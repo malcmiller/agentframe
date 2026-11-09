@@ -1,0 +1,76 @@
+# AgentFrame
+
+**Define agents with Python. Communicate through A2A. Choose your model host.**
+
+AgentFrame is a proposed Python library for creating agents through classes,
+decorators, and type annotations. Agent-to-Agent (A2A) interoperability and
+Agent Cards are core contracts, not optional exports.
+
+## Status
+
+This repository currently contains initial design documentation only. There is
+no implemented SDK, installable release, or supported public API yet. All names,
+interfaces, examples, and defaults in the documentation are proposals.
+
+## Goals
+
+- Make a small agent easy to define with explicit Python declarations.
+- Generate native A2A Agent Cards from agent and skill metadata plus host configuration.
+- Support model-free agents and optional model-assisted behavior.
+- Start with Microsoft Foundry model inference and local Llama through Ollama.
+- Allow model selection to change without rewriting agent behavior.
+- Provide safe, validated defaults with typed configuration and dependency injection.
+- Build on the official A2A Python SDK instead of maintaining another wire format.
+
+Llama is a model family; Ollama is the initial local model host. Foundry model
+inference is distinct from deploying an agent to Foundry Agent Service.
+
+## First success criterion
+
+Define one text agent in approximately 25 lines of agent-authoring code, generate
+and publish a valid Agent Card, invoke it with an independent official A2A client,
+and switch between a Foundry GPT deployment and local Llama by changing only model
+configuration. Host bootstrap and credential setup are documented separately.
+
+The same public contract must work with both hosts; identical generated answers
+are not required. A deterministic model-free example must work without cloud
+credentials, model downloads, or an inference server.
+
+## Initial scope
+
+The first release focuses on agent authoring, native A2A hosting, model adapters,
+validation, cancellation, and bounded execution. It does not include a UI,
+multi-agent orchestration platform, durable workflow engine, federation, RAG
+system, evaluation platform, or Foundry-hosted agent deployment.
+
+AgentFrame may become a foundation for a larger agentic platform. That platform
+is not a prerequisite for the first useful library.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Initial outline and delivery gates](docs/initial-outline.md)
+- [Decorators and type annotations](docs/annotations.md)
+- [Base classes and interfaces](docs/base-classes.md)
+
+## Development and contributions
+
+The project is in API-design discovery. Proposals should connect to the first
+success criterion and identify interoperability, safety, and authoring tradeoffs.
+There are no build or test commands until the Python package is introduced.
+
+The intended repository and distribution name is `agentframe`; the intended
+Python import is `agentframe`. Package-index names are not reserved by creating
+this repository, and no package availability or trademark clearance is guaranteed.
+
+## References
+
+- [A2A specification](https://a2a-protocol.org/latest/specification/)
+- [Official A2A Python SDK](https://github.com/a2aproject/a2a-python)
+- [Ollama Python client](https://github.com/ollama/ollama-python)
+- [Microsoft Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/)
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE), a permissive open-source license
+that includes an explicit patent grant subject to its terms.
