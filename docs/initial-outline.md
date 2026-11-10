@@ -36,6 +36,17 @@ an `Agent` subclass for behavior. Use typed configuration for settings and
 dependency injection for models and infrastructure. Do not force every piece
 into a decorator or an inheritance hierarchy.
 
+Each behavior is a separate async `@skill` method accepting runtime-injected
+`ctx: RunContext`. An agent requires at least one valid skill, not an abstract
+`handle()` method. Skills may be model-free, model-backed, or mixed in one class.
+An injected model is optional and is only used when requested.
+
+`Runtime.invoke` selects a stable skill ID explicitly for local calls. Remote A2A
+requests enter through the host, with an explicit router for multi-skill agents.
+Do not require authors to implement a large dispatch handler, infer an A2A
+method-call protocol from skill metadata, or silently pick the first skill.
+Model-assisted selection is opt-in and separate from model-assisted execution.
+
 The complete [piece-to-code mapping](base-classes.md#authoring-and-extension-decisions)
 records which surfaces are annotation-based, subclass-derived, injected, or
 library-managed. The normal authoring path needs only one AgentFrame subclass.
@@ -99,9 +110,9 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
 
 | Gate | Deliverable | Acceptance |
 | --- | --- | --- |
-| 1 | Model-free agent authoring | A decorated class produces deterministic metadata; invalid definitions fail without network access; isolated local invocations return validated results. |
-| 2 | Native A2A interoperability | The same agent publishes a valid card and accepts a message from an independent official SDK client. Supported task retrieval and cancellation are verified; unimplemented optional capabilities are not advertised. |
-| 3 | Interchangeable model hosts | One text-agent implementation runs against Foundry GPT and locally served Llama with only configuration changes. Provider integration tests are explicit opt-ins. |
+| 1 | Model-free agent authoring | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; missing/duplicate skill definitions and invalid arguments fail explicitly; skill-ID invocations use isolated context and validated outputs without network access. |
+| 2 | Native A2A interoperability | The agent publishes a valid card and accepts an independent official SDK client's message. Multi-skill routing is explicit, ambiguity is handled safely, and supported task retrieval/cancellation are verified; unimplemented optional capabilities are not advertised. |
+| 3 | Interchangeable model hosts | One text-agent implementation runs against Foundry GPT and locally served Llama with only configuration changes. Mixed agents can run model-free skills without inference; generation without a model fails explicitly. Provider integration tests are explicit opt-ins. |
 | 4 | Safe configuration and packaging | Configuration precedence, invalid outputs, timeouts, failures, cancellation, concurrent isolation, authentication boundaries, and installed-wheel examples are covered. |
 
 Streaming, tools, structured model output, and persistent task stores may be
@@ -112,10 +123,11 @@ Each advertised feature needs an interoperability or behavioral test.
 
 - Minimum supported Python version and dependency versions.
 - Initial A2A binding and compatibility policy.
-- Exact agent handler signature and minimal-message versus task lifecycle behavior.
+- Structured skill-input mappings and minimal-message versus task lifecycle behavior.
 - Initial Foundry inference API and supported credential mechanisms.
 - Concrete execution limits, error taxonomy, and configuration field names.
-- How multiple declared skills inform the agent's message handling without
-  inventing undocumented method routing.
+- Exact router interface, clarification behavior, and any negotiated remote
+  skill-selection contract. Multiple skill methods and no required `handle()`
+  are the agreed authoring direction, not open questions.
 
 Resolve these with small executable examples before declaring a stable API.

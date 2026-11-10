@@ -31,6 +31,8 @@ interfaces, examples, and defaults in the documentation are proposals.
 
 This is design syntax, not an implemented API. Decorators describe the agent;
 an `Agent` subclass implements behavior. Models and infrastructure are injected.
+Each ability is a separate `@skill` method; no abstract `handle()` or manual
+dispatch method is required.
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -39,13 +41,15 @@ from agentframe import Agent, RunContext, agent, skill
 @agent(name="Echo", description="Returns supplied text.", version="0.1.0")
 class Echo(Agent):
     @skill(id="echo", name="Echo text", description="Return text.", tags=["text"])
-    async def handle(self, text: str, ctx: RunContext) -> str:
+    async def echo(self, text: str, ctx: RunContext) -> str:
         return text
 ```
 
 The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
-need no provider configuration. See the [API design examples](docs/base-classes.md#proposed-api-examples)
-for model injection, host composition, and advanced extension points.
+need no provider configuration. See [agents with and without models](docs/agent-examples.md)
+for multi-skill, mixed, and local invocation examples, and the
+[API design examples](docs/base-classes.md#proposed-api-examples) for host
+composition and advanced extension points.
 
 Llama is a model family; Ollama is the initial local model host. Foundry model
 inference is distinct from deploying an agent to Foundry Agent Service.
@@ -77,6 +81,7 @@ is not a prerequisite for the first useful library.
 - [Initial outline and delivery gates](docs/initial-outline.md)
 - [Decorators and type annotations](docs/annotations.md)
 - [Base classes and interfaces](docs/base-classes.md)
+- [Agent examples: model-free, model-backed, and mixed](docs/agent-examples.md)
 - [Contributor and coding-agent context](AGENTS.md)
 
 ## Development and contributions

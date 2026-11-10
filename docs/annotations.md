@@ -13,7 +13,7 @@ Do not add provider-specific decorators such as `@foundry` or `@llama`.
 | Decorator | Applies to | Definition |
 | --- | --- | --- |
 | `@agent(...)` | An `Agent` subclass | Declares name, description, version, and optional documentation/provider identity. Collects explicitly declared skills without performing I/O. |
-| `@skill(...)` | An agent handler method | Associates an advertised A2A skill with behavior. Declares a stable ID, name, description, tags, examples, and optional input/output media types. Does not create an A2A RPC endpoint per method. |
+| `@skill(...)` | An individual async agent method | Registers a typed skill implementation and its advertised A2A metadata. Declares a stable ID, name, description, tags, examples, and optional input/output media types. Does not create an A2A RPC endpoint per method. |
 | `@tool(...)` | An explicitly registered callable | Makes a typed callable eligible for the agent's model toolbox. Does not publish the callable as an A2A skill or authorize its execution. This is a later optional authoring feature. |
 
 Require a non-empty agent description, an explicit agent version, and stable,
@@ -25,6 +25,11 @@ Agent decorators should preserve class identity, normal inheritance, signatures,
 and Python introspection. Inheritance and overrides must have documented,
 deterministic behavior; no process-global auto-registration is required.
 
+An agent must have at least one valid decorated skill, defined directly or
+inherited. There is no required abstract `handle()` method. Each skill has its
+own implementation; do not stack several skill declarations on a single
+mandatory handler. Undecorated helpers are not registered skills.
+
 ## Type annotations
 
 - Standard Python types describe local parameters and return values.
@@ -32,8 +37,10 @@ deterministic behavior; no process-global auto-registration is required.
 - `Annotated[T, Field(...)]` supplies descriptions and constraints without a
   separate AgentFrame validation language.
 - `RunContext` is runtime-injected context, never a user-supplied model/tool argument.
-- Async handlers are the primary execution path. Support for synchronous
-  handlers must document blocking and cancellation behavior before release.
+- Every skill accepts a typed `ctx: RunContext`, even when it does not use a model.
+  Context also carries deadlines, cancellation, caller information, and dependencies.
+- Async skill methods are the primary execution path. Support for synchronous
+  skills must document blocking and cancellation behavior before release.
 
 Agent Card input/output modes are media types, not complete Python schemas.
 If typed schema discovery is added later, use a documented, negotiated extension
@@ -42,8 +49,8 @@ rather than claiming that a standard A2A skill encodes method parameters.
 ## Proposed authoring shape
 
 This is illustrative design syntax, not executable code from a released package.
-The initial example deliberately uses one text handler and one skill to avoid
-introducing a custom multi-method routing protocol.
+This short example has one skill. See the [full agent examples](agent-examples.md)
+for multiple skills, model-free agents, and model injection.
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -63,19 +70,49 @@ class Summarizer(Agent):
         description="Produce a concise summary of supplied text.",
         tags=["text", "summary"],
     )
-    async def handle(self, text: str, ctx: RunContext) -> str:
-        return await ctx.generate(text)
+    async def summarize(self, text: str, ctx: RunContext) -> str:
+        return await ctx.generate(
+            text,
+            instructions="Summarize the supplied text in three sentences.",
+        )
 ```
 
-The host converts supported A2A text parts into handler input and converts the
-validated return into native A2A output. Unsupported part types fail explicitly.
+The host converts supported A2A parts into the selected skill's input and converts
+the validated return into native A2A output. Unsupported part types fail explicitly.
 The text argument represents supplied data; the model adapter should keep it
 separate from agent instructions rather than concatenate everything into a
 single privileged prompt.
 
-A model-free handler can return a computed value without using `ctx.generate`.
+A model-free skill can return a computed value without using `ctx.generate`.
 Model configuration is supplied when constructing the agent, not encoded in
 `@agent` or provider-specific decorators.
+
+Shared instructions and trusted skill-specific instructions form the effective
+generation instructions; the latter specialize the task without replacing
+shared constraints. Supplied text remains user content, not privileged
+instructions. Execution policy is enforced independently of prompt wording.
+Calling `ctx.generate()` without a configured model fails explicitly.
+
+## Skill registration versus request routing
+
+The runtime registers decorated methods by stable skill ID, derives their local
+argument/output contracts, and validates invocation through a common pipeline.
+The proposed local `Runtime.invoke(agent, skill=..., arguments=...)` selects an
+ID explicitly; Python method names need not equal skill IDs. Direct calls such
+as `await instance.summarize(...)` are ordinary Python calls and bypass runtime
+validation, policy, context creation, and execution limits.
+
+A2A skill metadata does not define remote function dispatch. A single-skill
+agent can select that skill when the content matches its contract. Multi-skill
+remote agents need an explicitly configured router, using deterministic logic
+or an optional model-backed selector. Unknown or ambiguous selection must fail
+clearly or request clarification, not select the first registered skill.
+
+Model-backed routing is distinct from model-backed skill execution. Neither
+an injected model nor a decorated skill implicitly enables model selection,
+tool access, or multi-skill orchestration. Any explicit remote skill-ID
+selection format requires a documented application contract or negotiated
+extension. No router signature or selection wire format has been finalized.
 
 ## Small data-contract example
 

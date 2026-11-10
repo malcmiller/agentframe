@@ -30,6 +30,9 @@ dependencies optional and reuse protocol types instead of copying schemas.
 - Use `@agent` for identity and `@skill` for advertised skills.
 - Implement behavior in an `Agent` subclass; the common path needs no additional
   AgentFrame subclass.
+- Give each skill its own async `@skill` method. Require at least one valid
+  declared or inherited skill, not an abstract `handle()` or author-written
+  dispatch method. Do not revert examples to the older single-handler design.
 - Use Python types, Pydantic data models, and `Annotated`/`Field` for contracts.
 - Use `@tool` plus explicit registration for optional model-callable functions.
   Tools and A2A skills are different concepts.
@@ -38,6 +41,11 @@ dependencies optional and reuse protocol types instead of copying schemas.
 - Inject models, state stores, policies, retrieval dependencies, and hooks.
   Custom components may implement structural protocols without inheritance.
 - Keep `RunContext` library-managed and invocation-scoped.
+- Every skill accepts `ctx: RunContext`; model-free skills may leave it unused.
+  Models are optional dependencies, and a class may mix model-free and
+  model-backed skills. Generation without a configured model fails explicitly.
+- Combine shared agent instructions with trusted skill-specific generation
+  instructions while keeping user text separate. Instructions are not policy.
 - Supply default bounded execution in AgentFrame, not another framework.
 - Generate native Agent Cards from metadata plus actual host configuration.
 - Compose A2A hosting through `AgentApp`; do not require server subclassing.
@@ -48,6 +56,13 @@ interfaces remain proposals until proven by implementation.
 
 ## A2A and model boundaries
 
+`Runtime.invoke` selects registered skill IDs explicitly for local calls and
+applies validation, policy, and execution limits. Direct Python method calls
+bypass that pipeline. The host owns remote entry and uses an explicit router
+for multiple skills; model-based selection is opt-in, not implied by injecting
+a model. Unknown or ambiguous selection needs an explicit error or clarification.
+Multiple-skill orchestration is not automatically enabled.
+
 An A2A skill is descriptive metadata, not a Python-method RPC endpoint. Messages,
 tasks, artifacts, and actual endpoint capabilities follow the selected official
 protocol/SDK version. A card's security declaration does not enforce security.
@@ -57,7 +72,8 @@ Initial models are GPT deployments through Microsoft Foundry inference and
 locally executed Llama through Ollama. Llama is a model family, not a host.
 Foundry inference is not Foundry-hosted agent deployment. Keep provider imports
 out of agent business logic. Switching providers should change configuration,
-not the handler.
+not skill implementations. Any remote skill-ID selector needs a documented
+application contract or negotiated extension; it is not standard A2A dispatch.
 
 ## Safety and scope
 
@@ -78,7 +94,8 @@ deployment unless explicitly requested.
 ## Documentation maintenance
 
 Read `README.md` and `docs/README.md` first. Keep `docs/initial-outline.md`,
-`docs/annotations.md`, and `docs/base-classes.md` consistent. Preserve the
+`docs/annotations.md`, `docs/base-classes.md`, and `docs/agent-examples.md`
+consistent. Preserve the
 distinction between confirmed product direction and illustrative API details.
 
 When implementation starts, select compatible Python/dependency versions and

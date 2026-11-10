@@ -16,8 +16,8 @@ Configuration and composition are intentional alternatives to inheritance.
 | Piece | Recommended mechanism | Responsibility |
 | --- | --- | --- |
 | Identity | Annotation-based | `@agent(...)` supplies descriptive metadata, not executable overrides. |
-| Skills | Annotation-based | `@skill(...)` advertises abilities without creating per-method A2A RPC endpoints. |
-| Behavior / entry point | Subclass-derived | An `Agent` subclass implements an async handler. |
+| Skills | Annotation-based | Each `@skill(...)` method registers an implementation and advertised metadata without creating a per-method A2A RPC endpoint. |
+| Behavior / entry point | Subclass-derived skill methods | An `Agent` subclass implements one or more async skills, not a required `handle()`. The runtime owns the protocol entry point. |
 | Input/output contracts | Type annotations and optional data-model subclasses | Built-in types or Pydantic `BaseModel` subclasses validate data. |
 | Instructions | Configuration or typed callable | Static instructions by default; trusted dynamic construction when needed. No required subclass. |
 | Model dependency | Injected interface implementation | Supplied adapters or a custom `Model` protocol implementation. |
@@ -41,14 +41,27 @@ layer of agent inheritance.
 
 | Type | Definition |
 | --- | --- |
-| `Agent` | Base class for behavior and immutable authoring configuration. Supports model-free handlers and optional injected models. Does not own transport or provider SDK details. |
+| `Agent` | Base class for immutable authoring configuration and one or more valid decorated skill methods, including inherited skills. Supports model-free, model-backed, and mixed skills with no required abstract `handle()`. |
 | `RunContext` | Per-invocation model access, verified caller context, deadline, cancellation, and correlation data. Provides convenience helpers such as `generate`. Never reused as mutable global state. |
+| `Runtime` | Registers skill IDs and runs explicitly selected local skills through validation, policy, context creation, deadlines, and output validation. Does not require inference. |
+| `SkillRouter` | Proposed injected interface for selecting a skill from a remote request. Deterministic or explicitly model-backed; exact signature remains open. Selection is subject to authorization and never grants execution permission by itself. |
 | `AgentConfig` | Validated defaults for instructions and execution limits. A default is distinct from a non-overridable host policy ceiling. |
 | `AgentApp` | ASGI integration that adapts supported A2A requests to agent behavior, publishes the native card, and coordinates task lifecycle and owned resources through the official SDK. |
 | `HostConfig` | Advertised endpoint, supported binding, authentication integration, task-store choice, and actual optional protocol capabilities. Separate from model and agent settings. |
 
-`AgentApp` must own the mapping from A2A messages to handlers explicitly. An
-internal Python handler name must not become an undocumented remote RPC method.
+Each skill accepts `ctx: RunContext`, including model-free skills; unused context
+is valid. It belongs to the invocation, not exclusively to model inference.
+`ctx.generate(text, instructions=...)` uses the injected model, shared agent
+instructions, and trusted call-specific instructions, with user text kept separate.
+Missing model configuration produces an explicit error on generation, not a
+failure to construct or run a model-free agent.
+
+`AgentApp` owns the A2A entry point and uses an explicit routing strategy for
+multiple skills, then invokes the selected skill through the common runtime.
+One matching skill can be selected directly; ambiguous requests need clarification
+or an explicit error. An internal Python skill method name must not become an
+undocumented remote RPC method. Local skill-ID invocation is not a standard A2A
+operation. See [routing boundaries](annotations.md#skill-registration-versus-request-routing).
 Task state transitions and cancellation must follow the selected A2A version.
 Disconnecting a stream is not automatically equivalent to canceling a task.
 
@@ -103,6 +116,8 @@ global plugin registry or custom configuration language in the first release.
 All snippets are illustrative, unimplemented API proposals. Constructor names,
 module exports, and field names are not stable. The `Summarizer` class below is
 the example in [annotations](annotations.md#proposed-authoring-shape).
+For complete multi-skill definitions and local invocation, see
+[agents with and without models](agent-examples.md).
 
 ### Inject a local model
 
