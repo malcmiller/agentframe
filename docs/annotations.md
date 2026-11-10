@@ -110,9 +110,11 @@ clearly or request clarification, not select the first registered skill.
 
 Model-backed routing is distinct from model-backed skill execution. Neither
 an injected model nor a decorated skill implicitly enables model selection,
-tool access, or multi-skill orchestration. Any explicit remote skill-ID
-selection format requires a documented application contract or negotiated
-extension. No router signature or selection wire format has been finalized.
+tool access, or multi-skill orchestration. Any explicit A2A skill-ID selection
+format requires a documented application contract or negotiated extension.
+The optional [MCP adapter](mcp-skills.md) instead uses standard tool-name
+selection for explicitly published skills. No A2A router signature or custom
+selection wire format has been finalized.
 
 ## Small data-contract example
 
@@ -147,6 +149,11 @@ def to_fahrenheit(celsius: float) -> float:
 The proposed construction shape is `Summarizer(model=model, tools=[to_fahrenheit])`.
 The runtime must validate arguments, enforce policy, and bound tool iterations.
 Instruction text is not an authorization mechanism.
+
+Publishing a skill as an MCP tool is a separate host allowlist decision, not a
+new decorator and not automatic publication of `@tool` callables. Token budgets
+belong in [execution configuration](limits.md); [tracing](tracing.md) belongs on
+the runtime. Neither requires changing a skill's signature or agent inheritance.
 
 ## Card generation boundaries
 

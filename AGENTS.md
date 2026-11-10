@@ -24,6 +24,8 @@ This is not a ban on useful dependencies. The official A2A SDK, Pydantic
 validation, ASGI/HTTP libraries, credential libraries, and official model-provider
 clients are appropriate when needed. Pydantic is not Pydantic AI. Keep provider
 dependencies optional and reuse protocol types instead of copying schemas.
+The official MCP Python SDK and OpenTelemetry are permitted optional
+protocol/observability dependencies; they do not justify adding an agent framework.
 
 ## Authoring decisions
 
@@ -72,8 +74,36 @@ Initial models are GPT deployments through Microsoft Foundry inference and
 locally executed Llama through Ollama. Llama is a model family, not a host.
 Foundry inference is not Foundry-hosted agent deployment. Keep provider imports
 out of agent business logic. Switching providers should change configuration,
-not skill implementations. Any remote skill-ID selector needs a documented
+not skill implementations. Any A2A skill-ID selector needs a documented
 application contract or negotiated extension; it is not standard A2A dispatch.
+
+## Limits, tracing, and MCP decisions
+
+- Keep per-request `ModelSettings.max_output_tokens` separate from `RunLimits`
+  for assembled input, aggregate invocation tokens, inference attempts, and time.
+  Model context capacity is not an arbitrary user setting.
+- Enforce host ceilings independently of defaults and permitted tighter run
+  options. Preflight/reserve budget and reconcile reported usage, including
+  retries. Unknown usage is not zero; strict accounting cannot assume a bound.
+- Budget model-backed routing before skill execution and propagate remaining
+  allowance. Do not promise hard billing caps or free cancellation.
+- Configure optional OpenTelemetry through `Runtime` and `TracingConfig`.
+  The application owns the provider, exporters, and sampling. Content capture
+  is off by default; credentials and private reasoning are never captured.
+- Keep invocation IDs, token accounting, and enforcement working without
+  tracing. Incoming trace context and session IDs are not authentication.
+- A2A remains first-class. Optional `MCPConfig(exposed_skills=[...])` publishes
+  only explicitly allowlisted registered skills through native MCP tool calls.
+  It does not expose internal `@tool` functions or authorize callers.
+- MCP named selection bypasses A2A routing, not validation, policy, limits, or
+  tracing. Keep discovery and invocation authorization consistent.
+- Use `A2AConfig` and `MCPConfig` for adapter settings; `HostConfig` owns the
+  advertised origin, authentication integration, and hard limit ceilings.
+- Defer a custom REST skill API unless a concrete client requires it. Do not
+  invent MCP/A2A payload fields, response envelopes, or unverified capabilities.
+
+See `docs/limits.md`, `docs/tracing.md`, and `docs/mcp-skills.md` for proposed
+settings, deployed server examples, accounting caveats, and protocol boundaries.
 
 ## Safety and scope
 
@@ -94,8 +124,8 @@ deployment unless explicitly requested.
 ## Documentation maintenance
 
 Read `README.md` and `docs/README.md` first. Keep `docs/initial-outline.md`,
-`docs/annotations.md`, `docs/base-classes.md`, and `docs/agent-examples.md`
-consistent. Preserve the
+`docs/annotations.md`, `docs/base-classes.md`, `docs/agent-examples.md`,
+`docs/limits.md`, `docs/tracing.md`, and `docs/mcp-skills.md` consistent. Preserve the
 distinction between confirmed product direction and illustrative API details.
 
 When implementation starts, select compatible Python/dependency versions and

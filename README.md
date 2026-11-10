@@ -72,6 +72,11 @@ validation, cancellation, and bounded execution. It does not include a UI,
 multi-agent orchestration platform, durable workflow engine, federation, RAG
 system, evaluation platform, or Foundry-hosted agent deployment.
 
+Token budgets and deadlines are runtime-enforced configuration; tracing is an
+optional OpenTelemetry integration with content capture off by default. MCP is
+a planned optional adapter for explicitly allowlisted skills, not automatic
+publication of every skill or internal tool. A custom REST skill API is deferred.
+
 AgentFrame may become a foundation for a larger agentic platform. That platform
 is not a prerequisite for the first useful library.
 
@@ -82,6 +87,9 @@ is not a prerequisite for the first useful library.
 - [Decorators and type annotations](docs/annotations.md)
 - [Base classes and interfaces](docs/base-classes.md)
 - [Agent examples: model-free, model-backed, and mixed](docs/agent-examples.md)
+- [Execution limits and token accounting](docs/limits.md)
+- [Tracing and correlation](docs/tracing.md)
+- [A2A hosting and optional MCP skill configuration](docs/mcp-skills.md)
 - [Contributor and coding-agent context](AGENTS.md)
 
 ## Development and contributions

@@ -25,7 +25,9 @@ handling rather than reinventing the standard.
 
 This is not a zero-dependency requirement. Standard-library utilities, Pydantic
 for validation, ASGI/HTTP infrastructure, official model-provider clients, and
-credential libraries are appropriate when justified. Pydantic and Pydantic AI
+credential libraries are appropriate when justified. The official MCP Python SDK
+and OpenTelemetry are optional protocol/observability dependencies, not agent
+frameworks. Pydantic and Pydantic AI
 are different packages: the former is permitted; the latter is an agent framework.
 Keep provider-specific dependencies optional so model-free use remains lightweight.
 
@@ -46,6 +48,11 @@ requests enter through the host, with an explicit router for multi-skill agents.
 Do not require authors to implement a large dispatch handler, infer an A2A
 method-call protocol from skill metadata, or silently pick the first skill.
 Model-assisted selection is opt-in and separate from model-assisted execution.
+
+For explicit remote skill invocation, prefer an optional MCP adapter over a new
+REST protocol. Publish only named, allowlisted skills as MCP tools; keep this
+separate from internal model-callable `@tool` registration and caller authorization.
+A2A stays first-class and MCP does not block the minimal initial slice.
 
 The complete [piece-to-code mapping](base-classes.md#authoring-and-extension-decisions)
 records which surfaces are annotation-based, subclass-derived, injected, or
@@ -106,6 +113,25 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
   is enabled. A client-supplied context ID is not authorization.
 - Offer no shell, filesystem, network-fetching, or other tools by default.
 
+## Token budgets and tracing
+
+Use `ModelSettings.max_output_tokens` for one model request and `RunLimits` for
+assembled-input bounds, aggregate invocation tokens, model-attempt count, and
+elapsed time. Model context capacity is a capability, not a configurable
+guarantee. Host ceilings are independent of overridable defaults.
+
+Preflight/reserve allowances and reconcile actual usage; label estimates and
+unknown usage honestly. Strict accounting must reject calls without a reliable
+bound. Do not promise a hard financial cap or cancellation without charges.
+Budget any model-backed routing before skill execution and inherit remaining
+allowances rather than reset them. See [limits](limits.md).
+
+Use optional `TracingConfig` on `Runtime`, with an application-owned
+OpenTelemetry provider. Sampling/export are application policy; content capture
+is off by default. Keep correlation and accounting independent of tracing.
+Do not leak credentials, prompts, outputs, or private reasoning; incoming trace
+context is not identity. See [tracing](tracing.md).
+
 ## Delivery gates
 
 | Gate | Deliverable | Acceptance |
@@ -119,6 +145,14 @@ Streaming, tools, structured model output, and persistent task stores may be
 added incrementally. They must not block a minimal text-only, model-free agent.
 Each advertised feature needs an interoperability or behavioral test.
 
+Optional MCP delivery follows the minimal A2A slice. Its gate includes
+initialization, explicit tool discovery/invocation, unsupported schema rejection,
+authorization, shared limits/tracing, and independent-client interoperability.
+Tracing adds a separate opt-in check for safe metadata, correct span boundaries,
+and accounting that still works with tracing disabled. These additions do not
+reintroduce a UI, workflow platform, or custom REST skill API.
+See the [combined hosting proposal](mcp-skills.md).
+
 ## Open design decisions
 
 - Minimum supported Python version and dependency versions.
@@ -126,6 +160,10 @@ Each advertised feature needs an interoperability or behavioral test.
 - Structured skill-input mappings and minimal-message versus task lifecycle behavior.
 - Initial Foundry inference API and supported credential mechanisms.
 - Concrete execution limits, error taxonomy, and configuration field names.
+- Token counting/strict-enforcement capabilities and incomplete-usage semantics
+  for each supported provider.
+- Pinned MCP/telemetry versions, authorization hooks, schema/result mappings,
+  and transport-specific correlation metadata.
 - Exact router interface, clarification behavior, and any negotiated remote
   skill-selection contract. Multiple skill methods and no required `handle()`
   are the agreed authoring direction, not open questions.

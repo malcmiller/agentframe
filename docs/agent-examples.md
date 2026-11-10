@@ -224,11 +224,23 @@ model-backed routing. Unknown or ambiguous requests must fail clearly or request
 clarification rather than choose the first skill.
 
 Local `skill="word-count"` invocation is not a standard A2A wire operation. Any
-remote skill-ID selector requires a documented application contract or negotiated
-extension. Input/output A2A part mappings must be documented and tested, including
+A2A skill-ID selector requires a documented application contract or negotiated
+extension. Optional MCP exposure uses standard named tool calls instead.
+Input/output A2A part mappings must be documented and tested, including
 non-string outputs such as the integer count above.
 
 Model-backed routing is separate from model use inside skills. It must not be
 enabled just because an agent has a model, and a selector does not bypass policy
 or implicitly grant access to skills as model tools. Requests needing multiple
 skills require explicit composition, not automatic orchestration.
+
+## Limits, tracing, and optional MCP
+
+The same skills can inherit token budgets and deadlines without new decorators.
+Tracing observes their runtime execution independently of whether a model is used.
+An MCP host may explicitly publish selected skill IDs for named tool invocation,
+without using the A2A router or exposing internal model tools.
+
+See [limits](limits.md), [tracing](tracing.md), and the
+[combined A2A/MCP server example](mcp-skills.md). All three use the same validated
+runtime pipeline; the custom REST skill API is deferred.

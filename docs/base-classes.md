@@ -46,8 +46,12 @@ layer of agent inheritance.
 | `Runtime` | Registers skill IDs and runs explicitly selected local skills through validation, policy, context creation, deadlines, and output validation. Does not require inference. |
 | `SkillRouter` | Proposed injected interface for selecting a skill from a remote request. Deterministic or explicitly model-backed; exact signature remains open. Selection is subject to authorization and never grants execution permission by itself. |
 | `AgentConfig` | Validated defaults for instructions and execution limits. A default is distinct from a non-overridable host policy ceiling. |
-| `AgentApp` | ASGI integration that adapts supported A2A requests to agent behavior, publishes the native card, and coordinates task lifecycle and owned resources through the official SDK. |
-| `HostConfig` | Advertised endpoint, supported binding, authentication integration, task-store choice, and actual optional protocol capabilities. Separate from model and agent settings. |
+| `RunLimits` | Validated invocation budgets, per-model-request input bound, inference-attempt count, and deadline. Also used to express host ceilings separately from defaults. |
+| `TracingConfig` | Optional runtime tracing with an application-owned OpenTelemetry provider and content capture off by default. Never owns token enforcement. |
+| `AgentApp` | ASGI composition for native A2A and optional MCP adapters over the common runtime. Publishes the native card and coordinates task lifecycle and owned resources through protocol SDKs. |
+| `HostConfig` | Advertised endpoint, authentication integration, and non-overridable execution ceilings. Separate from agent defaults and adapter-specific settings. |
+| `A2AConfig` | A2A path, selected binding, task-store integration, and actual supported endpoint features. A2A remains the default interface. |
+| `MCPConfig` | Optional MCP endpoint and an explicit `exposed_skills` allowlist. Does not publish internal model tools or grant caller authorization. |
 
 Each skill accepts `ctx: RunContext`, including model-free skills; unused context
 is valid. It belongs to the invocation, not exclusively to model inference.
@@ -72,7 +76,7 @@ Disconnecting a stream is not automatically equivalent to canceling a task.
 | `Model` | A Python `Protocol` for asynchronous generation through normalized requests and responses. Does not require inheritance from a vendor-specific class. |
 | `FoundryModel` | Adapter for a configured Foundry model deployment and an explicitly supported inference API. Accepts injected credentials or a configured SDK client. |
 | `OllamaModel` | Adapter for an explicit Ollama endpoint and model tag, initially targeting locally executed Llama models. Never downloads or switches models implicitly. |
-| `ModelSettings` | Validated shared generation settings with typed provider-specific options. Unsupported requested settings fail explicitly. |
+| `ModelSettings` | Validated shared generation settings such as per-request `max_output_tokens`, with typed provider-specific options. Unsupported requested settings fail explicitly. |
 | `ModelCapabilities` | Supported features of the actual model/deployment, including streaming, tools, structured output, and accepted modalities. Unknown support is not assumed to be available. |
 | `ModelRequest` | Provider-neutral messages, optional tool definitions, output contract, and permitted generation settings. Keeps instructions distinct from user content. |
 | `ModelResponse` | Normalized generated content, optional tool calls, available usage data, and completion status. Missing usage remains unknown, not zero. |
@@ -160,11 +164,11 @@ No secrets belong in the definition or generated card.
 ### Configure defaults and compose the host
 
 ```python
-from agentframe import AgentApp, AgentConfig, HostConfig
+from agentframe import AgentApp, AgentConfig, HostConfig, RunLimits
 
 configured_agent = Summarizer(
     model=local_model,
-    config=AgentConfig(timeout_seconds=30),
+    config=AgentConfig(limits=RunLimits(timeout_seconds=30)),
 )
 app = AgentApp(
     agent=configured_agent,
@@ -178,6 +182,10 @@ example override, not a settled library default. Non-local hosting needs explici
 authentication and HTTPS; a public URL does not configure either automatically.
 Instance configuration overrides class defaults, and permitted run overrides
 remain subject to host-enforced ceilings.
+
+See [limits](limits.md), [tracing](tracing.md), and
+[MCP skill configuration](mcp-skills.md) for invocation budgets, optional
+telemetry, explicit skill publication, and a combined server example.
 
 ### Implement an interface without subclassing an agent framework
 
