@@ -77,6 +77,11 @@ optional OpenTelemetry integration with content capture off by default. MCP is
 a planned optional adapter for explicitly allowlisted skills, not automatic
 publication of every skill or internal tool. A custom REST skill API is deferred.
 
+Skills may declare required permissions; application roles map to grants outside
+the agent definition. The proposed runtime enforces verified identity and
+application resource policy across entry points. Prompt safeguarding combines
+library trust boundaries with application checks, not a guaranteed injection filter.
+
 AgentFrame may become a foundation for a larger agentic platform. That platform
 is not a prerequisite for the first useful library.
 
@@ -90,6 +95,8 @@ is not a prerequisite for the first useful library.
 - [Execution limits and token accounting](docs/limits.md)
 - [Tracing and correlation](docs/tracing.md)
 - [A2A hosting and optional MCP skill configuration](docs/mcp-skills.md)
+- [Skill authorization and caller identity](docs/authorization.md)
+- [Prompt safeguarding and shared responsibilities](docs/prompt-safeguarding.md)
 - [Contributor and coding-agent context](AGENTS.md)
 
 ## Development and contributions

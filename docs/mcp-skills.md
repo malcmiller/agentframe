@@ -31,7 +31,8 @@ It must still enforce the same authorization and execution limits.
 ## Proposed server composition
 
 This example uses `WritingAssistant` from [agent examples](agent-examples.md).
-`model`, `tracer_provider`, `authentication`, and `application_router` are
+`model`, `tracer_provider`, `authentication`, `authorization_policy`,
+`execution_policy`, and `application_router` are
 application-supplied dependencies. Constructor fields and transport choices
 are proposals, not stable signatures.
 
@@ -62,6 +63,8 @@ writer = WritingAssistant(
 )
 
 runtime = Runtime(
+    authorization=authorization_policy,
+    policy=execution_policy,
     tracing=TracingConfig(
         enabled=True,
         tracer_provider=tracer_provider,
@@ -163,6 +166,18 @@ eligible skills, and re-check the selected skill at invocation. MCP allowlisting
 is publication policy, not caller authorization. Filter discovery as required
 and enforce policy again on `tools/call`; hidden tools must not remain callable.
 Session and conversation identifiers are not proof of caller identity.
+
+Use a verified `Principal` and require all skill `requires_permissions` grants
+plus application resource policy on each invocation. MCP allowlisting does not
+override these checks. Missing identity or unavailable required policy fails
+protected operations. Anonymous access is an explicit host/application decision,
+not inferred from an empty skill permission list.
+
+Role-to-permission mapping lives in the application, not MCP arguments or the
+Agent Card. Re-check protected task/resource access and consequential tool/action
+execution; model output is not authorization. See
+[authorization](authorization.md) and [prompt safeguarding](prompt-safeguarding.md)
+for caller identity and the additional content-policy boundaries.
 
 Generate and preserve invocation correlation through the runtime. Inference,
 retries, and internal tool execution share the same accounting whether entered

@@ -27,6 +27,7 @@ Configuration and composition are intentional alternatives to inheritance.
 | Conversation state | Injected interface implementation | A future `StateStore` protocol isolates conversation state. It is not the A2A task store. |
 | Knowledge / retrieval | Injected interface or annotated tool | Application-directed retrieval uses a dependency; model-directed retrieval uses an explicitly registered tool. |
 | Execution policy | Typed configuration and policy interface | Limits and runtime checks enforce policy; metadata may declare requirements but cannot enforce them. |
+| Authorization | Skill permission annotations and an injected policy | `requires_permissions` declares all-of grants; verified identity and resource policy govern execution. Roles remain application-owned. |
 | Failure handling | Library defaults and exception subclasses | Typed failures and explicit protocol mappings; no required error decorator. |
 | Observability | Configuration and injected hooks | Correlated operational logs and optional tracing without changing agent inheritance. |
 | Agent Card | Generated from annotations and host configuration | Native SDK type with validated customization, not a required custom subclass. |
@@ -42,7 +43,10 @@ layer of agent inheritance.
 | Type | Definition |
 | --- | --- |
 | `Agent` | Base class for immutable authoring configuration and one or more valid decorated skill methods, including inherited skills. Supports model-free, model-backed, and mixed skills with no required abstract `handle()`. |
-| `RunContext` | Per-invocation model access, verified caller context, deadline, cancellation, and correlation data. Provides convenience helpers such as `generate`. Never reused as mutable global state. |
+| `RunContext` | Per-invocation model access, `principal`, application dependencies, deadline, cancellation, and correlation. Provides helpers such as `generate`; never reused as mutable global state. |
+| `Principal` | Immutable trusted caller identity and verified grants/claims, supplied by authentication or trusted local application context, not skill arguments. Exact fields remain open. |
+| `AuthorizationPolicy` | Injected policy for verified caller grants and resource-specific rules. Adds restrictions to mandatory skill requirements and fails closed on denial or unavailability. |
+| `ExecutionPolicy` | Optional configured input, outbound-model, tool/action, and output checks. Does not replace authorization or guarantee injection prevention. |
 | `Runtime` | Registers skill IDs and runs explicitly selected local skills through validation, policy, context creation, deadlines, and output validation. Does not require inference. |
 | `SkillRouter` | Proposed injected interface for selecting a skill from a remote request. Deterministic or explicitly model-backed; exact signature remains open. Selection is subject to authorization and never grants execution permission by itself. |
 | `AgentConfig` | Validated defaults for instructions and execution limits. A default is distinct from a non-overridable host policy ceiling. |
@@ -52,6 +56,13 @@ layer of agent inheritance.
 | `HostConfig` | Advertised endpoint, authentication integration, and non-overridable execution ceilings. Separate from agent defaults and adapter-specific settings. |
 | `A2AConfig` | A2A path, selected binding, task-store integration, and actual supported endpoint features. A2A remains the default interface. |
 | `MCPConfig` | Optional MCP endpoint and an explicit `exposed_skills` allowlist. Does not publish internal model tools or grant caller authorization. |
+
+`Runtime(authorization=..., policy=...)` separates required permission/resource
+decisions from supplementary content/action checks. Missing integration cannot
+permit protected execution. Both apply at their relevant execution boundaries;
+an earlier model or prompt-filter decision cannot authorize a later action.
+See [authorization](authorization.md) and [prompt safeguarding](prompt-safeguarding.md)
+for API examples and application responsibilities.
 
 Each skill accepts `ctx: RunContext`, including model-free skills; unused context
 is valid. It belongs to the invocation, not exclusively to model inference.

@@ -105,6 +105,37 @@ application contract or negotiated extension; it is not standard A2A dispatch.
 See `docs/limits.md`, `docs/tracing.md`, and `docs/mcp-skills.md` for proposed
 settings, deployed server examples, accounting caveats, and protocol boundaries.
 
+## Authorization and prompt-safeguarding decisions
+
+- Add all-of `requires_permissions` declarations to skills, not organization-
+  specific role names. Applications own role mappings, identity directories,
+  trusted grant resolution, and resource policy.
+- Put immutable verified caller identity in `RunContext.principal`. Never trust
+  roles, grants, principals, tenant ownership, or context from request arguments.
+  Protected local calls also need trusted caller context; Python is not a sandbox.
+- Inject `AuthorizationPolicy` through `Runtime(authorization=...)`. Enforce
+  mandatory skill requirements plus resource checks, not just prompt/filter
+  advice. Missing identity/integration, denial, timeout, or policy outage must
+  fail protected work.
+- Empty permission requirements, MCP allowlists, discovery visibility, and
+  loopback binding do not declare anonymous access or grant authorization.
+  Anonymous remote access must be explicit; unprotected local examples need no
+  identity provider.
+- Restrict routing candidates, re-check invocation and protected task access,
+  and enforce consequential tool/resource decisions at the action boundary.
+  Delegation cannot amplify caller authority through broad server credentials.
+- Prompt safeguarding is shared responsibility. Keep trusted instructions
+  separate from untrusted user/retrieval/tool content; never store secrets in
+  prompts or promise a universal injection detector.
+- Optional `ExecutionPolicy` hooks cover input, each outbound model request,
+  tools/actions, and final output. Required checks fail closed and cannot waive
+  authorization. External screening requires explicit egress approval.
+- Whole-output checks may require buffering or disabling streaming. Output
+  rejection cannot undo previously executed actions or released content.
+
+See `docs/authorization.md` and `docs/prompt-safeguarding.md` for examples and
+application/library responsibility boundaries. APIs remain proposals.
+
 ## Safety and scope
 
 Use explicit model selection, finite execution limits, validated inputs/outputs,
@@ -125,7 +156,8 @@ deployment unless explicitly requested.
 
 Read `README.md` and `docs/README.md` first. Keep `docs/initial-outline.md`,
 `docs/annotations.md`, `docs/base-classes.md`, `docs/agent-examples.md`,
-`docs/limits.md`, `docs/tracing.md`, and `docs/mcp-skills.md` consistent. Preserve the
+`docs/limits.md`, `docs/tracing.md`, `docs/mcp-skills.md`,
+`docs/authorization.md`, and `docs/prompt-safeguarding.md` consistent. Preserve the
 distinction between confirmed product direction and illustrative API details.
 
 When implementation starts, select compatible Python/dependency versions and

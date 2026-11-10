@@ -11,6 +11,8 @@ These documents describe a proposed design, not an implemented or stable API.
 | [Limits](limits.md) | Per-request output/input limits, invocation budgets, host ceilings, and honest accounting guarantees. |
 | [Tracing](tracing.md) | Optional OpenTelemetry configuration, span boundaries, safe metadata, and correlation. |
 | [MCP skills](mcp-skills.md) | Optional allowlisted skill publication, shared A2A/MCP hosting, schema mapping, and protocol boundaries. |
+| [Authorization](authorization.md) | Skill permission requirements, verified principals, application role/resource policy, and fail-closed execution. |
+| [Prompt safeguarding](prompt-safeguarding.md) | Shared responsibilities, content-policy hooks, data egress, and prompt-injection limitations. |
 | [Repository context](../AGENTS.md) | Durable contributor and coding-agent instructions, including framework independence and scope boundaries. |
 
 Read the outline first. Changes to proposed interfaces should keep the design

@@ -13,7 +13,7 @@ Do not add provider-specific decorators such as `@foundry` or `@llama`.
 | Decorator | Applies to | Definition |
 | --- | --- | --- |
 | `@agent(...)` | An `Agent` subclass | Declares name, description, version, and optional documentation/provider identity. Collects explicitly declared skills without performing I/O. |
-| `@skill(...)` | An individual async agent method | Registers a typed skill implementation and its advertised A2A metadata. Declares a stable ID, name, description, tags, examples, and optional input/output media types. Does not create an A2A RPC endpoint per method. |
+| `@skill(...)` | An individual async agent method | Registers implementation and A2A metadata, plus optional `requires_permissions` for runtime enforcement. Declared permissions are not invented standard Agent Card fields or per-method RPC endpoints. |
 | `@tool(...)` | An explicitly registered callable | Makes a typed callable eligible for the agent's model toolbox. Does not publish the callable as an A2A skill or authorize its execution. This is a later optional authoring feature. |
 
 Require a non-empty agent description, an explicit agent version, and stable,
@@ -29,6 +29,19 @@ An agent must have at least one valid decorated skill, defined directly or
 inherited. There is no required abstract `handle()` method. Each skill has its
 own implementation; do not stack several skill declarations on a single
 mandatory handler. Undecorated helpers are not registered skills.
+
+## Permission requirements
+
+Use `@skill(..., requires_permissions=["documents:publish"])` to declare
+all-of permission requirements. Roles are application-owned permission groupings,
+not hardcoded skill decorators. The runtime evaluates trusted caller grants
+and application resource policy before execution; the decorator alone provides
+no enforcement. An empty list does not make a remote skill public.
+
+Caller identity is runtime-supplied as `ctx.principal`, never a user/model
+argument. Permission requirements are distinct from MCP publication allowlists
+and internal tool registration. See [authorization](authorization.md) for a
+complete skill example, anonymous-access boundaries, and inherited requirements.
 
 ## Type annotations
 

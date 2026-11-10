@@ -113,6 +113,35 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
   is enabled. A client-supplied context ID is not authorization.
 - Offer no shell, filesystem, network-fetching, or other tools by default.
 
+## Identity, authorization, and prompt safeguarding
+
+Skills declare all-of `requires_permissions` requirements rather than hardcoded
+user roles. Applications map roles to grants and supply trusted authentication
+and resource policy. The runtime exposes an immutable `Principal` through
+`ctx.principal` and enforces authorization before executing protected work.
+Untrusted arguments cannot set identity, roles, permissions, or runtime context.
+
+Use an injected `AuthorizationPolicy` for application checks such as document
+ownership, tenant boundaries, approval state, and permitted destinations.
+Declared permission requirements remain mandatory; admission, discovery/routing,
+skill invocation, and consequential actions need checks at the appropriate
+boundaries. Anonymous remote access is explicit, never inferred from an empty
+permission list or loopback binding. Missing identity/policy, denial, timeout,
+or policy unavailability fails protected operations.
+
+Prompt safeguarding is shared responsibility, not a universal model filter.
+Keep trusted instructions separate from untrusted content, credentials outside
+model context, and content out of default logs. Application-supplied
+`ExecutionPolicy` checks cover input, each outbound model request (including
+model routing), tools/actions, and outputs. Required checks fail closed.
+External screening is explicit data egress, not an automatic safety fallback.
+
+Validate model output but never treat it as authority. Preserve or reduce
+permissions during delegation; service credentials do not expand caller grants.
+Resource decisions must be enforced at the actual side-effect boundary, not
+only at skill admission. See [authorization](authorization.md) and
+[prompt safeguarding](prompt-safeguarding.md).
+
 ## Token budgets and tracing
 
 Use `ModelSettings.max_output_tokens` for one model request and `RunLimits` for
@@ -139,7 +168,7 @@ context is not identity. See [tracing](tracing.md).
 | 1 | Model-free agent authoring | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; missing/duplicate skill definitions and invalid arguments fail explicitly; skill-ID invocations use isolated context and validated outputs without network access. |
 | 2 | Native A2A interoperability | The agent publishes a valid card and accepts an independent official SDK client's message. Multi-skill routing is explicit, ambiguity is handled safely, and supported task retrieval/cancellation are verified; unimplemented optional capabilities are not advertised. |
 | 3 | Interchangeable model hosts | One text-agent implementation runs against Foundry GPT and locally served Llama with only configuration changes. Mixed agents can run model-free skills without inference; generation without a model fails explicitly. Provider integration tests are explicit opt-ins. |
-| 4 | Safe configuration and packaging | Configuration precedence, invalid outputs, timeouts, failures, cancellation, concurrent isolation, authentication boundaries, and installed-wheel examples are covered. |
+| 4 | Safe configuration and packaging | Configuration precedence, invalid outputs, timeouts, cancellation, isolation, verified identity, permission/resource denials, policy outages, no side effects on denial, and installed-wheel examples are covered. |
 
 Streaming, tools, structured model output, and persistent task stores may be
 added incrementally. They must not block a minimal text-only, model-free agent.
@@ -164,6 +193,8 @@ See the [combined hosting proposal](mcp-skills.md).
   for each supported provider.
 - Pinned MCP/telemetry versions, authorization hooks, schema/result mappings,
   and transport-specific correlation metadata.
+- Principal construction and identity/delegation trust contracts, explicit
+  anonymous-access syntax, resource-policy interfaces, and content-check decisions.
 - Exact router interface, clarification behavior, and any negotiated remote
   skill-selection contract. Multiple skill methods and no required `handle()`
   are the agreed authoring direction, not open questions.
