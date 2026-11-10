@@ -6,6 +6,11 @@ AgentFrame is a proposed Python library for creating agents through classes,
 decorators, and type annotations. Agent-to-Agent (A2A) interoperability and
 Agent Cards are core contracts, not optional exports.
 
+AgentFrame is an independent agent framework, not a wrapper around LangChain,
+LangGraph, Microsoft Agent Framework, Pydantic AI, Google ADK, CrewAI, or another
+major agent package. It owns its authoring API and execution behavior while
+reusing protocol SDKs, validation libraries, and model-provider clients.
+
 ## Status
 
 This repository currently contains initial design documentation only. There is
@@ -21,6 +26,26 @@ interfaces, examples, and defaults in the documentation are proposals.
 - Allow model selection to change without rewriting agent behavior.
 - Provide safe, validated defaults with typed configuration and dependency injection.
 - Build on the official A2A Python SDK instead of maintaining another wire format.
+
+## Proposed authoring experience
+
+This is design syntax, not an implemented API. Decorators describe the agent;
+an `Agent` subclass implements behavior. Models and infrastructure are injected.
+
+```python
+from agentframe import Agent, RunContext, agent, skill
+
+
+@agent(name="Echo", description="Returns supplied text.", version="0.1.0")
+class Echo(Agent):
+    @skill(id="echo", name="Echo text", description="Return text.", tags=["text"])
+    async def handle(self, text: str, ctx: RunContext) -> str:
+        return text
+```
+
+The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
+need no provider configuration. See the [API design examples](docs/base-classes.md#proposed-api-examples)
+for model injection, host composition, and advanced extension points.
 
 Llama is a model family; Ollama is the initial local model host. Foundry model
 inference is distinct from deploying an agent to Foundry Agent Service.
@@ -52,6 +77,7 @@ is not a prerequisite for the first useful library.
 - [Initial outline and delivery gates](docs/initial-outline.md)
 - [Decorators and type annotations](docs/annotations.md)
 - [Base classes and interfaces](docs/base-classes.md)
+- [Contributor and coding-agent context](AGENTS.md)
 
 ## Development and contributions
 

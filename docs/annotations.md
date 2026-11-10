@@ -3,6 +3,11 @@
 All interfaces below are proposals. AgentFrame uses ordinary Python decorators
 for metadata and registration, and Python type annotations for data contracts.
 
+Decorators are AgentFrame-owned, not re-exports from another agent framework.
+They describe behavior; the `Agent` subclass implements it. Configuration and
+dependency injection supply instructions, models, policies, and infrastructure.
+Do not add provider-specific decorators such as `@foundry` or `@llama`.
+
 ## Proposed decorators
 
 | Decorator | Applies to | Definition |
@@ -71,6 +76,40 @@ single privileged prompt.
 A model-free handler can return a computed value without using `ctx.generate`.
 Model configuration is supplied when constructing the agent, not encoded in
 `@agent` or provider-specific decorators.
+
+## Small data-contract example
+
+Use existing validation types instead of an AgentFrame-specific field system.
+This schema illustrates a local input contract; the A2A structured-part mapping
+must be specified before advertising this as an interoperable remote input.
+
+```python
+from typing import Annotated
+from pydantic import BaseModel, Field
+
+
+class SummaryInput(BaseModel):
+    text: Annotated[str, Field(min_length=1, max_length=20_000)]
+```
+
+## Optional tool example
+
+Tools are a later, optional feature, not required for initial text agents.
+Registration is explicit; decoration alone does not grant model access or
+execution permission. This callable is not automatically an advertised A2A skill.
+
+```python
+from agentframe import tool
+
+
+@tool(description="Convert Celsius to Fahrenheit.")
+def to_fahrenheit(celsius: float) -> float:
+    return celsius * 9 / 5 + 32
+```
+
+The proposed construction shape is `Summarizer(model=model, tools=[to_fahrenheit])`.
+The runtime must validate arguments, enforce policy, and bound tool iterations.
+Instruction text is not an authorization mechanism.
 
 ## Card generation boundaries
 

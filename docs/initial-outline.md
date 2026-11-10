@@ -10,6 +10,38 @@ and optionally to a model host.
 The intended audience is developers building agents as components of an agentic
 platform. The first deliverable is a focused library, not the whole platform.
 
+## Independence and dependency boundaries
+
+AgentFrame is intended as an independent alternative to existing agent
+frameworks, not an authoring facade over one. Do not depend on major agent
+packages such as LangChain, LangGraph, Microsoft Agent Framework, Pydantic AI,
+Google ADK, CrewAI, AutoGen, or Semantic Kernel to define or execute agents.
+Do not introduce such dependencies indirectly through an integration package.
+
+AgentFrame owns agent definitions, validated invocation, execution limits,
+model/tool coordination when introduced, and mapping between its execution
+behavior and A2A. Reuse the official A2A SDK for protocol types and protocol
+handling rather than reinventing the standard.
+
+This is not a zero-dependency requirement. Standard-library utilities, Pydantic
+for validation, ASGI/HTTP infrastructure, official model-provider clients, and
+credential libraries are appropriate when justified. Pydantic and Pydantic AI
+are different packages: the former is permitted; the latter is an agent framework.
+Keep provider-specific dependencies optional so model-free use remains lightweight.
+
+## Authoring and extension model
+
+Use decorators for descriptive metadata, Python types for data contracts, and
+an `Agent` subclass for behavior. Use typed configuration for settings and
+dependency injection for models and infrastructure. Do not force every piece
+into a decorator or an inheritance hierarchy.
+
+The complete [piece-to-code mapping](base-classes.md#authoring-and-extension-decisions)
+records which surfaces are annotation-based, subclass-derived, injected, or
+library-managed. The normal authoring path needs only one AgentFrame subclass.
+Custom components may implement structural protocols without inheriting a
+framework base class.
+
 ## Architectural rules
 
 1. Agent identity and advertised skills are explicit authoring metadata.

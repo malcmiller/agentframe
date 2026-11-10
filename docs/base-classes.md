@@ -4,6 +4,39 @@ These are proposed responsibilities, not stable class signatures. Start with
 the smallest working surface; add supporting types when implementation needs
 them, rather than scaffolding an entire platform in advance.
 
+AgentFrame owns these abstractions independently of major agent frameworks.
+Provider adapters use protocol/HTTP clients or vendor SDKs, not another agent
+framework's agent, executor, or model abstraction.
+
+## Authoring and extension decisions
+
+Here, annotation-based includes decorators and Python type annotations.
+Configuration and composition are intentional alternatives to inheritance.
+
+| Piece | Recommended mechanism | Responsibility |
+| --- | --- | --- |
+| Identity | Annotation-based | `@agent(...)` supplies descriptive metadata, not executable overrides. |
+| Skills | Annotation-based | `@skill(...)` advertises abilities without creating per-method A2A RPC endpoints. |
+| Behavior / entry point | Subclass-derived | An `Agent` subclass implements an async handler. |
+| Input/output contracts | Type annotations and optional data-model subclasses | Built-in types or Pydantic `BaseModel` subclasses validate data. |
+| Instructions | Configuration or typed callable | Static instructions by default; trusted dynamic construction when needed. No required subclass. |
+| Model dependency | Injected interface implementation | Supplied adapters or a custom `Model` protocol implementation. |
+| Tools | Annotation-based with explicit registration | `@tool(...)` defines typed callables; registration and authorization remain separate. |
+| Execution loop | Library default with a replaceable interface | AgentFrame owns bounded execution; advanced executors are a later extension point. |
+| Run context | Library-managed class | A fresh `RunContext` supplies per-invocation dependencies and control signals. Do not subclass it to store application state. |
+| Conversation state | Injected interface implementation | A future `StateStore` protocol isolates conversation state. It is not the A2A task store. |
+| Knowledge / retrieval | Injected interface or annotated tool | Application-directed retrieval uses a dependency; model-directed retrieval uses an explicitly registered tool. |
+| Execution policy | Typed configuration and policy interface | Limits and runtime checks enforce policy; metadata may declare requirements but cannot enforce them. |
+| Failure handling | Library defaults and exception subclasses | Typed failures and explicit protocol mappings; no required error decorator. |
+| Observability | Configuration and injected hooks | Correlated operational logs and optional tracing without changing agent inheritance. |
+| Agent Card | Generated from annotations and host configuration | Native SDK type with validated customization, not a required custom subclass. |
+| A2A host | Configured composition | `AgentApp` assembles an agent, host configuration, and SDK components. |
+
+These are design responsibilities, not a requirement to implement every
+extension in the first release. One `Agent` subclass is enough for the normal
+authoring path. Pydantic schema subclasses are data definitions, not another
+layer of agent inheritance.
+
 ## Agent authoring and execution
 
 | Type | Definition |
@@ -64,3 +97,89 @@ responses.
 Allow explicit injection of model implementations, provider clients, credential
 providers, supported task stores, and authentication integration. Avoid a
 global plugin registry or custom configuration language in the first release.
+
+## Proposed API examples
+
+All snippets are illustrative, unimplemented API proposals. Constructor names,
+module exports, and field names are not stable. The `Summarizer` class below is
+the example in [annotations](annotations.md#proposed-authoring-shape).
+
+### Inject a local model
+
+```python
+from agentframe import OllamaModel
+
+local_model = OllamaModel(
+    model="llama3.2:3b",
+    endpoint="http://localhost:11434",
+)
+local_agent = Summarizer(model=local_model)
+```
+
+The tag is illustrative and must already be installed. Construction performs no
+download or inference; unsupported model features fail explicitly.
+
+### Switch to Foundry without changing behavior
+
+```python
+from azure.core.credentials_async import AsyncTokenCredential
+from agentframe import FoundryModel
+
+
+def build_cloud_agent(
+    endpoint: str, deployment: str, credential: AsyncTokenCredential
+) -> Summarizer:
+    model = FoundryModel(
+        endpoint=endpoint,
+        deployment=deployment,
+        credential=credential,
+    )
+    return Summarizer(model=model)
+```
+
+The application supplies a supported endpoint, deployment, and credential. This
+proposal uses an async Azure token credential from the optional provider
+dependencies; the final accepted credential types depend on the selected client.
+No secrets belong in the definition or generated card.
+
+### Configure defaults and compose the host
+
+```python
+from agentframe import AgentApp, AgentConfig, HostConfig
+
+configured_agent = Summarizer(
+    model=local_model,
+    config=AgentConfig(timeout_seconds=30),
+)
+app = AgentApp(
+    agent=configured_agent,
+    host=HostConfig(public_url="http://127.0.0.1:8000"),
+)
+```
+
+This illustrates a local ASGI application, not a running server. The ASGI server
+must separately bind to loopback on the matching port. Thirty seconds is an
+example override, not a settled library default. Non-local hosting needs explicit
+authentication and HTTPS; a public URL does not configure either automatically.
+Instance configuration overrides class defaults, and permitted run overrides
+remain subject to host-enforced ceilings.
+
+### Implement an interface without subclassing an agent framework
+
+```python
+from agentframe import Model, ModelRequest, ModelResponse
+
+
+class CustomModel:
+    def __init__(self, client: Model) -> None:
+        self.client = client
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        return await self.client.generate(request)
+```
+
+This structural delegation example wraps an injected model already using
+AgentFrame's request/response types. A real vendor adapter must explicitly translate its
+messages, output, errors, and feature support. Final client typing, capability
+reporting, and lifecycle requirements must be specified before implementation.
+No inheritance from `Agent`, or from another agent framework, is needed.
