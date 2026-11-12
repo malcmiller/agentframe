@@ -106,7 +106,7 @@ async def test_context_deadline_follows_the_agent_timeout() -> None:
 
 
 async def test_unknown_skill_is_rejected() -> None:
-    with pytest.raises(InputValidationError, match="no skill 'missing'"):
+    with pytest.raises(InputValidationError, match="no skill with the requested id"):
         await Runtime().invoke(Vault(), skill="missing")
 
 

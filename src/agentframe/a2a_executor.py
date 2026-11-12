@@ -39,6 +39,7 @@ from agentframe.agent import Agent
 from agentframe.errors import (
     AgentFrameError,
     CancelledError,
+    DefinitionError,
     InputValidationError,
     OutputValidationError,
     PermissionDeniedError,
@@ -54,6 +55,9 @@ PRINCIPAL_STATE_KEY = "agentframe.principal"
 
 SKILL_FAILED_MESSAGE = "The skill failed."
 """What callers see when a skill raises an exception that is not AgentFrame's."""
+
+HOST_MISCONFIGURED_MESSAGE = "The agent is not configured correctly."
+"""What callers see for a ``DefinitionError``, whose message names internals."""
 
 logger = logging.getLogger(__name__)
 
@@ -128,15 +132,12 @@ class RuntimeExecutor(AgentExecutor):
             PRINCIPAL_STATE_KEY
         )
         call = read_skill_call(context.message)
+        invocation_id = _new_invocation_id()
         await task.start_work()
         try:
-            result = await self._runtime.run(
-                self._agent,
-                skill=call.skill,
-                arguments=call.arguments,
-                principal=principal,
+            result = await self._runtime._run_invocation(
+                invocation_id, self._agent, call.skill, call.arguments, principal
             )
-            invocation_id = result.invocation_id
             part = result_part(result.value, invocation_id)
         except AgentFrameError as error:
             await publish_failure(task, error)
@@ -144,11 +145,9 @@ class RuntimeExecutor(AgentExecutor):
         except Exception:
             # Skill exceptions may carry submitted values or secrets, so the
             # caller gets a generic message and only the log keeps the details,
-            # under an ID the caller can quote.
-            failure = AgentFrameError(
-                SKILL_FAILED_MESSAGE, invocation_id=_new_invocation_id()
-            )
-            logger.exception("Skill failed (invocation_id=%s)", failure.invocation_id)
+            # under the run's ID that the caller can quote.
+            failure = AgentFrameError(SKILL_FAILED_MESSAGE, invocation_id=invocation_id)
+            logger.exception("Skill failed (invocation_id=%s)", invocation_id)
             await publish_failure(task, failure)
             return
         await publish_result(task, part, invocation_id)
@@ -218,10 +217,12 @@ async def publish_result(task: TaskUpdater, part: Part, invocation_id: str) -> N
 async def publish_failure(task: TaskUpdater, error: AgentFrameError) -> None:
     """End the task in the state for ``error`` with its safe message.
 
-    An error without an invocation ID (one raised before any run started) is
-    given a new one, so every task reports an ID.
+    A ``DefinitionError`` names agent internals, so it is logged and callers
+    get a generic message instead. An error without an invocation ID (one
+    raised before any run started) is given a new one, so every task reports
+    an ID.
     """
-    message = task.new_agent_message([new_text_part(error.message)])
+    message = task.new_agent_message([new_text_part(_safe_message(error))])
     await task.update_status(
         failure_state(error),
         message=message,
@@ -245,6 +246,17 @@ async def publish_input_required(
         message=message,
         metadata=_invocation_metadata(invocation_id),
     )
+
+
+def _safe_message(error: AgentFrameError) -> str:
+    if isinstance(error, DefinitionError):
+        logger.error(
+            "Agent definition error (invocation_id=%s): %s",
+            error.invocation_id,
+            error.message,
+        )
+        return HOST_MISCONFIGURED_MESSAGE
+    return error.message
 
 
 def _new_invocation_id() -> str:

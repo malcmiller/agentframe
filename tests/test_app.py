@@ -7,7 +7,7 @@ import asyncio
 import socket
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -81,9 +81,12 @@ class Greeter(Agent):
         await asyncio.sleep(5)
         return "too late"
 
+    failed_invocation_ids: ClassVar[list[str]] = []
+
     @skill("broken", tags=["test"])
     async def broken(self, ctx: RunContext) -> str:
         """Fail with a secret in the error."""
+        Greeter.failed_invocation_ids.append(ctx.invocation_id)
         raise RuntimeError("database password is hunter2")
 
     @skill("count", tags=["test"])
@@ -310,7 +313,8 @@ async def test_unknown_skill_is_rejected(http: httpx.AsyncClient) -> None:
     task = await run_task(http, "missing")
 
     assert task["status"]["state"] == "TASK_STATE_REJECTED"
-    assert "missing" in status_text(task)
+    assert "no skill" in status_text(task)
+    assert "missing" not in status_text(task)
     assert task["metadata"]["invocation_id"]
 
 
@@ -386,8 +390,9 @@ async def test_skill_exception_fails_with_a_safe_message(
     assert task["status"]["state"] == "TASK_STATE_FAILED"
     assert status_text(task) == "The skill failed."
     assert "hunter2" not in str(task)
-    # The log keeps the details under the ID the caller was given.
+    # The caller, the skill and the log all see the run's one ID.
     invocation_id = task["metadata"]["invocation_id"]
+    assert Greeter.failed_invocation_ids[-1] == invocation_id
     assert any(
         invocation_id in record.getMessage() and record.exc_info
         for record in caplog.records

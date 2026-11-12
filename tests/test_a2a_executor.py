@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from agentframe import (
     AgentFrameError,
     CancelledError,
+    DefinitionError,
     InputValidationError,
     LimitExceededError,
     OutputValidationError,
@@ -134,6 +135,17 @@ async def test_failure_published_before_any_run_still_has_an_invocation_id() -> 
     assert event.status.state == TaskState.TASK_STATE_FAILED
     assert event.status.message.parts[0].text == "The router failed."
     assert event.metadata["invocation_id"]
+
+
+async def test_definition_error_reaches_callers_only_as_a_generic_message() -> None:
+    task, queue = recording_task()
+    error = DefinitionError("no service registered for parameter 'db'")
+
+    await publish_failure(task, error)
+
+    event = only_status(queue)
+    assert event.status.state == TaskState.TASK_STATE_FAILED
+    assert "db" not in event.status.message.parts[0].text
 
 
 # Clarification

@@ -140,13 +140,15 @@ Every other outcome follows this table:
   `InvalidParams` (`-32602`) before the SDK creates a task. Malformed JSON-RPC is
   rejected by the SDK the same way. Extension activation rules arrive with #5.
 - `REJECTED` and `FAILED` tasks carry the error's safe message as the status
-  message: no stack traces, provider payloads, submitted values or secrets.
-  Exceptions raised by a skill (or, with #6, a router) are logged with their
-  details and reported only as "The skill failed.".
+  message: no stack traces, provider payloads, submitted values (including the
+  requested skill ID) or secrets. Exceptions raised by a skill (or, with #6, a
+  router) are logged with their details and reported only as "The skill
+  failed.". A `DefinitionError` names agent internals, so it is logged and
+  reported only as "The agent is not configured correctly.".
 - Every task status carries the run's `invocation_id` in the task metadata,
-  including failures. A failure raised before a run starts (such as a routing
-  failure) gets a new ID, and a skill exception's log entry includes the ID the
-  caller was given.
+  including failures. The host allocates the ID before the run, so the caller,
+  the skill's `ctx.invocation_id` and the log entry for a skill exception all
+  share it. A failure raised before a run starts gets a new ID.
 - `INPUT_REQUIRED` with the question as the status message is published by
   free-text routing (#6).
 - `CancelTask` ends a running task in `CANCELED` through AgentFrame's
