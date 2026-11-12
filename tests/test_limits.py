@@ -320,6 +320,29 @@ async def test_validate_model_passes_with_an_agent_input_limit_or_no_model() -> 
     await Runtime().validate_model(Echo())
 
 
+class SlowCapabilitiesModel(ScriptedModel):
+    """Takes a second to report its capabilities."""
+
+    async def capabilities(self) -> ModelCapabilities:
+        await asyncio.sleep(1)
+        return await super().capabilities()
+
+
+async def test_validate_model_reports_a_slow_capabilities_read_as_provider_error() -> (
+    None
+):
+    @agent(version="1.0.0")
+    class Impatient(Echo):
+        """Waits only briefly for its model."""
+
+        limits = RunLimits(timeout_seconds=0.01)
+
+    with pytest.raises(ProviderError, match="timed out") as raised:
+        await Runtime().validate_model(Impatient(model=SlowCapabilitiesModel()))
+
+    assert raised.value.transient
+
+
 async def lifespan_startup(app: AgentApp) -> dict[str, Any]:
     """Run the ASGI lifespan startup and return the server's reply."""
     events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
