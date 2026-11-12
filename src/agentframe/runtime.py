@@ -23,6 +23,7 @@ from agentframe.errors import (
     OutputValidationError,
     PermissionDeniedError,
     PolicyUnavailableError,
+    ProviderError,
     TimeoutLimitExceededError,
 )
 from agentframe.generation import GenerationState, RunAccounting, input_token_limit
@@ -98,14 +99,19 @@ class Runtime:
         Raises:
             DefinitionError: The model reports no context window and a skill
                 has no ``max_input_tokens``. A context size is never guessed.
-            ProviderError: The model's capabilities could not be read.
-            TimeoutError: Reading them took longer than the agent's timeout.
+            ProviderError: The model's capabilities could not be read, or
+                reading them took longer than the agent's timeout.
         """
         if agent.model is None:
             return
         agent_limits = merge_settings(DEFAULT_LIMITS, agent.limits)
-        async with asyncio.timeout(agent_limits.timeout_seconds):
-            capabilities = await agent.model.capabilities()
+        try:
+            async with asyncio.timeout(agent_limits.timeout_seconds):
+                capabilities = await agent.model.capabilities()
+        except TimeoutError:
+            raise ProviderError(
+                "Reading the model's capabilities timed out", transient=True
+            ) from None
         for skill in type(agent).definition().skills.values():
             limits, _ = _effective_settings(agent, skill, RunOptions())
             try:

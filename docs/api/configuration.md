@@ -62,8 +62,8 @@ not duplicated on `RunLimits`):
 ```text
 RunLimits(
     *, max_input_tokens: int = ..., max_total_tokens: int = 100000,
-    max_model_calls: int = 10, max_tool_calls: int = 20,
-    timeout_seconds: ... = 120,
+    max_model_calls: int = 10, max_model_retries: int = 2,
+    max_tool_calls: int = 20, timeout_seconds: ... = 120,
 )
 ```
 
@@ -72,6 +72,7 @@ RunLimits(
 | `max_input_tokens` | `int \| None` (implemented M3 #36) | Unset (`None`) means the model-reported context window; unknown window plus unset limit is a `DefinitionError` | Bounds assembled input, including instructions/history/user content/tool schemas/results; actual input plus reserved output must also fit context. Unknown capacity is not unlimited; explicit overflow fails, never truncates. |
 | `max_total_tokens` | `int \| None` (implemented M3 #36) | `100000`, configurable | Aggregate input/output across a run, retries and continuations, without double-counting overlapping usage. |
 | `max_model_calls` | `int \| None` (implemented M3 #36) | `10`, configurable | Dispatched inference attempts including retries, not just successful completions. |
+| `max_model_retries` | `int \| None` (implemented M3 #37) | `2`, configurable; `0` disables retries; negative is a `DefinitionError` | Retries of one model call after a transient `ProviderError`. Each retry counts toward `max_model_calls` and the token budget; see [retries](../limits.md#retries-and-duplicate-requests). |
 | `max_tool_calls` | `int` | `20`, configurable | Bounds managed tool executions/continuations; detailed attempted/denied call counting remains open. |
 | `timeout_seconds` | Numeric seconds; accepted numeric type open | `120`, configurable | Wall-clock invocation deadline including model/tool work; retries never reset it. |
 

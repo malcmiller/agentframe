@@ -206,7 +206,7 @@ async def test_a_failed_call_with_unknown_usage_keeps_its_reservation() -> None:
 
 async def test_a_failed_call_with_known_usage_settles_to_it() -> None:
     model = ScriptedModel(
-        [ProviderError("Down", transient=True, usage=usage(1, 0)), "Two."]
+        [ProviderError("Down", transient=False, usage=usage(1, 0)), "Two."]
     )
 
     result = await run_echo(
@@ -318,6 +318,29 @@ async def test_validate_model_passes_with_an_agent_input_limit_or_no_model() -> 
 
     await Runtime().validate_model(bounded)
     await Runtime().validate_model(Echo())
+
+
+class SlowCapabilitiesModel(ScriptedModel):
+    """Takes a second to report its capabilities."""
+
+    async def capabilities(self) -> ModelCapabilities:
+        await asyncio.sleep(1)
+        return await super().capabilities()
+
+
+async def test_validate_model_reports_a_slow_capabilities_read_as_provider_error() -> (
+    None
+):
+    @agent(version="1.0.0")
+    class Impatient(Echo):
+        """Waits only briefly for its model."""
+
+        limits = RunLimits(timeout_seconds=0.01)
+
+    with pytest.raises(ProviderError, match="timed out") as raised:
+        await Runtime().validate_model(Impatient(model=SlowCapabilitiesModel()))
+
+    assert raised.value.transient
 
 
 async def lifespan_startup(app: AgentApp) -> dict[str, Any]:
