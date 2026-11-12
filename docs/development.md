@@ -1,23 +1,34 @@
 # Local development and container packaging
 
-These are approved CLI and packaging design contracts, not installed commands,
-generated configuration or working deployment tooling. No SDK, Dockerfile,
-Compose file or dependency is added by this documentation.
+`agentframe run` (M2) is implemented. The multi-agent and container sections
+are approved design contracts, not installed commands, generated configuration
+or working deployment tooling.
 
 ## One agent: M2
 
-`agentframe run myapp.research:ResearchAgent` starts one agent through the native
-host. `module:Class` identifies the application agent; exact loading/factory,
-credential and host-option configuration remains open. This explicit command
-may start serving; importing or defining an agent never does.
+`agentframe run` starts one agent with uvicorn (`pip install
+'agentframe[server]'`). Point it at your own `create_app()` function, which
+returns a fully configured `AgentApp`; read secrets from environment variables
+inside it, never from command-line flags:
 
 ```shell
-agentframe run myapp.research:ResearchAgent
+agentframe run myapp.hosting:create_app --host 127.0.0.1 --port 8000
 ```
 
-Apply the normal explicit host `auth`, readiness, limits and graceful-shutdown
-rules. The command does not silently choose production credentials or enable
-anonymous access. CLI startup must report invalid modules/definitions/configuration.
+For quick local development, `--dev` serves an agent class with
+`AllowAnonymous` on localhost only. It logs a warning and refuses any
+non-localhost `--host`:
+
+```shell
+agentframe run myapp.agents:Echo --dev --reload
+```
+
+`--host` defaults to `127.0.0.1`, `--port` to `8000`, and `--reload` restarts on
+source changes. Normal explicit `auth` rules apply: the command never chooses
+credentials or enables anonymous access outside `--dev`. Invalid targets,
+factory return values and agent definitions are reported before anything is
+served. Importing or defining an agent never starts a server. See the
+[reference](api/hosting.md#agentframe-run).
 
 ## Multiple agents: M8+
 

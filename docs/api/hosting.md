@@ -311,25 +311,66 @@ this does not redefine A2A stream-disconnect task semantics.
 
 ## `agentframe run`
 
-**Purpose / decision:** explicitly start one agent through the native host in
-M2. Approved command: `agentframe run myapp.research:ResearchAgent`.
-The command is not implemented or installed in this repository.
+**Purpose / decision:** start one agent through the native host with one
+command. Implemented in M2 (#9). The application's own factory function
+returns a fully configured [`AgentApp`](#agentapp) (agent, services, router,
+auth, policy) in plain, type-checked Python; there is no new configuration file
+format. Secrets come from environment variables read inside the factory, never
+from command-line flags. Serving uses [uvicorn](https://www.uvicorn.org/),
+pinned in the optional `server` extra: `pip install 'agentframe[server]'`.
+
+```text
+agentframe run TARGET [--host HOST] [--port PORT] [--reload] [--dev]
+```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Agent target | `module:Class` string | Required | Application module and agent class. Loading/factory details and host/config flags remain open. |
-| Host configuration | Explicit trusted application configuration; carrier open | Required remotely | Auth choice, limits, advertised address and readiness rules still apply. No implicit anonymous startup. |
+| `TARGET` | `module:function` string | Required | Function called with no arguments that returns an `AgentApp`. With `--dev`, `module:AgentClass` instead. The working directory is importable. |
+| `--host` | string | Default `127.0.0.1` | Address the server binds to. Not the advertised origin: the factory's `HostConfig(public_url=...)` is. |
+| `--port` | integer | Default `8000` | Port the server binds to. |
+| `--reload` | flag | Off | Restart when source files in the working directory change. Development only. |
+| `--dev` | flag | Off | Serve an `@agent` class constructed without arguments, with `AllowAnonymous`, at `http://HOST:PORT`. Only localhost hosts (`localhost`, loopback addresses) are accepted; logs a warning that any local process can call it. |
 
-```shell
-agentframe run myapp.research:ResearchAgent
+```python
+# myapp/hosting.py
+import os
+
+from agentframe import AgentApp, APIKey, APIKeyAuth, HostConfig
+
+from myapp.agents import Echo
+
+
+def create_app() -> AgentApp:
+    keys = {os.environ["ECHO_API_KEY"]: APIKey(caller_id="dev-client")}
+    return AgentApp(
+        agent=Echo(),
+        host=HostConfig(
+            public_url="http://127.0.0.1:8000",
+            auth=APIKeyAuth(keys=keys),  # Development placeholder credential.
+        ),
+    )
 ```
 
-**Behavior / failures:** startup reports invalid import, agent definition,
-configuration or missing auth. Importing agents never starts serving; shutdown
-uses the host grace period, not abrupt unbounded child work.
+```shell
+agentframe run myapp.hosting:create_app --host 127.0.0.1 --port 8000
+agentframe run myapp.agents:Echo --dev
+```
+
+**Behavior / failures:** the app is built before the server starts, so problems
+are reported as one `agentframe: error: ...` line with exit code 1 and nothing
+is served: a target that is not `module:name`, a module that cannot be found,
+a missing attribute, a target that is not callable, a factory returning
+anything other than an `AgentApp` (an agent class without `--dev` suggests
+`--dev`), an invalid agent or configuration (`DefinitionError` from
+`AgentApp`), `--dev` with a non-localhost host, a non-agent class or one that
+needs constructor arguments, and a missing uvicorn install. Errors raised by
+the application's own code, including imports inside its modules, keep their
+traceback. Importing agents never starts serving. Shutdown follows uvicorn's
+default graceful shutdown until the host grace period arrives in M7.
+Multi-agent `agentframe.yaml` is M8+ ([`agentframe dev`](#agentframe-dev)).
 
 **Related:** [single-agent development](../development.md#one-agent-m2),
-[`HostConfig`](#hostconfig).
+[`HostConfig`](#hostconfig), [authentication](authorization.md).
 
 ## `agentframe dev`
 

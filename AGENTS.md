@@ -361,8 +361,9 @@ typed proxy always uses structured selection, never prompt routing. Prove two or
 independently deployed AgentFrame agents, an orchestrator discovering/calling a
 specialist with propagated context, and non-AgentFrame A2A client/server interop.
 Development support starts with running N agents locally, then container
-packaging; Foundry/Kubernetes templates are later. M2 `agentframe run module:Class`
-starts one agent. M8+ `agentframe dev` reads agentframe.yaml (names/modules/ports),
+packaging; Foundry/Kubernetes templates are later. M2 `agentframe run module:create_app`
+serves the app's own configured `AgentApp` (`--dev module:Class` is localhost-only
+anonymous; uvicorn is the `server` extra). M8+ `agentframe dev` reads agentframe.yaml (names/modules/ports),
 starts localhost agents, writes local registry, configures dev API keys and
 combines logs tagged by agent/invocation. One container per agent; Dockerfile
 template and generated docker-compose example. Exact schema/generation/key
