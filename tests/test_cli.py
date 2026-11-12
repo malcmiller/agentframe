@@ -127,7 +127,7 @@ def test_dev_serves_an_agent_class_anonymously_on_localhost(
     assert "Never use --dev in production" in caplog.text
 
 
-@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.20", "echo.example.com"])
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.20", "echo.example.com"])
 def test_dev_refuses_non_localhost_hosts(host: str) -> None:
     with pytest.raises(CommandError, match="only binds to localhost"):
         build_app(settings("cli_targets:Echo", host=host, dev=True))
