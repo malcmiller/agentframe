@@ -9,7 +9,10 @@ implements the text-generation layouts below (`Message`, `ModelSettings`,
 `ModelRequest`, `ModelResponse`, `ModelCapabilities`, the `Model` protocol)
 in `agentframe.models.base`, with no provider SDK imported. M4 #53 adds the
 structured-output contract ([`OutputSchema`](#outputschema) on `ModelRequest`).
-Tool-call and other layouts not specified here remain open, not provider leaks.
+M5 #59 settles the tool-call layouts: [`ToolSpec`](#toolspec),
+[`ToolCall`](#toolcall), `tool` messages, `ModelRequest.tools`,
+`ModelResponse.tool_calls`/`provider_items` and `FinishReason.TOOL_CALLS`.
+Layouts not specified here remain open, not provider leaks.
 
 ## `Model`
 
@@ -80,8 +83,11 @@ capabilities raise [`UnsupportedCapabilityError`](runtime.md#unsupportedcapabili
 before sending. Managed generation (`ctx.generate`, #35) turns `REFUSED` into
 `ModelRefusalError` and `LENGTH` into `IncompleteOutputError`. Structured
 output (`output=`) is implemented by the managed layer (M4 #53); adapters send
-[`ModelRequest.output`](#modelrequest) to their provider. Tools (`tools=`, M5)
-and streaming remain later, with
+[`ModelRequest.output`](#modelrequest) to their provider. The tool-call types
+are implemented (M5 #59); the managed tool loop (`tools=`, #61) and adapter
+tool mappings (#64, #65) follow, and until then `FoundryModel` and
+`OllamaModel` raise `UnsupportedCapabilityError` for requests with tool
+content. Streaming remains later, with
 optional [AG-UI](streaming.md) mapping from managed execution, not raw
 provider events.
 
@@ -359,13 +365,13 @@ model-backed skills offline, quickly and repeatably, without a provider.
 **Signature (implemented, M3 #34):** `agentframe.testing.ScriptedModel`.
 
 ```text
-ScriptedModel(replies: Iterable[str | ModelResponse | Exception] = (), *, capabilities: ModelCapabilities | None = None)
+ScriptedModel(replies: Iterable[str | ToolCall | tuple[ToolCall, ...] | ModelResponse | Exception] = (), *, capabilities: ModelCapabilities | None = None)
 ```
 
 | Parameter / attribute | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `replies` | `Iterable[str \| ModelResponse \| Exception]` | Default empty | One reply per `generate` call, in order. A `str` returns a `COMPLETED` response with unknown usage; a `ModelResponse` is returned as given (scripted usage/finish reason); an exception, such as `ProviderError(..., transient=True)`, is raised. |
-| `capabilities` | `ModelCapabilities \| None` | Default `ModelCapabilities(context_window=SCRIPTED_CONTEXT_WINDOW)` (128000), with no structured output or tools | Returned by `capabilities()`. Pass `ModelCapabilities()` to test a model that reports no context window, or `ModelCapabilities(context_window=..., structured_output=True)` to test `ctx.generate(..., output=...)`. |
+| `replies` | `Iterable[str \| ToolCall \| tuple[ToolCall, ...] \| ModelResponse \| Exception]` | Default empty | One reply per `generate` call, in order. A `str` returns a `COMPLETED` response with unknown usage; a [`ToolCall`](#toolcall), or a tuple of them, returns a `TOOL_CALLS` response with empty text, those calls and unknown usage (M5 #59); a `ModelResponse` is returned as given (scripted usage/finish reason); an exception, such as `ProviderError(..., transient=True)`, is raised. |
+| `capabilities` | `ModelCapabilities \| None` | Default `ModelCapabilities(context_window=SCRIPTED_CONTEXT_WINDOW)` (128000), with no structured output or tools | Returned by `capabilities()`. Pass `ModelCapabilities()` to test a model that reports no context window, or `ModelCapabilities(context_window=..., structured_output=True)` to test `ctx.generate(..., output=...)`, or `tools=True` for requests that offer tools. |
 | `requests` | `list[ModelRequest]` | Attribute | Every request `generate` received, for asserting on assembled messages and settings. |
 | `closed` | `bool` | Attribute | Whether `close()` (or `async with` exit) ran. |
 
@@ -472,6 +478,50 @@ async def test_summarize_returns_a_summary() -> None:
 
     assert summary == Summary(text="Short.", key_points=["one"])
     assert model.requests[0].output is not None
+```
+
+To script a model that asks for a tool before answering, put tool calls in
+the replies. Each later request records what the caller sent back:
+
+```python
+from agentframe import (
+    Message,
+    ModelCapabilities,
+    ModelRequest,
+    ModelSettings,
+    ToolCall,
+)
+from agentframe.testing import ScriptedModel
+
+
+async def test_model_asks_for_a_tool_then_answers() -> None:
+    lookup = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}')
+    model = ScriptedModel(
+        [lookup, "Order A1 has shipped."],
+        capabilities=ModelCapabilities(context_window=8192, tools=True),
+    )
+    settings = ModelSettings(max_output_tokens=100)
+    question = Message(role="user", content="Where is order A1?")
+
+    asked = await model.generate(ModelRequest(messages=(question,), settings=settings))
+    answer = await model.generate(
+        ModelRequest(
+            messages=(
+                question,
+                Message(role="assistant", content="", tool_calls=asked.tool_calls),
+                Message(
+                    role="tool",
+                    content='{"status": "shipped"}',
+                    tool_call_id="call_1",
+                    tool_name="lookup_order",
+                ),
+            ),
+            settings=settings,
+        )
+    )
+
+    assert asked.tool_calls == (lookup,)
+    assert answer.text == "Order A1 has shipped."
 ```
 
 **Behavior / failures:** calling `generate` more times than scripted raises
@@ -602,31 +652,49 @@ clients stay caller-owned. `async with model:` calls `close()` on exit.
 
 ## `Message`
 
-**Purpose / decision:** one text message in a model conversation.
+**Purpose / decision:** one message in a model conversation: text, an
+assistant's tool calls, or a tool's result.
 
-**Signature (implemented, M3 #33):** frozen dataclass.
+**Signature (implemented, M3 #33; tool fields M5 #59):** frozen dataclass.
 
 ```text
-Message(role: Role, content: str)
+Message(role: Role, content: str, tool_calls: tuple[ToolCall, ...] = (), tool_call_id: str | None = None, tool_name: str | None = None, provider_items: tuple[object, ...] = ())
 ```
 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `role` | `Role` = `Literal["system", "user", "assistant"]` | Required | `system` holds trusted instructions only; untrusted user text is always a `user` message. |
-| `content` | `str` | Required | Text only in M3. |
+| `role` | `Role` = `Literal["system", "user", "assistant", "tool"]` | Required | `system` holds trusted instructions only; untrusted user text is always a `user` message; tool results are `tool` messages, never `system`. |
+| `content` | `str` | Required | The message text. For a `tool` message, the tool's result as text (M5: validated results serialized as JSON). May be empty for an assistant message that only calls tools. |
+| `tool_calls` | `tuple[`[`ToolCall`](#toolcall)`, ...]` | Default `()` | The tools an `assistant` message asked to call, in the model's order. |
+| `tool_call_id` | `str \| None` | Default `None`; required for `tool` | The [`ToolCall.id`](#toolcall) this `tool` message answers. |
+| `tool_name` | `str \| None` | Default `None` | For `tool` messages, the tool that ran (Ollama needs the name). |
+| `provider_items` | `tuple[object, ...]` | Default `()` | Opaque adapter data to replay in the next request, such as Foundry reasoning items with `encrypted_content`. Excluded from `repr` and equality. |
 
 ```python
-from agentframe import Message
+from agentframe import Message, ToolCall
 
 
+lookup = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}')
 messages = (
     Message(role="system", content="Answer in one sentence."),
-    Message(role="user", content="What is A2A?"),
+    Message(role="user", content="Where is order A1?"),
+    Message(role="assistant", content="", tool_calls=(lookup,)),
+    Message(
+        role="tool",
+        content='{"status": "shipped"}',
+        tool_call_id="call_1",
+        tool_name="lookup_order",
+    ),
 )
 ```
 
 **Behavior / failures:** never concatenate untrusted text into a `system`
-message. Tool-call/result messages and other content types remain open (M5).
+message; tool results are untrusted content too. Inconsistent shapes raise
+`DefinitionError`: `tool_calls` on a non-`assistant` message, a `tool` message
+without `tool_call_id`, or `tool_call_id`/`tool_name` on a non-`tool` message.
+`provider_items` is kept in memory for the run only: the runtime copies it
+from a response to the assistant message and never inspects, logs, traces or
+returns it (decided 2026-11-12). Other content types remain open.
 
 **Related:** [`ModelRequest`](#modelrequest),
 [prompt safeguarding](../design/prompt-safeguarding.md).
@@ -636,10 +704,10 @@ message. Tool-call/result messages and other content types remain open (M5).
 **Purpose / direction:** normalized outbound generation input shared by model
 adapters, keeping trusted instructions distinct from untrusted content.
 
-**Signature (implemented, M3 #33; `output` M4 #53):** frozen dataclass.
+**Signature (implemented, M3 #33; `output` M4 #53; `tools` M5 #59):** frozen dataclass.
 
 ```text
-ModelRequest(messages: tuple[Message, ...], settings: ModelSettings, output: OutputSchema | None = None)
+ModelRequest(messages: tuple[Message, ...], settings: ModelSettings, output: OutputSchema | None = None, tools: tuple[ToolSpec, ...] = ())
 ```
 
 | Field | Type | Required/default status | Meaning and constraints |
@@ -647,6 +715,7 @@ ModelRequest(messages: tuple[Message, ...], settings: ModelSettings, output: Out
 | `messages` | `tuple[Message, ...]` | Required | The conversation in order; preserves instruction/user provenance. |
 | `settings` | [`ModelSettings`](#modelsettings) | Required, fully resolved | The effective settings for this call. Every field must be set: an unset (`None`) field raises `DefinitionError` (M3 #42), so adapters never guess defaults. The runtime always sends merged settings. |
 | `output` | [`OutputSchema`](#outputschema) ` \| None` | Default `None` (plain text) | The JSON shape the reply must have. When set, the adapter constrains generation to it and returns the JSON as `ModelResponse.text`; the managed layer validates it. |
+| `tools` | `tuple[`[`ToolSpec`](#toolspec)`, ...]` | Default `()` (no tools) | The tools the model may call. A non-empty `tools` on a model whose `capabilities().tools` is `False` raises `UnsupportedCapabilityError` before tokens are reserved or anything is sent. |
 
 ```python
 from agentframe import Message, ModelRequest, ModelSettings
@@ -663,7 +732,10 @@ request. Invalid/unsupported requests, denied egress and exceeded allowances
 must stop dispatch. `ctx.generate(..., output=Summary)` sends the same messages
 as the text form plus `output=OutputSchema(name="Summary", json_schema=...)`;
 the serialized schema counts toward the call's input token estimate. Tool
-request fields for `ctx.generate(..., tools=[...])` remain open (M5).
+specs, tool-call names and arguments, and tool results count toward it too.
+`uses_tools()` returns whether the request offers tools or carries tool calls
+or results. The managed loop that fills `tools` from
+`ctx.generate(..., tools=[...])` is #61.
 
 **Related:** [`ExecutionPolicy`](authorization.md#executionpolicy),
 [outbound checks](../design/prompt-safeguarding.md#check-at-the-boundary-not-just-once).
@@ -712,17 +784,19 @@ Provider strict-mode conversion is the adapter's job (see
 **Purpose / direction:** normalized model result with honest usage/completion
 information, not an A2A or MCP transport envelope.
 
-**Signature (implemented, M3 #33):** frozen dataclass.
+**Signature (implemented, M3 #33; tool fields M5 #59):** frozen dataclass.
 
 ```text
-ModelResponse(text: str, usage: Usage, finish_reason: FinishReason)
+ModelResponse(text: str, usage: Usage, finish_reason: FinishReason, tool_calls: tuple[ToolCall, ...] = (), provider_items: tuple[object, ...] = ())
 ```
 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `text` | `str` | Required | Generated text, or the JSON text for a structured-output request; possibly truncated when `finish_reason` is not `COMPLETED`. |
 | `usage` | [`Usage`](runtime.md#runresult) | Required | Tokens for this call; unknown counts are `None`, never zero; `estimated` marks estimates. |
-| `finish_reason` | [`FinishReason`](runtime.md#runresult) | Required | `COMPLETED`, `LENGTH`, `REFUSED` or `CONTENT_FILTER`. |
+| `finish_reason` | [`FinishReason`](runtime.md#runresult) | Required | `COMPLETED`, `LENGTH`, `REFUSED`, `CONTENT_FILTER` or `TOOL_CALLS` (the model stopped to ask for tool calls; model calls only, never a run's finish reason). |
+| `tool_calls` | `tuple[`[`ToolCall`](#toolcall)`, ...]` | Default `()` | The tools the model asks to call, in its order. `text` may be empty. |
+| `provider_items` | `tuple[object, ...]` | Default `()` | Opaque adapter data to replay with the assistant message (see [`Message`](#message)). Excluded from `repr` and equality; never logged, traced or returned. |
 
 ```python
 from agentframe import FinishReason, ModelResponse, Usage
@@ -740,8 +814,72 @@ success-shaped text. Refusal and truncation are reported through
 `finish_reason`; the managed helper raises `ModelRefusalError` and
 `IncompleteOutputError` (partial-result opt-in syntax open) and never returns
 them as success. Structured replies are JSON in `text`, validated by the
-managed layer (M4 #53). Tool-call linkage remains open (M5). Failed-run usage retrieval remains open; no hard billing guarantee
+managed layer (M4 #53). Each tool result links to its call through
+`Message.tool_call_id` (M5 #59). Failed-run usage retrieval remains open; no hard billing guarantee
 is implied.
 
 **Related:** [`Model.generate`](#modelgenerate),
 [accounting and enforcement](../guides/limits.md#accounting-and-enforcement).
+
+## `ToolSpec`
+
+**Purpose / decision:** a tool as the model sees it: name, description and the
+JSON schema of its business arguments. Adapters translate it to their
+provider's tool format.
+
+**Signature (implemented, M5 #59):** frozen dataclass, exported from `agentframe`.
+
+```text
+ToolSpec(name: str, description: str, parameters: dict[str, Any])
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `name` | `str` | Required | The tool's name, used by the model to call it. |
+| `description` | `str` | Required | What the tool does, for the model. |
+| `parameters` | `dict[str, Any]` | Required | JSON schema of the business arguments, as from [`ToolDefinition.json_schema()`](decorators.md#tooldefinition); `ctx` and `Inject[T]` parameters never appear. |
+
+```python
+from agentframe import ToolSpec
+
+
+spec = ToolSpec(
+    name="lookup_order",
+    description="Look up an order by its ID.",
+    parameters={"type": "object", "properties": {"order_id": {"type": "string"}}},
+)
+```
+
+**Behavior / failures:** a spec grants nothing; only tools registered on the
+agent and selected by a `ctx.generate` call are offered (#60, #61). Provider
+strict-schema conversion is the adapter's job (#64).
+
+**Related:** [`ModelRequest`](#modelrequest), [`@tool`](decorators.md#tool).
+
+## `ToolCall`
+
+**Purpose / decision:** one tool call requested by a model.
+
+**Signature (implemented, M5 #59):** frozen dataclass, exported from `agentframe`.
+
+```text
+ToolCall(id: str, name: str, arguments: str)
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `id` | `str` | Required | The provider's call ID. Adapters generate one when the provider has none (Ollama), so every `tool` message can answer its call. |
+| `name` | `str` | Required | The tool to call. |
+| `arguments` | `str` | Required | Raw JSON text. The runtime validates it with the tool's `arguments_adapter.validate_json`, so bad JSON and bad fields take one failure path (decided 2026-11-12). |
+
+```python
+from agentframe import ToolCall
+
+
+call = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}')
+```
+
+**Behavior / failures:** arguments are untrusted model output; nothing runs
+until the managed loop (#61) validates and authorizes the call.
+
+**Related:** [`ModelResponse`](#modelresponse), [`Message`](#message).

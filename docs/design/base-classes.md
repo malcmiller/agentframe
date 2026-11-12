@@ -319,7 +319,7 @@ two retries with backoff; disable SDK retries. Side-effecting tools declare
 `@tool(side_effects=True)` and never auto-retry; `idempotent=True` is not a
 blanket replay grant. A2A deduplicates same caller/message ID for 10 minutes
 in memory by default, with a pluggable multi-instance store, not exactly-once.
-Retry/store configuration syntax, atomicity details, normalized field layouts,
+Retry/store configuration syntax, atomicity details, normalized usage layouts,
 A2A typed-part mappings and router extraction/clarification remain open.
 Applications own human
 approval workflows; required authorization/action checks still fail closed.

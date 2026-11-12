@@ -385,7 +385,7 @@ The managed loop validates model tool calls, applies mandatory authorization/
 action checks, validates results and includes them in generation continuations
 under the decided defaults: 20 tool calls, 10 model attempts, 100000 total
 tokens and 120 seconds per run; each model call defaults to 4096 output tokens.
-Normalized layouts remain open. Transient model failures retry at most twice
+Normalized tool-call layouts are settled (M5 #59). Transient model failures retry at most twice
 with backoff and provider-SDK retries disabled. `@tool(side_effects=True)`
 tools never auto-retry; idempotent declarations are not retry grants.
 Application approval workflows are separate; first
