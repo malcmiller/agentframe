@@ -343,7 +343,8 @@ server, silently switches models, or enables cloud execution.
 - `prompt_eval_count` / `eval_count` become input/output usage (missing counts
   stay `None`); `done_reason` `length` becomes `FinishReason.LENGTH`, anything
   else `COMPLETED`.
-- `structured_output` and `tools` are reported as unsupported in M3.
+- `structured_output` is reported as supported for every model (see
+  [structured output](#structured-output-ollama)); `tools` is unsupported.
 - Connection failures, timeouts, HTTP 408, 429 and 5xx raise a transient
   `ProviderError`; an unknown model (404) or other rejected request raises a
   non-transient one. Messages are safe and do not repeat the server's error
@@ -353,6 +354,31 @@ server, silently switches models, or enables cloud execution.
   `AGENTFRAME_TEST_OLLAMA=1` and `AGENTFRAME_OLLAMA_MODEL` (optionally
   `AGENTFRAME_OLLAMA_ENDPOINT`). Default test runs and CI never call Ollama.
   See `AGENTS.md`.
+
+### Structured output (Ollama)
+
+`ctx.generate(..., output=Summary)` sends the [`OutputSchema`](#outputschema)
+JSON schema unchanged as Ollama's `format`, which constrains generation to that
+schema (M4 #56). Without `output=`, no `format` is sent and requests are
+unchanged from M3.
+
+- Because the server, not the model, enforces the schema, `capabilities()`
+  reports `structured_output=True` for every model. The opt-in real test proves
+  it with `llama3.2:3b`.
+- No OpenAI strict-mode conversion is applied: optional fields may simply be
+  omitted, so Pydantic defaults apply without any null handling.
+- **No hidden prompt text:** the adapter never adds the schema or other
+  instructions to the prompt. **Tip:** describe the expected format in the
+  agent's or skill's trusted `instructions` (for example "Reply with JSON: the
+  country, its capital city and nicknames."); small local models answer better
+  when the prompt says what the schema means.
+- **No refusal signal:** Ollama cannot report a refusal. A model that declines
+  in prose instead of JSON fails validation with `OutputValidationError`; it
+  never counts as success and never raises `ModelRefusalError`.
+- `done_reason` `length` raises `IncompleteOutputError`, as for text. Usage is
+  recorded in both failure cases.
+- Validation stays in the generation layer: the adapter returns the JSON text
+  and never validates it.
 
 **Related:** [`ModelCapabilities`](#modelcapabilities),
 [local model guide](../guides/agent-examples.md#choose-local-llama-through-ollama).
@@ -774,7 +800,8 @@ schema = OutputSchema(name="Summary", json_schema=Summary.model_json_schema())
 **Behavior / failures:** only `BaseModel` subclasses (not `RootModel`) produce
 an `OutputSchema`; anything else raises `DefinitionError` before sending.
 Provider strict-mode conversion is the adapter's job (see
-[`FoundryModel` structured output](#structured-output); Ollama #56).
+[`FoundryModel` structured output](#structured-output);
+[`OllamaModel`](#structured-output-ollama) sends the schema unchanged).
 
 **Related:** [`ModelRequest`](#modelrequest),
 [`RunContext.generate`](agents.md#runcontextgenerate).
