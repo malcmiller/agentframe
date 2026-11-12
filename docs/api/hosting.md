@@ -745,9 +745,9 @@ the `http-server` extra is listed explicitly rather than relied on transitively.
 The selected binding is **JSON-RPC over HTTP** for protocol 1.0 only, with the
 SDK's 0.3 compatibility disabled. `tests/test_a2a_binding.py` proves an official
 SDK client exchanging a message over that binding and the rejection of pre-1.0
-requests; CI imports the server binding from a clean wheel install. Native type
-mappings and independent-client interoperability with AgentFrame hosting remain
-to be proven in later M2 stories. MCP version selection is separate. Constructor signatures/imports
+requests; CI imports the server binding from a clean wheel install. `tests/test_interoperability.py`
+proves native type mappings and independent official-client interoperability
+with AgentFrame hosting end to end over localhost HTTP (M2 #10). MCP version selection is separate. Constructor signatures/imports
 are deliberately not copied as stable AgentFrame APIs. See
 [resolved platform/API choices](../initial-outline.md#resolved-m0-platform-and-api-decisions).
 No fabricated
