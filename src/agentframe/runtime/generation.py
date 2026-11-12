@@ -19,8 +19,7 @@ from agentframe.errors import (
     TokenLimitExceededError,
     UnsupportedCapabilityError,
 )
-from agentframe.limits import RunLimits
-from agentframe.models import (
+from agentframe.models.base import (
     Message,
     Model,
     ModelCapabilities,
@@ -28,7 +27,8 @@ from agentframe.models import (
     ModelResponse,
     ModelSettings,
 )
-from agentframe.usage import FinishReason, Usage
+from agentframe.runtime.limits import RunLimits
+from agentframe.runtime.usage import FinishReason, Usage
 
 NO_USAGE = Usage(input_tokens=0, output_tokens=0, total_tokens=0, estimated=False)
 UNKNOWN_USAGE = Usage(

@@ -13,7 +13,7 @@ from typing import Protocol, runtime_checkable
 from a2a.types import APIKeySecurityScheme, SecurityScheme
 
 from agentframe.errors import AuthenticationError, DefinitionError
-from agentframe.principal import Principal
+from agentframe.security.principal import Principal
 
 API_KEY_HEADER = "X-API-Key"
 

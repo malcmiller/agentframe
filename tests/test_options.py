@@ -19,9 +19,9 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.generation import GenerationState
-from agentframe.limits import DEFAULT_LIMITS
-from agentframe.options import merge_settings
+from agentframe.runtime.generation import GenerationState
+from agentframe.runtime.limits import DEFAULT_LIMITS
+from agentframe.runtime.options import merge_settings
 from agentframe.testing import ScriptedModel
 
 

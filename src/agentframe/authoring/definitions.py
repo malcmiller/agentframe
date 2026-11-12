@@ -12,11 +12,11 @@ from pydantic import (
     create_model,
 )
 
-from agentframe.context import RunContext
+from agentframe.authoring.context import RunContext
+from agentframe.authoring.services import Inject
 from agentframe.errors import DefinitionError
-from agentframe.limits import RunLimits
-from agentframe.models import ModelSettings
-from agentframe.services import Inject
+from agentframe.models.base import ModelSettings
+from agentframe.runtime.limits import RunLimits
 
 # Callers can never supply these as business arguments.
 _RESERVED_ARGUMENT_NAMES = frozenset({"ctx", "principal"})

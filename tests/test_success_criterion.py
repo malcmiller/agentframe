@@ -14,8 +14,8 @@ from a2a.types import TaskState
 
 from a2a_client import call_skill, connect
 from agentframe import AgentApp, FoundryModel, ModelResponse, OllamaModel
+from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.testing import ScriptedModel
-from agentframe.usage import FinishReason, Usage
 from examples.assistant import create_app, create_model
 from local_server import ServeLocally
 

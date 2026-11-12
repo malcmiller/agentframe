@@ -42,7 +42,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.ollama_model import DEFAULT_ENDPOINT
+from agentframe.models.ollama import DEFAULT_ENDPOINT
 from local_server import ServeLocally
 
 # A name no provider has, to prove an unknown model fails clearly.

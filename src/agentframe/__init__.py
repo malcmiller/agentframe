@@ -2,20 +2,11 @@
 
 from typing import TYPE_CHECKING
 
-from agentframe.agent import Agent
-from agentframe.app import AgentApp
-from agentframe.auth import (
-    AllowAnonymous,
-    APIKey,
-    APIKeyAuth,
-    Authenticator,
-    DeclaresCardSecurity,
-    VerifiedCaller,
-)
-from agentframe.authorization import AuthorizationPolicy
-from agentframe.context import RunContext
-from agentframe.decorators import agent, skill
-from agentframe.definitions import SkillDefinition
+from agentframe.authoring.agent import Agent
+from agentframe.authoring.context import RunContext
+from agentframe.authoring.decorators import agent, skill
+from agentframe.authoring.definitions import SkillDefinition
+from agentframe.authoring.services import Inject, Services
 from agentframe.errors import (
     AgentFrameError,
     AuthenticationError,
@@ -35,9 +26,10 @@ from agentframe.errors import (
     TokenLimitExceededError,
     UnsupportedCapabilityError,
 )
-from agentframe.host import HostConfig
-from agentframe.limits import RunLimits
-from agentframe.models import (
+from agentframe.hosting.app import AgentApp
+from agentframe.hosting.host import HostConfig
+from agentframe.hosting.routing import Clarification, SkillCall, SkillRouter
+from agentframe.models.base import (
     Message,
     Model,
     ModelCapabilities,
@@ -46,16 +38,24 @@ from agentframe.models import (
     ModelSettings,
     Role,
 )
-from agentframe.options import RunOptions
-from agentframe.principal import Principal
-from agentframe.routing import Clarification, SkillCall, SkillRouter
-from agentframe.runtime import RunResult, Runtime
-from agentframe.services import Inject, Services
-from agentframe.usage import FinishReason, Usage
+from agentframe.runtime.limits import RunLimits
+from agentframe.runtime.options import RunOptions
+from agentframe.runtime.runtime import RunResult, Runtime
+from agentframe.runtime.usage import FinishReason, Usage
+from agentframe.security.authentication import (
+    AllowAnonymous,
+    APIKey,
+    APIKeyAuth,
+    Authenticator,
+    DeclaresCardSecurity,
+    VerifiedCaller,
+)
+from agentframe.security.authorization import AuthorizationPolicy
+from agentframe.security.principal import Principal
 
 if TYPE_CHECKING:
-    from agentframe.foundry_model import FoundryModel as FoundryModel
-    from agentframe.ollama_model import OllamaModel as OllamaModel
+    from agentframe.models.foundry import FoundryModel as FoundryModel
+    from agentframe.models.ollama import OllamaModel as OllamaModel
 
 __version__ = "0.1.0.dev0"
 
@@ -118,11 +118,11 @@ def __getattr__(name: str) -> object:
     # Provider adapters are imported on first use so that ``import agentframe``
     # works without their optional extras installed.
     if name == "FoundryModel":
-        from agentframe.foundry_model import FoundryModel as FoundryModel
+        from agentframe.models.foundry import FoundryModel as FoundryModel
 
         return FoundryModel
     if name == "OllamaModel":
-        from agentframe.ollama_model import OllamaModel as OllamaModel
+        from agentframe.models.ollama import OllamaModel as OllamaModel
 
         return OllamaModel
     raise AttributeError(f"module 'agentframe' has no attribute {name!r}")

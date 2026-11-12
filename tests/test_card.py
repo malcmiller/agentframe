@@ -29,7 +29,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.card import SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
 
 # Test-only value; real applications load keys from the environment.
 SECRET_KEY = "test-secret-key"

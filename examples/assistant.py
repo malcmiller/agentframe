@@ -65,7 +65,7 @@ def create_model() -> Model:
     """
     provider = os.environ["AGENTFRAME_MODEL_PROVIDER"]
     if provider == "ollama":
-        from agentframe.ollama_model import DEFAULT_ENDPOINT, OllamaModel
+        from agentframe.models.ollama import DEFAULT_ENDPOINT, OllamaModel
 
         return OllamaModel(
             model=os.environ["AGENTFRAME_OLLAMA_MODEL"],
@@ -75,7 +75,7 @@ def create_model() -> Model:
     if provider == "foundry":
         from azure.identity.aio import AzureCliCredential
 
-        from agentframe.foundry_model import FoundryModel
+        from agentframe.models.foundry import FoundryModel
 
         # Local development signs in with `az login`; production can use
         # DefaultAzureCredential or managed identity. Like the model, the

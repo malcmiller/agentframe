@@ -7,7 +7,7 @@ Provider dependencies are optional and stay out of skill business logic.
 usage and finish reasons; adapters translate to/from provider types. M3 #33
 implements the text-generation layouts below (`Message`, `ModelSettings`,
 `ModelRequest`, `ModelResponse`, `ModelCapabilities`, the `Model` protocol)
-in `agentframe.models`, with no provider SDK imported. Tool-call, structured
+in `agentframe.models.base`, with no provider SDK imported. Tool-call, structured
 output and other layouts not specified here remain open, not provider leaks.
 
 ## `Model`

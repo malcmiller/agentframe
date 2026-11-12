@@ -26,11 +26,11 @@ from agentframe import (
     Runtime,
     Usage,
     agent,
-    generation,
     skill,
 )
-from agentframe.generation import backoff_seconds
-from agentframe.limits import DEFAULT_LIMITS
+from agentframe.runtime import generation
+from agentframe.runtime.generation import backoff_seconds
+from agentframe.runtime.limits import DEFAULT_LIMITS
 from agentframe.testing import ScriptedModel
 
 

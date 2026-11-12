@@ -19,8 +19,8 @@ except ImportError as error:
     ) from error
 
 from agentframe.errors import DefinitionError, ProviderError
-from agentframe.models import ModelCapabilities, ModelRequest, ModelResponse
-from agentframe.usage import FinishReason, Usage
+from agentframe.models.base import ModelCapabilities, ModelRequest, ModelResponse
+from agentframe.runtime.usage import FinishReason, Usage
 
 DEFAULT_ENDPOINT = "http://localhost:11434"
 

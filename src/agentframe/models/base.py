@@ -9,7 +9,7 @@ from types import TracebackType
 from typing import Literal, Protocol, Self
 
 from agentframe.errors import DefinitionError
-from agentframe.usage import FinishReason, Usage
+from agentframe.runtime.usage import FinishReason, Usage
 
 type Role = Literal["system", "user", "assistant"]
 """Who a message is from. ``system`` messages hold trusted instructions only."""

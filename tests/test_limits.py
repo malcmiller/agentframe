@@ -35,7 +35,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.limits import DEFAULT_LIMITS
+from agentframe.runtime.limits import DEFAULT_LIMITS
 from agentframe.testing import ScriptedModel
 
 UNKNOWN_WINDOW = ModelCapabilities(context_window=None)

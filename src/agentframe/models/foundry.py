@@ -27,13 +27,13 @@ except ImportError as error:
     ) from error
 
 from agentframe.errors import DefinitionError, IncompleteOutputError, ProviderError
-from agentframe.models import (
+from agentframe.models.base import (
     Message,
     ModelCapabilities,
     ModelRequest,
     ModelResponse,
 )
-from agentframe.usage import FinishReason, Usage
+from agentframe.runtime.usage import FinishReason, Usage
 
 FOUNDRY_SCOPE = "https://ai.azure.com/.default"
 """Microsoft Entra scope for Foundry inference tokens."""

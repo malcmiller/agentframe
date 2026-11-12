@@ -12,10 +12,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from agentframe.agent import Agent
-from agentframe.authorization import AuthorizationPolicy
-from agentframe.context import RunContext
-from agentframe.definitions import SkillDefinition
+from agentframe.authoring.agent import Agent
+from agentframe.authoring.context import RunContext
+from agentframe.authoring.definitions import SkillDefinition
+from agentframe.authoring.services import Services
 from agentframe.errors import (
     AgentFrameError,
     DefinitionError,
@@ -26,13 +26,17 @@ from agentframe.errors import (
     ProviderError,
     TimeoutLimitExceededError,
 )
-from agentframe.generation import GenerationState, RunAccounting, input_token_limit
-from agentframe.limits import DEFAULT_LIMITS, RunLimits
-from agentframe.models import DEFAULT_MODEL_SETTINGS, ModelSettings
-from agentframe.options import RunOptions, merge_settings
-from agentframe.principal import Principal
-from agentframe.services import Services
-from agentframe.usage import FinishReason, Usage
+from agentframe.models.base import DEFAULT_MODEL_SETTINGS, ModelSettings
+from agentframe.runtime.generation import (
+    GenerationState,
+    RunAccounting,
+    input_token_limit,
+)
+from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits
+from agentframe.runtime.options import RunOptions, merge_settings
+from agentframe.runtime.usage import FinishReason, Usage
+from agentframe.security.authorization import AuthorizationPolicy
+from agentframe.security.principal import Principal
 
 
 @dataclass(frozen=True)

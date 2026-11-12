@@ -3,8 +3,8 @@
 from collections.abc import Mapping
 from typing import Protocol
 
-from agentframe.definitions import SkillDefinition
-from agentframe.principal import Principal
+from agentframe.authoring.definitions import SkillDefinition
+from agentframe.security.principal import Principal
 
 
 class AuthorizationPolicy(Protocol):

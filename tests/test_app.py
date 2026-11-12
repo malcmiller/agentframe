@@ -42,7 +42,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.card import SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
 from local_server import ServeLocally
 
 # Test-only values; real applications load keys from the environment.

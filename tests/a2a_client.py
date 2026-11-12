@@ -29,7 +29,7 @@ from a2a.types import (
     Task,
 )
 
-from agentframe.card import SKILL_CALL_EXTENSION_URI
+from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 
 
 class APIKeyCredentials(CredentialService):

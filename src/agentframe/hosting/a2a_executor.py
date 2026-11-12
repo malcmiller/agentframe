@@ -46,8 +46,7 @@ from a2a.types import Message, Part, Task, TaskState
 from a2a.utils.errors import InvalidParamsError
 from pydantic_core import to_jsonable_python
 
-from agentframe.agent import Agent
-from agentframe.card import SKILL_CALL_EXTENSION_URI
+from agentframe.authoring.agent import Agent
 from agentframe.errors import (
     AgentFrameError,
     CancelledError,
@@ -56,18 +55,19 @@ from agentframe.errors import (
     OutputValidationError,
     PermissionDeniedError,
 )
-from agentframe.generation import RunAccounting
-from agentframe.limits import DEFAULT_LIMITS
-from agentframe.options import RunOptions, merge_settings
-from agentframe.principal import Principal
-from agentframe.routing import (
+from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
+from agentframe.hosting.routing import (
     Clarification,
     SkillCall,
     SkillRouter,
     eligible_skills,
     route,
 )
-from agentframe.runtime import Runtime
+from agentframe.runtime.generation import RunAccounting
+from agentframe.runtime.limits import DEFAULT_LIMITS
+from agentframe.runtime.options import RunOptions, merge_settings
+from agentframe.runtime.runtime import Runtime
+from agentframe.security.principal import Principal
 
 SKILL_METADATA_NAMESPACE = "agentframe."
 """Prefix of the message metadata keys the skill-call extension owns."""

@@ -17,7 +17,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.auth import authenticate_request, principal_for
+from agentframe.security.authentication import authenticate_request, principal_for
 
 # Test-only values; real applications load keys from the environment.
 BILLING_KEY = "test-billing-key"

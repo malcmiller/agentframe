@@ -18,10 +18,10 @@ from a2a.types import (
 )
 from a2a.utils.constants import PROTOCOL_VERSION_1_0, TransportProtocol
 
-from agentframe.auth import Authenticator, DeclaresCardSecurity
-from agentframe.definitions import AgentDefinition, SkillDefinition
+from agentframe.authoring.definitions import AgentDefinition, SkillDefinition
 from agentframe.errors import DefinitionError
-from agentframe.host import HostConfig
+from agentframe.hosting.host import HostConfig
+from agentframe.security.authentication import Authenticator, DeclaresCardSecurity
 
 A2A_PATH = "/a2a"
 SKILL_CALL_EXTENSION_URI = (

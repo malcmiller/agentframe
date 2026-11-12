@@ -3,8 +3,8 @@
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from agentframe.agent import DEFINITION_ATTRIBUTE, Agent
-from agentframe.definitions import (
+from agentframe.authoring.agent import DEFINITION_ATTRIBUTE, Agent
+from agentframe.authoring.definitions import (
     AgentDefinition,
     SkillDefinition,
     SkillMetadata,
@@ -12,8 +12,8 @@ from agentframe.definitions import (
     class_docstring,
 )
 from agentframe.errors import DefinitionError
-from agentframe.limits import RunLimits
-from agentframe.models import ModelSettings
+from agentframe.models.base import ModelSettings
+from agentframe.runtime.limits import RunLimits
 
 _SKILL_ATTRIBUTE = "_skill_metadata"
 

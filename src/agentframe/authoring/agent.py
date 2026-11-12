@@ -2,10 +2,10 @@
 
 from typing import ClassVar
 
-from agentframe.definitions import AgentDefinition
+from agentframe.authoring.definitions import AgentDefinition
 from agentframe.errors import DefinitionError
-from agentframe.limits import RunLimits
-from agentframe.models import Model, ModelSettings
+from agentframe.models.base import Model, ModelSettings
+from agentframe.runtime.limits import RunLimits
 
 DEFINITION_ATTRIBUTE = "__agentframe_definition__"
 

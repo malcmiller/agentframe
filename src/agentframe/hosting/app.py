@@ -31,22 +31,22 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from agentframe.a2a_executor import (
+from agentframe.authoring.agent import Agent
+from agentframe.authoring.services import Services
+from agentframe.errors import AuthenticationError, DefinitionError
+from agentframe.hosting.a2a_executor import (
     PRINCIPAL_STATE_KEY,
     RuntimeExecutor,
     is_skill_call,
     read_skill_call,
 )
-from agentframe.agent import Agent
-from agentframe.auth import authenticate_request, www_authenticate
-from agentframe.authorization import AuthorizationPolicy
-from agentframe.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
-from agentframe.errors import AuthenticationError, DefinitionError
-from agentframe.host import HostConfig
-from agentframe.principal import Principal
-from agentframe.routing import SkillRouter
-from agentframe.runtime import Runtime
-from agentframe.services import Services
+from agentframe.hosting.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.hosting.host import HostConfig
+from agentframe.hosting.routing import SkillRouter
+from agentframe.runtime.runtime import Runtime
+from agentframe.security.authentication import authenticate_request, www_authenticate
+from agentframe.security.authorization import AuthorizationPolicy
+from agentframe.security.principal import Principal
 
 type Endpoint = Callable[[Request], Awaitable[Response]]
 

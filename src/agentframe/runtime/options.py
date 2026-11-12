@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass, fields, replace
 
-from agentframe.limits import RunLimits
-from agentframe.models import ModelSettings
+from agentframe.models.base import ModelSettings
+from agentframe.runtime.limits import RunLimits
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -8,13 +8,13 @@ from typing import Any, Protocol
 
 from a2a.types import Message
 
-from agentframe.definitions import AgentDefinition, SkillDefinition
+from agentframe.authoring.definitions import AgentDefinition, SkillDefinition
 from agentframe.errors import (
     AgentFrameError,
     InputValidationError,
     TimeoutLimitExceededError,
 )
-from agentframe.principal import Principal
+from agentframe.security.principal import Principal
 
 ROUTER_FAILED_MESSAGE = "The skill router failed."
 """What callers see when the router raises an exception."""

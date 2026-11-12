@@ -31,13 +31,13 @@ from agentframe import (
     ProviderError,
     UnsupportedCapabilityError,
 )
-from agentframe.a2a_executor import (
+from agentframe.hosting.a2a_executor import (
     failure_state,
     publish_failure,
     publish_input_required,
     result_part,
 )
-from agentframe.generation import RunAccounting
+from agentframe.runtime.generation import RunAccounting
 
 
 class RecordingQueue(EventQueue):

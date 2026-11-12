@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
-from agentframe.auth import Authenticator
 from agentframe.errors import DefinitionError
+from agentframe.security.authentication import Authenticator
 
 
 @dataclass(frozen=True)

@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass, field
 
-from agentframe.generation import GenerationState
-from agentframe.principal import Principal
+from agentframe.runtime.generation import GenerationState
+from agentframe.security.principal import Principal
 
 
 @dataclass(frozen=True)
