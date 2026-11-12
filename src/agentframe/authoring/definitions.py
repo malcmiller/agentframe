@@ -2,8 +2,9 @@
 
 import inspect
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, get_args, get_origin, get_type_hints
 
 from pydantic import (
@@ -23,7 +24,10 @@ from agentframe.runtime.limits import RunLimits
 _RESERVED_ARGUMENT_NAMES = frozenset({"ctx", "principal"})
 
 # Model providers accept tool names of this shape (OpenAI's function-name rule).
-_TOOL_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+_TOOL_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,64}")
+
+# Where ``@tool`` stores a function's ``ToolDefinition``.
+TOOL_ATTRIBUTE = "_tool_definition"
 
 
 @dataclass(frozen=True)
@@ -166,7 +170,7 @@ def build_tool_definition(
     function = _tool_function(target)
     name = function.__name__
     where = f"Tool '{name}'"
-    if not _TOOL_NAME_PATTERN.match(name):
+    if not _TOOL_NAME_PATTERN.fullmatch(name):
         raise DefinitionError(
             f"{where}: name must be 1-64 ASCII letters, digits, '_' or '-'"
         )
@@ -205,6 +209,7 @@ def build_tool_definition(
 def _tool_function(target: object) -> Callable[..., Any]:
     """Return the plain function behind ``target``; no lambdas or methods."""
     is_static = isinstance(target, staticmethod)
+    # Repeats the isinstance check because mypy cannot narrow through is_static.
     function = target.__func__ if isinstance(target, staticmethod) else target
     if not inspect.isfunction(function):
         raise DefinitionError(
@@ -212,6 +217,10 @@ def _tool_function(target: object) -> Callable[..., Any]:
         )
     if function.__name__ == "<lambda>":
         raise DefinitionError("@tool cannot decorate a lambda; use a named function")
+    if inspect.isgeneratorfunction(function) or inspect.isasyncgenfunction(function):
+        raise DefinitionError(
+            f"Tool '{function.__name__}': generators cannot be tools; return a value"
+        )
     # A function written directly in a class body has a qualname "Class.name";
     # one nested in a function has "outer.<locals>.name".
     enclosing = function.__qualname__.split(".")[:-1]
@@ -221,6 +230,38 @@ def _tool_function(target: object) -> Callable[..., Any]:
             "module-level function, or put @tool above @staticmethod"
         )
     return function
+
+
+def tool_definition(function: Callable[..., Any]) -> ToolDefinition:
+    """Return the definition ``@tool`` attached to ``function``.
+
+    Raises:
+        DefinitionError: If ``function`` is not decorated with ``@tool``.
+    """
+    definition = getattr(function, TOOL_ATTRIBUTE, None)
+    if not isinstance(definition, ToolDefinition):
+        raise DefinitionError(f"{function!r} is not decorated with @tool")
+    return definition
+
+
+def tools_by_name(
+    tools: Iterable[Callable[..., Any]],
+) -> Mapping[str, ToolDefinition]:
+    """Build an agent's read-only tool registry from ``@tool`` functions.
+
+    Raises:
+        DefinitionError: A function is not decorated with ``@tool``, or two
+            tools share a name.
+    """
+    registered: dict[str, ToolDefinition] = {}
+    for function in tools:
+        definition = tool_definition(function)
+        if definition.name in registered:
+            raise DefinitionError(
+                f"Tool name '{definition.name}' is registered more than once"
+            )
+        registered[definition.name] = definition
+    return MappingProxyType(registered)
 
 
 def _check_tags(where: str, tags: tuple[str, ...]) -> None:

@@ -169,8 +169,9 @@ Explicitly registered tools, bounded execution and generation continuations are
 part of the first usable release; individual agents can still omit tools.
 Registration is explicit; decoration alone does not grant model access or
 execution permission. This callable is not automatically an advertised A2A skill.
-`@tool` and `ToolDefinition` are implemented (M5 #58); registration and tool
-execution are not yet.
+`@tool` and `ToolDefinition` are implemented (M5 #58), as are registration with
+`Agent(tools=[...])` and per-call selection with `ctx.generate(..., tools=[...])`
+(M5 #60); tool execution is not yet.
 
 ```python
 from agentframe import tool

@@ -5,10 +5,10 @@ from typing import Any
 
 from agentframe.authoring.agent import DEFINITION_ATTRIBUTE, Agent
 from agentframe.authoring.definitions import (
+    TOOL_ATTRIBUTE,
     AgentDefinition,
     SkillDefinition,
     SkillMetadata,
-    ToolDefinition,
     build_skill_definition,
     build_tool_definition,
     class_docstring,
@@ -18,7 +18,6 @@ from agentframe.models.base import ModelSettings
 from agentframe.runtime.limits import RunLimits
 
 _SKILL_ATTRIBUTE = "_skill_metadata"
-_TOOL_ATTRIBUTE = "_tool_definition"
 
 
 # noinspection PyShadowingBuiltins
@@ -156,10 +155,11 @@ def tool[F: Callable[..., Any]](
 ) -> Callable[[F], F]:
     """Mark a typed function as a tool a model may call.
 
+    Always call it with parentheses: ``@tool()`` or ``@tool(description=...)``.
     The function is validated immediately and stays directly callable. Sync
     functions run inline on the event loop, so use ``async def`` for any I/O.
     Decorating grants nothing: the tool must still be registered on an agent
-    and selected by ``ctx.generate``.
+    (``Agent(tools=[...])``) and selected by ``ctx.generate(..., tools=[...])``.
 
     Args:
         description: What the tool does, shown to the model. Defaults to the
@@ -175,8 +175,9 @@ def tool[F: Callable[..., Any]](
 
     Raises:
         DefinitionError: If the function breaks a tool rule: it is a lambda or
-            method, has an invalid name, unannotated, ``*args``/``**kwargs`` or
-            positional-only parameters, an unsupported type, or no description.
+            method, is a generator, has an invalid name, unannotated,
+            ``*args``/``**kwargs`` or positional-only parameters, an
+            unsupported type, or no description.
     """
 
     def decorator(func: F) -> F:
@@ -186,19 +187,7 @@ def tool[F: Callable[..., Any]](
             side_effects=side_effects,
             idempotent=idempotent,
         )
-        setattr(definition.function, _TOOL_ATTRIBUTE, definition)
+        setattr(definition.function, TOOL_ATTRIBUTE, definition)
         return func
 
     return decorator
-
-
-def tool_definition(function: Callable[..., Any]) -> ToolDefinition:
-    """Return the definition ``@tool`` attached to ``function``.
-
-    Raises:
-        DefinitionError: If ``function`` is not decorated with ``@tool``.
-    """
-    definition = getattr(function, _TOOL_ATTRIBUTE, None)
-    if not isinstance(definition, ToolDefinition):
-        raise DefinitionError(f"{function!r} is not decorated with @tool")
-    return definition

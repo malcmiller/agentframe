@@ -7,7 +7,10 @@ import asyncio
 import json
 import math
 import random
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, RootModel, ValidationError
 
@@ -35,6 +38,10 @@ from agentframe.models.base import (
 )
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.usage import FinishReason, Usage
+
+if TYPE_CHECKING:
+    # Imported only for type checking: definitions imports this module.
+    from agentframe.authoring.definitions import ToolDefinition
 
 NO_USAGE = Usage(input_tokens=0, output_tokens=0, total_tokens=0, estimated=False)
 UNKNOWN_USAGE = Usage(
@@ -139,6 +146,7 @@ class GenerationState:
         settings: Effective settings for every model call in this run.
         limits: Effective limits for this run.
         accounting: Tokens and model calls this run has used so far.
+        tools: The agent's registered tools by name.
     """
 
     model: Model | None
@@ -146,9 +154,16 @@ class GenerationState:
     settings: ModelSettings
     limits: RunLimits
     accounting: RunAccounting = field(default_factory=RunAccounting)
+    tools: "Mapping[str, ToolDefinition]" = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     async def generate_text(
-        self, text: str, instructions: str | None, deadline: float
+        self,
+        text: str,
+        instructions: str | None,
+        deadline: float,
+        tools: Iterable[Callable[..., Any]] = (),
     ) -> str:
         """Send ``text`` to the model and return its complete answer.
 
@@ -157,12 +172,15 @@ class GenerationState:
             instructions: Trusted call-specific instructions, sent after the
                 agent's own instructions as a separate ``system`` message.
             deadline: Event-loop time when the run times out.
+            tools: Registered ``@tool`` functions to offer the model.
 
         Raises:
-            UnsupportedCapabilityError: The agent has no model, or the model
-                lacks something the request needs.
-            DefinitionError: The model reports no context window and no
+            DefinitionError: A selected tool is not registered on the agent,
+                or the model reports no context window and no
                 ``max_input_tokens`` is set.
+            UnsupportedCapabilityError: The agent has no model, the model
+                lacks something the request needs, or tools were selected
+                (running tools is not implemented yet).
             TokenLimitExceededError: The call does not fit the input limit,
                 the context window or the run's remaining tokens.
             ModelCallLimitExceededError: The run has made ``max_model_calls``.
@@ -172,11 +190,16 @@ class GenerationState:
                 used every retry, or would have to wait past the deadline.
             TimeoutLimitExceededError: The run's deadline passed during the call.
         """
-        response = await self._generate(text, instructions, None, deadline)
+        response = await self._generate(text, instructions, None, deadline, tools)
         return text_from(response)
 
     async def generate_output[T: BaseModel](
-        self, text: str, instructions: str | None, output: type[T], deadline: float
+        self,
+        text: str,
+        instructions: str | None,
+        output: type[T],
+        deadline: float,
+        tools: Iterable[Callable[..., Any]] = (),
     ) -> T:
         """Send ``text`` to the model and return its reply validated as ``output``.
 
@@ -190,6 +213,7 @@ class GenerationState:
                 ``generate_text``).
             output: The Pydantic model class the reply must validate as.
             deadline: Event-loop time when the run times out.
+            tools: Registered ``@tool`` functions to offer the model.
 
         Raises:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
@@ -200,7 +224,7 @@ class GenerationState:
                 match ``output``. The message lists field locations only.
         """
         schema = output_schema(output)
-        response = await self._generate(text, instructions, schema, deadline)
+        response = await self._generate(text, instructions, schema, deadline, tools)
         return validate_output(text_from(response), output)
 
     async def _generate(
@@ -209,10 +233,16 @@ class GenerationState:
         instructions: str | None,
         output: OutputSchema | None,
         deadline: float,
+        tools: Iterable[Callable[..., Any]],
     ) -> ModelResponse:
         """Build the request and call the model within the run's deadline."""
+        selected_tools = self.select_tools(tools)
         if self.model is None:
             raise UnsupportedCapabilityError("This agent has no model configured")
+        if selected_tools:
+            # The tool-calling loop is not implemented yet. Fail rather than
+            # send a request that silently leaves the selected tools out.
+            raise UnsupportedCapabilityError("Tool calling is not available yet")
         messages = build_messages(self.instructions, instructions, text)
         request = ModelRequest(messages=messages, settings=self.settings, output=output)
         try:
@@ -224,6 +254,31 @@ class GenerationState:
             raise TimeoutLimitExceededError(
                 "The run's timeout expired during a model call"
             ) from None
+
+    def select_tools(
+        self, functions: Iterable[Callable[..., Any]]
+    ) -> tuple["ToolDefinition", ...]:
+        """Return the definitions of ``functions``, in the order given.
+
+        Only tools registered on the agent can be selected; registering a
+        tool never offers it to a model on its own.
+
+        Raises:
+            DefinitionError: A function is not a tool registered on the agent.
+        """
+        by_function = {tool.function: tool for tool in self.tools.values()}
+        selected: list[ToolDefinition] = []
+        for function in functions:
+            definition = by_function.get(function)
+            if definition is None:
+                # Tool names are author-defined, never caller data.
+                name = getattr(function, "__name__", repr(function))
+                raise DefinitionError(
+                    f"Tool '{name}' is not registered on this agent; pass it "
+                    "to the agent's tools=[...]"
+                )
+            selected.append(definition)
+        return tuple(selected)
 
     async def _call_with_retries(
         self, model: Model, request: ModelRequest, deadline: float

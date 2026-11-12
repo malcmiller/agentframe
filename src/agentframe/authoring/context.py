@@ -1,7 +1,8 @@
 """Per-run context passed to skills."""
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import overload
+from typing import Any, overload
 
 from pydantic import BaseModel
 
@@ -27,11 +28,22 @@ class RunContext:
     _generation: GenerationState = field(repr=False, compare=False)
 
     @overload
-    async def generate(self, text: str, *, instructions: str | None = None) -> str: ...
+    async def generate(
+        self,
+        text: str,
+        *,
+        instructions: str | None = None,
+        tools: Iterable[Callable[..., Any]] = (),
+    ) -> str: ...
 
     @overload
     async def generate[T: BaseModel](
-        self, text: str, *, instructions: str | None = None, output: type[T]
+        self,
+        text: str,
+        *,
+        instructions: str | None = None,
+        output: type[T],
+        tools: Iterable[Callable[..., Any]] = (),
     ) -> T: ...
 
     async def generate(
@@ -40,6 +52,7 @@ class RunContext:
         *,
         instructions: str | None = None,
         output: type[BaseModel] | None = None,
+        tools: Iterable[Callable[..., Any]] = (),
     ) -> str | BaseModel:
         """Generate text, or a validated ``output`` instance, with the agent's model.
 
@@ -56,6 +69,9 @@ class RunContext:
                 is asked for JSON matching its schema and the reply is
                 validated into an instance. Invalid output is never repaired
                 or re-requested.
+            tools: ``@tool`` functions to offer the model, each registered on
+                the agent. Omitted or empty offers no tools; registered tools
+                are never offered unless selected here.
 
         Returns:
             The model's complete answer, or an ``output`` instance when
@@ -63,10 +79,13 @@ class RunContext:
 
         Raises:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
-                a ``RootModel``.
+                a ``RootModel``, or a selected tool is not registered on the
+                agent. Raised before anything is sent.
             UnsupportedCapabilityError: The agent has no model configured, or
                 the model lacks something the request needs, such as
-                structured output. Raised before anything is sent.
+                structured output. Tool calling is not implemented yet, so
+                selecting any tool raises this too. Raised before anything is
+                sent.
             OutputValidationError: The structured reply is not valid JSON or
                 does not match ``output``.
             ModelRefusalError: The model refused, or a content filter blocked
@@ -79,8 +98,8 @@ class RunContext:
         """
         if output is None:
             return await self._generation.generate_text(
-                text, instructions, self.deadline
+                text, instructions, self.deadline, tools
             )
         return await self._generation.generate_output(
-            text, instructions, output, self.deadline
+            text, instructions, output, self.deadline, tools
         )

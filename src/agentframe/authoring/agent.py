@@ -1,8 +1,14 @@
 """The Agent base class."""
 
-from typing import ClassVar
+from collections.abc import Callable, Iterable, Mapping
+from types import MappingProxyType
+from typing import Any, ClassVar
 
-from agentframe.authoring.definitions import AgentDefinition
+from agentframe.authoring.definitions import (
+    AgentDefinition,
+    ToolDefinition,
+    tools_by_name,
+)
 from agentframe.errors import DefinitionError
 from agentframe.models.base import Model, ModelSettings
 from agentframe.runtime.limits import RunLimits
@@ -16,6 +22,13 @@ class Agent:
     Args:
         model: The model ``ctx.generate`` calls. Model-free agents omit it.
             The application owns the model and closes it.
+        tools: ``@tool`` functions this agent's ``ctx.generate`` calls may
+            select. Registering grants nothing by itself: each call names the
+            tools it offers the model. Tools are never advertised as skills.
+
+    Raises:
+        DefinitionError: A tool is not decorated with ``@tool``, or two tools
+            share a name.
 
     Attributes:
         limits: Default execution limits for this agent's skills. Fields it
@@ -26,16 +39,24 @@ class Agent:
         model_settings: Default settings for this agent's model calls, merged
             field by field like ``limits``.
         model: The model passed to the constructor, or ``None``.
+        tools: The registered tools by name, read-only.
     """
 
     limits: ClassVar[RunLimits] = RunLimits()
     instructions: ClassVar[str | None] = None
     model_settings: ClassVar[ModelSettings] = ModelSettings()
-    # A class default keeps subclasses that do not call super().__init__() working.
+    # Class defaults keep subclasses that do not call super().__init__() working.
     model: Model | None = None
+    tools: Mapping[str, ToolDefinition] = MappingProxyType({})
 
-    def __init__(self, *, model: Model | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        model: Model | None = None,
+        tools: Iterable[Callable[..., Any]] = (),
+    ) -> None:
         self.model = model
+        self.tools = tools_by_name(tools)
 
     @classmethod
     def definition(cls) -> AgentDefinition:

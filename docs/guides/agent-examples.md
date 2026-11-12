@@ -350,8 +350,10 @@ schema to their provider. Provider schema subsets are documented with each
 adapter as it gains support. Hosted, the returned instance becomes one A2A data
 part `{"value": {...}}`.
 
-This tool example uses the existing proposed registration shape. The supplied
-`model` must support the requested tool capability; instructions do not grant it.
+This tool example uses the implemented registration and selection shape (M5
+#60): the constructor registers tools, and each `ctx.generate` call names the
+ones it offers. Running them is not implemented yet (#61). The supplied `model`
+must support the requested tool capability; instructions do not grant it.
 
 ```python
 from agentframe import Agent, Model, RunContext, agent, skill, tool

@@ -4,8 +4,9 @@
 approved contracts. `Agent`, `RunContext`, `Inject[T]` and `Services` are
 implemented from source as of M1; M3 #35 adds model injection, agent
 `instructions` / `model_settings` and the text form of `ctx.generate`; M4 #53
-adds the structured `output=` form. `AgentConfig` and tool features are not
-implemented yet.
+adds the structured `output=` form. M5 #60 adds tool registration
+(`Agent(tools=[...])`) and per-call selection (`ctx.generate(..., tools=[...])`).
+`AgentConfig` and running tools (the tool loop) are not implemented yet.
 Unspecified details remain open.
 Models are dependencies, not a second kind of agent base class.
 
@@ -21,14 +22,14 @@ there is no required abstract `handle()`.
 Echo(*, model: Model = ..., config: AgentConfig = ..., tools = ...)
 ```
 
-`Echo` is defined below, not a library class. Exact base constructor, accepted
-containers, and omission representations remain open. The `config`/`tools`
-arguments arrive with their milestones. Implemented members:
+`Echo` is defined below, not a library class. The `config` argument arrives
+with its milestone. Implemented members:
 
 | Member | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `Agent(*, model=None)` | keyword-only constructor (M3 #35) | `model=None` | Stores the injected model as `self.model`. Subclasses with their own `__init__` keep working without calling it; they simply have no model. |
+| `Agent(*, model=None, tools=())` | keyword-only constructor (M3 #35, `tools` M5 #60) | `model=None`, `tools=()` | Stores the injected model as `self.model` and the registered tools as `self.tools`. Subclasses with their own `__init__` keep working without calling it; they simply have no model and no tools. |
 | `model` | `Model \| None` | `None` | The model `ctx.generate` calls. Application-owned: AgentFrame never closes it. |
+| `tools` | `Mapping[str, ToolDefinition]` (M5 #60) | empty | The registered [`@tool`](decorators.md#tool) definitions by tool name, read-only. |
 | `limits` | `ClassVar[RunLimits]` | `RunLimits()` (all unset) | Agent-wide execution limits. Fields it sets override the library defaults; a skill or [per-run options](configuration.md#runoptions) override only the fields they set ([precedence](configuration.md#precedence)). |
 | `instructions` | `ClassVar[str \| None]` (M3 #35) | `None` | Trusted shared instructions, sent as the first `system` message of every `ctx.generate` call. `None` or empty sends none. |
 | `model_settings` | `ClassVar[ModelSettings]` (M3 #35) | `ModelSettings()` (all unset) | Default settings for this agent's model calls, merged field by field with the library defaults, skill and per-run settings ([precedence](configuration.md#precedence)). |
@@ -38,7 +39,7 @@ arguments arrive with their milestones. Implemented members:
 | --- | --- | --- | --- |
 | `model` | `Model` implementation | Optional; no implicit provider | Needed only for generation. Model-free and mixed skills use this same base. |
 | `config` | `AgentConfig` | Optional; exact constructor default open | Instance configuration refines class/library defaults, subject to host ceilings and security policy. |
-| `tools` | Explicit collection of decorated callables; type open | Optional per agent; first-release bounded execution/continuations | Supplies internal model tools, not A2A skills, MCP publication or future AG-UI frontend tools. No implicit grants. |
+| `tools` | `Iterable[Callable[..., Any]]` of `@tool` functions (implemented, M5 #60) | Optional; default `()` registers none | The tools this agent's `ctx.generate` calls may select. Registering grants nothing by itself: each call names the tools it offers. An undecorated function or two tools with the same name raise `DefinitionError` at construction. `Runtime.validate` (and so `AgentApp` startup) fails with `DefinitionError` when a registered tool's `Inject[T]` service is not registered. Tools are internal: never on the Agent Card, in skill lists, router candidates, MCP publication or future AG-UI frontend tools. |
 | Class `instructions` | `str \| None` (implemented) | Optional; `None` sends no agent instructions | Trusted shared instructions. Typed configuration/trusted callable is also intended; callable signature and merge details open. |
 
 ```python
@@ -135,16 +136,28 @@ registered tools. The accepted `tools` collection type remains open; the names
 ```text
 await ctx.generate(text, instructions=...) -> str       # implemented (M3 #35)
 await ctx.generate(text, output=Summary) -> Summary     # implemented (M4 #53)
-await ctx.generate(text, tools=[lookup_order]) -> str   # M5, not implemented
+await ctx.generate(text, tools=[lookup_order]) -> str   # M5: selection only (#60)
 ```
 
-**Implemented signature (M3 #35, M4 #53):** two `typing.overload`s, so type
-checkers infer `str` without `output` and the requested class with it.
+**Implemented signature (M3 #35, M4 #53, `tools` M5 #60):** two
+`typing.overload`s, so type checkers infer `str` without `output` and the
+requested class with it.
 
 ```text
-async def generate(self, text: str, *, instructions: str | None = None) -> str
+async def generate(
+    self,
+    text: str,
+    *,
+    instructions: str | None = None,
+    tools: Iterable[Callable[..., Any]] = (),
+) -> str
 async def generate[T: BaseModel](
-    self, text: str, *, instructions: str | None = None, output: type[T]
+    self,
+    text: str,
+    *,
+    instructions: str | None = None,
+    output: type[T],
+    tools: Iterable[Callable[..., Any]] = (),
 ) -> T
 ```
 
@@ -158,7 +171,7 @@ message. This separation does not guarantee resistance to prompt injection.
 | `text` | `str` | Required in current text proposal | Untrusted user content, never promoted to privileged instructions. |
 | `instructions` | `str \| None` | Optional; default `None` sends no call instructions | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
 | `output` | `type[T]`, `T` a Pydantic `BaseModel` subclass (implemented, M4 #53) | Optional; `None` returns text | Sends the class's JSON schema as [`OutputSchema`](models.md#outputschema) and returns the reply validated with `model_validate_json` in Pydantic's default (lax) mode; a model's own `ConfigDict(strict=True)` is respected. `RootModel`, `list[...]` and other types raise `DefinitionError` before sending: wrap lists in a model field. Provider schema subsets and combination with tools remain open. |
-| `tools` | Explicit collection of registered `@tool` functions | Optional; no implicit tools | Select authorized registered functions for bounded calls/results and continuations. Decoration or a model suggestion alone does not grant execution. |
+| `tools` | `Iterable[Callable[..., Any]]` of `@tool` functions registered on the agent (selection implemented, M5 #60) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent raises `DefinitionError` naming the tool before anything is sent. Running tools (bounded calls/results and continuations) is #61: until then, a non-empty valid selection raises `UnsupportedCapabilityError` before anything is sent. Decoration or a model suggestion alone does not grant execution. |
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -216,7 +229,9 @@ before any error is raised. Unknown usage stays unknown, never zero.
 
 | Situation | Result |
 | --- | --- |
+| A selected tool is not registered on the agent | `DefinitionError` naming the tool; nothing is sent (M5 #60) |
 | Agent has no model | `UnsupportedCapabilityError` ("This agent has no model configured"); nothing is sent |
+| A tool is selected (tool loop not implemented yet) | `UnsupportedCapabilityError`; nothing is sent (M5 #60, replaced by #61) |
 | `COMPLETED` with text | The text is returned |
 | `COMPLETED` with empty text | `IncompleteOutputError` |
 | `LENGTH` | `IncompleteOutputError`; no partial text |
