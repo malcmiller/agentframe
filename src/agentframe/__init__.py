@@ -43,6 +43,7 @@ from agentframe.models import (
     ModelSettings,
     Role,
 )
+from agentframe.options import RunOptions
 from agentframe.principal import Principal
 from agentframe.routing import Clarification, SkillCall, SkillRouter
 from agentframe.runtime import RunResult, Runtime
@@ -91,6 +92,7 @@ __all__ = [
     "Role",
     "RunContext",
     "RunLimits",
+    "RunOptions",
     "RunResult",
     "Runtime",
     "Services",

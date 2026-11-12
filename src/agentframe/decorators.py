@@ -13,6 +13,7 @@ from agentframe.definitions import (
 )
 from agentframe.errors import DefinitionError
 from agentframe.limits import RunLimits
+from agentframe.models import ModelSettings
 
 _SKILL_ATTRIBUTE = "_skill_metadata"
 
@@ -26,6 +27,7 @@ def skill[F: Callable[..., Any]](
     tags: Iterable[str] = (),
     requires_permissions: Iterable[str] = (),
     limits: RunLimits | None = None,
+    model_settings: ModelSettings | None = None,
 ) -> Callable[[F], F]:
     """Mark an async ``Agent`` method as an advertised skill.
 
@@ -38,7 +40,10 @@ def skill[F: Callable[..., Any]](
         tags: Descriptive discovery tags. At least one non-blank tag is
             required (A2A 1.0); ``@agent`` rejects a skill without one.
         requires_permissions: Permissions the caller must all hold.
-        limits: Execution limits for this skill, overriding the agent's.
+        limits: Execution limits for this skill. Each field it sets overrides
+            the agent's value; unset fields are inherited.
+        model_settings: Model settings for this skill. Each field it sets
+            overrides the agent's value; unset fields are inherited.
 
     Returns:
         A decorator that records the metadata and returns the same function.
@@ -60,6 +65,7 @@ def skill[F: Callable[..., Any]](
         tags=tuple(tags),
         requires_permissions=frozenset(requires_permissions),
         limits=limits,
+        model_settings=model_settings,
     )
 
     def decorator(func: F) -> F:

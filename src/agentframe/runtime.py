@@ -26,6 +26,9 @@ from agentframe.errors import (
     PolicyUnavailableError,
 )
 from agentframe.generation import GenerationState
+from agentframe.limits import DEFAULT_LIMITS, RunLimits
+from agentframe.models import DEFAULT_MODEL_SETTINGS, ModelSettings
+from agentframe.options import RunOptions, merge_settings
 from agentframe.principal import Principal
 from agentframe.services import Services
 from agentframe.usage import FinishReason, Usage
@@ -84,13 +87,18 @@ class Runtime:
         skill: str,
         arguments: Mapping[str, Any] | None = None,
         principal: Principal | None = None,
+        options: RunOptions | None = None,
     ) -> Any:
         """Run a skill and return only its validated value.
 
         Takes the same arguments and raises the same errors as ``run``.
         """
         result = await self.run(
-            agent, skill=skill, arguments=arguments, principal=principal
+            agent,
+            skill=skill,
+            arguments=arguments,
+            principal=principal,
+            options=options,
         )
         return result.value
 
@@ -101,6 +109,7 @@ class Runtime:
         skill: str,
         arguments: Mapping[str, Any] | None = None,
         principal: Principal | None = None,
+        options: RunOptions | None = None,
     ) -> RunResult[Any]:
         """Run a skill and return its value with execution metadata.
 
@@ -109,6 +118,8 @@ class Runtime:
             skill: Id of the skill to run.
             arguments: Business arguments for the skill. ``None`` means none.
             principal: Verified caller identity supplied by trusted code.
+            options: Limits and model settings for this run only. Each field
+                they set overrides the skill's, agent's and library's value.
 
         Returns:
             A ``RunResult`` holding the validated value.
@@ -127,7 +138,12 @@ class Runtime:
             Exceptions raised by the skill itself propagate unchanged.
         """
         return await self._run_invocation(
-            str(uuid.uuid4()), agent, skill, arguments or {}, principal
+            str(uuid.uuid4()),
+            agent,
+            skill,
+            arguments or {},
+            principal,
+            options or RunOptions(),
         )
 
     async def _run_invocation(
@@ -137,6 +153,7 @@ class Runtime:
         skill: str,
         arguments: Mapping[str, Any],
         principal: Principal | None,
+        options: RunOptions,
         started_at: float | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
@@ -149,7 +166,7 @@ class Runtime:
         started = time.perf_counter()
         try:
             value, generation = await self._run(
-                invocation_id, agent, skill, arguments, principal, started_at
+                invocation_id, agent, skill, arguments, principal, options, started_at
             )
         except AgentFrameError as error:
             error.invocation_id = invocation_id
@@ -171,6 +188,7 @@ class Runtime:
         skill_id: str,
         arguments: Mapping[str, Any],
         principal: Principal | None,
+        options: RunOptions,
         started_at: float | None,
     ) -> tuple[Any, GenerationState]:
         """Run the skill; return its validated value and the run's model state."""
@@ -185,16 +203,18 @@ class Runtime:
         _check_permissions(skill, principal)
         validated_arguments = _validate_arguments(skill, arguments)
 
-        limits = skill.limits or type(agent).limits
+        limits, model_settings = _effective_settings(agent, skill, options)
+        timeout_seconds = limits.timeout_seconds
+        assert timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
         method = getattr(agent, skill.method_name)
         if started_at is None:
             started_at = asyncio.get_running_loop().time()
-        deadline = started_at + limits.timeout_seconds
+        deadline = started_at + timeout_seconds
         await self._check_policy(skill, principal, validated_arguments, deadline)
         generation = GenerationState(
             model=agent.model,
             instructions=agent.instructions,
-            settings=agent.model_settings,
+            settings=model_settings,
             limits=limits,
         )
         ctx = RunContext(invocation_id, principal, deadline, generation)
@@ -209,8 +229,7 @@ class Runtime:
             if not timeout.expired():
                 raise
             raise LimitExceededError(
-                f"Skill '{skill.id}' exceeded its timeout of "
-                f"{limits.timeout_seconds} seconds"
+                f"Skill '{skill.id}' exceeded its timeout of {timeout_seconds} seconds"
             ) from None
         return _validate_output(skill, result), generation
 
@@ -251,6 +270,20 @@ class Runtime:
                     f"Skill '{skill.id}': no service registered for "
                     f"parameter '{parameter_name}'"
                 )
+
+
+def _effective_settings(
+    agent: Agent, skill: SkillDefinition, options: RunOptions
+) -> tuple[RunLimits, ModelSettings]:
+    """Merge library defaults, agent, skill and run settings, field by field."""
+    limits = merge_settings(DEFAULT_LIMITS, agent.limits, skill.limits, options.limits)
+    model_settings = merge_settings(
+        DEFAULT_MODEL_SETTINGS,
+        agent.model_settings,
+        skill.model_settings,
+        options.model_settings,
+    )
+    return limits, model_settings
 
 
 def _check_permissions(skill: SkillDefinition, principal: Principal | None) -> None:

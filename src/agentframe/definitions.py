@@ -15,6 +15,7 @@ from pydantic import (
 from agentframe.context import RunContext
 from agentframe.errors import DefinitionError
 from agentframe.limits import RunLimits
+from agentframe.models import ModelSettings
 from agentframe.services import Inject
 
 # Callers can never supply these as business arguments.
@@ -31,6 +32,7 @@ class SkillMetadata:
     tags: tuple[str, ...]
     requires_permissions: frozenset[str]
     limits: RunLimits | None
+    model_settings: ModelSettings | None
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class SkillDefinition:
     tags: tuple[str, ...]
     requires_permissions: frozenset[str]
     limits: RunLimits | None
+    model_settings: ModelSettings | None
     method_name: str
     argument_names: tuple[str, ...]
     injected: dict[str, object]
@@ -111,6 +114,7 @@ def build_skill_definition(
         tags=metadata.tags,
         requires_permissions=metadata.requires_permissions,
         limits=metadata.limits,
+        model_settings=metadata.model_settings,
         method_name=method_name,
         argument_names=tuple(parameter.name for parameter in arguments),
         injected=injected,

@@ -53,6 +53,8 @@ from agentframe.errors import (
     OutputValidationError,
     PermissionDeniedError,
 )
+from agentframe.limits import DEFAULT_LIMITS
+from agentframe.options import RunOptions, merge_settings
 from agentframe.principal import Principal
 from agentframe.routing import (
     Clarification,
@@ -204,6 +206,8 @@ class RuntimeExecutor(AgentExecutor):
                 call.skill,
                 call.arguments,
                 principal,
+                # Hosted callers cannot send per-run options in M3.
+                RunOptions(),
                 started_at,
             )
             part = result_part(result.value, invocation_id)
@@ -240,7 +244,9 @@ class RuntimeExecutor(AgentExecutor):
         definition = type(self._agent).definition()
         # The skill is not known yet, so routing is bounded by the agent's
         # timeout; the selected skill's deadline counts from the same start.
-        deadline = started_at + type(self._agent).limits.timeout_seconds
+        limits = merge_settings(DEFAULT_LIMITS, self._agent.limits)
+        assert limits.timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
+        deadline = started_at + limits.timeout_seconds
         return await route(
             self._router,
             conversation,
