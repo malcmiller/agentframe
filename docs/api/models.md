@@ -211,6 +211,51 @@ client versions, and lifecycle details remain open.
 **Related:** [`ModelCapabilities`](#modelcapabilities),
 [local model guide](../agent-examples.md#choose-local-llama-through-ollama).
 
+## `ScriptedModel`
+
+**Purpose / decision:** a deterministic [`Model`](#model) for testing
+model-backed skills offline, quickly and repeatably, without a provider.
+
+**Signature (implemented, M3 #34):** `agentframe.testing.ScriptedModel`.
+
+```text
+ScriptedModel(replies: Iterable[str | ModelResponse | Exception] = (), *, capabilities: ModelCapabilities | None = None)
+```
+
+| Parameter / attribute | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `replies` | `Iterable[str \| ModelResponse \| Exception]` | Default empty | One reply per `generate` call, in order. A `str` returns a `COMPLETED` response with unknown usage; a `ModelResponse` is returned as given (scripted usage/finish reason); an exception, such as `ProviderError(..., transient=True)`, is raised. |
+| `capabilities` | `ModelCapabilities \| None` | Default `ModelCapabilities()` | Returned by `capabilities()`. |
+| `requests` | `list[ModelRequest]` | Attribute | Every request `generate` received, for asserting on assembled messages and settings. |
+| `closed` | `bool` | Attribute | Whether `close()` (or `async with` exit) ran. |
+
+```python
+from agentframe import Message, ModelRequest, ModelSettings, ProviderError
+from agentframe.testing import ScriptedModel
+
+
+async def test_retry_after_rate_limit() -> None:
+    model = ScriptedModel([ProviderError("Rate limited.", transient=True), "Hello!"])
+    request = ModelRequest(
+        messages=(Message(role="user", content="Hi"),), settings=ModelSettings()
+    )
+
+    try:
+        await model.generate(request)
+    except ProviderError:
+        pass
+    response = await model.generate(request)
+
+    assert response.text == "Hello!"
+    assert len(model.requests) == 2
+```
+
+**Behavior / failures:** calling `generate` more times than scripted raises
+`AssertionError` naming the call count, so tests fail clearly. No I/O, no
+provider SDK; importing `agentframe` does not import `agentframe.testing`.
+
+**Related:** [`Model.generate`](#modelgenerate), [`ModelResponse`](#modelresponse).
+
 ## `ModelSettings`
 
 **Purpose / decision:** typed generation settings for individual model requests,
