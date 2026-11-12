@@ -14,16 +14,25 @@ from azure.core.credentials import AccessToken
 from azure.core.exceptions import ClientAuthenticationError
 from azure.core.pipeline.transport import AioHttpTransport
 from azure.identity.aio import DefaultAzureCredential
+from pydantic import BaseModel
 
 from agentframe import (
+    Agent,
     DefinitionError,
     FinishReason,
     FoundryModel,
     IncompleteOutputError,
     Message,
+    ModelError,
     ModelRequest,
     ModelSettings,
+    OutputSchema,
     ProviderError,
+    RunContext,
+    Runtime,
+    UnsupportedCapabilityError,
+    agent,
+    skill,
 )
 
 ENDPOINT = "https://example.openai.azure.com/openai/v1/"
@@ -522,8 +531,15 @@ async def test_capabilities_report_the_configured_context_window() -> None:
         capabilities = await model.capabilities()
 
     assert capabilities.context_window == 128000
-    assert capabilities.structured_output is False
+    assert capabilities.structured_output is True
     assert capabilities.tools is False
+
+
+async def test_structured_output_support_can_be_turned_off() -> None:
+    async with foundry(structured_output=False) as model:
+        capabilities = await model.capabilities()
+
+    assert capabilities.structured_output is False
 
 
 async def test_unconfigured_context_window_is_unknown() -> None:
@@ -570,3 +586,178 @@ def test_missing_extra_names_the_extra_to_install() -> None:
 
     assert result.returncode != 0
     assert "agentframe[foundry]" in result.stderr
+
+
+# Structured output
+
+
+class Summary(BaseModel):
+    text: str
+    points: list[str] = []
+    rating: int | None = 5
+
+
+@agent(version="1.0.0")
+class Summarizer(Agent):
+    """Summarizes text as a typed summary."""
+
+    @skill("summarize", tags=["text"])
+    async def summarize(self, text: str, ctx: RunContext) -> Summary:
+        """Summarize text."""
+        return await ctx.generate(text, output=Summary)
+
+    @skill("failure", tags=["text"])
+    async def failure(self, text: str, ctx: RunContext) -> str:
+        """Return the name of the model error a structured call raises."""
+        try:
+            await ctx.generate(text, output=Summary)
+        except ModelError as error:
+            return type(error).__name__
+        return "no error"
+
+
+def ask_for(output: type[BaseModel], name: str | None = None) -> ModelRequest:
+    schema = OutputSchema(
+        name=output.__name__ if name is None else name,
+        json_schema=output.model_json_schema(),
+    )
+    return ModelRequest(
+        messages=(Message(role="user", content="Summarize"),),
+        settings=ModelSettings(max_output_tokens=100),
+        output=schema,
+    )
+
+
+async def test_structured_requests_send_a_strict_json_schema_format(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+
+    async with foundry() as model:
+        await model.generate(ask_for(Summary))
+
+    [body] = server.bodies()
+    assert body["text"] == {
+        "format": {
+            "type": "json_schema",
+            "name": "Summary",
+            "schema": {
+                "type": "object",
+                "title": "Summary",
+                "properties": {
+                    "text": {"type": "string", "title": "Text"},
+                    "points": {
+                        "anyOf": [
+                            {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "title": "Points",
+                            },
+                            {"type": "null"},
+                        ]
+                    },
+                    "rating": {
+                        "anyOf": [{"type": "integer"}, {"type": "null"}],
+                        "title": "Rating",
+                    },
+                },
+                "required": ["text", "points", "rating"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "format_name"),
+    [
+        ("Page[int]", "Page_int_"),
+        ("Pair[Summary, list[str]]", "Pair_Summary__list_str__"),
+        ("x" * 70, "x" * 64),
+        ("", "output"),
+    ],
+)
+async def test_format_names_are_made_valid(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+    name: str,
+    format_name: str,
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+
+    async with foundry() as model:
+        await model.generate(ask_for(Summary, name=name))
+
+    assert server.bodies()[0]["text"]["format"]["name"] == format_name
+
+
+async def test_nulls_for_defaults_are_dropped_so_defaults_apply(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    reply_json = '{"text": "Short.", "points": null, "rating": null}'
+    use_server(FakeFoundry(reply(text_output(reply_json))))
+
+    async with foundry(context_window=128000) as model:
+        summary = await Runtime().invoke(
+            Summarizer(model=model), skill="summarize", arguments={"text": "Long."}
+        )
+
+    assert summary == Summary(text="Short.", points=[], rating=None)
+
+
+async def test_an_unsupported_schema_fails_before_the_client_is_called(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    class Counts(BaseModel):
+        counts: dict[str, int]
+
+    server = FakeFoundry()
+    use_server(server)
+
+    async with foundry() as model:
+        with pytest.raises(UnsupportedCapabilityError, match="free-form object"):
+            await model.generate(ask_for(Counts))
+
+    assert server.requests == []
+
+
+async def test_a_rejected_structured_request_is_a_safe_non_transient_error(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    use_server(FakeFoundry(status(400)))
+
+    async with foundry() as model:
+        with pytest.raises(ProviderError, match="structured output") as caught:
+            await model.generate(ask_for(Summary))
+
+    assert caught.value.transient is False
+    assert "secret details" not in str(caught.value)
+    assert "Summary" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("foundry_reply", "error"),
+    [
+        (reply(refusal_output()), "ModelRefusalError"),
+        (incomplete("max_output_tokens"), "IncompleteOutputError"),
+        (incomplete("content_filter"), "ModelRefusalError"),
+    ],
+    ids=["refusal", "max-output-tokens", "content-filter"],
+)
+async def test_unfinished_structured_replies_raise_typed_errors_with_usage(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+    foundry_reply: dict[str, Any],
+    error: str,
+) -> None:
+    use_server(FakeFoundry(foundry_reply))
+
+    async with foundry(context_window=128000) as model:
+        result = await Runtime().run(
+            Summarizer(model=model), skill="failure", arguments={"text": "Long."}
+        )
+
+    assert result.value == error
+    assert result.model_calls == 1
+    assert result.usage.total_tokens == 15

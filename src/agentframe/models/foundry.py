@@ -4,8 +4,11 @@ Calls the OpenAI v1 Responses API through the official ``openai`` package.
 Needs the optional extra: ``pip install agentframe[foundry]``.
 """
 
+import json
+import re
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import TracebackType
 from typing import Self
 
@@ -18,6 +21,7 @@ try:
         EasyInputMessageParam,
         Response,
         ResponseInputParam,
+        ResponseTextConfigParam,
         ResponseUsage,
     )
 except ImportError as error:
@@ -32,7 +36,9 @@ from agentframe.models.base import (
     ModelCapabilities,
     ModelRequest,
     ModelResponse,
+    OutputSchema,
 )
+from agentframe.models.strict_schema import drop_defaulted_nulls, strict_schema
 from agentframe.runtime.usage import FinishReason, Usage
 
 FOUNDRY_SCOPE = "https://ai.azure.com/.default"
@@ -56,6 +62,12 @@ class FoundryModel:
     ``max_output_tokens`` caps visible output plus reasoning tokens, so
     reasoning models need a larger cap than their visible answer.
 
+    Structured output uses the Responses API's strict JSON-schema format. The
+    output model's schema is converted to the strict subset by
+    ``strict_schema``; constructs it cannot express fail before sending.
+    Fields with defaults become nullable, and the model's ``null`` for them
+    is dropped so Pydantic applies the default.
+
     Credentials are never logged or included in error messages.
 
     Args:
@@ -74,6 +86,10 @@ class FoundryModel:
             or ``None`` when unknown.
         store: Whether Foundry stores responses server-side. This controls
             response storage only, not every provider retention mechanism.
+        structured_output: Whether to report structured-output support. The
+            Responses API defines it, so it is on by default; turn it off for
+            a deployment that rejects it. A rejection fails the call with a
+            non-transient ``ProviderError``.
 
     Raises:
         DefinitionError: If neither or both of ``client`` and
@@ -90,11 +106,13 @@ class FoundryModel:
         client: openai.AsyncOpenAI | None = None,
         context_window: int | None = None,
         store: bool = False,
+        structured_output: bool = True,
     ) -> None:
         if context_window is not None and context_window <= 0:
             raise DefinitionError("FoundryModel context_window must be greater than 0")
         self.deployment = deployment
         self.store = store
+        self.structured_output = structured_output
         self._context_window = context_window
         self._owns_client = client is None
         self._client = _resolve_client(endpoint, credential, client)
@@ -103,33 +121,47 @@ class FoundryModel:
         """Send ``request`` to the Responses API and return the full reply.
 
         Returns:
-            The reply. A refusal finishes ``REFUSED`` with empty text; output
-            stopped at the token cap finishes ``LENGTH``, and output stopped by
-            a content filter finishes ``CONTENT_FILTER``.
+            The reply; for a structured-output request, its JSON text without
+            the nulls that stand for defaults. A refusal finishes ``REFUSED``
+            with empty text; output stopped at the token cap finishes
+            ``LENGTH``, and output stopped by a content filter finishes
+            ``CONTENT_FILTER``.
 
         Raises:
+            UnsupportedCapabilityError: The output schema uses a construct
+                strict structured output cannot express. Raised before sending.
             IncompleteOutputError: The response stopped early for another reason.
             ProviderError: The call or the response failed. Connection failures,
                 timeouts, rate limits and server errors are transient; rejected
-                credentials, an unknown deployment and invalid requests are not.
+                credentials, an unknown deployment and invalid requests,
+                including a rejected output schema, are not.
         """
         instructions, conversation = _split_instructions(request.messages)
-        async with _provider_errors(self.deployment):
+        text = openai.omit if request.output is None else _text_format(request.output)
+        async with _provider_errors(self.deployment, request.output is not None):
             response = await self._client.responses.create(
                 model=self.deployment,
                 instructions=instructions,
                 input=conversation,
                 max_output_tokens=request.settings.max_output_tokens,
                 store=self.store,
+                text=text,
             )
-        return _model_response(response)
+        model_response = _model_response(response)
+        if request.output is None:
+            return model_response
+        return _without_defaulted_nulls(model_response, request.output)
 
     async def capabilities(self) -> ModelCapabilities:
-        """Return the configured context window; structured output and tools are off.
+        """Return the configured context window and structured-output support.
 
         Does no I/O: the API does not report a deployment's capabilities.
+        Tools are not supported yet.
         """
-        return ModelCapabilities(context_window=self._context_window)
+        return ModelCapabilities(
+            context_window=self._context_window,
+            structured_output=self.structured_output,
+        )
 
     async def close(self) -> None:
         """Close the client this model created; an injected client stays open."""
@@ -196,6 +228,48 @@ def _split_instructions(
         for message in messages[leading:]
     ]
     return instructions or None, conversation
+
+
+def _text_format(output: OutputSchema) -> ResponseTextConfigParam:
+    """Return the strict JSON-schema ``text`` setting for ``output``.
+
+    Raises:
+        UnsupportedCapabilityError: The schema cannot be made strict.
+    """
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": _format_name(output.name),
+            "schema": strict_schema(output.json_schema),
+            "strict": True,
+        }
+    }
+
+
+def _format_name(name: str) -> str:
+    """Make ``name`` a valid format name: ``^[a-zA-Z0-9_-]{1,64}$``.
+
+    Generic Pydantic models have names such as ``Page[int]``.
+    """
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", name)[:64] or "output"
+
+
+def _without_defaulted_nulls(
+    response: ModelResponse, output: OutputSchema
+) -> ModelResponse:
+    """Drop the nulls that stand for defaults from a completed JSON reply.
+
+    Any other reply, including invalid JSON, is returned unchanged for the
+    generation layer to reject.
+    """
+    if response.finish_reason is not FinishReason.COMPLETED:
+        return response
+    try:
+        value = json.loads(response.text)
+    except ValueError:
+        return response
+    text = json.dumps(drop_defaulted_nulls(value, output.json_schema))
+    return replace(response, text=text)
 
 
 def _model_response(response: Response) -> ModelResponse:
@@ -268,7 +342,9 @@ def _usage(usage: ResponseUsage | None) -> Usage:
 
 
 @asynccontextmanager
-async def _provider_errors(deployment: str) -> AsyncIterator[None]:
+async def _provider_errors(
+    deployment: str, structured_output: bool
+) -> AsyncIterator[None]:
     """Turn client and credential errors into ``ProviderError`` with a safe message.
 
     The service's own error text is not passed on because it may echo request
@@ -279,7 +355,7 @@ async def _provider_errors(deployment: str) -> AsyncIterator[None]:
     except openai.APIConnectionError as error:  # Includes timeouts.
         raise ProviderError("Could not reach Foundry", transient=True) from error
     except openai.APIStatusError as error:
-        raise _status_error(error, deployment) from error
+        raise _status_error(error, deployment, structured_output) from error
     except ClientAuthenticationError as error:
         raise ProviderError(
             "Could not get a Microsoft Entra token for Foundry", transient=False
@@ -288,7 +364,9 @@ async def _provider_errors(deployment: str) -> AsyncIterator[None]:
         raise ProviderError("The Foundry call failed", transient=False) from error
 
 
-def _status_error(error: openai.APIStatusError, deployment: str) -> ProviderError:
+def _status_error(
+    error: openai.APIStatusError, deployment: str, structured_output: bool
+) -> ProviderError:
     status_code = error.status_code
     if status_code in (401, 403):
         return ProviderError(
@@ -303,6 +381,12 @@ def _status_error(error: openai.APIStatusError, deployment: str) -> ProviderErro
             f"Foundry could not handle the call now (HTTP {status_code})",
             transient=True,
             retry_after=_retry_after(error.response.headers),
+        )
+    if structured_output:
+        return ProviderError(
+            f"Foundry rejected the structured-output request (HTTP {status_code}); "
+            "the deployment may not support structured output or this schema",
+            transient=False,
         )
     return ProviderError(
         f"Foundry rejected the request (HTTP {status_code})", transient=False
