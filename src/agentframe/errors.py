@@ -1,5 +1,7 @@
 """Errors raised by AgentFrame."""
 
+from agentframe.usage import Usage
+
 
 class AgentFrameError(Exception):
     """Base class for all AgentFrame errors.
@@ -41,6 +43,50 @@ class PermissionDeniedError(AgentFrameError):
 
 class PolicyUnavailableError(AgentFrameError):
     """A required policy failed or did not answer in time, so the run failed closed."""
+
+
+class ModelError(AgentFrameError):
+    """Base class for model failures: capability, refusal, truncation, provider."""
+
+
+class UnsupportedCapabilityError(ModelError):
+    """The model lacks a requested capability; raised before anything is sent."""
+
+
+class ModelRefusalError(ModelError):
+    """The model refused the request. Refusal is never returned as text."""
+
+
+class IncompleteOutputError(ModelError):
+    """The model's output was cut short, for example at its output token limit."""
+
+
+class ProviderError(ModelError):
+    """A model provider call failed, translated without provider details.
+
+    Args:
+        message: Safe, human-readable description of the failure.
+        transient: Whether retrying may succeed (rate limit, timeout, server
+            error). Only transient errors are retried.
+        retry_after: Seconds the provider asked callers to wait before
+            retrying, when it gave a hint.
+        usage: Tokens the failed call consumed, when the provider reported any.
+        invocation_id: Identifier of the run that failed, when known.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        transient: bool,
+        retry_after: float | None = None,
+        usage: Usage | None = None,
+        invocation_id: str | None = None,
+    ) -> None:
+        super().__init__(message, invocation_id=invocation_id)
+        self.transient = transient
+        self.retry_after = retry_after
+        self.usage = usage
 
 
 class LimitExceededError(AgentFrameError):

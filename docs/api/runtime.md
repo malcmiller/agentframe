@@ -5,7 +5,8 @@ contracts. As of M1, `Runtime(services=...)`, `invoke`, `run`, `RunResult`,
 `Usage`, `FinishReason` and the `AgentFrameError`, `DefinitionError`,
 `InputValidationError`, `OutputValidationError`, `PermissionDeniedError` and
 `LimitExceededError` classes are implemented from source. M2 adds
-`Runtime(authorization=...)`, `PolicyUnavailableError` and `CancelledError`; the remaining
+`Runtime(authorization=...)`, `PolicyUnavailableError` and `CancelledError`. M3 #33
+adds the `FinishReason` model values and the `ModelError` family; the remaining
 parameters and errors arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
 
@@ -197,8 +198,7 @@ Exact failed-run usage access/retention remains open.
 of OpenTelemetry. Not the remote A2A response envelope.
 
 **Signature status:** fields below are decided and implemented in M1 as a
-frozen generic dataclass `RunResult[T]`. Finish-reason values beyond
-`COMPLETED` arrive with model milestones.
+frozen generic dataclass `RunResult[T]`.
 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -208,12 +208,13 @@ frozen generic dataclass `RunResult[T]`. Finish-reason values beyond
 | `model_calls` | `int` | Present | Dispatched inference attempts including retries; `0` for model-free runs. |
 | `tool_calls` | `int` | Present | Managed tool executions; `0` in M1. Exact attempted/denied-call breakdown remains open. |
 | `duration` | `datetime.timedelta` | Present | Run duration, not a provider-only time. |
-| `finish_reason` | `FinishReason` (`StrEnum`) | Present | Completion information, not raw provider data or private reasoning. M1 uses only `FinishReason.COMPLETED`. |
+| `finish_reason` | `FinishReason` (`StrEnum`) | Present | Completion information, not raw provider data or private reasoning. Values: `COMPLETED`, `LENGTH` (output token limit reached), `REFUSED`, `CONTENT_FILTER` (decided, M3 #33); more only when a later milestone needs them. Model-free runs report `COMPLETED`. |
 
 `Usage(input_tokens, output_tokens, total_tokens, estimated)` is a frozen
 dataclass. Each count is `int | None`, where `None` means unknown, never zero;
 `estimated: bool` marks estimates. Model-free runs report
-`Usage(0, 0, 0, estimated=False)`. Provider completeness details and no hard
+`Usage(0, 0, 0, estimated=False)`. The same `Usage` and `FinishReason` describe
+a single model call in [`ModelResponse`](models.md#modelresponse). Provider completeness details and no hard
 billing guarantee remain as described in [accounting](../limits.md#accounting-and-enforcement).
 
 ```python
@@ -402,7 +403,10 @@ policy's own error; the original exception is chained for server-side diagnostic
 ## `ModelError`
 
 **Purpose / decision:** base for model capability, refusal, incomplete-output and provider errors.
-**Signature status:** decided `AgentFrameError` subtype; constructor open.
+**Signature status:** implemented (M3 #33) `AgentFrameError` subtype with the
+inherited `(message, *, invocation_id=None)` constructor, as are its subtypes
+except `ProviderError`. Adapters raise them without an invocation ID; the
+runtime attaches the run's ID.
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
@@ -422,7 +426,7 @@ def model_failure(error: ModelError) -> object:
 ## `UnsupportedCapabilityError`
 
 **Purpose / decision:** requested model capability is unsupported.
-**Signature status:** decided `ModelError` subtype; constructor open.
+**Signature status:** implemented `ModelError` subtype (M3 #33).
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
@@ -442,7 +446,7 @@ def unsupported(error: UnsupportedCapabilityError) -> object:
 ## `ModelRefusalError`
 
 **Purpose / decision:** the model refused the requested generation.
-**Signature status:** decided `ModelError` subtype; constructor open.
+**Signature status:** implemented `ModelError` subtype (M3 #33).
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
@@ -462,7 +466,7 @@ def refused(error: ModelRefusalError) -> object:
 ## `IncompleteOutputError`
 
 **Purpose / decision:** token-limit truncation without explicit permission for partial results.
-**Signature status:** decided `ModelError` subtype; partial opt-in syntax open.
+**Signature status:** implemented `ModelError` subtype (M3 #33); partial opt-in syntax open.
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
@@ -482,18 +486,26 @@ def incomplete(error: IncompleteOutputError) -> object:
 ## `ProviderError`
 
 **Purpose / decision:** safely translated provider failure.
-**Signature status:** decided `ModelError` subtype; transient classification details open.
+**Signature status:** implemented `ModelError` subtype (M3 #33). Per-provider
+transient classification belongs to each adapter.
+
+```text
+ProviderError(message, *, transient, retry_after=None, usage=None, invocation_id=None)
+```
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
 | Inherited error contract | Invocation ID and safe message | Required | Redact diagnostics; no provider stack/payload for callers. |
+| `transient` | `bool` | Required keyword | `True` when retrying may succeed (rate limit, timeout, server error). Only transient errors are retried. |
+| `retry_after` | `float \| None` | `None` | Seconds the provider asked callers to wait, from its hint. |
+| `usage` | `Usage \| None` | `None` | Tokens the failed call consumed, when reported, so accounting never treats a failed call as free. |
 
 ```python
 from agentframe import ProviderError
 
 
 def provider_failure(error: ProviderError) -> object:
-    return error.invocation_id
+    return error.transient, error.retry_after
 ```
 
 **Behavior / failures:** transient rate-limit, timeout and server failures alone

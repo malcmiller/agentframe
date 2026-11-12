@@ -3,7 +3,8 @@
 AgentFrame is in early development: M1 model-free authoring (`@agent`, `@skill`,
 `Agent`, `RunContext`, `Inject`, `Services`, `Principal`, `RunLimits` with
 `timeout_seconds`, local `Runtime.invoke` / `run`, `RunResult`, `Usage`,
-`FinishReason` and the M1 error classes) is available from source. There is no
+`FinishReason` and the M1 error classes) is available from source. M3 #33 adds
+the normalized model types, the `Model` protocol and the model errors. There is no
 published release or stable import surface. This reference organizes the
 current contracts for iteration; it does not turn illustrative signatures into
 implemented release commitments. Entries note where M1 or M2 implements them. Explicitly approved names/defaults are design
@@ -30,7 +31,7 @@ deliberately shows typed dependency use instead of inventing one.
 | [Agents, context and services](agents.md) | [`Agent`](agents.md#agent), [`RunContext`](agents.md#runcontext), [`generate`](agents.md#runcontextgenerate), [`Inject[T]`](agents.md#injectt), [`Services`](agents.md#services), [`add`](agents.md#servicesadd), [`add_scoped`](agents.md#servicesadd_scoped). |
 | [Local runtime and results](runtime.md) | [`Runtime`](runtime.md#runtime), [`invoke`](runtime.md#runtimeinvoke), [`run`](runtime.md#runtimerun), [`RunResult`](runtime.md#runresult), future [`StateStore`](runtime.md#statestore-deferred). |
 | [Safe errors](runtime.md#agentframeerror) | `AgentFrameError`, `DefinitionError`, validation/auth/policy errors, `ModelError` and capability/refusal/incomplete/provider subtypes, `LimitExceededError`, AgentFrame `CancelledError`; each has its own entry. |
-| [Models](models.md) | [`Model`](models.md#model), [`Model.generate`](models.md#modelgenerate), [`FoundryModel`](models.md#foundrymodel), [`OllamaModel`](models.md#ollamamodel), [`ModelSettings`](models.md#modelsettings), [`ModelCapabilities`](models.md#modelcapabilities), [`ModelRequest`](models.md#modelrequest), [`ModelResponse`](models.md#modelresponse). |
+| [Models](models.md) | [`Model`](models.md#model), [`Model.generate`](models.md#modelgenerate), [`Model.capabilities`](models.md#modelcapabilities-1), [`Model.close`](models.md#modelclose), [`Message`](models.md#message), [`FoundryModel`](models.md#foundrymodel), [`OllamaModel`](models.md#ollamamodel), [`ModelSettings`](models.md#modelsettings), [`ModelCapabilities`](models.md#modelcapabilities), [`ModelRequest`](models.md#modelrequest), [`ModelResponse`](models.md#modelresponse). |
 | [Execution configuration](configuration.md) | [`AgentConfig`](configuration.md#agentconfig), [`RunLimits`](configuration.md#runlimits), [`TracingConfig`](configuration.md#tracingconfig). |
 | [Identity, authorization and content policy](authorization.md) | [`Principal`](authorization.md#principal), [`AuthorizationPolicy`](authorization.md#authorizationpolicy), [`ExecutionPolicy`](authorization.md#executionpolicy), [`Authenticator`](authorization.md#authenticator), [`DeclaresCardSecurity`](authorization.md#declarescardsecurity), [`EntraIDAuth`](authorization.md#entraidauth), [`APIKeyAuth`](authorization.md#apikeyauth), [`AllowAnonymous`](authorization.md#allowanonymous). |
 | [Hosting](hosting.md) | [`AgentApp`](hosting.md#agentapp), [`HostConfig`](hosting.md#hostconfig), [`A2AConfig`](hosting.md#a2aconfig), [`MCPConfig`](hosting.md#mcpconfig), [`SkillRouter`](hosting.md#skillrouter); native SDK types. |

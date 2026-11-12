@@ -19,18 +19,33 @@ from agentframe.errors import (
     AuthenticationError,
     CancelledError,
     DefinitionError,
+    IncompleteOutputError,
     InputValidationError,
     LimitExceededError,
+    ModelError,
+    ModelRefusalError,
     OutputValidationError,
     PermissionDeniedError,
     PolicyUnavailableError,
+    ProviderError,
+    UnsupportedCapabilityError,
 )
 from agentframe.host import HostConfig
 from agentframe.limits import RunLimits
+from agentframe.models import (
+    Message,
+    Model,
+    ModelCapabilities,
+    ModelRequest,
+    ModelResponse,
+    ModelSettings,
+    Role,
+)
 from agentframe.principal import Principal
 from agentframe.routing import Clarification, SkillCall, SkillRouter
-from agentframe.runtime import FinishReason, RunResult, Runtime, Usage
+from agentframe.runtime import RunResult, Runtime
 from agentframe.services import Inject, Services
+from agentframe.usage import FinishReason, Usage
 
 __version__ = "0.1.0.dev0"
 
@@ -50,13 +65,24 @@ __all__ = [
     "DefinitionError",
     "FinishReason",
     "HostConfig",
+    "IncompleteOutputError",
     "Inject",
     "InputValidationError",
     "LimitExceededError",
+    "Message",
+    "Model",
+    "ModelCapabilities",
+    "ModelError",
+    "ModelRefusalError",
+    "ModelRequest",
+    "ModelResponse",
+    "ModelSettings",
     "OutputValidationError",
     "PermissionDeniedError",
     "PolicyUnavailableError",
     "Principal",
+    "ProviderError",
+    "Role",
     "RunContext",
     "RunLimits",
     "RunResult",
@@ -65,6 +91,7 @@ __all__ = [
     "SkillCall",
     "SkillDefinition",
     "SkillRouter",
+    "UnsupportedCapabilityError",
     "Usage",
     "VerifiedCaller",
     "__version__",

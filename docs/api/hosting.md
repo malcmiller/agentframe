@@ -139,6 +139,7 @@ Every other outcome follows this table:
 | Unknown skill, invalid arguments, permission or policy denied | Task `REJECTED`, safe message |
 | Clarification needed | Task `INPUT_REQUIRED` |
 | Timeout, output validation failure, skill or router exception, router timeout, policy unavailable | Task `FAILED`, safe message |
+| Model error: unsupported capability, refusal, incomplete output, provider failure (M3 #33) | Task `FAILED`, safe message |
 | Cancelled | Task `CANCELED` |
 
 - A malformed [skill call](#structured-skill-call-wire-format) is refused with
