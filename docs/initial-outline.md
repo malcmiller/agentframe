@@ -265,7 +265,7 @@ development tooling; agent features remain unimplemented.
 
 | Milestone | Deliverable | Acceptance |
 | --- | --- | --- |
-| 0 | Development setup (CI confirmation pending) | Installable typed `src/` skeleton, no runtime dependencies, exact development pins and `uv.lock`. Ruff formatting/lint (88-character lines), strict mypy, pytest-asyncio auto mode, pre-commit Ruff/mypy, CI checks on Python 3.13/3.14/3.15 and isolated wheel import. Mark complete only after CI is green on `main`. |
+| 0 | Development setup (complete) | Installable typed `src/` skeleton, no runtime dependencies, exact development pins and `uv.lock`. Ruff formatting/lint (88-character lines), strict mypy, pytest-asyncio auto mode, pre-commit Ruff/mypy, CI checks on Python 3.13/3.14/3.15 and isolated wheel import. All checks passed locally and on `main`. |
 | 1 | Model-free authoring and `Runtime.invoke` | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; invalid definitions, missing services and invalid arguments fail explicitly before skill effects. Prove annotated `Inject[T]`, singleton/scoped ownership, isolated context and validated outputs without network access. `invoke` returns the value; `run` exposes local `RunResult` metadata. |
 | 2 | Native A2A hosting with structured requests and custom routing only | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Add `agentframe run module:Class` with explicit host config. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
 | 3 | Text generation through the shared `Model` contract | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
@@ -273,6 +273,14 @@ development tooling; agent features remain unimplemented.
 | 5 | Bounded tool calling | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
 | 6 | Built-in opt-in model router | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
 | 7 | Hardening and first usable release | Prove decided defaults/precedence within ceilings, deadlines/cancellation, DI startup/scoped cleanup, `RunResult` without telemetry, safe correlated errors and identity/resource/policy failures. Prove host admission/byte/shutdown limits, health/readiness and A2A deduplication/caller isolation without exactly-once claims; installed-wheel examples return complete validated results. No built-in approval pause/resume. |
+
+M0 acceptance was verified on **2026-11-11**: all four checks passed locally on
+Python 3.13.16, 3.14.8 and 3.15.0; fresh-clone `uv sync`, pre-commit, sdist/wheel
+builds, and an isolated wheel import/type marker check passed. The
+[green CI run on `main`](https://github.com/malcmiller/agentframe/actions/runs/43155553347)
+at commit `8d6a825` passed all three Python jobs and the build/import job.
+CI uses `actions/checkout@v7` and `astral-sh/setup-uv@v10.3.3`; the plan's
+`setup-uv@v10` alias did not resolve, so the verified release tag is pinned.
 
 M1 is the first proof: a model-free agent. M2 adds independent native A2A
 interoperability; M3 meets the [README success criterion](../README.md#first-success-criterion)
