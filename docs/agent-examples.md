@@ -84,9 +84,36 @@ class WritingAssistant(Agent):
 ```
 
 Shared instructions apply to every generation call. Trusted skill-specific
-instructions specialize the task without replacing shared constraints. The
-adapter keeps supplied text separate as user content; prompt wording does not
-replace authorization or other enforced policy.
+instructions specialize the task without replacing shared constraints.
+AgentFrame sends the shared instructions, then the skill's instructions, as
+separate `system` messages and the supplied text as a `user` message; it never
+merges the text into instructions. This does not guarantee resistance to prompt
+injection, and prompt wording does not replace authorization or other enforced
+policy.
+
+The agent above and text `ctx.generate` run from source today (M3 #35). Until
+the provider adapters below land, test it with the scripted test model:
+
+```python
+from agentframe import Runtime
+from agentframe.testing import ScriptedModel
+
+
+async def test_summarize() -> None:
+    model = ScriptedModel(["A three-sentence summary."])
+    writer = WritingAssistant(model=model)
+
+    summary = await Runtime().invoke(
+        writer, skill="summarize", arguments={"text": "Long text."}
+    )
+
+    assert summary == "A three-sentence summary."
+    assert [message.role for message in model.requests[0].messages] == [
+        "system",
+        "system",
+        "user",
+    ]
+```
 
 ### Choose local Llama through Ollama
 

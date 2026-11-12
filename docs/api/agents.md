@@ -1,9 +1,11 @@
 # Agents and invocation context
 
 [Reference index and status conventions](README.md). The decisions below are
-approved contracts. `Agent`, `RunContext` (without `generate`), `Inject[T]` and
-`Services` are implemented from source as of M1; model, configuration and tool
-features are not yet. Unspecified details remain open.
+approved contracts. `Agent`, `RunContext`, `Inject[T]` and `Services` are
+implemented from source as of M1; M3 #35 adds model injection, agent
+`instructions` / `model_settings` and the text form of `ctx.generate`.
+`AgentConfig`, structured output and tool features are not implemented yet.
+Unspecified details remain open.
 Models are dependencies, not a second kind of agent base class.
 
 ## `Agent`
@@ -19,13 +21,16 @@ Echo(*, model: Model = ..., config: AgentConfig = ..., tools = ...)
 ```
 
 `Echo` is defined below, not a library class. Exact base constructor, accepted
-containers, and omission representations remain open. In M1 `Agent` has no
-constructor logic; the `model`/`config`/`tools` arguments arrive with their
-milestones. M1 adds a class attribute and a class method:
+containers, and omission representations remain open. The `config`/`tools`
+arguments arrive with their milestones. Implemented members:
 
 | Member | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `Agent(*, model=None)` | keyword-only constructor (M3 #35) | `model=None` | Stores the injected model as `self.model`. Subclasses with their own `__init__` keep working without calling it; they simply have no model. |
+| `model` | `Model \| None` | `None` | The model `ctx.generate` calls. Application-owned: AgentFrame never closes it. |
 | `limits` | `ClassVar[RunLimits]` | `RunLimits()` | Agent-wide execution limits; a skill's own `limits` replace them for that skill. |
+| `instructions` | `ClassVar[str \| None]` (M3 #35) | `None` | Trusted shared instructions, sent as the first `system` message of every `ctx.generate` call. `None` or empty sends none. |
+| `model_settings` | `ClassVar[ModelSettings]` (M3 #35) | `ModelSettings()` | Settings for every model call this agent makes. Field-by-field skill/run precedence arrives with #42. |
 | `definition()` | class method returning the validated agent definition | — | Returns metadata built by `@agent`; raises `DefinitionError` if this exact class was not decorated. |
 
 | Parameter/configuration | Type | Required/default status | Meaning, constraints, precedence |
@@ -33,7 +38,7 @@ milestones. M1 adds a class attribute and a class method:
 | `model` | `Model` implementation | Optional; no implicit provider | Needed only for generation. Model-free and mixed skills use this same base. |
 | `config` | `AgentConfig` | Optional; exact constructor default open | Instance configuration refines class/library defaults, subject to host ceilings and security policy. |
 | `tools` | Explicit collection of decorated callables; type open | Optional per agent; first-release bounded execution/continuations | Supplies internal model tools, not A2A skills, MCP publication or future AG-UI frontend tools. No implicit grants. |
-| Class `instructions` | `str` in existing examples | Optional class default; omission semantics open | Trusted shared instructions. Typed configuration/trusted callable is also intended; callable signature and merge details open. |
+| Class `instructions` | `str \| None` (implemented) | Optional; `None` sends no agent instructions | Trusted shared instructions. Typed configuration/trusted callable is also intended; callable signature and merge details open. |
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -71,8 +76,10 @@ it as `ctx: RunContext`; they do not construct/subclass it or accept it from
 request arguments.
 
 **Signature status:** applications do not construct it. M1 implements a frozen
-dataclass with the attributes below; [`generate`](#runcontextgenerate) arrives
-in M3. Further accessors remain open.
+dataclass with the attributes below; M3 #35 adds the text form of
+[`generate`](#runcontextgenerate). The context also holds a private per-run
+generation state (model, effective settings and limits, usage totals, call
+count), so concurrent runs never share accounting. Further accessors remain open.
 
 | Attribute/concern | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
@@ -125,15 +132,26 @@ registered tools. Exact overload spelling and accepted collection types remain
 open; the names `output` and `tools` and their behavior are decided.
 
 ```text
-await ctx.generate(text, instructions=...) -> str
-await ctx.generate(text, output=Summary) -> Summary
-await ctx.generate(text, tools=[lookup_order]) -> str
+await ctx.generate(text, instructions=...) -> str       # implemented (M3 #35)
+await ctx.generate(text, output=Summary) -> Summary     # M4, not implemented
+await ctx.generate(text, tools=[lookup_order]) -> str   # M5, not implemented
 ```
+
+**Implemented signature (M3 #35):**
+
+```text
+async def generate(self, text: str, *, instructions: str | None = None) -> str
+```
+
+Messages are assembled in this order: the agent's `instructions` as a `system`
+message, then the call's `instructions` as a second `system` message, then
+`text` as a `user` message. Untrusted `text` is never merged into a `system`
+message. This separation does not guarantee resistance to prompt injection.
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
 | `text` | `str` | Required in current text proposal | Untrusted user content, never promoted to privileged instructions. |
-| `instructions` | `str` in current examples | Optional specialization; concrete default open | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
+| `instructions` | `str \| None` | Optional; default `None` sends no call instructions | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
 | `output` | Pydantic model class | Optional; omitted returns text | Return a validated instance of the requested class; unsupported structured capability fails before sending. Schema subset and combinations with tools remain open. |
 | `tools` | Explicit collection of registered `@tool` functions | Optional; no implicit tools | Select authorized registered functions for bounded calls/results and continuations. Decoration or a model suggestion alone does not grant execution. |
 
@@ -152,6 +170,41 @@ class Writer(Agent):
 
 Construct `Writer(model=...)` with a configured [`FoundryModel`](models.md#foundrymodel),
 [`OllamaModel`](models.md#ollamamodel), or structural `Model` implementation.
+Tests can use [`ScriptedModel`](models.md#scriptedmodel):
+
+```python
+from agentframe import Runtime
+from agentframe.testing import ScriptedModel
+
+async def test_summarize() -> None:
+    model = ScriptedModel(["A three-sentence summary."])
+    summary = await Runtime().invoke(
+        Writer(model=model), skill="summarize", arguments={"text": "Long text."}
+    )
+    assert summary == "A three-sentence summary."
+```
+
+**Implemented outcome mapping (M3 #35).** Each model call is counted, and its
+usage is added to the run's totals (`RunResult.usage`, `RunResult.model_calls`)
+before any error is raised. Unknown usage stays unknown, never zero.
+
+| Situation | Result |
+| --- | --- |
+| Agent has no model | `UnsupportedCapabilityError` ("This agent has no model configured"); nothing is sent |
+| `COMPLETED` with text | The text is returned |
+| `COMPLETED` with empty text | `IncompleteOutputError` |
+| `LENGTH` | `IncompleteOutputError`; no partial text |
+| `REFUSED` | `ModelRefusalError` |
+| `CONTENT_FILTER` | `ModelRefusalError` (blocked by a content filter) |
+| Model raises `ProviderError` | Re-raised unchanged; its reported usage, or unknown usage, is recorded |
+| Model raises `UnsupportedCapabilityError` | Re-raised; not counted, because nothing was sent |
+| Run timeout expires during the call | The call is cancelled; `LimitExceededError` |
+| Run cancelled during the call | The call is cancelled |
+
+Hosted runs map these errors to task `FAILED` with their safe message and the
+run's `invocation_id` (see [result and failure mapping](hosting.md#result-and-failure-mapping)). Token limits and
+reservations (#36), retries (#37) and skill/run settings precedence (#42) are
+not implemented yet; every call uses the agent's `model_settings`.
 
 **Behavior / failures:** apply outbound checks to every model request, including
 continuations; reserve/reconcile token budgets and count dispatched attempts
