@@ -89,6 +89,19 @@ class Runtime:
         self._services = services or Services()
         self._authorization = authorization
 
+    def validate(self, agent: Agent) -> None:
+        """Check that ``agent`` can run here before accepting any work.
+
+        Args:
+            agent: Instance of an ``@agent``-decorated class.
+
+        Raises:
+            DefinitionError: The agent's class is not decorated with ``@agent``,
+                or a skill's ``Inject[T]`` parameter has no registered service.
+        """
+        for skill in type(agent).definition().skills.values():
+            self._check_services(skill)
+
     async def invoke(
         self,
         agent: Agent,
