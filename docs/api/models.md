@@ -155,14 +155,14 @@ FoundryModel(
 | `store` | `bool` | `False` | Whether Foundry stores responses server-side. Controls response storage only, not every provider retention mechanism. |
 
 ```python
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 
 from agentframe import FoundryModel
 
 
 async def main(endpoint: str, deployment: str) -> None:
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         FoundryModel(
             endpoint=endpoint, deployment=deployment, credential=credential
         ) as model,
@@ -171,7 +171,10 @@ async def main(endpoint: str, deployment: str) -> None:
 ```
 
 The application supplies the endpoint, deployment and credential; no
-credential chain is selected implicitly.
+credential chain is selected implicitly. `AzureCliCredential` signs in through
+`az login`. The async `DefaultAzureCredential` and managed identity credentials
+also need [`aiohttp`](https://pypi.org/project/aiohttp/), which the `foundry`
+extra does not install.
 
 **Behavior / failures:** implements [`Model.generate`](#modelgenerate) with one
 non-streaming Responses call.

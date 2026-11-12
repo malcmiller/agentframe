@@ -63,8 +63,10 @@ class FoundryModel:
         endpoint: OpenAI v1 base URL, such as
             ``"https://<resource>.openai.azure.com/openai/v1/"``.
         credential: An API key, or an async Azure token credential such as
-            ``azure.identity.aio.DefaultAzureCredential()``. A token credential
-            stays caller-owned; the model never closes it.
+            ``azure.identity.aio.AzureCliCredential()``. A token credential
+            stays caller-owned; the model never closes it. The async
+            ``DefaultAzureCredential`` also needs ``aiohttp``, which the
+            ``foundry`` extra does not install.
         client: An existing ``openai.AsyncOpenAI`` client to use instead of
             ``endpoint`` and ``credential``. It is used with retries disabled
             and is never closed by the model.
