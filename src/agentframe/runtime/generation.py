@@ -41,6 +41,7 @@ from agentframe.models.base import (
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.tools import (
     assistant_message,
+    is_permitted,
     run_tool_call,
     tool_message,
     tool_spec,
@@ -48,9 +49,10 @@ from agentframe.runtime.tools import (
 from agentframe.runtime.usage import FinishReason, Usage
 
 if TYPE_CHECKING:
-    # Imported only for type checking: both modules import this one.
+    # Imported only for type checking: these modules import this one.
     from agentframe.authoring.context import RunContext
     from agentframe.authoring.definitions import ToolDefinition
+    from agentframe.security.authorization import ToolAuthorizationPolicy
 
 NO_USAGE = Usage(input_tokens=0, output_tokens=0, total_tokens=0, estimated=False)
 UNKNOWN_USAGE = Usage(
@@ -176,6 +178,8 @@ class GenerationState:
         services: The run's services, for the tools' ``Inject[T]`` parameters.
         accounting: Tokens, model calls and tool calls this run has used so far.
         tools: The agent's registered tools by name.
+        tool_authorization: Application policy checked before every tool
+            call, or ``None`` for ``requires_permissions`` checks only.
     """
 
     model: Model | None
@@ -187,6 +191,7 @@ class GenerationState:
     tools: "Mapping[str, ToolDefinition]" = field(
         default_factory=lambda: MappingProxyType({})
     )
+    tool_authorization: "ToolAuthorizationPolicy | None" = None
 
     async def generate_text(
         self,
@@ -313,8 +318,15 @@ class GenerationState:
         run one at a time, in the model's order, and each counts toward
         ``max_tool_calls`` before it runs. The loop ends because those limits
         are finite. A tool call is never retried.
+
+        Tools the caller lacks a required permission for are left out of the
+        request, and every call is authorized again before it runs.
         """
-        specs = tuple(tool_spec(tool) for tool in tools.values())
+        specs = tuple(
+            tool_spec(tool)
+            for tool in tools.values()
+            if is_permitted(tool, ctx.principal)
+        )
         while True:
             request = ModelRequest(
                 messages=messages, settings=self.settings, output=output, tools=specs
@@ -326,7 +338,9 @@ class GenerationState:
             messages += (assistant_message(response),)
             for call in response.tool_calls:
                 self.accounting.count_tool_call(self.limits)
-                result = await run_tool_call(call, tools, self.services, ctx)
+                result = await run_tool_call(
+                    call, tools, self.services, ctx, self.tool_authorization
+                )
                 messages += (tool_message(call, result),)
 
     def select_tools(

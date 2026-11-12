@@ -74,6 +74,7 @@ class ToolDefinition:
     description: str
     side_effects: bool
     idempotent: bool
+    requires_permissions: frozenset[str]
     function: Callable[..., Any]
     takes_context: bool
     argument_names: tuple[str, ...]
@@ -155,6 +156,7 @@ def build_tool_definition(
     description: str | None,
     side_effects: bool,
     idempotent: bool,
+    requires_permissions: frozenset[str],
 ) -> ToolDefinition:
     """Inspect a module-level or static function and build its tool definition.
 
@@ -163,6 +165,7 @@ def build_tool_definition(
         description: Explicit description; defaults to the docstring.
         side_effects: Whether calling the tool has consequential effects.
         idempotent: Whether repeating a call has no further effect.
+        requires_permissions: Permissions the caller must all hold.
 
     Raises:
         DefinitionError: If the function breaks a tool rule.
@@ -197,6 +200,7 @@ def build_tool_definition(
         description=tool_description,
         side_effects=side_effects,
         idempotent=idempotent,
+        requires_permissions=requires_permissions,
         function=function,
         takes_context="ctx" in {parameter.name for parameter in parameters},
         argument_names=tuple(parameter.name for parameter in arguments),

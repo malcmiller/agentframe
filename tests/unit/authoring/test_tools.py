@@ -97,6 +97,19 @@ def test_flags_default_to_false_and_may_both_be_true() -> None:
     assert tool_definition(lookup_order).idempotent
 
 
+def test_requires_permissions_is_an_all_of_set() -> None:
+    @tool(description="Cancel.", requires_permissions=["orders:write", "orders:read"])
+    def cancel() -> None: ...
+
+    assert tool_definition(cancel).requires_permissions == {
+        "orders:write",
+        "orders:read",
+    }
+    assert tool_definition(to_fahrenheit).requires_permissions == frozenset()
+    with pytest.raises(DefinitionError, match="list of strings"):
+        tool(requires_permissions="orders:write")
+
+
 def test_schema_matches_the_business_parameters_only() -> None:
     class LookupArguments(BaseModel):
         order_id: str

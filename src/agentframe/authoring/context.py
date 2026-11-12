@@ -76,6 +76,8 @@ class RunContext:
                 order, and their results are sent back until it answers.
                 A call naming a tool that was not offered, or with invalid
                 arguments, runs nothing; the model is told what was wrong.
+                Tools whose ``requires_permissions`` the caller lacks are
+                not offered, and every call is authorized before it runs.
 
         Returns:
             The model's complete answer, or an ``output`` instance when
@@ -99,6 +101,11 @@ class RunContext:
                 for text cut short at the limit, the error's ``partial_text``
                 holds what arrived, and a skill may catch it and use it.
             ProviderError: The model provider call failed.
+            PermissionDeniedError: The model called a tool the caller lacks
+                a required permission for, or the runtime's tool
+                authorization policy denied a call. The model is never told.
+            PolicyUnavailableError: The tool authorization policy raised an
+                error or did not answer before the run's deadline.
             LimitExceededError: A model call does not fit the run's limits,
                 the run has made ``max_tool_calls`` tool calls, or the run's
                 timeout expired during a model or tool call.
