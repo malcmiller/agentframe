@@ -132,8 +132,8 @@ through the OpenAI v1 **Responses API** using the official `openai` Python
 package, not deploy a hosted agent. The Azure AI Inference SDK is retired and
 not used.
 
-**Signature status:** implemented (M3 #39); decisions confirmed 2026-11-12.
-Requires the optional extra `agentframe[foundry]`, which pins
+**Signature status:** implemented (M3 #39; structured output M4 #55);
+decisions confirmed 2026-11-12. Requires the optional extra `agentframe[foundry]`, which pins
 [`openai`](https://github.com/openai/openai-python) (`3.49.0`),
 [`azure-identity`](https://pypi.org/project/azure-identity/) (`1.27.0`) and
 [`aiohttp`](https://pypi.org/project/aiohttp/) (`3.14.5`), azure-core's async
@@ -147,6 +147,7 @@ FoundryModel(
     credential: str | AsyncTokenCredential | None = None,
     client: openai.AsyncOpenAI | None = None,
     context_window: int | None = None, store: bool = False,
+    structured_output: bool = True,
 )
 ```
 
@@ -158,6 +159,7 @@ FoundryModel(
 | `client` | `openai.AsyncOpenAI \| None` | `None` | An application-created client used instead of `endpoint`/`credential` (giving both fails). Used through `with_options(max_retries=0)`; it stays caller-owned and is never closed by the model. |
 | `context_window` | `int \| None` | `None` | Tokens of input plus output the deployment accepts. The API does not report it, so `None` means unknown, never guessed. Must be greater than zero. |
 | `store` | `bool` | `False` | Whether Foundry stores responses server-side. Controls response storage only, not every provider retention mechanism. |
+| `structured_output` | `bool` | `True` | Whether `capabilities()` reports structured output. The Responses API defines it, so it is on by default (relaxing "unknown = unsupported" for Foundry only); pass `False` for a deployment that rejects it. A rejection fails the call with a non-transient `ProviderError`, never a retry or success. |
 
 ```python
 from azure.identity.aio import AzureCliCredential
@@ -209,7 +211,7 @@ non-streaming Responses call.
   401/403, 404, other 4xx and Entra token failures are not. Messages never
   include the service's error text or credentials.
 - [`capabilities`](#modelcapabilities-1) does no I/O and reports the
-  configured `context_window` (or `None`); structured output and tools are
+  configured `context_window` (or `None`) and `structured_output`; tools are
   unsupported. Without `context_window=`, an agent using this model needs an
   explicit `RunLimits(max_input_tokens=...)`; otherwise `AgentApp` startup
   fails with `DefinitionError` ([limits accounting](../guides/limits.md#implemented-token-accounting-m3), M3 #36).
@@ -217,6 +219,56 @@ non-streaming Responses call.
   set `AGENTFRAME_TEST_FOUNDRY=1`, `AGENTFRAME_FOUNDRY_ENDPOINT` and
   `AGENTFRAME_FOUNDRY_DEPLOYMENT`; they sign in with the Azure CLI credential.
   Default test runs and CI never call Foundry. See `AGENTS.md`.
+
+### Structured output
+
+`ctx.generate(..., output=Summary)` sends the Responses API's strict JSON-schema
+format; without `output=`, requests are unchanged from M3:
+
+```text
+text={"format": {"type": "json_schema", "name": <name>,
+                 "schema": strict_schema(<json_schema>), "strict": True}}
+```
+
+- `name` is the [`OutputSchema`](#outputschema) name with every character
+  outside `a-zA-Z0-9_-` replaced by `_` and cut to 64 characters, so a generic
+  model such as `Page[int]` becomes `Page_int_` (empty becomes `output`).
+- `strict_schema` (`agentframe.models.strict_schema`, AgentFrame-owned, no
+  `openai.lib` helpers or `responses.parse`) copies the Pydantic schema and
+  makes it strict: every object gets `"additionalProperties": false` and all
+  of its properties in `required`; a `$ref` with sibling keywords (such as
+  `description`) is wrapped in a one-branch `anyOf`, because strict mode rejects
+  `$ref` siblings; and `default` keywords are removed. Other keywords are kept
+  as-is: `title`, `description`, `enum`, `const`, `anyOf`, `$defs`/`$ref`
+  (including recursion), `pattern`, `format`, `minLength`/`maxLength`,
+  `minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum`/`multipleOf` and
+  `minItems`/`maxItems`. A real `gpt-5.4` deployment accepted `title`,
+  `default` and `minLength`/`maxLength`, and rejected `$ref` with sibling
+  keywords (2026-11-12).
+- **Defaulted fields:** strict mode makes every property required, which would
+  erase Pydantic defaults. A field with a default (including
+  `default_factory`) becomes nullable (`anyOf [T, null]`); when the model
+  answers `null`, the adapter drops it before returning `ModelResponse.text`,
+  so the default applies. A field already nullable in the model
+  (`x: int | None = 5`) keeps an explicit `null`. Where a reply object could
+  match several `anyOf` object branches, its nulls are left as they are.
+- **Rejected before sending** with `UnsupportedCapabilityError`, which names the
+  construct and field path, never a value: a root that is not an object;
+  `allOf`, `not`, `if`/`then`/`else`, `dependentRequired`, `dependentSchemas`,
+  `oneOf` (Pydantic discriminated unions; use a plain union) and
+  `patternProperties`; `prefixItems` (Pydantic `tuple[...]` fields; use a
+  list or a model); free-form objects (`dict[str, X]`, `extra="allow"`);
+  and values of any type (`Any`). No non-strict fallback is attempted.
+- Validation stays in the generation layer: the adapter returns the JSON text
+  and never validates it. Refusal, `max_output_tokens` and content-filter
+  replies finish `REFUSED`, `LENGTH` and `CONTENT_FILTER` as for text, so
+  `ctx.generate` raises `ModelRefusalError`, `IncompleteOutputError` and
+  `ModelRefusalError` with the call's usage recorded.
+- A 4xx rejection of a structured request (for example a deployment without
+  structured output, or a schema the converter let through) raises a
+  non-transient `ProviderError` saying the deployment may not support
+  structured output or this schema; the schema and the service's text are
+  never echoed.
 
 **Related:** [`ModelSettings`](#modelsettings),
 [Foundry guide](../guides/agent-examples.md#switch-to-foundry),
@@ -649,7 +701,8 @@ schema = OutputSchema(name="Summary", json_schema=Summary.model_json_schema())
 
 **Behavior / failures:** only `BaseModel` subclasses (not `RootModel`) produce
 an `OutputSchema`; anything else raises `DefinitionError` before sending.
-Provider strict-mode conversion is the adapter's job (Foundry #55, Ollama #56).
+Provider strict-mode conversion is the adapter's job (see
+[`FoundryModel` structured output](#structured-output); Ollama #56).
 
 **Related:** [`ModelRequest`](#modelrequest),
 [`RunContext.generate`](agents.md#runcontextgenerate).

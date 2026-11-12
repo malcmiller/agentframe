@@ -22,6 +22,7 @@ from a2a.client import A2ACardResolver
 from a2a.helpers import get_artifact_text
 from a2a.types import TaskState
 from azure.identity.aio import AzureCliCredential
+from pydantic import BaseModel
 
 from a2a_client import call_skill, connect
 from agentframe import (
@@ -62,6 +63,26 @@ class Assistant(Agent):
     async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer a question briefly."""
         return await ctx.generate(question)
+
+
+class Capital(BaseModel):
+    country: str
+    city: str
+    nicknames: list[str] = []
+
+
+@agent(version="1.0.0")
+class Geographer(Agent):
+    """Answers geography questions with typed data."""
+
+    # Reasoning deployments count reasoning tokens toward the output cap.
+    model_settings = ModelSettings(max_output_tokens=256)
+    limits = RunLimits(max_input_tokens=1000)
+
+    @skill("capital", tags=["geography"])
+    async def capital(self, country: str, ctx: RunContext) -> Capital:
+        """Name a country's capital city."""
+        return await ctx.generate(f"The capital of {country}?", output=Capital)
 
 
 # The providers, configured only through environment variables
@@ -177,6 +198,27 @@ async def test_unknown_model_fails_with_a_clear_error(open_model: OpenModel) -> 
 
     assert not raised.value.transient
     assert raised.value.invocation_id
+
+
+# Structured output (Foundry; Ollama follows in its own story)
+
+
+@pytest.mark.foundry
+@pytest.mark.skipif(
+    os.environ.get("AGENTFRAME_TEST_FOUNDRY") != "1",
+    reason="set AGENTFRAME_TEST_FOUNDRY=1",
+)
+async def test_foundry_returns_a_validated_structured_output() -> None:
+    async with foundry_model() as model:
+        result = await Runtime().run(
+            Geographer(model=model), skill="capital", arguments={"country": "France"}
+        )
+
+    assert isinstance(result.value, Capital)
+    assert result.value.city == "Paris"
+    assert result.model_calls == 1
+    assert result.usage.total_tokens
+    assert not result.usage.estimated
 
 
 # Hosted: the official A2A client calls the agent with a structured request
