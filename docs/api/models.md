@@ -330,15 +330,18 @@ provider SDK; importing `agentframe` does not import `agentframe.testing`.
 **Purpose / decision:** typed generation settings for individual model requests,
 separate from aggregate invocation budgets and actual model context capacity.
 
-**Signature (implemented, M3 #33):** frozen dataclass.
+**Signature (implemented, M3 #33; unset representation M3 #42):** frozen,
+keyword-only dataclass. Every field defaults to `None`, meaning "unset": the
+value is inherited from the next lower precedence level. The library defaults
+are `DEFAULT_MODEL_SETTINGS = ModelSettings(max_output_tokens=4096)`.
 
 ```text
-ModelSettings(max_output_tokens: int = 4096)
+ModelSettings(*, max_output_tokens: int | None = None)
 ```
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `max_output_tokens` | `int` | `4096`, configurable | Canonical per-model-call output allowance, not a second `RunLimits` field. Must be greater than zero (`DefinitionError` otherwise). Must fit model context, host ceilings and remaining run budget; reasoning-token inclusion is provider/API-specific. |
+| `max_output_tokens` | `int \| None` | `None` (unset); library default `4096` | Canonical per-model-call output allowance, not a second `RunLimits` field. Must be greater than zero when set (`DefinitionError` otherwise). Must fit model context, host ceilings and remaining run budget; reasoning-token inclusion is provider/API-specific. |
 
 ```python
 from agentframe import ModelSettings
@@ -351,8 +354,11 @@ settings = ModelSettings(max_output_tokens=800)
 settings against the actual deployment and effective limits; unsupported
 requested settings fail, not disappear. Typed provider-specific options are
 intended, but no universal temperature/reasoning fields or option registry are
-settled. Precedence is library → agent → skill → per-run within host ceilings,
-merged field by field (#42). Do not duplicate output tokens in `RunLimits`.
+settled. Precedence is library → agent → skill → per-run, merged field by
+field (see [precedence](configuration.md#precedence)); host ceilings arrive in
+M7. A [`ModelRequest`](#modelrequest) built by the runtime always carries the fully
+resolved settings, with every field set. Do not duplicate output tokens in
+`RunLimits`.
 
 **Related:** [`AgentConfig`](configuration.md#agentconfig),
 [`RunLimits`](configuration.md#runlimits), [limit scopes](../limits.md#separate-the-scopes).

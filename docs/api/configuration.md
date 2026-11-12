@@ -1,8 +1,9 @@
 # Execution configuration
 
 [Reference index and status conventions](README.md). Defaults and precedence
-identified as decided below are approved design contracts, not implemented
-enforcement. Example overrides are not the library defaults.
+identified as decided below are approved design contracts; field-by-field
+[precedence](#precedence), `RunOptions` and the `timeout_seconds` limit are
+implemented, other limits and host ceilings are not yet enforced. Example overrides are not the library defaults.
 
 ## `AgentConfig`
 
@@ -40,8 +41,9 @@ Supply as `config=` when constructing an author-defined [`Agent`](agents.md#agen
 subclass.
 
 **Behavior / failures:** resolve library → agent → skill → per-run, always
-within host ceilings. Skills use `@skill(limits=RunLimits(...))`; exact per-run
-options syntax and partial-field composition remain open. Shared instructions combine with
+within host ceilings, merged field by field (see [precedence](#precedence)).
+Skills use `@skill(limits=..., model_settings=...)`; local runs use
+[`RunOptions`](#runoptions). Shared instructions combine with
 trusted generation-specific instructions without replacing shared constraints.
 Reject invalid settings or explicit requests exceeding policy; never silently
 clamp them or allow overrides to weaken security/host ceilings.
@@ -85,11 +87,14 @@ limits = RunLimits(
 )
 ```
 
-**Behavior / failures:** validate finite settings; exact numeric ranges, zero
-semantics, and partial-field composition remain open. M1 implements a frozen
-`RunLimits(timeout_seconds: float = 120.0)` only; the other fields arrive with
-model and tool milestones. A `timeout_seconds` that is not greater than zero
-raises `DefinitionError`, and exceeding it raises `LimitExceededError`. Model-free skills still
+**Behavior / failures:** validate finite settings; exact numeric ranges and zero
+semantics remain open. Implemented so far: a frozen, keyword-only
+`RunLimits(*, timeout_seconds: float | None = None)`; the other fields arrive
+with model and tool milestones. Every field defaults to `None`, meaning
+"unset", and is inherited field by field (see [precedence](#precedence)); the
+library defaults are `DEFAULT_LIMITS = RunLimits(timeout_seconds=120.0)`. A
+`timeout_seconds` that is set but not greater than zero raises
+`DefinitionError`, and exceeding it raises `LimitExceededError`. Model-free skills still
 have deadlines but consume no model tokens. Concurrency/request-size controls
 are separate host requirements, not invented fields on this type.
 
@@ -101,8 +106,8 @@ budgeted before selection and pass remaining allowance to the skill. Retries,
 continuations, and explicit child work cannot reset or double-spend budgets.
 First-release typed structured generation and bounded registered-tool loops
 use these allowances. Resolve library → agent → skill → per-run; none
-may exceed host ceilings. `@skill(limits=RunLimits(...))` is decided; exact
-per-run keyword/container and partial-field merge mechanics remain open.
+may exceed host ceilings. `@skill(limits=RunLimits(...))` and per-run
+[`RunOptions`](#runoptions) are implemented (M3 #42) and merged field by field.
 Host admission/bytes/shutdown defaults live on `HostConfig`, not this type.
 
 Invalid/excessive requests, input overflow, exhausted budgets, unavailable
@@ -122,6 +127,90 @@ new guessed `RunLimits` field. See [cross-agent budgets](../limits.md#cross-agen
 **Related:** [`ModelSettings.max_output_tokens`](models.md#modelsettings),
 [`HostConfig.limits_ceiling`](hosting.md#hostconfig),
 [accounting rationale](../limits.md#accounting-and-enforcement).
+
+## Precedence
+
+**Decision (2026-11-12, implemented M3 #42):** limits and model settings combine
+**field by field** in this order, lowest to highest:
+
+1. Library defaults: `DEFAULT_LIMITS` (`timeout_seconds=120`) and
+   `DEFAULT_MODEL_SETTINGS` (`max_output_tokens=4096`).
+2. Agent: class attributes `limits = RunLimits(...)` and
+   `model_settings = ModelSettings(...)`.
+3. Skill: `@skill(limits=RunLimits(...), model_settings=ModelSettings(...))`.
+4. Per run: `runtime.run(..., options=RunOptions(...))` or the same `options=`
+   on `invoke`.
+
+Only fields a level explicitly sets override; a field left `None` (unset) falls
+through to the next lower level. Overriding one value, such as a skill's
+`timeout_seconds`, therefore never resets the agent's other limits or settings.
+The merged values are the run's effective settings: they set the run deadline,
+are stored on the run's generation state and are sent, fully resolved, in
+every [`ModelRequest`](models.md#modelrequest).
+
+```python
+from agentframe import Agent, ModelSettings, RunContext, RunLimits, agent, skill
+
+
+@agent(version="1.0.0")
+class Editor(Agent):
+    """Edits text."""
+
+    limits = RunLimits(timeout_seconds=30)
+    model_settings = ModelSettings(max_output_tokens=512)
+
+    @skill("quick", limits=RunLimits(timeout_seconds=5), tags=["text"])
+    async def quick(self, text: str, ctx: RunContext) -> str:
+        """Edit text quickly."""
+        # Effective: timeout_seconds=5 (skill), max_output_tokens=512 (agent).
+        return await ctx.generate(text)
+```
+
+Hosted A2A requests use library, agent and skill settings only; callers cannot
+send per-run options in M3. Host ceilings (M7) will cap the merged result as an
+independent constraint; they are not implemented yet.
+
+**Related:** [`RunOptions`](#runoptions), [`RunLimits`](#runlimits),
+[`ModelSettings`](models.md#modelsettings),
+[defaults versus ceilings](../limits.md#defaults-versus-ceilings).
+
+## `RunOptions`
+
+**Purpose / decision:** per-run limits and model settings for one local run,
+kept apart from the skill's business arguments.
+
+**Signature (implemented, M3 #42):** frozen, keyword-only dataclass.
+
+```text
+RunOptions(*, limits: RunLimits | None = None, model_settings: ModelSettings | None = None)
+```
+
+| Parameter | Type | Required/default status | Meaning, constraints, precedence |
+| --- | --- | --- | --- |
+| `limits` | `RunLimits \| None` | Optional; `None` sets nothing | Highest-precedence limits. Only fields it sets override the skill's, agent's and library's values. |
+| `model_settings` | `ModelSettings \| None` | Optional; `None` sets nothing | Highest-precedence model settings, merged field by field like `limits`. |
+
+```python
+from agentframe import Agent, ModelSettings, RunOptions, Runtime
+
+
+async def short_summary(runtime: Runtime, writer: Agent) -> str:
+    options = RunOptions(model_settings=ModelSettings(max_output_tokens=200))
+    return await runtime.invoke(
+        writer, skill="summarize", arguments={"text": "..."}, options=options
+    )
+```
+
+`writer` is an application-supplied agent with a `summarize` skill.
+
+**Behavior / failures:** options apply to one run only and never change the
+agent, skill or other runs. Invalid values fail when the `RunLimits` or
+`ModelSettings` is constructed (`DefinitionError`). Hosted requests never
+accept per-run options from callers in M3; authenticated remote overrides and
+host ceilings remain later work.
+
+**Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
+[`Runtime.run`](runtime.md#runtimerun), [precedence](#precedence).
 
 ## `TracingConfig`
 

@@ -63,7 +63,8 @@ writer = WritingAssistant(
 
 The decided defaults above are configurable. Skills can use
 `@skill(..., limits=RunLimits(timeout_seconds=30, max_tool_calls=4))`;
-exact per-run options syntax and partial-field composition remain open.
+per-run settings use `options=RunOptions(...)`, and every level overrides only
+the fields it sets ([precedence](api/configuration.md#precedence)).
 Do not pass limits through skill business arguments.
 
 ## Defaults versus ceilings
