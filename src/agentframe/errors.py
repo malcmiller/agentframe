@@ -36,7 +36,11 @@ class AuthenticationError(AgentFrameError):
 
 
 class PermissionDeniedError(AgentFrameError):
-    """The caller lacks a permission that the skill requires."""
+    """The caller lacks a required permission or the policy denied the run."""
+
+
+class PolicyUnavailableError(AgentFrameError):
+    """A required policy failed or did not answer in time, so the run failed closed."""
 
 
 class LimitExceededError(AgentFrameError):

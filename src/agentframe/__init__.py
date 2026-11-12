@@ -8,8 +8,10 @@ from agentframe.auth import (
     Authenticator,
     VerifiedCaller,
 )
+from agentframe.authorization import AuthorizationPolicy
 from agentframe.context import RunContext
 from agentframe.decorators import agent, skill
+from agentframe.definitions import SkillDefinition
 from agentframe.errors import (
     AgentFrameError,
     AuthenticationError,
@@ -18,6 +20,7 @@ from agentframe.errors import (
     LimitExceededError,
     OutputValidationError,
     PermissionDeniedError,
+    PolicyUnavailableError,
 )
 from agentframe.limits import RunLimits
 from agentframe.principal import Principal
@@ -34,6 +37,7 @@ __all__ = [
     "AllowAnonymous",
     "AuthenticationError",
     "Authenticator",
+    "AuthorizationPolicy",
     "DefinitionError",
     "FinishReason",
     "Inject",
@@ -41,12 +45,14 @@ __all__ = [
     "LimitExceededError",
     "OutputValidationError",
     "PermissionDeniedError",
+    "PolicyUnavailableError",
     "Principal",
     "RunContext",
     "RunLimits",
     "RunResult",
     "Runtime",
     "Services",
+    "SkillDefinition",
     "Usage",
     "VerifiedCaller",
     "__version__",
