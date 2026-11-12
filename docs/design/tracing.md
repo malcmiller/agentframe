@@ -137,5 +137,5 @@ Telemetry export failure must not become an agent success/failure substitute:
 report exporter health through the observability infrastructure, keep execution
 failures explicit, and never rely on successful export to enforce limits.
 
-See [limits](limits.md) for independent accounting and
+See [limits](../guides/limits.md) for independent accounting and
 [MCP skill configuration](mcp-skills.md) for shared server composition.

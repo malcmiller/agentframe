@@ -1,4 +1,4 @@
-# Initial outline
+# Roadmap
 
 ## Product definition
 
@@ -71,11 +71,11 @@ separate from internal model-callable `@tool` registration and caller authorizat
 A2A stays first-class and MCP does not block the minimal initial slice.
 Tool-like typed/quick/single-shot skills may also use MCP; agent-like judgment,
 multi-turn or clarification skills usually stay A2A-only. This is guidance,
-not an enforced exposure rule. The [request-style guide](mcp-skills.md#a2a-request-styles-and-extension-boundary)
+not an enforced exposure rule. The [request-style guide](design/mcp-skills.md#a2a-request-styles-and-extension-boundary)
 cites the native extension, data-part and task-state mechanisms; the extension
 URI/schema/name and detailed support advertisement remain open.
 
-The complete [piece-to-code mapping](base-classes.md#authoring-and-extension-decisions)
+The complete [piece-to-code mapping](design/base-classes.md#authoring-and-extension-decisions)
 records which surfaces are annotation-based, subclass-derived, injected, or
 library-managed. The normal authoring path needs only one AgentFrame subclass.
 Custom components may implement structural protocols without inheriting a
@@ -131,7 +131,7 @@ workflow/graph engine, deployment service, write-registration system,
 lease/federation layer, or A2A task manager. Discovery itself does not delegate;
 a separate `RemoteAgentClient` uses native A2A after selection/authorization,
 without a finalized method/payload API. A2A is not a registry protocol.
-See [discovery design](discovery.md) and [surface reference](api/discovery.md).
+See [discovery design](design/discovery.md) and [surface reference](api/discovery.md).
 
 ## Initial adapters
 
@@ -225,8 +225,8 @@ External screening is explicit data egress, not an automatic safety fallback.
 Validate model output but never treat it as authority. Preserve or reduce
 permissions during delegation; service credentials do not expand caller grants.
 Resource decisions must be enforced at the actual boundary where side effects happen, not
-only at skill admission. See [authorization](authorization.md) and
-[prompt safeguarding](prompt-safeguarding.md).
+only at skill admission. See [authorization](guides/authorization.md) and
+[prompt safeguarding](design/prompt-safeguarding.md).
 Human approval workflows belong to the application. No built-in approval
 pause/resume is part of the first release; unavailable required approval or
 authorization must prevent the action, not silently allow it. Native A2A tasks
@@ -243,13 +243,13 @@ Preflight/reserve allowances and reconcile actual usage; label estimates and
 unknown usage honestly. Strict accounting must reject calls without a reliable
 bound. Do not promise a hard financial cap or cancellation without charges.
 Budget any model-backed routing before skill execution and inherit remaining
-allowances rather than reset them. See [limits](limits.md).
+allowances rather than reset them. See [limits](guides/limits.md).
 
 Use optional `TracingConfig` on `Runtime`, with an application-owned
 OpenTelemetry provider. Sampling/export are application policy; content capture
 is off by default. Keep correlation and accounting independent of tracing.
 Do not leak credentials, prompts, outputs, or private reasoning; incoming trace
-context is not identity. See [tracing](tracing.md).
+context is not identity. See [tracing](design/tracing.md).
 `Runtime.invoke` returns the validated value. `Runtime.run` returns `RunResult`
 with value, invocation ID, token usage (complete/estimated; unknown never zero),
 model/tool calls, duration and finish reason even with tracing off. A2A returns
@@ -396,10 +396,10 @@ authorization, shared limits/tracing, and independent-client interoperability.
 Tracing integration adds a separate opt-in check for safe metadata, correct span boundaries,
 and accounting that still works with tracing disabled. These additions do not
 reintroduce a UI, workflow platform, or custom REST skill API.
-See the [combined hosting proposal](mcp-skills.md).
+See the [combined hosting proposal](design/mcp-skills.md).
 
 Streaming/AG-UI is another separate follow-up after M7, with its existing
-[acceptance criteria](streaming.md#open-contracts-and-delivery-gate) for ordering,
+[acceptance criteria](design/streaming.md#open-contracts-and-delivery-gate) for ordering,
 errors/truncation, refusal/incomplete results, safe side effects, isolation and
 no secrets/private reasoning, proven with an independent AG-UI client. Pin the
 feature profile, versions/binding and lifecycle/policy contracts before claiming

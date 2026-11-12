@@ -7,7 +7,7 @@ scope for the next multi-agent release (M8+), after the M7 single-agent release,
 not optional add-ons. Orchestrators are ordinary AgentFrame skills that call
 independently deployed specialists over A2A, not a workflow/graph engine.
 A2A is not a registry protocol.
-See the [design and lifecycle guide](../discovery.md) for composition examples.
+See the [design and lifecycle guide](../design/discovery.md) for composition examples.
 
 ## `AgentRegistry`
 
@@ -54,7 +54,7 @@ malformed references and unsupported queries are explicit failures, not empty
 results. Exact abstract-base implementation and errors remain open. No required
 `register`, deployment, HTTP, polling, or card-refresh loop.
 
-**Related:** [extension guide](../discovery.md#extending-the-read-base),
+**Related:** [extension guide](../design/discovery.md#extending-the-read-base),
 [`AgentDirectory`](#agentdirectory).
 
 ## `AgentRegistry.get`
@@ -82,7 +82,7 @@ Distinguish confirmed absence from read outage/invalid data; missing-ID exceptio
 type remains open. ID format, namespaces and source consistency need design.
 
 **Related:** [`AgentReference`](#agentreference),
-[failure boundaries](../discovery.md#failure-trust-and-isolation-boundaries).
+[failure boundaries](../design/discovery.md#failure-trust-and-isolation-boundaries).
 
 ## `AgentRegistry.list`
 
@@ -113,7 +113,7 @@ query skill/tag fields absent from references without an explicit source
 metadata/enrichment contract; matching is not access permission.
 
 **Related:** [`AgentQuery`](#agentquery),
-[query placement](../discovery.md#query-matching-and-card-enrichment).
+[query placement](../design/discovery.md#query-matching-and-card-enrichment).
 
 ## `AgentReference`
 
@@ -144,7 +144,7 @@ to the eventual validation contract. A schema-valid reference is not trusted,
 healthy, authorized, or guaranteed invocable. Skills/tags are not assumed
 members of this minimal type.
 
-**Related:** [candidate source format](../discovery.md#sources-and-reference-format),
+**Related:** [candidate source format](../design/discovery.md#sources-and-reference-format),
 [`AgentCardResolver`](#agentcardresolver).
 
 ## `AgentQuery`
@@ -177,7 +177,7 @@ search combination semantics remain open. Directory card search is now decided
 as [`find(skill=...)` / `find(tags=...)`](#agentdirectoryfind).
 
 **Related:** [`AgentRegistry.list`](#agentregistrylist),
-[enrichment boundary](../discovery.md#query-matching-and-card-enrichment).
+[enrichment boundary](../design/discovery.md#query-matching-and-card-enrichment).
 
 ## `EnvironmentAgentRegistry`
 
@@ -204,7 +204,7 @@ Missing variable, malformed references, duplicate IDs and unsupported
 queries fail explicitly. Empty authoritative source differs from missing or
 failed source. No card fetching or background polling in this adapter.
 
-**Related:** [source formats](../discovery.md#sources-and-reference-format),
+**Related:** [source formats](../design/discovery.md#sources-and-reference-format),
 [`AgentRegistry`](#agentregistry).
 
 ## `FileAgentRegistry`
@@ -230,7 +230,7 @@ unsupported queries fail, not return empty matches. Bounded reads, source
 reconciliation and concurrent-update consistency require specification.
 The example does not create `agents.yaml` or finalize its schema.
 
-**Related:** [source format](../discovery.md#sources-and-reference-format),
+**Related:** [source format](../design/discovery.md#sources-and-reference-format),
 [`AgentDirectory`](#agentdirectory).
 
 ## `FoundryAgentRegistry`
@@ -282,7 +282,7 @@ are a possible additional reference source, not a chosen contract.
 See [observed SDK metadata](https://pypi.org/project/azure-ai-projects/2.10.0/);
 this does not mean AgentFrame agents deploy to Foundry.
 
-**Related:** [chosen source and mapping boundaries](../discovery.md#sources-and-reference-format),
+**Related:** [chosen source and mapping boundaries](../design/discovery.md#sources-and-reference-format),
 [`FoundryModel`](models.md#foundrymodel).
 
 ## `AgentCardResolver`
@@ -323,7 +323,7 @@ auth/network/timeout failures remain explicit. URL/schema validation alone is
 not SSRF prevention or endpoint trust. No resolver method signature is settled;
 users need not implement card HTTP loops for each backend.
 
-**Related:** [trust boundaries](../discovery.md#failure-trust-and-isolation-boundaries),
+**Related:** [trust boundaries](../design/discovery.md#failure-trust-and-isolation-boundaries),
 [`AgentDirectory`](#agentdirectory).
 
 ## `CardCacheConfig`
@@ -355,7 +355,7 @@ card variants and source/reference versions, including coalesced fetches.
 Cache freshness is neither health, trust nor current permission. Source refresh
 and removal semantics cannot be inferred from card TTL alone.
 
-**Related:** [freshness lifecycle](../discovery.md#managed-directory-lifecycle),
+**Related:** [freshness lifecycle](../design/discovery.md#managed-directory-lifecycle),
 [`AgentDirectory.refresh`](#agentdirectoryrefresh).
 
 ## `AgentDirectory`
@@ -420,7 +420,7 @@ reconciled removals stop new eligibility, not active tasks. TTL can delay
 observing removal; no instant revocation guarantee.
 
 **Related:** [`get`](#agentdirectoryget), [`find`](#agentdirectoryfind), [`refresh`](#agentdirectoryrefresh),
-[dependency injection](../discovery.md#agent-injection-and-separate-invocation).
+[dependency injection](../design/discovery.md#agent-injection-and-separate-invocation).
 
 ## `AgentDirectory.get`
 
@@ -453,7 +453,7 @@ permitted stale use must be labeled. Restrict eligible candidates and authorize
 again at invocation/action. Retrieval does not invoke/delegate remotely.
 
 **Related:** [`CardCacheConfig`](#cardcacheconfig),
-[failure/isolation constraints](../discovery.md#failure-trust-and-isolation-boundaries).
+[failure/isolation constraints](../design/discovery.md#failure-trust-and-isolation-boundaries).
 
 ## `AgentDirectory.find`
 
@@ -485,7 +485,7 @@ use is explicit; never silently omit failed sources as empty matches. No
 automatic remote invocation. Source conflict/result ordering remain open.
 
 **Related:** [`AgentDirectory`](#agentdirectory),
-[search boundaries](../discovery.md#query-matching-and-card-enrichment).
+[search boundaries](../design/discovery.md#query-matching-and-card-enrichment).
 
 ## `AgentDirectory.refresh`
 
@@ -515,7 +515,7 @@ selection; active tasks are not automatically canceled. Surface outages,
 malformed data, auth/destination denials and refresh failures explicitly.
 Background refresh is not implicitly enabled by this operation.
 
-**Related:** [managed lifecycle](../discovery.md#managed-directory-lifecycle),
+**Related:** [managed lifecycle](../design/discovery.md#managed-directory-lifecycle),
 [`AgentDirectory.get`](#agentdirectoryget).
 
 ## `AgentDirectory.__aenter__`
@@ -545,7 +545,7 @@ cleanup need specification. Context entry does not grant discovery eligibility
 or transfer ownership of every injected dependency.
 
 **Related:** [`AgentDirectory`](#agentdirectory),
-[ownership guide](../discovery.md#managed-directory-lifecycle).
+[ownership guide](../design/discovery.md#managed-directory-lifecycle).
 
 ## `AgentDirectory.__aexit__`
 
@@ -574,7 +574,7 @@ cleanup-error precedence and shutdown bounds remain open; failures must remain
 explicit rather than silently swallowed.
 
 **Related:** [`AgentDirectory.__aenter__`](#agentdirectory__aenter__),
-[discovery lifecycle scope](../discovery.md#phasing-and-open-decisions).
+[discovery lifecycle scope](../design/discovery.md#phasing-and-open-decisions).
 
 ## `RemoteAgentClient`
 
@@ -616,10 +616,10 @@ Revisit durable workflows after M8+ usage, in an optional separate package if
 added; long-running A2A tasks/persistent task stores are not workflow recovery.
 No claim of a tested Foundry registry/client integration.
 
-**Related:** [discovery to invocation](../discovery.md#agent-injection-and-separate-invocation),
-[`SkillRouter`](hosting.md#skillrouter), [limits](../limits.md),
-[structured extension and prompt request styles](../mcp-skills.md#a2a-request-styles-and-extension-boundary),
-[multi-agent release acceptance and deployment direction](../discovery.md#phasing-and-open-decisions).
+**Related:** [discovery to invocation](../design/discovery.md#agent-injection-and-separate-invocation),
+[`SkillRouter`](hosting.md#skillrouter), [limits](../guides/limits.md),
+[structured extension and prompt request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary),
+[multi-agent release acceptance and deployment direction](../design/discovery.md#phasing-and-open-decisions).
 
 ## `Remote["name"]`
 
@@ -656,7 +656,7 @@ Injection is not delegation authorization. No automatic multi-agent loop or
 clarification conversation.
 
 **Related:** [`AgentDirectory`](#agentdirectory),
-[identity](../authorization.md#cross-agent-identity-propagation-m8).
+[identity](../guides/authorization.md#cross-agent-identity-propagation-m8).
 
 ## `Remote.call`
 
@@ -700,7 +700,7 @@ Send deadline/token/depth via the shared extension, reconcile AgentFrame usage
 once, preserve other-agent usage as unknown. Cancellation is not rollback.
 
 **Related:** [`ClarificationNeededError`](#clarificationneedederror),
-[budgets](../limits.md#cross-agent-budgets-and-depth-m8).
+[budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8).
 
 ## `Remote.ask`
 
@@ -729,7 +729,7 @@ deadline. Input-required raises `ClarificationNeededError`; never auto-converse.
 Identity exchange failure fails even for extension-unaware targets; plain text
 is not permission to forward a bearer token. No implicit structured fallback.
 
-**Related:** [`Remote.call`](#remotecall), [request styles](../mcp-skills.md#a2a-request-styles-and-extension-boundary).
+**Related:** [`Remote.call`](#remotecall), [request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
 
 ## `ClarificationNeededError`
 
@@ -757,4 +757,4 @@ Application decides subsequent action; native state is not rewritten as remote
 failure merely because the local client raises. Follow-up/task-ID API remains open.
 
 **Related:** [`AgentFrameError`](runtime.md#agentframeerror),
-[remote calls](../discovery.md#planned-remote-calls-and-cross-agent-context).
+[remote calls](../design/discovery.md#planned-remote-calls-and-cross-agent-context).

@@ -75,15 +75,42 @@ with `uv run --python 3.13 pytest` (repeat for 3.14 and 3.15).
 In PyCharm, select `.venv/bin/python`, mark `src` as Sources Root and `tests`
 as Test Sources Root, and use pytest as the test runner.
 
+### Repository layout
+
+Folders stay one level deep. Put new code in the group that owns the concept:
+
+| Path | Contents |
+| --- | --- |
+| `src/agentframe/__init__.py` | Public API re-exports; every public name is importable from `agentframe`. |
+| `src/agentframe/` (root) | `errors.py`, `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run`). |
+| `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
+| `src/agentframe/runtime/` | `Runtime`, generation, `RunLimits`, `RunOptions`, `Usage`. |
+| `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`. |
+| `src/agentframe/hosting/` | `AgentApp`, `HostConfig`, Agent Card, A2A executor, routing. |
+| `src/agentframe/security/` | `Principal`, authentication, authorization. |
+| `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
+| `tests/integration/` | Interoperability, real providers, success criterion, README example. |
+| `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`). |
+| `docs/roadmap.md` | Product boundaries, decisions and milestones. |
+| `docs/guides/` | How to use AgentFrame and how its behavior works. |
+| `docs/design/` | Rationale and proposed designs. |
+| `docs/api/` | Public surface reference. |
+
+Keep subpackage `__init__.py` files to a short docstring; add public exports to
+the top-level `__init__.py` only. Import internal modules by full path, for
+example `from agentframe.runtime.limits import RunLimits`. Keep test basenames
+unique, since test folders are not packages.
+
 ### Real-provider tests (opt-in, local only)
 
-`tests/integration/test_providers.py` runs one agent against a real Ollama server and a real
-Foundry deployment: text generation with usage, a tiny `max_output_tokens`
-raising `IncompleteOutputError`, a clear error for an unknown model/deployment,
-and a hosted structured call through the official A2A client. They are marked
-`ollama` / `foundry` and skipped unless enabled, so default `uv run pytest` and
-CI never call a provider (no secrets in CI for M3; revisit a manual Foundry
-workflow at M7). Endpoints and model names come only from environment variables:
+`tests/integration/test_providers.py` runs one agent against a real Ollama
+server and a real Foundry deployment: text generation with usage, a tiny
+`max_output_tokens` raising `IncompleteOutputError`, a clear error for an
+unknown model/deployment, and a hosted structured call through the official A2A
+client. They are marked `ollama` / `foundry` and skipped unless enabled, so
+default `uv run pytest` and CI never call a provider (no secrets in CI for M3;
+revisit a manual Foundry workflow at M7). Endpoints and model names come only
+from environment variables:
 
 | Variable | Needed | Meaning |
 | --- | --- | --- |
@@ -132,7 +159,7 @@ official `a2a-sdk` (specification release v1.0.1). M2 pins the core dependency
 `a2a-sdk[http-server]==1.3.0` and selects JSON-RPC over HTTP, protocol 1.0 only
 (0.3 compatibility disabled). Pin other packages exactly when introduced, not
 from observed-version snapshots; no provider compatibility testing has occurred. Sources and remaining implementation
-decisions are in `docs/initial-outline.md#resolved-m0-platform-and-api-decisions`.
+decisions are in `docs/roadmap.md#resolved-m0-platform-and-api-decisions`.
 
 ## Authoring decisions
 
@@ -172,7 +199,7 @@ decisions are in `docs/initial-outline.md#resolved-m0-platform-and-api-decisions
 - Compose A2A hosting through `AgentApp`; do not require server subclassing.
 
 The complete piece-to-code decision table and examples live in
-`docs/base-classes.md`. Approved defaults/names are documented decisions;
+`docs/design/base-classes.md`. Approved defaults/names are documented decisions;
 unspecified signatures/extension interfaces still need implementation evidence.
 
 ## A2A and model boundaries
@@ -203,7 +230,7 @@ Free-text/extension-unaware callers use custom or opt-in model routing plus
 validated extraction. Ambiguity/missing arguments asks back through
 `TASK_STATE_INPUT_REQUIRED`, never guesses; question/follow-up contract is open.
 This is not human approval or durable workflow resumption. Sources are in
-`docs/mcp-skills.md#a2a-request-styles-and-extension-boundary`.
+`docs/design/mcp-skills.md#a2a-request-styles-and-extension-boundary`.
 Multiple-skill orchestration is not automatically enabled.
 Provide a built-in opt-in model-based A2A router plus custom-router support;
 the built-in public name/constructor, validated argument-extraction decisions
@@ -276,8 +303,9 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
 - Defer a custom REST skill API unless a concrete client requires it. Do not
   invent MCP/A2A payload fields, response envelopes, or unverified capabilities.
 
-See `docs/limits.md`, `docs/tracing.md`, and `docs/mcp-skills.md` for proposed
-settings, deployed server examples, accounting caveats, and protocol boundaries.
+See `docs/guides/limits.md`, `docs/design/tracing.md`, and
+`docs/design/mcp-skills.md` for proposed settings, deployed server examples,
+accounting caveats, and protocol boundaries.
 
 ## Authorization and prompt-safeguarding decisions
 
@@ -315,8 +343,8 @@ settings, deployed server examples, accounting caveats, and protocol boundaries.
 - Whole-output checks may require buffering or disabling streaming. Output
   rejection cannot undo previously executed actions or released content.
 
-See `docs/authorization.md` and `docs/prompt-safeguarding.md` for examples and
-application/library responsibility boundaries. APIs remain proposals.
+See `docs/guides/authorization.md` and `docs/design/prompt-safeguarding.md`
+for examples and application/library responsibility boundaries. APIs remain proposals.
 
 ## Safety and scope
 
@@ -372,7 +400,7 @@ Author skills use `Remote["name"]` (excluded from external schemas),
 `call("skill", ..., output=list[Source], max_total_tokens=...)` for structured
 A2A, or `ask(text)` for any compatible peer. Both wait within caller deadline;
 remote input-required raises `ClarificationNeededError` with question, no
-automatic back-and-forth. See `docs/discovery.md` and `docs/api/discovery.md`.
+automatic back-and-forth. See `docs/design/discovery.md` and `docs/api/discovery.md`.
 
 Plan cross-hop verified identity/delegation without authority amplification,
 permissions, deadlines, remaining token allowance and trace/correlation;
@@ -400,7 +428,7 @@ starts localhost agents, writes local registry, configures dev API keys and
 combines logs tagged by agent/invocation. One container per agent; Dockerfile
 template and generated docker-compose example. Exact schema/generation/key
 lifecycle remains open; no actual config files before implementation.
-No hosting platform is implied. See `docs/development.md`.
+No hosting platform is implied. See `docs/guides/development.md`.
 
 ### Initial release boundaries
 
@@ -439,7 +467,7 @@ explicit failures. No implicit downloads, cloud fallback, tool grants, server
 startup, or inference at import time. Runtime overrides must not weaken host
 security or exceed its resource ceilings.
 
-Follow `docs/initial-outline.md` milestones 0-7, each independently releasable
+Follow `docs/roadmap.md` milestones 0-7, each independently releasable
 and testable: M0 development setup; M1 model-free authoring/`Runtime.invoke`;
 M2 native A2A structured extension requests plus custom free-text routing only;
 M3 interchangeable Foundry/Ollama text
@@ -486,17 +514,17 @@ isolate caller/tenant/history/events, treat frontend messages/state/tools as
 untrusted, gate output/events before release and expose no secrets/raw private
 reasoning. Detailed cancellation translation/buffering/backpressure/shutdown
 remain open; tracing/accounting/enforcement work independently. See
-`docs/streaming.md` and `docs/api/streaming.md`.
+`docs/design/streaming.md` and `docs/api/streaming.md`.
 
 ## Documentation maintenance
 
-Read `README.md` and `docs/README.md` first. Keep `docs/initial-outline.md`,
-`docs/annotations.md`, `docs/base-classes.md`, `docs/agent-examples.md`,
-`docs/limits.md`, `docs/tracing.md`, `docs/mcp-skills.md`,
-`docs/authorization.md`, `docs/prompt-safeguarding.md`, `docs/discovery.md`, and
-`docs/streaming.md`, and `docs/development.md` consistent, including discovery/streaming API pages and
-navigation. Preserve the distinction between confirmed product direction and
-illustrative API details.
+Read `README.md` and `docs/README.md` first. Keep `docs/roadmap.md`, the
+guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
+`authorization.md`, `development.md`) and the design docs
+(`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
+`prompt-safeguarding.md`, `discovery.md`, `streaming.md`) consistent, including
+discovery/streaming API pages and navigation. Preserve the distinction between
+confirmed product direction and illustrative API details.
 
 Maintain `docs/api/README.md` and its linked surface reference pages alongside
 those design documents. Give every proposed decorator, class, and known public

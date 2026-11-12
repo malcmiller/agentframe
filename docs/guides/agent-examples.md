@@ -157,14 +157,14 @@ Azure token credential; `FoundryModel` (implemented in M3 #39, extra
 `https://<resource>.openai.azure.com/openai/v1/` through the official `openai`
 package, wrapping a token credential for scope `https://ai.azure.com/.default`.
 Do not use the retired Azure AI Inference SDK. See
-[`FoundryModel`](api/models.md#foundrymodel) and the
-[API choice and source](initial-outline.md#resolved-m0-platform-and-api-decisions).
+[`FoundryModel`](../api/models.md#foundrymodel) and the
+[API choice and source](../roadmap.md#resolved-m0-platform-and-api-decisions).
 No skill code changes when the configured model host changes.
 
 ### Choose the host by configuration
 
-[`examples/assistant.py`](../examples/assistant.py) is the runnable version of
-this switch (the [README success criterion](../README.md#first-success-criterion)).
+[`examples/assistant.py`](../../examples/assistant.py) is the runnable version of
+this switch (the [README success criterion](../../README.md#first-success-criterion)).
 Its `create_app()` builds `OllamaModel` (with `context_window=8192`) or
 `FoundryModel` (signed in through the Azure CLI's Entra ID credential) from
 environment variables and serves one unchanged agent class, which mixes a
@@ -292,8 +292,8 @@ workflow or a successful completed result.
 
 Local `skill="word-count"` is not a base A2A wire field. Over A2A the caller
 uses the AgentFrame skill-call extension; see its
-[wire format](api/hosting.md#structured-skill-call-wire-format) and
-[A2A request styles and native mechanisms](mcp-skills.md#a2a-request-styles-and-extension-boundary).
+[wire format](../api/hosting.md#structured-skill-call-wire-format) and
+[A2A request styles and native mechanisms](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
 Optional MCP uses native named tools and an empty-by-default skill allowlist.
 Quick typed/single-shot tool-like skills may also use MCP; judgment, multi-turn,
 clarification or long-running skills usually stay A2A-only, as guidance rather
@@ -412,21 +412,21 @@ Tracing observes their runtime execution independently of whether a model is use
 An MCP host may explicitly publish selected skill IDs for named tool invocation,
 without using the A2A router or exposing internal model tools.
 
-See [limits](limits.md), [tracing](tracing.md), and the
-[combined A2A/MCP server example](mcp-skills.md). All three use the same validated
+See [limits](limits.md), [tracing](../design/tracing.md), and the
+[combined A2A/MCP server example](../design/mcp-skills.md). All three use the same validated
 runtime pipeline; the custom REST skill API is deferred.
 
 ## Next-release multi-agent dependencies
 
-The [discovery guide](discovery.md#agent-injection-and-separate-invocation)
+The [discovery guide](../design/discovery.md#agent-injection-and-separate-invocation)
 shows trusted `Inject[AgentDirectory]` parameters registered in `Services`.
-Its [lifecycle example](discovery.md#managed-directory-lifecycle) keeps card
+Its [lifecycle example](../design/discovery.md#managed-directory-lifecycle) keeps card
 fetch/cache/refresh and owned-resource cleanup in the library. Named
 `Remote["research-agent"]` skill parameters resolve via `AgentApp(directory=...)`.
 Use `research.call("find_sources", topic=goal, output=list[Source])` for structured
 A2A, or `research.ask(text)` for any compatible A2A agent. Await task completion
 within caller deadline; input-required raises `ClarificationNeededError`, not an
-automatic conversation. See the [worked delegation, TaskGroup fan-out and search examples](discovery.md#worked-composition-examples).
+automatic conversation. See the [worked delegation, TaskGroup fan-out and search examples](../design/discovery.md#worked-composition-examples).
 No orchestration helper library in the first multi-agent release.
 Discovery and remote invocation
 are core to the next multi-agent release (M8+) after M7; they do not change
@@ -441,7 +441,7 @@ matching cards, not invocation permission. See [local dev/containers](developmen
 ## Future streaming and AG-UI
 
 First-release examples await complete validated results, not token streams.
-Future [AG-UI support](streaming.md) is a scoped optional frontend-protocol
+Future [AG-UI support](../design/streaming.md) is a scoped optional frontend-protocol
 adapter over managed execution events, not an OTel trace stream, automatic
 frontend tool execution, human approval workflow or durable resume mechanism.
 The later configuration is `AgentApp(..., ag_ui=AGUIConfig(enabled=True))` at

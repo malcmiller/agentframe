@@ -53,7 +53,7 @@ omission. Python execution in the host process is not sandboxed.
 
 **Related:** [`RunContext`](agents.md#runcontext),
 [`Runtime.invoke`](runtime.md#runtimeinvoke),
-[identity design](../authorization.md#proposed-server-composition).
+[identity design](../guides/authorization.md#proposed-server-composition).
 
 ## `AuthorizationPolicy`
 
@@ -158,7 +158,7 @@ approval pause/resume. A required approval or action check must prevent executio
 until satisfied, not create an implicit durable workflow from an A2A task.
 
 **Related:** [`@skill`](decorators.md#skill), [`HostConfig`](hosting.md#hostconfig),
-[fail-closed pipeline](../authorization.md#fail-closed-execution-pipeline).
+[fail-closed pipeline](../guides/authorization.md#fail-closed-execution-pipeline).
 
 ## `ExecutionPolicy`
 
@@ -216,7 +216,7 @@ state/tool declarations are untrusted, not `Principal` or trusted dependencies.
 
 **Related:** [`AuthorizationPolicy`](#authorizationpolicy),
 [`RunContext.generate`](agents.md#runcontextgenerate),
-[safeguarding design](../prompt-safeguarding.md).
+[safeguarding design](../design/prompt-safeguarding.md).
 
 ## `Authenticator`
 
@@ -351,14 +351,14 @@ not bypass current resource policy. `role_permissions` is application-owned on
 `HostConfig`, not an organization role hardcoded on skills. Exact scope mapping,
 claim selection, key refresh and permission-merge rules remain open.
 
-**Related:** [`Authenticator`](#authenticator), [identity guide](../authorization.md).
+**Related:** [`Authenticator`](#authenticator), [identity guide](../guides/authorization.md).
 
 For M8+ remote calls, per-target `on_behalf_of` is the Entra-ingress default
 when a delegated user assertion is supported. Exchange for the target audience;
 never forward the incoming token. Explicit `service` uses agent identity.
 Exchange failure fails, never elevates via fallback. API-key/anonymous ingress
 supports only explicit service mode. Per-target configuration and claim/provider
-details remain open; see [OBO boundaries](../authorization.md#cross-agent-identity-propagation-m8).
+details remain open; see [OBO boundaries](../guides/authorization.md#cross-agent-identity-propagation-m8).
 
 ## `APIKeyAuth`
 
@@ -433,4 +433,4 @@ This is an intentionally anonymous local demo, not a production-safe default.
 loopback. Anonymous requests cannot satisfy protected grants by default;
 enabling this never disables validation, limits, accounting or checks.
 
-**Related:** [`Authenticator`](#authenticator), [anonymous access](../authorization.md#exposure-anonymous-access-and-delegation).
+**Related:** [`Authenticator`](#authenticator), [anonymous access](../guides/authorization.md#exposure-anonymous-access-and-delegation).

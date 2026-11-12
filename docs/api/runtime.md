@@ -62,7 +62,7 @@ results. It has no built-in human approval pause/resume or automatic multi-agent
 orchestration. Future [streaming/AG-UI](streaming.md) is a separate surface.
 
 **Related:** [`Runtime.invoke`](#runtimeinvoke), [`AgentApp`](hosting.md#agentapp),
-[runtime design](../base-classes.md#agent-authoring-and-execution).
+[runtime design](../design/base-classes.md#agent-authoring-and-execution).
 
 ## `Runtime.validate`
 
@@ -198,7 +198,7 @@ exceed host ceilings (M7), weaken security, or extend a parent deadline.
 
 **Related:** [`Principal`](authorization.md#principal),
 [`RunContext`](agents.md#runcontext), [`RunLimits`](configuration.md#runlimits),
-[local invocation guide](../agent-examples.md#invoke-through-the-local-runtime).
+[local invocation guide](../guides/agent-examples.md#invoke-through-the-local-runtime).
 
 ## `Runtime.run`
 
@@ -262,7 +262,7 @@ not report for a returned response are filled with a character-based estimate
 with no reported usage makes the counts unknown (`None`). A successful run's
 `finish_reason` is `COMPLETED`: other finish reasons fail the run. The same `Usage` and `FinishReason` describe
 a single model call in [`ModelResponse`](models.md#modelresponse). Provider completeness details and no hard
-billing guarantee remain as described in [accounting](../limits.md#accounting-and-enforcement).
+billing guarantee remain as described in [accounting](../guides/limits.md#accounting-and-enforcement).
 
 ```python
 from agentframe import RunResult
@@ -280,7 +280,7 @@ The negotiated M8+ extension separately reports actual usage for cross-hop
 accounting, not full local execution results or provider payloads.
 Model-free runs have zero model usage/calls, not guessed inference.
 
-**Related:** [`Runtime.run`](#runtimerun), [accounting](../limits.md#accounting-and-enforcement).
+**Related:** [`Runtime.run`](#runtimerun), [accounting](../guides/limits.md#accounting-and-enforcement).
 
 ## `AgentFrameError`
 
@@ -311,7 +311,7 @@ per-class mapping is in [result and failure mapping](hosting.md#result-and-failu
 (M2 #7). Log diagnostics with redaction, never send
 raw provider exceptions, stack traces or secrets to callers.
 
-**Related:** [specific error classes](#definitionerror), [safe diagnostics](../tracing.md#safe-metadata).
+**Related:** [specific error classes](#definitionerror), [safe diagnostics](../design/tracing.md#safe-metadata).
 
 ## `DefinitionError`
 
@@ -562,7 +562,7 @@ may retry with backoff, default two retries (three attempts); SDK retries disabl
 Configured by `RunLimits.max_model_retries`; the wait honors `retry_after`, else
 exponential backoff with jitter, never past the deadline. Every attempt consumes
 the same token/model-call allowance and deadline; never replay a tool side effect.
-**Related:** [retry rules](../limits.md#retries-and-duplicate-requests), [`ModelError`](#modelerror).
+**Related:** [retry rules](../guides/limits.md#retries-and-duplicate-requests), [`ModelError`](#modelerror).
 
 ## `LimitExceededError`
 
@@ -605,7 +605,7 @@ input exceeds the input limit, input plus `max_output_tokens` exceeds the
 model's context window, or the call's reservation (input estimate +
 `max_output_tokens`) does not fit what is left of `max_total_tokens`. Input is
 never truncated and the output cap is never lowered to fit.
-**Related:** [accounting](../limits.md#implemented-token-accounting-m3).
+**Related:** [accounting](../guides/limits.md#implemented-token-accounting-m3).
 
 ## `ModelCallLimitExceededError`
 
@@ -670,7 +670,7 @@ def cancelled(error: AgentFrameCancelledError) -> object:
 **Behavior / failures:** preserve cancellation propagation and scoped cleanup;
 do not swallow Python task cancellation or present it as success. Native A2A
 cancellation retains protocol semantics.
-**Related:** [`AgentFrameError`](#agentframeerror), [cancellation](../limits.md#accounting-and-enforcement).
+**Related:** [`AgentFrameError`](#agentframeerror), [cancellation](../guides/limits.md#accounting-and-enforcement).
 
 M8+ also adds [`ClarificationNeededError`](discovery.md#clarificationneedederror),
 an `AgentFrameError` carrying a remote input-required question; no automatic
@@ -703,5 +703,5 @@ This only illustrates the future dependency type, not a usable storage API.
 attachment is promised. Never store mutable per-caller state on a shared agent.
 Storage failure semantics and lifecycle must be specified before support.
 
-**Related:** [extension responsibilities](../base-classes.md#authoring-and-extension-decisions),
+**Related:** [extension responsibilities](../design/base-classes.md#authoring-and-extension-decisions),
 [A2A task-store boundary](hosting.md#a2aconfig).

@@ -56,7 +56,7 @@ standard built-in `skill` field. Source-checked on 2026-11-11:
 
 A structured `SendMessage` for `summarize`, sent with the header
 `A2A-Extensions: https://github.com/malcmiller/agentframe/extensions/skill-call/v1`
-(full rules in the [wire format reference](api/hosting.md#structured-skill-call-wire-format)):
+(full rules in the [wire format reference](../api/hosting.md#structured-skill-call-wire-format)):
 
 ```json
 {
@@ -118,11 +118,11 @@ allowance, reported peer usage and default max-5-hop depth. `ask` works with
 extension-unaware peers, with local time bounds and unknown usage, never zero.
 Input-required raises local `ClarificationNeededError`, not automatic dialogue.
 Ordinary A2A correlation still exposes only invocation ID; negotiated usage
-exchange is not internal `RunResult` disclosure. See [remote contracts](api/discovery.md#remotecall).
+exchange is not internal `RunResult` disclosure. See [remote contracts](../api/discovery.md#remotecall).
 
 ## Proposed server composition
 
-This example uses `WritingAssistant` from [agent examples](agent-examples.md).
+This example uses `WritingAssistant` from [agent examples](../guides/agent-examples.md).
 `model`, `tracer_provider`, `tenant_id`, `audience`, `authorization_policy`,
 `execution_policy`, and `application_router` are
 application-supplied dependencies. Constructor fields and transport choices
@@ -281,7 +281,7 @@ not inferred from an empty skill permission list.
 Role-to-permission mapping lives in the application, not MCP arguments or the
 Agent Card. Re-check protected task/resource access and consequential tool/action
 execution; model output is not authorization. See
-[authorization](authorization.md) and [prompt safeguarding](prompt-safeguarding.md)
+[authorization](../guides/authorization.md) and [prompt safeguarding](prompt-safeguarding.md)
 for caller identity and the additional content-policy boundaries.
 
 Generate and preserve invocation correlation through the runtime. Inference,
@@ -291,7 +291,7 @@ through an explicitly supported contract; do not invent standard MCP budget fiel
 
 The same tracing provider observes both interfaces with content capture off by
 default. Trace propagation never grants identity or execution permission.
-See [limits](limits.md) and [tracing](tracing.md) for the enforcement boundaries.
+See [limits](../guides/limits.md) and [tracing](tracing.md) for the enforcement boundaries.
 
 ## Dependency and delivery boundary
 

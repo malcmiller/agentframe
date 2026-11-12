@@ -5,7 +5,7 @@ results. Streaming is a later deliverable and should support **AG-UI** through a
 scoped optional agent-to-frontend protocol adapter. A2A/native Agent Cards remain
 first-class; MCP remains a separate tool interface. No UI framework, other agent
 framework, automatic orchestration, or blanket AG-UI conformance is authorized.
-The [surface reference](api/streaming.md) records decided configuration and
+The [surface reference](../api/streaming.md) records decided configuration and
 still-open event/wire details.
 
 ## Protocol scope and sources
@@ -182,10 +182,10 @@ Prove disconnect cancellation and no reconnect/resume alongside ordering/errors/
 incomplete-result behavior, safe side effects, isolation and no secrets/private
 reasoning with an independent AG-UI client. Do not advertise absent A2A features.
 
-See [delivery milestones and post-M7 follow-ups](initial-outline.md#delivery-milestones),
-[runtime reference](api/runtime.md), [model contracts](api/models.md),
-[authorization](authorization.md), [safeguarding](prompt-safeguarding.md),
-[limits](limits.md), and [tracing](tracing.md). Discovery/remote invocation belongs
+See [delivery milestones and post-M7 follow-ups](../roadmap.md#delivery-milestones),
+[runtime reference](../api/runtime.md), [model contracts](../api/models.md),
+[authorization](../guides/authorization.md), [safeguarding](prompt-safeguarding.md),
+[limits](../guides/limits.md), and [tracing](tracing.md). Discovery/remote invocation belongs
 to the next core multi-agent release (M8+) after M7, not an optional follow-up.
 Streaming remains a separate optional delivery; its timing does not demote that
 core release or imply a workflow/graph engine.

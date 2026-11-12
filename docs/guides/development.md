@@ -28,7 +28,7 @@ source changes. Normal explicit `auth` rules apply: the command never chooses
 credentials or enables anonymous access outside `--dev`. Invalid targets,
 factory return values and agent definitions are reported before anything is
 served. Importing or defining an agent never starts a server. See the
-[reference](api/hosting.md#agentframe-run).
+[reference](../api/hosting.md#agentframe-run).
 
 ## Multiple agents: M8+
 
@@ -113,5 +113,5 @@ local named discovery and authenticated calls between N agents, tagged combined
 logs, failure cleanup, and equivalent independent one-container-per-agent A2A
 composition. No claim of implementation follows from syntax validation here.
 
-See [milestones](initial-outline.md#delivery-milestones),
-[discovery](discovery.md) and [hosting reference](api/hosting.md).
+See [milestones](../roadmap.md#delivery-milestones),
+[discovery](../design/discovery.md) and [hosting reference](../api/hosting.md).

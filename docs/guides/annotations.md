@@ -138,12 +138,12 @@ arguments; ambiguity or missing input asks back via an A2A
 `TASK_STATE_INPUT_REQUIRED` task, never guesses. A matching single skill still
 needs valid arguments.
 
-The extension's [wire format](api/hosting.md#structured-skill-call-wire-format)
+The extension's [wire format](../api/hosting.md#structured-skill-call-wire-format)
 is implemented (M2 #5); the router decision and clarification/follow-up contract remain open. Local
 `skill=` is not a standard A2A wire field, and this extension is not claimed as
 an official standard skill-dispatch API. See the [verified A2A 1.0 extension,
-data-part and task-state mechanisms](mcp-skills.md#a2a-request-styles-and-extension-boundary).
-The optional [MCP adapter](mcp-skills.md) instead uses native named tools for
+data-part and task-state mechanisms](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
+The optional [MCP adapter](../design/mcp-skills.md) instead uses native named tools for
 allowlisted skills, empty by default. Tool-like deterministic/typed/quick skills
 may also use MCP; agent-like multi-turn/judgment/clarification skills usually
 stay A2A-only. This is guidance, not an enforced classifier.
@@ -198,12 +198,12 @@ instance. Unsupported requested capability fails before sending; refusal raises
 `ModelRefusalError` and truncation `IncompleteOutputError` by default. Explicit
 partial-result opt-in syntax and supported schema subset remain open; see
 [structured generation examples](agent-examples.md#typed-structured-output-and-bounded-tools).
-Return complete validated results first; future [streaming/AG-UI](streaming.md)
+Return complete validated results first; future [streaming/AG-UI](../design/streaming.md)
 does not authorize partial output or automatic frontend tools.
 
 Publishing a skill as an MCP tool is a separate host allowlist decision, not a
 new decorator and not automatic publication of `@tool` callables. Token budgets
-belong in [execution configuration](limits.md); [tracing](tracing.md) belongs on
+belong in [execution configuration](limits.md); [tracing](../design/tracing.md) belongs on
 the runtime. Neither requires changing a skill's signature nor agent inheritance.
 
 ## Card generation boundaries

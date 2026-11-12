@@ -67,7 +67,7 @@ writer = WritingAssistant(
 The decided defaults above are configurable. Skills can use
 `@skill(..., limits=RunLimits(timeout_seconds=30, max_tool_calls=4))`;
 per-run settings use `options=RunOptions(...)`, and every level overrides only
-the fields it sets ([precedence](api/configuration.md#precedence)).
+the fields it sets ([precedence](../api/configuration.md#precedence)).
 Do not pass limits through skill business arguments.
 
 ## Defaults versus ceilings
@@ -110,7 +110,7 @@ Structured A2A selection through the activated extension bypasses routing/model
 selection, not request budgets or accounting. The selected skill's inference
 and tools still consume their allowances; do not call it a free invocation.
 
-Next-core-release [directory discovery](discovery.md) must also fit remaining
+Next-core-release [directory discovery](../design/discovery.md) must also fit remaining
 deadlines and host resource bounds: source reads, bounded card HTTP fetches,
 refresh/enrichment fan-out and downstream calls do not reset allowance.
 Discovery itself is model-free; explicit model-assisted selection consumes
@@ -148,7 +148,7 @@ Never silently truncate user input, discard history, switch models, or disable
 structured validation to fit a limit. Failures must distinguish input too large,
 budget exhaustion, unavailable strict accounting, deadline expiration,
 cancellation and provider errors. Use the
-[decided error hierarchy](api/runtime.md#agentframeerror): `LimitExceededError`
+[decided error hierarchy](../api/runtime.md#agentframeerror): `LimitExceededError`
 has the `TokenLimitExceededError`, `ModelCallLimitExceededError` and
 `TimeoutLimitExceededError` subtypes (M3 #36); the tool-call subtype name
 remains open;
@@ -156,7 +156,7 @@ AgentFrame `CancelledError` is distinct from `asyncio.CancelledError`.
 
 Cancellation propagates where supported; it cannot guarantee that already
 dispatched inference stops or that charges are prevented. Enforcement must work
-with tracing disabled or sampled out. See [tracing](tracing.md).
+with tracing disabled or sampled out. See [tracing](../design/tracing.md).
 
 First release returns complete validated results by default; token-limit
 truncation raises `IncompleteOutputError` unless a skill explicitly opts into
@@ -165,7 +165,7 @@ partial results (syntax open, validation still mandatory).
 value, invocation ID, usage, model/tool call counts, duration and finish reason,
 even with tracing off. Usage marks completeness/estimation and never turns
 unknown into zero. Exact usage marker fields/failed-run retrieval remain open.
-Future [AG-UI streaming](streaming.md) must bound buffering,
+Future [AG-UI streaming](../design/streaming.md) must bound buffering,
 slow-consumer/backpressure and write/shutdown time within execution deadlines.
 AG-UI disconnect cancels the run; its first version has no reconnect/resume.
 This does not redefine A2A task-disconnect semantics or retry completed actions.
@@ -207,7 +207,7 @@ M3 #36 implements the steps above for `ctx.generate`, per run:
 Actual usage can exceed a reservation when the estimate was low; the next
 call then has less budget, so the total is a best-effort bound. `RunResult`
 reports the run's `usage` and `model_calls`; hosted tasks report the same
-values in a safe [usage snapshot](api/hosting.md#result-and-failure-mapping).
+values in a safe [usage snapshot](../api/hosting.md#result-and-failure-mapping).
 Each [retry](#retries-and-duplicate-requests) is a new call with its own
 reservation and call count.
 
@@ -246,7 +246,7 @@ attempt. Implemented in M3 #37:
 
 - `RunLimits.max_model_retries` sets the retries per `ctx.generate` call
   (default `2`; `0` disables them), merged field by field like every other
-  limit ([precedence](api/configuration.md#precedence)).
+  limit ([precedence](../api/configuration.md#precedence)).
 - The runtime's generate path is the single retry layer. Adapters only
   classify failures as `ProviderError(transient=...)`; provider SDK retries
   are disabled.

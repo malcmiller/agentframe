@@ -68,7 +68,7 @@ layer of agent inheritance.
 decisions from supplementary content/action checks. Missing integration cannot
 permit protected execution. Both apply at their relevant execution boundaries;
 an earlier model or prompt-filter decision cannot authorize a later action.
-See [authorization](authorization.md) and [prompt safeguarding](prompt-safeguarding.md)
+See [authorization](../guides/authorization.md) and [prompt safeguarding](prompt-safeguarding.md)
 for API examples and application responsibilities.
 
 Each skill accepts `ctx: RunContext`, including model-free skills; unused context
@@ -93,7 +93,7 @@ skill-ID invocation is not a base A2A wire operation.
 Free-text requests use an explicitly configured custom or opt-in model router
 for selection/extraction. Ambiguous/missing input asks back via an
 input-required task; invalid/unknown structured selection fails explicitly,
-never silently reroutes. See [routing boundaries](annotations.md#skill-registration-versus-request-routing).
+never silently reroutes. See [routing boundaries](../guides/annotations.md#skill-registration-versus-request-routing).
 Task state transitions and cancellation must follow the selected A2A version.
 First release returns complete validated results; streaming is later.
 Native task support does not imply application approval pause/resume.
@@ -130,7 +130,7 @@ import time.
 
 The next core multi-agent release (M8+), after the M7 single-agent release, adds
 read-first discovery building blocks; see the [discovery design](discovery.md)
-and its [API reference](api/discovery.md). Native remote A2A calls let ordinary orchestrator
+and its [API reference](../api/discovery.md). Native remote A2A calls let ordinary orchestrator
 skills compose independently deployed agents, without a workflow/graph engine.
 
 | Type | Definition |
@@ -158,8 +158,8 @@ Per-remote OBO (Entra default) or explicit service identity never forwards the
 incoming token or elevates on exchange failure. Shared deadlines/token allowance,
 reported AgentFrame usage and maximum 5 hops use the same A2A extension (wire
 schema still open). No first-release orchestration helpers; use Python TaskGroup.
-See [remote budgets](limits.md#cross-agent-budgets-and-depth-m8) and
-[development/packaging](development.md).
+See [remote budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8) and
+[development/packaging](../guides/development.md).
 
 Later streaming uses `AGUIConfig(enabled=True)` on `AgentApp(ag_ui=...)` at
 `/ag-ui`. Shared checks, lifecycle/text/tool-name-status/errors, whole-answer
@@ -181,7 +181,7 @@ copy SDK schemas into a separately maintained contract.
 Distinguish definition/configuration errors, input/output validation failures,
 authentication/authorization failures, unsupported model features, provider
 failures, deadline expiration and cancellation using the
-[decided error hierarchy](api/runtime.md#agentframeerror). Base/subclass names
+[decided error hierarchy](../api/runtime.md#agentframeerror). Base/subclass names
 are approved; constructors, named limit subtypes and exact protocol mappings
 remain open.
 
@@ -199,9 +199,9 @@ source dependency, not that global plugin mechanism.
 
 All snippets are illustrative, unimplemented API proposals. Constructor names,
 module exports, and field names are not stable. The `Summarizer` class below is
-the example in [annotations](annotations.md#proposed-authoring-shape).
+the example in [annotations](../guides/annotations.md#proposed-authoring-shape).
 For complete multi-skill definitions and local invocation, see
-[agents with and without models](agent-examples.md).
+[agents with and without models](../guides/agent-examples.md).
 
 ### Inject a local model
 
@@ -240,7 +240,7 @@ def build_cloud_agent(
 The application supplies a supported endpoint, deployment, and credential. This
 proposal uses an async Azure token credential from the optional provider
 dependencies; mapping to the selected `openai` client is not settled.
-The [chosen API path](initial-outline.md#resolved-m0-platform-and-api-decisions)
+The [chosen API path](../roadmap.md#resolved-m0-platform-and-api-decisions)
 is OpenAI v1 Responses, with Entra token-provider or API-key authentication;
 this is not the retired Azure AI Inference SDK. Final accepted AgentFrame
 credential types and async wrapping remain open.
@@ -276,7 +276,7 @@ Resolve library → agent → skill → per-run within host ceilings; skills
 use `@skill(limits=RunLimits(...))`. Omitted `auth` refuses startup; anonymous
 access requires explicit `AllowAnonymous()`.
 
-See [limits](limits.md), [tracing](tracing.md), and
+See [limits](../guides/limits.md), [tracing](tracing.md), and
 [MCP skill configuration](mcp-skills.md) for invocation budgets, optional
 telemetry, explicit skill publication, and a combined server example.
 
@@ -309,7 +309,7 @@ scoped instances it created. Missing services fail startup; factory/disposal
 method signatures remain open.
 
 `Runtime.invoke` returns the value; `Runtime.run` returns `RunResult`.
-The [safe error hierarchy](api/runtime.md#agentframeerror) is decided, including
+The [safe error hierarchy](../api/runtime.md#agentframeerror) is decided, including
 validation/auth/policy/model/limit/cancellation failures and correlation.
 Startup ID allocation, usage marker representation, duration units and precise
 transport mappings remain open.

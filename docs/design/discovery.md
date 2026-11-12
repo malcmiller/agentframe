@@ -9,7 +9,7 @@ add-ons or prerequisites for M7's complete validated text/structured/tool result
 AgentFrame enables 1 to N independently deployed agents: ordinary orchestrator
 skills discover and call specialists over A2A, including non-AgentFrame peers.
 This is A2A composition first, not a workflow/graph engine or hosting platform.
-See the [surface reference](api/discovery.md) for individual API entries.
+See the [surface reference](../api/discovery.md) for individual API entries.
 
 ## Separate responsibilities
 
@@ -301,7 +301,7 @@ API-key/anonymous ingress can use only service mode, never inferred user delegat
 Never forward an incoming token as-is or fall back on exchange failure. Target
 validates original-user/calling-agent identity and its own permissions; no authority
 amplification. Exact per-remote configuration and claim-validation details remain open.
-See [identity propagation](authorization.md#cross-agent-identity-propagation-m8).
+See [identity propagation](../guides/authorization.md#cross-agent-identity-propagation-m8).
 
 Send remaining deadline automatically; an AgentFrame receiver takes the minimum
 of it and its own timeout, while the caller also enforces waiting locally.
@@ -394,8 +394,8 @@ Budget source reads, card resolution, routing and downstream work within the
 existing time/resource boundaries. Discovery alone uses no model tokens; any
 explicit model-assisted selection does use its invocation budget. Native A2A
 metadata does not establish a hard remote billing/token cap, free cancellation,
-or cross-service authority. See [limits](limits.md), [tracing](tracing.md),
-[authorization](authorization.md), and [prompt safeguarding](prompt-safeguarding.md).
+or cross-service authority. See [limits](../guides/limits.md), [tracing](tracing.md),
+[authorization](../guides/authorization.md), and [prompt safeguarding](prompt-safeguarding.md).
 
 ## Phasing and open decisions
 
@@ -409,7 +409,7 @@ leases, federation, registration writes, or A2A task management belongs in this
 discovery lifecycle. Deployment support starts with running N agents locally
 together, then container packaging; Foundry/Kubernetes templates are later.
 These are development/packaging capabilities, not a hosted deployment service.
-The [development/packaging plan](development.md) defines `agentframe run` (M2),
+The [development/packaging plan](../guides/development.md) defines `agentframe run` (M2),
 `agentframe dev` (M8+), `agentframe.yaml`, generated local discovery/development
 API-key wiring, and one container per agent; remaining configuration details
 are open.
@@ -418,7 +418,7 @@ Release acceptance is two or more independently deployed AgentFrame agents,
 with an ordinary orchestrator discovering and invoking a specialist over A2A
 and carrying identity/delegation, budget and trace/correlation across hops.
 Also prove a non-AgentFrame A2A client and server interoperate; do not rely only
-on AgentFrame peers. See the [core release plan](initial-outline.md#next-core-release-multi-agent-a2a-composition-m8).
+on AgentFrame peers. See the [core release plan](../roadmap.md#next-core-release-multi-agent-a2a-composition-m8).
 Future [AG-UI streaming](streaming.md) is another scoped direction; it does not
 move multi-agent composition into M7 or add frontend tools or built-in approval
 pause/resume here. Revisit durable workflows after this release based on real

@@ -114,7 +114,7 @@ interfaces remain open. The same `services` container is used here on app/runtim
 Host authentication creates the trusted principal and makes it available as
 `ctx.principal`; callers do not set it through skill arguments. Missing required
 authorization integration must prevent protected execution, not permit it.
-This composition also works with optional [MCP exposure](mcp-skills.md).
+This composition also works with optional [MCP exposure](../design/mcp-skills.md).
 
 For in-process calls, the application must explicitly establish trusted caller
 context when invoking protected skills. A proposed local shape is:
@@ -236,11 +236,11 @@ Per-remote mode/configuration carrier, consent/scopes/token-provider interface,
 actor claim verification and non-Entra service credential wiring remain open.
 OBO is not a universal mechanism for every A2A peer; incompatible targets fail
 explicitly under the configured mode rather than silently switching identity.
-See [remote calls](discovery.md#planned-remote-calls-and-cross-agent-context).
+See [remote calls](../design/discovery.md#planned-remote-calls-and-cross-agent-context).
 
 ## Checks required before release
 
-Next-core-release [agent discovery](discovery.md) must restrict eligible candidates,
+Next-core-release [agent discovery](../design/discovery.md) must restrict eligible candidates,
 isolate caller/tenant/authenticated-card variants, and enforce trusted outbound
 authentication and destination/redirect policy. A matched reference, fresh card
 or card security declaration is not permission or endpoint trust. Authorize
@@ -249,7 +249,7 @@ Successful source reconciliation removes entries from new eligibility but does
 not automatically cancel tasks or promise immediate revocation before TTL/source
 refresh. Source failures are not proof of removal.
 
-Future [AG-UI streaming](streaming.md) uses the same explicit ingress access,
+Future [AG-UI streaming](../design/streaming.md) uses the same explicit ingress access,
 caller/tenant isolation and action boundaries. Frontend thread/run IDs,
 messages/state/tools or returned tool results never establish a principal or
 authority. Protocol tool visibility does not grant frontend execution or
@@ -261,6 +261,6 @@ invocation, inherited declarations, tool execution, delegation, and background
 task access. Prove that denial prevents skill/action side effects and that local,
 A2A, and MCP managed invocation use the same enforcement.
 
-See [prompt safeguarding](prompt-safeguarding.md) for complementary content
-policies, [limits](limits.md) for bounded execution, and [tracing](tracing.md)
+See [prompt safeguarding](../design/prompt-safeguarding.md) for complementary content
+policies, [limits](limits.md) for bounded execution, and [tracing](../design/tracing.md)
 for safe diagnostics. Content screening never replaces authorization.

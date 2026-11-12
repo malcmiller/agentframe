@@ -95,7 +95,7 @@ Authorization and content-policy decisions work without tracing. Diagnostics
 should record safe decision categories and correlation, not blocked secrets,
 raw prompts, private reasoning, or full policy-service responses.
 
-See [authorization](authorization.md), [limits](limits.md), and
+See [authorization](../guides/authorization.md), [limits](../guides/limits.md), and
 [tracing](tracing.md). AgentFrame does not supply an identity directory, universal
 content policy, or guaranteed prompt-injection detector.
 
