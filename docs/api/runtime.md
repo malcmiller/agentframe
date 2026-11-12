@@ -530,8 +530,9 @@ scoped-service cleanup still runs.
 `asyncio.CancelledError`.
 **Signature status:** implemented in M2 (#7) as a direct `AgentFrameError`
 subclass with the inherited constructor. Over A2A it ends the task in
-`CANCELED` ([mapping](hosting.md#result-and-failure-mapping)); translating
-`asyncio` cancellation into it arrives with task operations (#8).
+`CANCELED` ([mapping](hosting.md#result-and-failure-mapping)): the host
+reports an A2A `CancelTask` with it, while the running skill itself stops
+through ordinary `asyncio` cancellation. `Runtime.run` does not raise it.
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |

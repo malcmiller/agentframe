@@ -2,7 +2,7 @@
 
 The official A2A SDK owns the protocol: JSON-RPC parsing, the task store and
 task lifecycle. This module is the bridge it calls for each message: read which
-skill to run, run it through ``Runtime.run`` and publish the outcome on the task.
+skill to run, run it through the ``Runtime`` and publish the outcome on the task.
 
 Outcomes map to native A2A results as follows:
 
@@ -11,15 +11,15 @@ Outcomes map to native A2A results as follows:
 - A result becomes the artifact of a ``COMPLETED`` task: a ``str`` is one text
   part, anything else one data part ``{"value": ...}`` in Pydantic JSON mode.
 - Unknown skills, invalid arguments and denied permissions end the task in
-  ``REJECTED``; every other failure ends it in ``FAILED``; AgentFrame's
-  ``CancelledError`` ends it in ``CANCELED``.
+  ``REJECTED``; every other failure ends it in ``FAILED``; ``CancelTask`` ends
+  it in ``CANCELED`` through AgentFrame's ``CancelledError``.
 - A question for the caller leaves the task in ``INPUT_REQUIRED``.
 
 Every task status carries the run's ``invocation_id`` in its metadata.
 
 Later M2 stories extend the marked seams: ``read_skill_call`` gains extension
 activation (#5) and free-text routing (#6), which publishes its questions with
-``publish_input_required``; task cancellation arrives with task operations (#8).
+``publish_input_required``.
 """
 
 import logging
@@ -55,6 +55,9 @@ PRINCIPAL_STATE_KEY = "agentframe.principal"
 
 SKILL_FAILED_MESSAGE = "The skill failed."
 """What callers see when a skill raises an exception that is not AgentFrame's."""
+
+CANCELLED_MESSAGE = "The task was cancelled."
+"""What callers see on a task cancelled with ``CancelTask``."""
 
 HOST_MISCONFIGURED_MESSAGE = "The agent is not configured correctly."
 """What callers see for a ``DefinitionError``, whose message names internals."""
@@ -133,7 +136,10 @@ class RuntimeExecutor(AgentExecutor):
         )
         call = read_skill_call(context.message)
         invocation_id = _new_invocation_id()
-        await task.start_work()
+        # Stored on the task now so a later cancel can report the same ID.
+        await task.update_status(
+            TaskState.TASK_STATE_WORKING, metadata=_invocation_metadata(invocation_id)
+        )
         try:
             result = await self._runtime._run_invocation(
                 invocation_id, self._agent, call.skill, call.arguments, principal
@@ -157,10 +163,18 @@ class RuntimeExecutor(AgentExecutor):
 
         The SDK calls this only for the caller's own unfinished task, then
         cancels the ``execute`` call. That ``asyncio`` cancellation unwinds
-        ``Runtime.run``, so per-run services are still cleaned up.
+        the run, so per-run services are still cleaned up. The task reports
+        the ``invocation_id`` its run started with.
         """
         assert context.task_id is not None and context.context_id is not None
-        await TaskUpdater(event_queue, context.task_id, context.context_id).cancel()
+        task = TaskUpdater(event_queue, context.task_id, context.context_id)
+        invocation_id = None
+        if context.current_task is not None:
+            metadata = dict(context.current_task.metadata.items())
+            invocation_id = metadata.get("invocation_id")
+        await publish_failure(
+            task, CancelledError(CANCELLED_MESSAGE, invocation_id=invocation_id)
+        )
 
 
 def result_part(value: Any, invocation_id: str) -> Part:
