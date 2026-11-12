@@ -124,60 +124,93 @@ backoff and provider-SDK retries disabled (#37).
 ## `FoundryModel`
 
 **Purpose / decision:** call an explicitly configured Foundry GPT deployment
-through OpenAI v1 **Responses API** using the official `openai` Python package,
-not deploy a hosted agent. The API/SDK choice is confirmed; the AgentFrame
-constructor below remains a proposal.
+through the OpenAI v1 **Responses API** using the official `openai` Python
+package, not deploy a hosted agent. The Azure AI Inference SDK is retired and
+not used.
 
-**Proposed credential-based constructor shape:**
+**Signature status:** implemented (M3 #39); decisions confirmed 2026-11-12.
+Requires the optional extra `agentframe[foundry]`, which pins
+[`openai`](https://github.com/openai/openai-python) (`3.49.0`) and
+[`azure-identity`](https://pypi.org/project/azure-identity/) (`1.27.0`).
+`import agentframe` works without it; using `FoundryModel` without it raises
+`ImportError` naming the extra.
 
 ```text
-FoundryModel(*, endpoint: str, deployment: str, credential: ...)
+FoundryModel(
+    *, deployment: str, endpoint: str | None = None,
+    credential: str | AsyncTokenCredential | None = None,
+    client: openai.AsyncOpenAI | None = None,
+    context_window: int | None = None, store: bool = False,
+)
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `endpoint` | `str` | Explicit in current shape | OpenAI v1 base URL `https://<resource>.openai.azure.com/openai/v1/`; final AgentFrame endpoint normalization remains open. Not a Foundry project agents endpoint. |
-| `deployment` | `str` | Explicit selection required | Deployment identifier; no automatic provisioning or fallback. |
-| `credential` | Async Azure token credential in existing examples; final wrapper types open | Required for this shape | Trusted application injection; chosen auth paths are Entra ID token provider or API key. Mapping this proposed parameter to the OpenAI client remains open; no invented `client=` or API-key constructor keyword. |
+| `deployment` | `str` | Required | Deployment name; no automatic provisioning or fallback. |
+| `endpoint` | `str \| None` | Required unless `client` is given | OpenAI v1 base URL `https://<resource>.openai.azure.com/openai/v1/`. Not a Foundry project agents endpoint. |
+| `credential` | `str \| AsyncTokenCredential \| None` | Required unless `client` is given | An API key, or an async Azure token credential (`azure.identity.aio`). The adapter wraps a token credential with `get_bearer_token_provider(credential, "https://ai.azure.com/.default")`. The credential stays application-owned and is never logged. |
+| `client` | `openai.AsyncOpenAI \| None` | `None` | An application-created client used instead of `endpoint`/`credential` (giving both fails). Used through `with_options(max_retries=0)`; it stays caller-owned and is never closed by the model. |
+| `context_window` | `int \| None` | `None` | Tokens of input plus output the deployment accepts. The API does not report it, so `None` means unknown, never guessed. Must be greater than zero. |
+| `store` | `bool` | `False` | Whether Foundry stores responses server-side. Controls response storage only, not every provider retention mechanism. |
 
 ```python
-from azure.core.credentials_async import AsyncTokenCredential
+from azure.identity.aio import DefaultAzureCredential
+
 from agentframe import FoundryModel
 
 
-def build_model(
-    endpoint: str, deployment: str, credential: AsyncTokenCredential
-) -> FoundryModel:
-    return FoundryModel(
-        endpoint=endpoint, deployment=deployment, credential=credential,
-    )
+async def main(endpoint: str, deployment: str) -> None:
+    async with (
+        DefaultAzureCredential() as credential,
+        FoundryModel(
+            endpoint=endpoint, deployment=deployment, credential=credential
+        ) as model,
+    ):
+        ...  # Inject the model into an agent and serve or run it.
 ```
 
-Azure imports are from optional provider dependencies. The application supplies
-the endpoint, deployment, and supported credential; no credential chain is
-implicitly selected by this example.
-The selected SDK accepts an API key or an Entra token provider. Microsoft's
-[migration guide](https://learn.microsoft.com/en-us/azure/foundry/how-to/model-inference-to-openai-migration)
-uses `azure-identity`'s `get_bearer_token_provider` with scope
-`https://ai.azure.com/.default`. The async credential above is an illustrative
-AgentFrame input, not a claim that the OpenAI client directly accepts that
-object; async wrapping and final accepted types remain to be implemented.
-Keep `openai` and `azure-identity` optional provider extras. The Azure AI
-Inference SDK is retired and is not the selected path. No dependency is
-installed or pinned by this reference.
+The application supplies the endpoint, deployment and credential; no
+credential chain is selected implicitly.
 
-**Behavior / failures:** implements the [`Model.generate`](#modelgenerate)
-contract. Reject unsupported API/features/settings explicitly; preserve
-authentication versus provider/configuration failure distinctions without
-leaking credential/provider payloads. Runtime bounds retries and attempts.
-Exact client typing, ownership transfer, and lifecycle APIs remain open.
-API selection does not prove a deployment supports every Responses feature;
-capability checks, normalized results/usage and Python 3.13-3.15 compatibility
-still need implementation evidence.
+**Behavior / failures:** implements [`Model.generate`](#modelgenerate) with one
+non-streaming Responses call.
+
+- Construction does no I/O. The adapter owns and [`close`](#modelclose)s a
+  client it created; an injected client stays open.
+- SDK retries are always off (`max_retries=0`), so AgentFrame is the only
+  retry layer.
+- Leading `system` messages become `instructions`; a later `system` message
+  keeps its place in the input as a `developer` message. User and assistant
+  messages are sent as input messages.
+- `max_output_tokens` is sent as is. For reasoning models it includes
+  reasoning tokens, so the visible answer can be shorter than the cap.
+- Response mapping: `completed` returns the output text. Any refusal content
+  item finishes `REFUSED` with empty text, even beside other text.
+  `incomplete` with reason `max_output_tokens` finishes `LENGTH`,
+  `content_filter` finishes `CONTENT_FILTER`, and any other reason raises
+  `IncompleteOutputError`. `failed` raises `ProviderError`, transient only for
+  `server_error` and `rate_limit_exceeded`; `cancelled`, `queued` and
+  `in_progress` raise a non-transient `ProviderError`.
+- Usage (`input_tokens`, `output_tokens`, `total_tokens`) is parsed whenever
+  present, including on a `ProviderError` from a failed response; missing
+  usage is unknown (`None`), not zero.
+- HTTP 408, 429 and 5xx, connection failures and timeouts are transient
+  `ProviderError`s (with a numeric `Retry-After` hint as `retry_after`);
+  401/403, 404, other 4xx and Entra token failures are not. Messages never
+  include the service's error text or credentials.
+- [`capabilities`](#modelcapabilities-1) does no I/O and reports the
+  configured `context_window` (or `None`); structured output and tools are
+  unsupported. Failing at startup when the context window is unknown and the
+  run sets no explicit `max_input_tokens` is part of
+  [limits accounting](../limits.md) (M3 #36), not the adapter.
+- Opt-in real test: set `AGENTFRAME_TEST_FOUNDRY=1`,
+  `AGENTFRAME_FOUNDRY_ENDPOINT` and `AGENTFRAME_FOUNDRY_DEPLOYMENT`; it signs in
+  with the Azure CLI credential. Default test runs never call Foundry.
 
 **Related:** [`ModelSettings`](#modelsettings),
 [Foundry guide](../agent-examples.md#switch-to-foundry),
-[resolved platform/API choices](../initial-outline.md#resolved-m0-platform-and-api-decisions).
+[resolved platform/API choices](../initial-outline.md#resolved-m0-platform-and-api-decisions),
+[migration guide](https://learn.microsoft.com/en-us/azure/foundry/how-to/model-inference-to-openai-migration).
 
 ## `OllamaModel`
 

@@ -30,6 +30,10 @@ server = ["uvicorn==0.54.0"]
 ollama = [
     "ollama==0.6.3",
 ]
+foundry = [
+    "azure-identity==1.27.0",
+    "openai==3.49.0",
+]
 
 [project.scripts]
 agentframe = "agentframe.cli:main"
@@ -46,7 +50,7 @@ dev = [
     "pre-commit==4.7.0",
     "uvicorn==0.54.0",
     "httpx==0.28.1",
-    "agentframe[ollama]",
+    "agentframe[ollama,foundry]",
 ]
 
 [tool.ruff]
