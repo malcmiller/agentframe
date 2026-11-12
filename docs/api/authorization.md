@@ -242,6 +242,8 @@ to HTTP 401 before creating any task or revealing skill details. The host builds
 the `Principal` from the verified caller: its permissions are the union of
 `role_permissions` for the caller's roles, and unknown roles grant nothing.
 Every task operation requires authentication; the public Agent Card does not.
+Tasks are scoped to the verified caller's ID. Anonymous callers share one task
+namespace and cannot list tasks; see [hosting](hosting.md#agentapp).
 
 ```python
 from collections.abc import Mapping

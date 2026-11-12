@@ -7,8 +7,7 @@ skill to run, run it through ``Runtime.run`` and publish the outcome on the task
 Only the minimal path exists so far. Later M2 stories replace the marked seams:
 ``read_skill_call`` gains extension activation and protocol errors (#5) plus
 free-text routing (#6); ``_publish_result`` and ``_publish_failure`` gain the
-full result and error mapping (#7); cancellation arrives with task operations
-(#8).
+full result and error mapping (#7).
 """
 
 import logging
@@ -126,8 +125,14 @@ class RuntimeExecutor(AgentExecutor):
         await _publish_result(task, result)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Cancellation is not supported yet (#8)."""
-        raise NotImplementedError("Task cancellation is not supported yet.")
+        """Mark the task ``CANCELED``; the SDK then stops the running skill.
+
+        The SDK calls this only for the caller's own unfinished task, then
+        cancels the ``execute`` call. That ``asyncio`` cancellation unwinds
+        ``Runtime.run``, so per-run services are still cleaned up.
+        """
+        assert context.task_id is not None and context.context_id is not None
+        await TaskUpdater(event_queue, context.task_id, context.context_id).cancel()
 
 
 async def _publish_result(task: TaskUpdater, result: RunResult[Any]) -> None:
