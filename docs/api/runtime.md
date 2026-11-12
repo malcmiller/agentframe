@@ -297,7 +297,9 @@ def invalid_output(error: OutputValidationError) -> object:
 ## `AuthenticationError`
 
 **Purpose / decision:** missing/invalid required caller authentication.
-**Signature status:** decided `AgentFrameError` subtype; transport details open.
+**Signature status:** implemented `AgentFrameError` subtype (M2 story #4), raised
+by authenticators before any run exists, so `invocation_id` is `None`. The host
+maps it to HTTP 401.
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |

@@ -263,8 +263,10 @@ settings, deployed server examples, accounting caveats, and protocol boundaries.
 - Use `HostConfig(auth=...)`, not `authentication=`. `Authenticator` has
   `EntraIDAuth(tenant_id=..., audience=...)`, `APIKeyAuth(keys=...)`,
   explicit `AllowAnonymous()` and custom implementations. No remote auth
-  choice means startup refusal. `role_permissions` maps verified roles/scopes;
-  custom interface methods, API-key entries/scope mapping remain open.
+  choice means startup refusal. `role_permissions` maps verified roles/scopes.
+  The protocol method is `async authenticate(headers) -> VerifiedCaller | None` (M2 #4); API keys use
+  `APIKey(caller_id=..., roles=[...])` and the `X-API-Key` header; permissions
+  are the union of mapped roles. Entra scope mapping remains open.
   Do not rename separate outbound resolver `authentication=` settings.
 - Restrict routing candidates, re-check invocation and protected task access,
   and enforce consequential tool/resource decisions at the action boundary.

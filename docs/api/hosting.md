@@ -169,7 +169,7 @@ HostConfig(
 | --- | --- | --- | --- |
 | `public_url` | `str` | Explicit in current shape | Advertised origin/endpoint configuration, not server binding or TLS setup. Do not derive it from untrusted forwarded headers. |
 | `auth` | `Authenticator` | Required for remote hosting; no default | Built-in Entra/API key/explicit anonymous or custom; omitted choice refuses startup. |
-| `role_permissions` | Role-to-permission mapping | Optional application mapping; omitted-container shape open | Maps verified roles, e.g. `{"Editor": ["documents:write"]}`; never trusts roles from skill arguments. Scope/merge details remain open. |
+| `role_permissions` | Role-to-permission mapping | Optional application mapping; omitted-container shape open | Maps verified roles, e.g. `{"Editor": ["documents:write"]}`; never trusts roles from skill arguments. Permissions are the union over the caller's verified roles; unknown roles grant nothing. Entra scope details remain open. |
 | `limits_ceiling` | `RunLimits` | Independent host constraint; omission/default values open | Non-overridable ceilings, not agent defaults. Validate configured agent allowances before accepting work. |
 | `max_concurrent_runs` | `int` | `32`, configurable | Excess is rejected immediately with a standard busy error, not indefinitely queued; exact binding error mapping open. |
 | `max_request_bytes` | `int` | `1048576` (1 MiB), configurable | Bound ingress before work; protocol/encoding measurement details open. |
