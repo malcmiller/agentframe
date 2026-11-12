@@ -9,7 +9,8 @@ contracts. As of M1, `Runtime(services=...)`, `invoke`, `run`, `RunResult`,
 adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
 `Runtime.validate_model`, token/model-call accounting in `RunResult` and the
 `TokenLimitExceededError`, `ModelCallLimitExceededError` and
-`TimeoutLimitExceededError` subtypes. The remaining parameters and errors
+`TimeoutLimitExceededError` subtypes. M5 #61 adds `ToolCallLimitExceededError`
+and real `RunResult.tool_calls` counts. The remaining parameters and errors
 arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
 
@@ -248,7 +249,7 @@ frozen generic dataclass `RunResult[T]`.
 | `invocation_id` | `str` (UUID 4) | Every run | Library-generated, independent of trace IDs; never authentication. |
 | `usage` | `Usage` | Present | Normalized token usage; see below. |
 | `model_calls` | `int` | Present | Dispatched inference attempts including retries; `0` for model-free runs. |
-| `tool_calls` | `int` | Present | Managed tool executions; `0` in M1. Exact attempted/denied-call breakdown remains open. |
+| `tool_calls` | `int` | Present (M5 #61) | Every tool call the model asked for, including ones that did not run because of an unknown tool name or invalid arguments. `0` for model-free and tool-free runs. |
 | `duration` | `datetime.timedelta` | Present | Run duration, not a provider-only time. |
 | `finish_reason` | `FinishReason` (`StrEnum`) | Present | Completion information, not raw provider data or private reasoning. Values: `COMPLETED`, `LENGTH` (output token limit reached), `REFUSED`, `CONTENT_FILTER` (decided, M3 #33); `TOOL_CALLS` (M5 #59) describes a model call that asks for tools and is never a run's finish reason; more only when a later milestone needs them. Model-free runs report `COMPLETED`. |
 
@@ -587,7 +588,8 @@ the same token/model-call allowance and deadline; never replay a tool side effec
 
 **Purpose / decision:** base for token, model-call, tool-call and timeout limit failures.
 **Signature status:** implemented base; the token, model-call and timeout
-subtypes below are implemented (M3 #36), the tool-call subtype name remains open.
+subtypes below are implemented (M3 #36) and the tool-call subtype
+`ToolCallLimitExceededError` (M5 #61).
 `except LimitExceededError` catches all of them.
 
 | Fields | Type | Required/default status | Meaning |
@@ -645,6 +647,26 @@ toward the limit; a call refused with `UnsupportedCapabilityError` before it
 was sent does not.
 **Related:** [`RunLimits`](configuration.md#runlimits).
 
+## `ToolCallLimitExceededError`
+
+**Purpose / decision:** a tool call would exceed `RunLimits.max_tool_calls`.
+**Signature status:** implemented (M5 #61) `LimitExceededError` subtype with the
+inherited constructor.
+
+```python
+from agentframe import ToolCallLimitExceededError
+
+
+def too_many_tools(error: ToolCallLimitExceededError) -> str:
+    return error.message
+```
+
+**Behavior / failures:** raised before the extra tool call runs. Every call a
+model asks for counts, including ones naming an unknown tool or with invalid
+arguments.
+**Related:** [`RunLimits`](configuration.md#runlimits),
+[tool calling](agents.md#implemented-tool-calling-m5-61).
+
 ## `TimeoutLimitExceededError`
 
 **Purpose / decision:** the run's `RunLimits.timeout_seconds` expired.
@@ -660,8 +682,8 @@ def too_slow(error: TimeoutLimitExceededError) -> str:
     return error.message
 ```
 
-**Behavior / failures:** raised when the skill, a model call or free-text
-routing runs past the run's deadline; scoped-service cleanup still runs.
+**Behavior / failures:** raised when the skill, a model call, a tool call or
+free-text routing runs past the run's deadline; scoped-service cleanup still runs.
 **Related:** [`RunLimits`](configuration.md#runlimits).
 
 ## `CancelledError`

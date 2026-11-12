@@ -84,7 +84,7 @@ before sending. Managed generation (`ctx.generate`, #35) turns `REFUSED` into
 `ModelRefusalError` and `LENGTH` into `IncompleteOutputError`. Structured
 output (`output=`) is implemented by the managed layer (M4 #53); adapters send
 [`ModelRequest.output`](#modelrequest) to their provider. The tool-call types
-are implemented (M5 #59); the managed tool loop (`tools=`, #61) and adapter
+and the managed tool loop (`tools=`, #61) are implemented (M5 #59, #61); adapter
 tool mappings (#64, #65) follow, and until then `FoundryModel` and
 `OllamaModel` raise `UnsupportedCapabilityError` for requests with tool
 content. Streaming remains later, with
@@ -760,8 +760,9 @@ as the text form plus `output=OutputSchema(name="Summary", json_schema=...)`;
 the serialized schema counts toward the call's input token estimate. Tool
 specs, tool-call names and arguments, and tool results count toward it too.
 `uses_tools()` returns whether the request offers tools or carries tool calls
-or results. The managed loop that fills `tools` from
-`ctx.generate(..., tools=[...])` is #61.
+or results. The managed loop fills `tools` from
+`ctx.generate(..., tools=[...])` (#61) and sends the same specs on every
+continuation.
 
 **Related:** [`ExecutionPolicy`](authorization.md#executionpolicy),
 [outbound checks](../design/prompt-safeguarding.md#check-at-the-boundary-not-just-once).
@@ -907,6 +908,7 @@ call = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}'
 ```
 
 **Behavior / failures:** arguments are untrusted model output; nothing runs
-until the managed loop (#61) validates and authorizes the call.
+until the managed loop (#61) validates the call; unknown tools and invalid
+arguments run nothing. Action authorization is #62.
 
 **Related:** [`ModelResponse`](#modelresponse), [`Message`](#message).

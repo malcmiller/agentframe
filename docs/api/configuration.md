@@ -73,7 +73,7 @@ RunLimits(
 | `max_total_tokens` | `int \| None` (implemented M3 #36) | `100000`, configurable | Aggregate input/output across a run, retries and continuations, without double-counting overlapping usage. |
 | `max_model_calls` | `int \| None` (implemented M3 #36) | `10`, configurable | Dispatched inference attempts including retries, not just successful completions. |
 | `max_model_retries` | `int \| None` (implemented M3 #37) | `2`, configurable; `0` disables retries; negative is a `DefinitionError` | Retries of one model call after a transient `ProviderError`. Each retry counts toward `max_model_calls` and the token budget; see [retries](../guides/limits.md#retries-and-duplicate-requests). |
-| `max_tool_calls` | `int` | `20`, configurable | Bounds managed tool executions/continuations; detailed attempted/denied call counting remains open. |
+| `max_tool_calls` | `int \| None` (implemented M5 #61) | `20`, configurable | Tool calls a run may make. Every model-requested call counts, including unknown-tool and invalid-argument calls that did not run; the call over the limit raises `ToolCallLimitExceededError` before it runs. |
 | `timeout_seconds` | Numeric seconds; accepted numeric type open | `120`, configurable | Wall-clock invocation deadline including model/tool work; retries never reset it. |
 
 ```python
@@ -91,15 +91,17 @@ limits = RunLimits(
 **Behavior / failures:** implemented so far: a frozen, keyword-only
 `RunLimits(*, timeout_seconds: float | None = None, max_total_tokens: int | None
 = None, max_model_calls: int | None = None, max_input_tokens: int | None =
-None)`; `max_tool_calls` arrives with tools (M5). Every field defaults to
+None, max_model_retries: int | None = None, max_tool_calls: int | None =
+None)`. Every field defaults to
 `None`, meaning "unset", and is inherited field by field (see
 [precedence](#precedence)); the library defaults are `DEFAULT_LIMITS =
-RunLimits(timeout_seconds=120.0, max_total_tokens=100_000, max_model_calls=10)`,
+RunLimits(timeout_seconds=120.0, max_total_tokens=100_000, max_model_calls=10,
+max_model_retries=2, max_tool_calls=20)`,
 with `max_input_tokens` unset so it falls back to the model's context window. A
 field that is set but not greater than zero raises `DefinitionError`. Exceeding
 a limit raises a `LimitExceededError` subclass naming it:
-`TimeoutLimitExceededError`, `TokenLimitExceededError` or
-`ModelCallLimitExceededError`. Model-free skills still have deadlines but
+`TimeoutLimitExceededError`, `TokenLimitExceededError`,
+`ModelCallLimitExceededError` or `ToolCallLimitExceededError`. Model-free skills still have deadlines but
 consume no model tokens and need no context window. Concurrency/request-size
 controls are separate host requirements, not invented fields on this type.
 
