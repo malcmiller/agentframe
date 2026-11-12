@@ -13,6 +13,15 @@ Example::
     response = await model.generate(request)
     assert response.text == "Hello!"
     assert model.requests == [request]
+
+To script a model that asks to call a tool before answering::
+
+    model = ScriptedModel(
+        [
+            ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}'),
+            "Order A1 has shipped.",
+        ]
+    )
 """
 
 from collections import deque
@@ -20,11 +29,16 @@ from collections.abc import Iterable
 from types import TracebackType
 from typing import Self
 
-from agentframe.models.base import ModelCapabilities, ModelRequest, ModelResponse
+from agentframe.models.base import (
+    ModelCapabilities,
+    ModelRequest,
+    ModelResponse,
+    ToolCall,
+)
 from agentframe.runtime.usage import FinishReason, Usage
 
-type ScriptedReply = str | ModelResponse | Exception
-"""One scripted model call: text, a full response, or an error to raise."""
+type ScriptedReply = str | ToolCall | tuple[ToolCall, ...] | ModelResponse | Exception
+"""One scripted model call: text, tool calls, a full response, or an error."""
 
 _UNKNOWN_USAGE = Usage(
     input_tokens=None, output_tokens=None, total_tokens=None, estimated=False
@@ -38,8 +52,10 @@ class ScriptedModel:
     """A deterministic ``Model`` that replays scripted replies in order.
 
     Each ``generate`` call records its request, then uses the next reply:
-    a ``str`` returns a completed response with unknown usage, a
-    ``ModelResponse`` is returned as given, and an exception is raised.
+    a ``str`` returns a completed response with unknown usage; a ``ToolCall``
+    or a tuple of them returns a ``TOOL_CALLS`` response with no text and
+    unknown usage; a ``ModelResponse`` is returned as given; and an exception
+    is raised.
 
     Args:
         replies: The replies for successive ``generate`` calls.
@@ -85,6 +101,15 @@ class ScriptedModel:
         if isinstance(reply, str):
             return ModelResponse(
                 text=reply, usage=_UNKNOWN_USAGE, finish_reason=FinishReason.COMPLETED
+            )
+        if isinstance(reply, ToolCall):
+            reply = (reply,)
+        if isinstance(reply, tuple):
+            return ModelResponse(
+                text="",
+                usage=_UNKNOWN_USAGE,
+                finish_reason=FinishReason.TOOL_CALLS,
+                tool_calls=reply,
             )
         return reply
 

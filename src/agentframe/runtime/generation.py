@@ -354,11 +354,13 @@ def check_supports(request: ModelRequest, capabilities: ModelCapabilities) -> No
     """Check that the model supports what ``request`` needs, before it is sent.
 
     Raises:
-        UnsupportedCapabilityError: The request asks for structured output
-            and the model does not report support for it.
+        UnsupportedCapabilityError: The request asks for structured output or
+            offers tools, and the model does not report support for it.
     """
     if request.output is not None and not capabilities.structured_output:
         raise UnsupportedCapabilityError("The model does not support structured output")
+    if request.tools and not capabilities.tools:
+        raise UnsupportedCapabilityError("The model does not support tool calling")
 
 
 def input_token_limit(limits: RunLimits, capabilities: ModelCapabilities) -> int:
@@ -416,10 +418,25 @@ def estimate_tokens(text: str) -> int:
 
 
 def estimate_input_tokens(request: ModelRequest) -> int:
-    """Estimate the input tokens of ``request``: its messages and output schema."""
-    tokens = sum(estimate_tokens(message.content) for message in request.messages)
+    """Estimate the input tokens of ``request``.
+
+    Counts every message, including tool calls and tool results, plus the
+    output schema and the tool specs.
+    """
+    tokens = sum(estimate_message_tokens(message) for message in request.messages)
     if request.output is not None:
         tokens += estimate_tokens(json.dumps(request.output.json_schema))
+    for spec in request.tools:
+        tokens += estimate_tokens(spec.name + spec.description)
+        tokens += estimate_tokens(json.dumps(spec.parameters))
+    return tokens
+
+
+def estimate_message_tokens(message: Message) -> int:
+    """Estimate the tokens of one message: its text, tool name and tool calls."""
+    tokens = estimate_tokens(message.content + (message.tool_name or ""))
+    for call in message.tool_calls:
+        tokens += estimate_tokens(call.name + call.arguments)
     return tokens
 
 

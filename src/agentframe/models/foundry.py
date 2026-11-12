@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import TracebackType
-from typing import Self
+from typing import Literal, Self
 
 try:
     import openai
@@ -30,19 +30,32 @@ except ImportError as error:
         "install them with: pip install 'agentframe[foundry]'"
     ) from error
 
-from agentframe.errors import DefinitionError, IncompleteOutputError, ProviderError
+from agentframe.errors import (
+    DefinitionError,
+    IncompleteOutputError,
+    ProviderError,
+    UnsupportedCapabilityError,
+)
 from agentframe.models.base import (
     Message,
     ModelCapabilities,
     ModelRequest,
     ModelResponse,
     OutputSchema,
+    Role,
 )
 from agentframe.models.strict_schema import drop_defaulted_nulls, strict_schema
 from agentframe.runtime.usage import FinishReason, Usage
 
 FOUNDRY_SCOPE = "https://ai.azure.com/.default"
 """Microsoft Entra scope for Foundry inference tokens."""
+
+_INPUT_ROLES: dict[Role, Literal["developer", "user", "assistant"]] = {
+    "system": "developer",
+    "user": "user",
+    "assistant": "assistant",
+}
+"""Responses API roles for text messages; tool messages are not supported yet."""
 
 TRANSIENT_FAILURE_CODES = frozenset({"server_error", "rate_limit_exceeded"})
 """Codes of ``failed`` responses that retrying may fix."""
@@ -128,14 +141,18 @@ class FoundryModel:
             ``CONTENT_FILTER``.
 
         Raises:
-            UnsupportedCapabilityError: The output schema uses a construct
-                strict structured output cannot express. Raised before sending.
+            UnsupportedCapabilityError: The request uses tools, which this
+                adapter does not support yet, or the output schema uses a
+                construct strict structured output cannot express. Raised
+                before sending.
             IncompleteOutputError: The response stopped early for another reason.
             ProviderError: The call or the response failed. Connection failures,
                 timeouts, rate limits and server errors are transient; rejected
                 credentials, an unknown deployment and invalid requests,
                 including a rejected output schema, are not.
         """
+        if request.uses_tools():
+            raise UnsupportedCapabilityError("FoundryModel does not support tools yet")
         instructions, conversation = _split_instructions(request.messages)
         text = openai.omit if request.output is None else _text_format(request.output)
         async with _provider_errors(self.deployment, request.output is not None):
@@ -222,7 +239,7 @@ def _split_instructions(
     instructions = "\n\n".join(message.content for message in messages[:leading])
     conversation: ResponseInputParam = [
         EasyInputMessageParam(
-            role="developer" if message.role == "system" else message.role,
+            role=_INPUT_ROLES[message.role],
             content=message.content,
         )
         for message in messages[leading:]

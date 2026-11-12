@@ -189,7 +189,8 @@ decisions are in `docs/roadmap.md#resolved-m0-platform-and-api-decisions`.
   AgentFrame owns normalized messages/tool calls/results/usage/finish reasons.
   Unsupported requested capability fails before sending; refusal raises
   `ModelRefusalError`, truncation `IncompleteOutputError` by default. Explicit
-  partial-result opt-in syntax and normalized field layouts remain open.
+  partial-result opt-in syntax remains open; message/tool-call layouts are
+  settled (M5 #59).
 - Annotate service parameters `Inject[T]`; register with `Services.add(T, instance)`
   or `add_scoped(T, factory)`, passed as `services=` on `AgentApp` / `Runtime`.
   Exclude injected params from caller/card/MCP schemas; missing services fail
@@ -436,7 +437,7 @@ No hosting platform is implied. See `docs/guides/development.md`.
 The first usable release supports text generation, typed structured outputs,
 and bounded execution of explicitly registered tools with generation
 continuations. Return complete validated results by default; streaming is later.
-Normalized field layouts, schema subsets and partial-output opt-in remain open,
+Normalized usage layouts, schema subsets and partial-output opt-in remain open,
 not normalization ownership, generation syntax or approved limits/errors. Do not
 reintroduce wholesale deferral of tools/structured outputs.
 

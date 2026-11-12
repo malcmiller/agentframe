@@ -12,12 +12,15 @@ class FinishReason(StrEnum):
         LENGTH: The model stopped at its output token limit; output is truncated.
         REFUSED: The model refused the request.
         CONTENT_FILTER: A provider content filter stopped the output.
+        TOOL_CALLS: The model stopped to ask for tool calls. Model calls only;
+            a run never finishes this way.
     """
 
     COMPLETED = "completed"
     LENGTH = "length"
     REFUSED = "refused"
     CONTENT_FILTER = "content_filter"
+    TOOL_CALLS = "tool_calls"
 
 
 @dataclass(frozen=True)

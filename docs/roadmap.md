@@ -185,7 +185,8 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
 - Offer no shell, filesystem, network-fetching, or other tools by default.
 - Bound tool execution and generation continuations, validate tool arguments
   and results, authorize each action, and never retry side effects implicitly.
-  Detailed normalized layouts and additional tool retry rules remain open.
+  Normalized tool-call layouts are settled (M5 #59); additional tool retry
+  rules remain open.
 - Host defaults: 32 concurrent runs (excess immediately rejected with standard
   busy error), 1 MiB request, 4 MiB response, 30-second shutdown grace (stop
   accepting, drain, then cancel). `/health` is liveness; `/ready` means startup
@@ -416,8 +417,8 @@ belongs to that release even though telemetry exporters/integration stay optiona
 
 ## Open design decisions
 
-- Exact AgentFrame-normalized message/tool/usage/finish layouts and enum values,
-  supported structured-output schemas, provider mappings and partial-result opt-in.
+- Exact AgentFrame-normalized usage layouts (message/tool-call layouts and
+  finish reasons are settled, M5 #59), supported structured-output schemas, provider mappings and partial-result opt-in.
   Ownership of normalization, `output=` / `tools=` and typed failures are decided.
 - Scoped factory/disposal interfaces, explicit local startup method and app/runtime
   service-container conflict handling; `Inject`, `Services`, ownership and startup

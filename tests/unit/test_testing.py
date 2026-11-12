@@ -11,6 +11,7 @@ from agentframe import (
     ModelResponse,
     ModelSettings,
     ProviderError,
+    ToolCall,
     Usage,
 )
 from agentframe.testing import SCRIPTED_CONTEXT_WINDOW, ScriptedModel
@@ -97,3 +98,21 @@ async def test_records_close_including_through_async_with() -> None:
         assert entered is model
 
     assert model.closed
+
+
+async def test_tool_call_replies_ask_for_tools_then_text_answers() -> None:
+    lookup = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}')
+    track = ToolCall(id="call_2", name="track_parcel", arguments='{"parcel": "P9"}')
+    model = ScriptedModel([lookup, (lookup, track), "Order A1 has shipped."])
+
+    one_call = await model.generate(make_request("Where is A1?"))
+    two_calls = await model.generate(make_request("And the parcel?"))
+    answer = await model.generate(make_request("Thanks"))
+
+    assert one_call.tool_calls == (lookup,)
+    assert one_call.finish_reason is FinishReason.TOOL_CALLS
+    assert one_call.text == ""
+    assert one_call.usage.total_tokens is None
+    assert two_calls.tool_calls == (lookup, track)
+    assert answer.text == "Order A1 has shipped."
+    assert answer.tool_calls == ()

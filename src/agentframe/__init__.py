@@ -38,6 +38,8 @@ from agentframe.models.base import (
     ModelSettings,
     OutputSchema,
     Role,
+    ToolCall,
+    ToolSpec,
 )
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
@@ -107,7 +109,9 @@ __all__ = [
     "SkillRouter",
     "TimeoutLimitExceededError",
     "TokenLimitExceededError",
+    "ToolCall",
     "ToolDefinition",
+    "ToolSpec",
     "UnsupportedCapabilityError",
     "Usage",
     "VerifiedCaller",

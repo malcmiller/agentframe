@@ -250,7 +250,7 @@ frozen generic dataclass `RunResult[T]`.
 | `model_calls` | `int` | Present | Dispatched inference attempts including retries; `0` for model-free runs. |
 | `tool_calls` | `int` | Present | Managed tool executions; `0` in M1. Exact attempted/denied-call breakdown remains open. |
 | `duration` | `datetime.timedelta` | Present | Run duration, not a provider-only time. |
-| `finish_reason` | `FinishReason` (`StrEnum`) | Present | Completion information, not raw provider data or private reasoning. Values: `COMPLETED`, `LENGTH` (output token limit reached), `REFUSED`, `CONTENT_FILTER` (decided, M3 #33); more only when a later milestone needs them. Model-free runs report `COMPLETED`. |
+| `finish_reason` | `FinishReason` (`StrEnum`) | Present | Completion information, not raw provider data or private reasoning. Values: `COMPLETED`, `LENGTH` (output token limit reached), `REFUSED`, `CONTENT_FILTER` (decided, M3 #33); `TOOL_CALLS` (M5 #59) describes a model call that asks for tools and is never a run's finish reason; more only when a later milestone needs them. Model-free runs report `COMPLETED`. |
 
 `Usage(input_tokens, output_tokens, total_tokens, estimated)` is a frozen
 dataclass. Each count is `int | None`, where `None` means unknown, never zero;

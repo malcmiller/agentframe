@@ -199,7 +199,7 @@ to select registered functions. Defaults are 20 tool calls, 10 model attempts,
 100000 total tokens and 120 seconds. No tool is ever retried automatically,
 whatever its flags; `idempotent=True` is not a retry grant. Model retries are
 transient-only, default two with backoff and provider-SDK retries disabled.
-Exact normalized layouts remain open.
+Normalized message and tool-call layouts are settled ([`ToolCall`](../api/models.md#toolcall), M5 #59).
 Human approval workflows are application-owned, not built-in first-release
 pause/resume.
 

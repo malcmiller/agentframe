@@ -18,7 +18,7 @@ except ImportError as error:
         "install it with: pip install 'agentframe[ollama]'"
     ) from error
 
-from agentframe.errors import DefinitionError, ProviderError
+from agentframe.errors import DefinitionError, ProviderError, UnsupportedCapabilityError
 from agentframe.models.base import ModelCapabilities, ModelRequest, ModelResponse
 from agentframe.runtime.usage import FinishReason, Usage
 
@@ -74,10 +74,14 @@ class OllamaModel:
         """Send ``request`` to the server's chat API and return the full reply.
 
         Raises:
+            UnsupportedCapabilityError: The request uses tools, which this
+                adapter does not support yet. Raised before sending.
             ProviderError: The call failed. Connection failures, timeouts,
                 rate limits and server errors are transient; an unknown model
                 or a rejected request is not.
         """
+        if request.uses_tools():
+            raise UnsupportedCapabilityError("OllamaModel does not support tools yet")
         context_window = await self._get_context_window()
         messages = [
             {"role": message.role, "content": message.content}
