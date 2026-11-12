@@ -3,6 +3,7 @@
 Needs the optional ``ollama`` package: ``pip install agentframe[ollama]``.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import TracebackType
@@ -34,11 +35,21 @@ class OllamaModel:
     Every request sends the context window explicitly (Ollama's ``num_ctx``),
     so the server never silently truncates input to a smaller default.
 
+    Prefer an explicit ``context_window`` sized for your inputs, such as
+    ``8192``. The metadata size is usually the model's maximum, and Ollama
+    allocates memory for the whole window: ``llama3.2:3b`` (131072 tokens)
+    loads at about 18 GB instead of about 2 GB at 8192. Ollama also reloads
+    the model, taking several seconds, whenever ``num_ctx`` changes.
+
+    After ``close()`` the model cannot be used again; later calls fail with
+    ``RuntimeError``. Create a new ``OllamaModel`` instead.
+
     Args:
         model: Tag of an installed model, for example ``"llama3.2:3b"``.
         endpoint: URL of the Ollama server.
         context_window: Tokens of input plus output to request from the server.
-            ``None`` uses the size reported in the model's metadata.
+            ``None`` uses the size reported in the model's metadata (see the
+            memory cost above).
 
     Raises:
         DefinitionError: If ``context_window`` is not greater than zero.
@@ -56,15 +67,16 @@ class OllamaModel:
         self.model = model
         self.endpoint = endpoint
         self._context_window = context_window
+        self._context_window_lock = asyncio.Lock()
         self._client = ollama.AsyncClient(host=endpoint)
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Send ``request`` to the server's chat API and return the full reply.
 
         Raises:
-            ProviderError: The call failed. Connection failures, timeouts and
-                server errors are transient; an unknown model or a rejected
-                request is not.
+            ProviderError: The call failed. Connection failures, timeouts,
+                rate limits and server errors are transient; an unknown model
+                or a rejected request is not.
         """
         context_window = await self._get_context_window()
         messages = [
@@ -113,9 +125,11 @@ class OllamaModel:
         await self.close()
 
     async def _get_context_window(self) -> int:
-        if self._context_window is None:
-            self._context_window = await self._fetch_context_window()
-        return self._context_window
+        # The lock makes concurrent first calls share a single metadata fetch.
+        async with self._context_window_lock:
+            if self._context_window is None:
+                self._context_window = await self._fetch_context_window()
+            return self._context_window
 
     async def _fetch_context_window(self) -> int:
         async with _provider_errors(self.model):
@@ -159,7 +173,7 @@ def _response_error(status_code: int, model: str) -> ProviderError:
             f"Ollama model {model!r} is not installed on the server",
             transient=False,
         )
-    if status_code == 429 or status_code >= 500:
+    if status_code in (408, 429) or status_code >= 500:
         return ProviderError(
             f"Ollama server error (HTTP {status_code})", transient=True
         )

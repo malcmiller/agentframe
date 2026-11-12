@@ -1,5 +1,6 @@
 """OllamaModel against a fake Ollama server built on httpx's mock transport."""
 
+import asyncio
 import json
 import os
 import subprocess
@@ -53,7 +54,8 @@ class FakeOllama:
         self.show = show
         self.requests: list[tuple[str, dict[str, Any]]] = []
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0)  # Let other tasks run, like a real network call.
         self.requests.append((request.url.path, json.loads(request.content)))
         reply = self.show if request.url.path == "/api/show" else self.chat
         if callable(reply):
@@ -169,6 +171,18 @@ async def test_context_window_is_read_once_from_model_metadata(
     assert server.paths() == ["/api/show", "/api/chat", "/api/chat"]
 
 
+async def test_concurrent_first_calls_read_metadata_once(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    server = FakeOllama()
+    use_server(server)
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        await asyncio.gather(model.generate(ask("One")), model.generate(ask("Two")))
+
+    assert server.paths().count("/api/show") == 1
+
+
 async def test_configured_context_window_is_sent_without_reading_metadata(
     use_server: Callable[[FakeOllama], None],
 ) -> None:
@@ -228,7 +242,8 @@ async def test_unknown_model_is_not_transient(
 
 
 @pytest.mark.parametrize(
-    ("code", "transient"), [(400, False), (429, True), (500, True), (503, True)]
+    ("code", "transient"),
+    [(400, False), (408, True), (429, True), (500, True), (503, True)],
 )
 async def test_http_errors_map_to_provider_errors(
     use_server: Callable[[FakeOllama], None], code: int, transient: bool
@@ -297,7 +312,7 @@ def test_missing_extra_names_the_extra_to_install() -> None:
 async def test_local_ollama_server_generates_text() -> None:
     model_tag = os.environ.get("AGENTFRAME_OLLAMA_MODEL", "llama3.2:3b")
 
-    async with OllamaModel(model=model_tag, context_window=2048) as model:
+    async with OllamaModel(model=model_tag, context_window=8192) as model:
         response = await model.generate(ask("Reply with the word: ready", 20))
 
     assert response.text
