@@ -404,7 +404,10 @@ class GenerationState:
             self.accounting.settle(reservation, UNKNOWN_USAGE)
             raise
         self.accounting.settle(
-            reservation, with_estimates(response.usage, input_estimate, response.text)
+            reservation,
+            with_estimates(
+                response.usage, input_estimate, estimate_output_tokens(response)
+            ),
         )
         return response
 
@@ -517,13 +520,21 @@ def estimate_message_tokens(message: Message) -> int:
     return tokens
 
 
-def with_estimates(reported: Usage, input_estimate: int, output_text: str) -> Usage:
+def estimate_output_tokens(response: ModelResponse) -> int:
+    """Estimate the output tokens of ``response``: its text and tool calls."""
+    tokens = estimate_tokens(response.text)
+    for call in response.tool_calls:
+        tokens += estimate_tokens(call.name + call.arguments)
+    return tokens
+
+
+def with_estimates(reported: Usage, input_estimate: int, output_estimate: int) -> Usage:
     """Fill in token counts a provider did not report with estimates.
 
     Args:
         reported: The usage the model reported; unknown counts are ``None``.
         input_estimate: The estimated input tokens of the call.
-        output_text: The text the model returned.
+        output_estimate: The estimated output tokens of the response.
 
     Returns:
         Complete usage. ``estimated`` is ``True`` if any count was estimated.
@@ -541,7 +552,7 @@ def with_estimates(reported: Usage, input_estimate: int, output_text: str) -> Us
     if input_tokens is None:
         input_tokens = input_estimate
     if output_tokens is None:
-        output_tokens = estimate_tokens(output_text)
+        output_tokens = output_estimate
     return Usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,

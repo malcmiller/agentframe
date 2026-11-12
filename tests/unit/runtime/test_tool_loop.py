@@ -7,6 +7,7 @@ real localhost HTTP to an ``AgentApp`` served by Uvicorn.
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
+from contextlib import AsyncExitStack
 from typing import Any
 
 import httpx
@@ -480,6 +481,19 @@ async def test_continuations_count_toward_max_model_calls() -> None:
     assert len(model.requests) == 1
 
 
+async def test_unreported_usage_estimates_tool_call_arguments_as_output() -> None:
+    long_id = "A" * 4000
+    model = scripted(lookup(long_id), "Done.")
+
+    result = await runtime_with(OrderStore()).run(
+        assistant(model), skill="ask", arguments={"question": "?"}
+    )
+
+    assert result.usage.estimated
+    assert result.usage.output_tokens is not None
+    assert result.usage.output_tokens > 4000 // 4
+
+
 async def test_continuations_count_toward_the_token_budget() -> None:
     used = Usage(input_tokens=100, output_tokens=50, total_tokens=150, estimated=False)
     asked = ModelResponse(
@@ -503,6 +517,26 @@ async def test_continuations_count_toward_the_token_budget() -> None:
             ),
         )
     assert len(model.requests) == 1
+
+
+async def test_concurrent_resolves_create_a_scoped_service_once() -> None:
+    created: list[OrderStore] = []
+
+    async def open_store() -> AsyncIterator[OrderStore]:
+        await asyncio.sleep(0.01)  # Lets the other call try to create it too.
+        created.append(OrderStore())
+        yield created[-1]
+
+    services = Services()
+    services.add_scoped(OrderStore, open_store)
+    scope = services.scope(AsyncExitStack())
+
+    first, second = await asyncio.gather(
+        scope.resolve({"orders": OrderStore}), scope.resolve({"orders": OrderStore})
+    )
+
+    assert len(created) == 1
+    assert first["orders"] is second["orders"]
 
 
 # Deadlines and cancellation

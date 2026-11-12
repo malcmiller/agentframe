@@ -42,7 +42,6 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.authoring.services import ServiceScope
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS
 from agentframe.runtime.generation import GenerationState, estimate_input_tokens
@@ -694,7 +693,7 @@ async def test_tools_on_a_model_without_tool_support_fail_before_reserving() -> 
         instructions=None,
         settings=DEFAULT_MODEL_SETTINGS,
         limits=DEFAULT_LIMITS,
-        services=ServiceScope(Services(), AsyncExitStack()),
+        services=Services().scope(AsyncExitStack()),
     )
     deadline = asyncio.get_running_loop().time() + 5
 

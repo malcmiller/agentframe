@@ -202,7 +202,7 @@ M3 #36 implements the steps above for `ctx.generate`, per run:
    `ModelCallLimitExceededError`. Either way the call is not sent.
 5. **Settle.** After the call, its reservation is replaced by its actual total.
    Counts the provider did not report for a returned response are estimated
-   (the output from its text) and marked `estimated=True`. A failed call
+   (the output from its text plus any tool-call names and arguments) and marked `estimated=True`. A failed call
    settles to the usage its error carries (`ModelError.usage`, set by
    adapters); when that is unknown, its reservation stays counted against the
    budget and the run's reported counts become unknown (`None`), never zero.

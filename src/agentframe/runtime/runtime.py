@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from agentframe.authoring.agent import Agent
 from agentframe.authoring.context import RunContext
 from agentframe.authoring.definitions import SkillDefinition
-from agentframe.authoring.services import Services, ServiceScope
+from agentframe.authoring.services import Services
 from agentframe.errors import (
     AgentFrameError,
     DefinitionError,
@@ -285,7 +285,7 @@ class Runtime:
                 asyncio.timeout_at(deadline) as timeout,
                 AsyncExitStack() as stack,
             ):
-                services = ServiceScope(self._services, stack)
+                services = self._services.scope(stack)
                 generation = GenerationState(
                     model=agent.model,
                     instructions=agent.instructions,
