@@ -4,9 +4,12 @@ Includes token accounting and retries of transient provider failures.
 """
 
 import asyncio
+import json
 import math
 import random
 from dataclasses import dataclass, field
+
+from pydantic import BaseModel, RootModel, ValidationError
 
 from agentframe.errors import (
     DefinitionError,
@@ -14,10 +17,12 @@ from agentframe.errors import (
     ModelCallLimitExceededError,
     ModelError,
     ModelRefusalError,
+    OutputValidationError,
     ProviderError,
     TimeoutLimitExceededError,
     TokenLimitExceededError,
     UnsupportedCapabilityError,
+    describe_validation_error,
 )
 from agentframe.models.base import (
     Message,
@@ -26,6 +31,7 @@ from agentframe.models.base import (
     ModelRequest,
     ModelResponse,
     ModelSettings,
+    OutputSchema,
 )
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.usage import FinishReason, Usage
@@ -166,20 +172,58 @@ class GenerationState:
                 used every retry, or would have to wait past the deadline.
             TimeoutLimitExceededError: The run's deadline passed during the call.
         """
+        response = await self._generate(text, instructions, None, deadline)
+        return text_from(response)
+
+    async def generate_output[T: BaseModel](
+        self, text: str, instructions: str | None, output: type[T], deadline: float
+    ) -> T:
+        """Send ``text`` to the model and return its reply validated as ``output``.
+
+        The model is asked for JSON matching ``output``'s schema. Invalid
+        output is never repaired or re-requested. Besides the errors below,
+        this raises everything ``generate_text`` raises.
+
+        Args:
+            text: Untrusted content, sent as a ``user`` message.
+            instructions: Trusted call-specific instructions (see
+                ``generate_text``).
+            output: The Pydantic model class the reply must validate as.
+            deadline: Event-loop time when the run times out.
+
+        Raises:
+            DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
+                a ``RootModel``.
+            UnsupportedCapabilityError: The agent has no model, or the model
+                does not support structured output.
+            OutputValidationError: The reply is not valid JSON or does not
+                match ``output``. The message lists field locations only.
+        """
+        schema = output_schema(output)
+        response = await self._generate(text, instructions, schema, deadline)
+        return validate_output(text_from(response), output)
+
+    async def _generate(
+        self,
+        text: str,
+        instructions: str | None,
+        output: OutputSchema | None,
+        deadline: float,
+    ) -> ModelResponse:
+        """Build the request and call the model within the run's deadline."""
         if self.model is None:
             raise UnsupportedCapabilityError("This agent has no model configured")
         messages = build_messages(self.instructions, instructions, text)
-        request = ModelRequest(messages=messages, settings=self.settings)
+        request = ModelRequest(messages=messages, settings=self.settings, output=output)
         try:
             async with asyncio.timeout_at(deadline) as timeout:
-                response = await self._call_with_retries(self.model, request, deadline)
+                return await self._call_with_retries(self.model, request, deadline)
         except TimeoutError:
             if not timeout.expired():
                 raise
             raise TimeoutLimitExceededError(
                 "The run's timeout expired during a model call"
             ) from None
-        return text_from(response)
 
     async def _call_with_retries(
         self, model: Model, request: ModelRequest, deadline: float
@@ -208,7 +252,8 @@ class GenerationState:
     async def _call(self, model: Model, request: ModelRequest) -> ModelResponse:
         """Reserve tokens, call the model, then settle the call's actual usage."""
         capabilities = await model.capabilities()
-        input_estimate = estimate_input_tokens(request.messages)
+        check_supports(request, capabilities)
+        input_estimate = estimate_input_tokens(request)
         max_output_tokens = request.settings.max_output_tokens
         assert max_output_tokens is not None  # ModelRequest requires every setting.
         check_fits_model(input_estimate, max_output_tokens, self.limits, capabilities)
@@ -248,6 +293,17 @@ def backoff_seconds(error: ProviderError, retry: int) -> float:
 async def wait_before_retry(seconds: float) -> None:
     """Wait ``seconds`` before retrying a model call. Tests replace this."""
     await asyncio.sleep(seconds)
+
+
+def check_supports(request: ModelRequest, capabilities: ModelCapabilities) -> None:
+    """Check that the model supports what ``request`` needs, before it is sent.
+
+    Raises:
+        UnsupportedCapabilityError: The request asks for structured output
+            and the model does not report support for it.
+    """
+    if request.output is not None and not capabilities.structured_output:
+        raise UnsupportedCapabilityError("The model does not support structured output")
 
 
 def input_token_limit(limits: RunLimits, capabilities: ModelCapabilities) -> int:
@@ -304,9 +360,12 @@ def estimate_tokens(text: str) -> int:
     return math.ceil(len(text) / CHARACTERS_PER_TOKEN)
 
 
-def estimate_input_tokens(messages: tuple[Message, ...]) -> int:
-    """Estimate the input tokens of ``messages`` from their text."""
-    return sum(estimate_tokens(message.content) for message in messages)
+def estimate_input_tokens(request: ModelRequest) -> int:
+    """Estimate the input tokens of ``request``: its messages and output schema."""
+    tokens = sum(estimate_tokens(message.content) for message in request.messages)
+    if request.output is not None:
+        tokens += estimate_tokens(json.dumps(request.output.json_schema))
+    return tokens
 
 
 def with_estimates(reported: Usage, input_estimate: int, output_text: str) -> Usage:
@@ -380,6 +439,38 @@ def text_from(response: ModelResponse) -> str:
     if not response.text:
         raise IncompleteOutputError("The model returned no text")
     return response.text
+
+
+def output_schema(output: type[BaseModel]) -> OutputSchema:
+    """Return the schema the model must follow to produce an ``output`` instance.
+
+    Raises:
+        DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is a
+            ``RootModel``. Wrap lists and other values in a model field.
+    """
+    is_model = isinstance(output, type) and issubclass(output, BaseModel)
+    if not is_model or issubclass(output, RootModel):
+        raise DefinitionError(
+            "generate(output=...) must be a Pydantic BaseModel subclass (not a "
+            "RootModel); wrap lists and other values in a model field"
+        )
+    return OutputSchema(name=output.__name__, json_schema=output.model_json_schema())
+
+
+def validate_output[T: BaseModel](text: str, output: type[T]) -> T:
+    """Parse and validate the model's JSON ``text`` as an ``output`` instance.
+
+    Raises:
+        OutputValidationError: ``text`` is not valid JSON or does not match
+            ``output``. The message names field locations, never the text.
+    """
+    try:
+        return output.model_validate_json(text)
+    except ValidationError as error:
+        raise OutputValidationError(
+            f"The model's output is not a valid '{output.__name__}': "
+            f"{describe_validation_error(error)}"
+        ) from None
 
 
 def add_usage(total: Usage, extra: Usage) -> Usage:

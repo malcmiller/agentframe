@@ -1,5 +1,7 @@
 """Errors raised by AgentFrame."""
 
+from pydantic import ValidationError
+
 from agentframe.runtime.usage import Usage
 
 
@@ -133,3 +135,16 @@ class CancelledError(AgentFrameError):
     Distinct from ``asyncio.CancelledError``: this reports a cancelled run to
     callers and does not cancel anything itself.
     """
+
+
+def describe_validation_error(error: ValidationError) -> str:
+    """List field locations and problems without the submitted values.
+
+    Used for safe error messages: the invalid input itself, which may be
+    caller or model text, is never included.
+    """
+    problems = []
+    for item in error.errors(include_input=False, include_url=False):
+        location = ".".join(str(part) for part in item["loc"]) or "value"
+        problems.append(f"{location}: {item['msg']}")
+    return "; ".join(problems)

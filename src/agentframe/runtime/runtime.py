@@ -25,6 +25,7 @@ from agentframe.errors import (
     PolicyUnavailableError,
     ProviderError,
     TimeoutLimitExceededError,
+    describe_validation_error,
 )
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, ModelSettings
 from agentframe.runtime.generation import (
@@ -362,7 +363,8 @@ def _validate_arguments(
         model = skill.arguments_adapter.validate_python(arguments)
     except ValidationError as error:
         raise InputValidationError(
-            f"Invalid arguments for skill '{skill.id}': {_describe(error)}"
+            f"Invalid arguments for skill '{skill.id}': "
+            f"{describe_validation_error(error)}"
         ) from None
     return {name: getattr(model, name) for name in skill.argument_names}
 
@@ -372,14 +374,6 @@ def _validate_output(skill: SkillDefinition, result: Any) -> Any:
         return skill.return_adapter.validate_python(result)
     except ValidationError as error:
         raise OutputValidationError(
-            f"Skill '{skill.id}' returned an invalid value: {_describe(error)}"
+            f"Skill '{skill.id}' returned an invalid value: "
+            f"{describe_validation_error(error)}"
         ) from None
-
-
-def _describe(error: ValidationError) -> str:
-    """List field locations and problems without the submitted values."""
-    problems = []
-    for item in error.errors(include_input=False, include_url=False):
-        location = ".".join(str(part) for part in item["loc"]) or "value"
-        problems.append(f"{location}: {item['msg']}")
-    return "; ".join(problems)
