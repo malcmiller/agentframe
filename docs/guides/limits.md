@@ -1,9 +1,10 @@
 # Execution limits and token accounting
 
 This document records approved defaults and design contracts. Timeouts (M1)
-and token/model-call limits (M3 #36, see
-[implemented token accounting](#implemented-token-accounting-m3)) are
-enforced; the rest is not implemented yet. Limits are typed configuration; `@skill(limits=RunLimits(...))`
+token/model-call limits (M3 #36, see
+[implemented token accounting](#implemented-token-accounting-m3)) and tool-call
+limits (M5 #61, see [implemented tool-call limits](#implemented-tool-call-limits-m5))
+are enforced; the rest is not implemented yet. Limits are typed configuration; `@skill(limits=RunLimits(...))`
 sets skill-specific overrides. Every entry point uses the same accounting
 and execution policy, whether called locally, through A2A, or through MCP.
 
@@ -16,7 +17,7 @@ and execution policy, whether called locally, through A2A, or through MCP.
 | `RunLimits.max_total_tokens` | One skill invocation | Default **100000** aggregate input/output tokens across requests and continuations, without double-counting subdivisions. |
 | `RunLimits.max_model_calls` | One skill invocation | Default **10** dispatched attempts including retries, not just successes. |
 | `RunLimits.max_model_retries` | Each model request | Default **2** retries of a transient provider failure; `0` disables retries. Each retry is a counted model call. |
-| `RunLimits.max_tool_calls` | One skill invocation | Default **20** managed tool calls; detailed attempted/denied call counting remains open. |
+| `RunLimits.max_tool_calls` | One skill invocation | Default **20** tool calls; every model-requested call counts, including unknown-tool and invalid-argument calls that did not run. |
 | `RunLimits.timeout_seconds` | One skill invocation | Default **120** seconds including model/tool work and backoff; retries never reset it. |
 
 Model context capacity belongs to `ModelCapabilities`, not a caller-controlled
@@ -150,8 +151,8 @@ budget exhaustion, unavailable strict accounting, deadline expiration,
 cancellation and provider errors. Use the
 [decided error hierarchy](../api/runtime.md#agentframeerror): `LimitExceededError`
 has the `TokenLimitExceededError`, `ModelCallLimitExceededError` and
-`TimeoutLimitExceededError` subtypes (M3 #36); the tool-call subtype name
-remains open;
+`TimeoutLimitExceededError` subtypes (M3 #36) and `ToolCallLimitExceededError`
+(M5 #61);
 AgentFrame `CancelledError` is distinct from `asyncio.CancelledError`.
 
 Cancellation propagates where supported; it cannot guarantee that already
@@ -201,7 +202,7 @@ M3 #36 implements the steps above for `ctx.generate`, per run:
    `ModelCallLimitExceededError`. Either way the call is not sent.
 5. **Settle.** After the call, its reservation is replaced by its actual total.
    Counts the provider did not report for a returned response are estimated
-   (the output from its text) and marked `estimated=True`. A failed call
+   (the output from its text plus any tool-call names and arguments) and marked `estimated=True`. A failed call
    settles to the usage its error carries (`ModelError.usage`, set by
    adapters); when that is unknown, its reservation stays counted against the
    budget and the run's reported counts become unknown (`None`), never zero.
@@ -214,6 +215,28 @@ reports the run's `usage` and `model_calls`; hosted tasks report the same
 values in a safe [usage snapshot](../api/hosting.md#result-and-failure-mapping).
 Each [retry](#retries-and-duplicate-requests) is a new call with its own
 reservation and call count.
+
+## Implemented tool-call limits (M5)
+
+M5 #61 runs the tools a model asks for inside `ctx.generate(..., tools=[...])`
+under the same run limits:
+
+- **Counting.** `max_tool_calls` (default 20) merges field by field like every
+  other limit. Each call the model asks for is counted before it runs,
+  including calls naming an unknown tool or with invalid arguments (which run
+  nothing). The call over the limit raises `ToolCallLimitExceededError` and
+  does not run. `RunResult.tool_calls` and the hosted usage snapshot report
+  the count.
+- **Continuations.** Sending tool results back is an ordinary model call: it
+  is counted against `max_model_calls`, reserved and settled against
+  `max_total_tokens`, and its input (including tool calls and results) is
+  checked against the input limit and context window.
+- **Deadline.** Tools run under the run's deadline. When it expires during a
+  tool, the tool is cancelled and the run raises `TimeoutLimitExceededError`;
+  cancelling the run cancels the tool. Scoped services are cleaned up either
+  way.
+- **No tool retries.** A tool call is never retried; a transient model retry
+  re-sends the same request, which already holds earlier tool results.
 
 ## Cross-agent budgets and depth (M8+)
 

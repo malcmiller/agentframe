@@ -145,7 +145,8 @@ Every other outcome follows this table:
 | Clarification needed | Task `INPUT_REQUIRED` |
 | Timeout, output validation failure, skill or router exception, router timeout, policy unavailable | Task `FAILED`, safe message |
 | Model error: unsupported capability, refusal, incomplete output, provider failure (M3 #33) | Task `FAILED`, safe message |
-| Token or model-call limit exceeded (M3 #36) | Task `FAILED`, safe message |
+| Token, model-call or tool-call limit exceeded (M3 #36, M5 #61) | Task `FAILED`, safe message |
+| A tool raises (M5 #61) | Task `FAILED`, reported like a skill exception: "The skill failed.", details logged with the `invocation_id` |
 | Cancelled | Task `CANCELED` |
 
 - A malformed [skill call](#structured-skill-call-wire-format) is refused with
@@ -172,14 +173,16 @@ Every other outcome follows this table:
       "output_tokens": 8,
       "total_tokens": 25,
       "estimated": false,
-      "model_calls": 2
+      "model_calls": 2,
+      "tool_calls": 1
     }
   }
   ```
 
   Token counts are `null` when unknown, never `0`: for example a cancelled task
   whose model call was still running. `estimated` is `true` when any count is
-  a character-based estimate. Model-free runs report zeros. No provider
+  a character-based estimate. `tool_calls` (M5 #61) counts every tool call
+  the model asked for, as in `RunResult.tool_calls`. Model-free runs report zeros. No provider
   payloads, `RunResult`, prompts or outputs are included.
 - `INPUT_REQUIRED` with the question as the status message is published when
   a [`SkillRouter`](#skillrouter) asks for clarification (#6).

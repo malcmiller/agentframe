@@ -16,7 +16,6 @@ from agentframe import (
     RunContext,
     Runtime,
     Services,
-    UnsupportedCapabilityError,
     agent,
     skill,
     tool,
@@ -135,22 +134,12 @@ async def test_an_empty_selection_offers_no_tools() -> None:
     model = ScriptedModel(["No tools needed."])
     assistant = OrderAssistant(model=model, tools=[lookup_order])
 
-    answer = await Runtime().invoke(
+    answer = await Runtime(services=order_services()).invoke(
         assistant, skill="chat", arguments={"question": "Hi"}
     )
 
     assert answer == "No tools needed."
-    assert len(model.requests) == 1
-
-
-async def test_selected_tools_are_not_sent_until_tool_calling_exists() -> None:
-    model = ScriptedModel([])
-    assistant = OrderAssistant(model=model, tools=[lookup_order])
-    runtime = Runtime(services=order_services())
-
-    with pytest.raises(UnsupportedCapabilityError, match="not available yet"):
-        await runtime.invoke(assistant, skill="ask", arguments={"question": "?"})
-    assert model.requests == []
+    assert model.requests[0].tools == ()
 
 
 def test_validate_requires_services_of_registered_tools() -> None:
@@ -159,6 +148,15 @@ def test_validate_requires_services_of_registered_tools() -> None:
     with pytest.raises(DefinitionError, match="Tool 'lookup_order': no service"):
         Runtime().validate(assistant)
     Runtime(services=order_services()).validate(assistant)
+
+
+async def test_local_runs_require_services_of_registered_tools() -> None:
+    model = ScriptedModel([])
+    assistant = OrderAssistant(model=model, tools=[lookup_order])
+
+    with pytest.raises(DefinitionError, match="Tool 'lookup_order': no service"):
+        await Runtime().invoke(assistant, skill="chat", arguments={"question": "?"})
+    assert model.requests == []
 
 
 def test_app_startup_requires_services_of_registered_tools() -> None:

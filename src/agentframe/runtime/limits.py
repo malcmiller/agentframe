@@ -28,6 +28,9 @@ class RunLimits:
             provider failure (rate limit, timeout, server error). Each retry
             is a new model call: it counts toward ``max_model_calls`` and the
             token budget. ``0`` disables retries. Library default: 2.
+        max_tool_calls: Tool calls a run may make. Every call a model asks
+            for counts, including ones with an unknown tool name or invalid
+            arguments. Library default: 20.
 
     Raises:
         DefinitionError: If a set field is not greater than zero, or
@@ -39,6 +42,7 @@ class RunLimits:
     max_model_calls: int | None = None
     max_input_tokens: int | None = None
     max_model_retries: int | None = None
+    max_tool_calls: int | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -46,6 +50,7 @@ class RunLimits:
             "max_total_tokens",
             "max_model_calls",
             "max_input_tokens",
+            "max_tool_calls",
         ):
             value = getattr(self, name)
             if value is not None and not value > 0:
@@ -59,6 +64,7 @@ DEFAULT_LIMITS = RunLimits(
     max_total_tokens=100_000,
     max_model_calls=10,
     max_model_retries=2,
+    max_tool_calls=20,
 )
 """The library defaults: the lowest precedence level.
 

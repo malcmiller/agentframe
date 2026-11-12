@@ -1,8 +1,10 @@
 """Service registration and per-run resolution for ``Inject[T]`` parameters."""
 
+import asyncio
 import inspect
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
+from types import MappingProxyType
 from typing import Annotated, cast
 
 from agentframe.errors import DefinitionError
@@ -67,23 +69,59 @@ class Services:
         """Return whether ``service_type`` has been registered."""
         return service_type in self._singletons or service_type in self._scoped
 
-    async def resolve(
-        self, needed: Mapping[str, object], stack: AsyncExitStack
-    ) -> dict[str, object]:
-        """Return service instances for one run, keyed by parameter name.
+    def scope(self, stack: AsyncExitStack) -> "ServiceScope":
+        """Return the services of one run, cleaned up when ``stack`` closes.
 
-        Scoped services are created once per type for the run. Their cleanup is
-        registered on ``stack``; singletons are never closed.
+        Args:
+            stack: Exit stack that lives exactly as long as the run.
+        """
+        return ServiceScope(
+            MappingProxyType(self._singletons), MappingProxyType(self._scoped), stack
+        )
+
+    def _check_not_registered(self, service_type: object) -> None:
+        if self.is_registered(service_type):
+            raise DefinitionError(
+                f"Service {_type_name(service_type)} is already registered"
+            )
+
+
+class ServiceScope:
+    """The services of one run, shared by its skill and the tools it calls.
+
+    Created by ``Services.scope``. Scoped services are created at most once
+    per type for the run, even when concurrent ``ctx.generate`` calls resolve
+    them at the same time. Their cleanup is registered on the run's exit
+    stack; singletons are never closed.
+
+    Args:
+        singletons: Registered shared instances by type.
+        scoped: Registered scoped factories by type.
+        stack: Exit stack that lives exactly as long as the run.
+    """
+
+    def __init__(
+        self,
+        singletons: Mapping[object, object],
+        scoped: Mapping[object, Callable[[], object]],
+        stack: AsyncExitStack,
+    ) -> None:
+        self._singletons = singletons
+        self._scoped = scoped
+        self._stack = stack
+        self._created: dict[object, object] = {}
+        self._creating = asyncio.Lock()
+
+    async def resolve(self, needed: Mapping[str, object]) -> dict[str, object]:
+        """Return service instances keyed by parameter name.
 
         Args:
             needed: Parameter name to requested service type.
-            stack: Exit stack that lives exactly as long as the run.
 
         Raises:
             DefinitionError: If a requested service type is not registered, or a
                 generator factory does not yield exactly once.
         """
-        created: dict[object, object] = {}
         resolved: dict[str, object] = {}
         for parameter_name, service_type in needed.items():
             if service_type in self._singletons:
@@ -93,17 +131,17 @@ class Services:
                 raise DefinitionError(
                     f"Service {_type_name(service_type)} is not registered"
                 )
-            if service_type not in created:
-                factory = self._scoped[service_type]
-                created[service_type] = await _create_scoped(factory, stack)
-            resolved[parameter_name] = created[service_type]
+            resolved[parameter_name] = await self._scoped_instance(service_type)
         return resolved
 
-    def _check_not_registered(self, service_type: object) -> None:
-        if self.is_registered(service_type):
-            raise DefinitionError(
-                f"Service {_type_name(service_type)} is already registered"
-            )
+    async def _scoped_instance(self, service_type: object) -> object:
+        # A factory may await, so without the lock two concurrent resolves
+        # could both see the type missing and create it twice.
+        async with self._creating:
+            if service_type not in self._created:
+                factory = self._scoped[service_type]
+                self._created[service_type] = await _create_scoped(factory, self._stack)
+            return self._created[service_type]
 
 
 async def _create_scoped(

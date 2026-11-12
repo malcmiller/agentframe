@@ -24,6 +24,7 @@ from agentframe.errors import (
     ProviderError,
     TimeoutLimitExceededError,
     TokenLimitExceededError,
+    ToolCallLimitExceededError,
     UnsupportedCapabilityError,
 )
 from agentframe.hosting.app import AgentApp
@@ -110,6 +111,7 @@ __all__ = [
     "TimeoutLimitExceededError",
     "TokenLimitExceededError",
     "ToolCall",
+    "ToolCallLimitExceededError",
     "ToolDefinition",
     "ToolSpec",
     "UnsupportedCapabilityError",

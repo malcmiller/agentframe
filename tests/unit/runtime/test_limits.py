@@ -111,12 +111,14 @@ async def run_echo(
 def test_the_library_defaults_bound_tokens_and_model_calls() -> None:
     assert DEFAULT_LIMITS.max_total_tokens == 100_000
     assert DEFAULT_LIMITS.max_model_calls == 10
+    assert DEFAULT_LIMITS.max_tool_calls == 20
     # Unset: the model's context window is the default input limit.
     assert DEFAULT_LIMITS.max_input_tokens is None
 
 
 @pytest.mark.parametrize(
-    "field", ["max_total_tokens", "max_model_calls", "max_input_tokens"]
+    "field",
+    ["max_total_tokens", "max_model_calls", "max_input_tokens", "max_tool_calls"],
 )
 def test_token_and_call_limits_must_be_positive(field: str) -> None:
     with pytest.raises(DefinitionError, match=f"RunLimits.{field}"):

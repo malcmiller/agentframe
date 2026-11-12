@@ -42,7 +42,11 @@ from agentframe.security.principal import Principal
 
 @dataclass(frozen=True)
 class RunResult[T]:
-    """The validated value of a run plus its execution metadata."""
+    """The validated value of a run plus its execution metadata.
+
+    ``tool_calls`` counts every tool call the model asked for, including ones
+    that did not run because of an unknown tool name or invalid arguments.
+    """
 
     value: T
     invocation_id: str
@@ -173,18 +177,21 @@ class Runtime:
 
         Raises:
             InputValidationError: Unknown skill or invalid arguments.
-            DefinitionError: Undecorated agent or unregistered service.
+            DefinitionError: Undecorated agent, or a service needed by the
+                skill or a registered tool is not registered.
             PermissionDeniedError: The principal lacks a required permission
                 or the authorization policy denied the run.
             PolicyUnavailableError: The authorization policy raised an error
                 or did not answer before the run's deadline.
             LimitExceededError: The run exceeded a limit. The subclass names
                 which one: ``TimeoutLimitExceededError``,
-                ``TokenLimitExceededError`` or ``ModelCallLimitExceededError``.
-            OutputValidationError: The skill returned an invalid value.
+                ``TokenLimitExceededError``, ``ModelCallLimitExceededError``
+                or ``ToolCallLimitExceededError``.
+            OutputValidationError: The skill or a tool returned an invalid value.
 
             Every ``AgentFrameError`` carries this run's ``invocation_id``.
-            Exceptions raised by the skill itself propagate unchanged.
+            Exceptions raised by the skill, or by a tool it lets the model
+            call, propagate unchanged.
         """
         return await self._run_invocation(
             str(uuid.uuid4()),
@@ -235,7 +242,7 @@ class Runtime:
             invocation_id=invocation_id,
             usage=accounting.usage,
             model_calls=accounting.model_calls,
-            tool_calls=0,
+            tool_calls=accounting.tool_calls,
             duration=timedelta(seconds=time.perf_counter() - started),
             finish_reason=FinishReason.COMPLETED,
         )
@@ -260,6 +267,8 @@ class Runtime:
                 f"Agent '{definition.name}' has no skill with the requested id"
             )
         self._check_services(f"Skill '{skill.id}'", skill.injected)
+        for tool in agent.tools.values():
+            self._check_services(f"Tool '{tool.name}'", tool.injected)
         _check_permissions(skill, principal)
         validated_arguments = _validate_arguments(skill, arguments)
 
@@ -271,22 +280,24 @@ class Runtime:
             started_at = asyncio.get_running_loop().time()
         deadline = started_at + timeout_seconds
         await self._check_policy(skill, principal, validated_arguments, deadline)
-        generation = GenerationState(
-            model=agent.model,
-            instructions=agent.instructions,
-            settings=model_settings,
-            limits=limits,
-            accounting=accounting,
-            tools=agent.tools,
-        )
-        ctx = RunContext(invocation_id, principal, deadline, generation)
         try:
             async with (
                 asyncio.timeout_at(deadline) as timeout,
                 AsyncExitStack() as stack,
             ):
-                services = await self._services.resolve(skill.injected, stack)
-                result = await method(**validated_arguments, **services, ctx=ctx)
+                services = self._services.scope(stack)
+                generation = GenerationState(
+                    model=agent.model,
+                    instructions=agent.instructions,
+                    settings=model_settings,
+                    limits=limits,
+                    services=services,
+                    accounting=accounting,
+                    tools=agent.tools,
+                )
+                ctx = RunContext(invocation_id, principal, deadline, generation)
+                injected = await services.resolve(skill.injected)
+                result = await method(**validated_arguments, **injected, ctx=ctx)
         except TimeoutError:
             if not timeout.expired():
                 raise

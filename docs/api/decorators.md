@@ -144,8 +144,11 @@ agent, offers it to a model, nor publishes an A2A skill or MCP tool.
 
 **Signature status:** decided and implemented in M5 (#58, decisions confirmed
 2026-11-12). Agent registration through `Agent(tools=[...])` and
-`ctx.generate(..., tools=[...])` selection are implemented (#60); the bounded
-tool loop (#61) and tool authorization (#62) are not implemented yet.
+`ctx.generate(..., tools=[...])` selection are implemented (#60), and so is the
+bounded [tool loop](agents.md#implemented-tool-calling-m5-61) (#61); tool
+authorization (#62) is not implemented yet. Tools may be sync (called inline)
+or async, and receive `ctx` only when they declare a `ctx: RunContext`
+parameter.
 
 ```text
 @tool(*, description: str | None = None, side_effects: bool = False, idempotent: bool = False)

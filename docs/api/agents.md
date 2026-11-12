@@ -5,8 +5,9 @@ approved contracts. `Agent`, `RunContext`, `Inject[T]` and `Services` are
 implemented from source as of M1; M3 #35 adds model injection, agent
 `instructions` / `model_settings` and the text form of `ctx.generate`; M4 #53
 adds the structured `output=` form. M5 #60 adds tool registration
-(`Agent(tools=[...])`) and per-call selection (`ctx.generate(..., tools=[...])`).
-`AgentConfig` and running tools (the tool loop) are not implemented yet.
+(`Agent(tools=[...])`) and per-call selection (`ctx.generate(..., tools=[...])`);
+M5 #61 adds the bounded tool-calling loop. `AgentConfig` and tool action
+authorization (#62) are not implemented yet.
 Unspecified details remain open.
 Models are dependencies, not a second kind of agent base class.
 
@@ -39,7 +40,7 @@ with its milestone. Implemented members:
 | --- | --- | --- | --- |
 | `model` | `Model` implementation | Optional; no implicit provider | Needed only for generation. Model-free and mixed skills use this same base. |
 | `config` | `AgentConfig` | Optional; exact constructor default open | Instance configuration refines class/library defaults, subject to host ceilings and security policy. |
-| `tools` | `Iterable[Callable[..., Any]]` of `@tool` functions (implemented, M5 #60) | Optional; default `()` registers none | The tools this agent's `ctx.generate` calls may select. Registering grants nothing by itself: each call names the tools it offers. An undecorated function or two tools with the same name raise `DefinitionError` at construction. `Runtime.validate` (and so `AgentApp` startup) fails with `DefinitionError` when a registered tool's `Inject[T]` service is not registered. Tools are internal: never on the Agent Card, in skill lists, router candidates, MCP publication or future AG-UI frontend tools. |
+| `tools` | `Iterable[Callable[..., Any]]` of `@tool` functions (implemented, M5 #60) | Optional; default `()` registers none | The tools this agent's `ctx.generate` calls may select. Registering grants nothing by itself: each call names the tools it offers. An undecorated function or two tools with the same name raise `DefinitionError` at construction. `Runtime.validate` (and so `AgentApp` startup), and every local `Runtime.run`, fail with `DefinitionError` when a registered tool's `Inject[T]` service is not registered. Tools are internal: never on the Agent Card, in skill lists, router candidates, MCP publication or future AG-UI frontend tools. |
 | Class `instructions` | `str \| None` (implemented) | Optional; `None` sends no agent instructions | Trusted shared instructions. Typed configuration/trusted callable is also intended; callable signature and merge details open. |
 
 ```python
@@ -136,10 +137,10 @@ registered tools. The accepted `tools` collection type remains open; the names
 ```text
 await ctx.generate(text, instructions=...) -> str       # implemented (M3 #35)
 await ctx.generate(text, output=Summary) -> Summary     # implemented (M4 #53)
-await ctx.generate(text, tools=[lookup_order]) -> str   # M5: selection only (#60)
+await ctx.generate(text, tools=[lookup_order]) -> str   # implemented (M5 #60, #61)
 ```
 
-**Implemented signature (M3 #35, M4 #53, `tools` M5 #60):** two
+**Implemented signature (M3 #35, M4 #53, `tools` M5 #60/#61):** two
 `typing.overload`s, so type checkers infer `str` without `output` and the
 requested class with it.
 
@@ -170,8 +171,8 @@ message. This separation does not guarantee resistance to prompt injection.
 | --- | --- | --- | --- |
 | `text` | `str` | Required in current text proposal | Untrusted user content, never promoted to privileged instructions. |
 | `instructions` | `str \| None` | Optional; default `None` sends no call instructions | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
-| `output` | `type[T]`, `T` a Pydantic `BaseModel` subclass (implemented, M4 #53) | Optional; `None` returns text | Sends the class's JSON schema as [`OutputSchema`](models.md#outputschema) and returns the reply validated with `model_validate_json` in Pydantic's default (lax) mode; a model's own `ConfigDict(strict=True)` is respected. `RootModel`, `list[...]` and other types raise `DefinitionError` before sending: wrap lists in a model field. Provider schema subsets and combination with tools remain open. |
-| `tools` | `Iterable[Callable[..., Any]]` of `@tool` functions registered on the agent (selection implemented, M5 #60) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent raises `DefinitionError` naming the tool before anything is sent. Running tools (bounded calls/results and continuations) is #61: until then, a non-empty valid selection raises `UnsupportedCapabilityError` before anything is sent. Decoration or a model suggestion alone does not grant execution. |
+| `output` | `type[T]`, `T` a Pydantic `BaseModel` subclass (implemented, M4 #53) | Optional; `None` returns text | Sends the class's JSON schema as [`OutputSchema`](models.md#outputschema) and returns the reply validated with `model_validate_json` in Pydantic's default (lax) mode; a model's own `ConfigDict(strict=True)` is respected. `RootModel`, `list[...]` and other types raise `DefinitionError` before sending: wrap lists in a model field. Provider schema subsets remain open. With `tools`, the final answer after the tool calls is validated (M5 #61). |
+| `tools` | `Iterable[Callable[..., Any]]` of `@tool` functions registered on the agent (selection implemented, M5 #60) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent, or selected twice, raises `DefinitionError` naming the tool before anything is sent. The model's tool calls run within the run's limits until it answers; see [tool calling](#implemented-tool-calling-m5-61). Decoration or a model suggestion alone does not grant execution. |
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -231,7 +232,6 @@ before any error is raised. Unknown usage stays unknown, never zero.
 | --- | --- |
 | A selected tool is not registered on the agent | `DefinitionError` naming the tool; nothing is sent (M5 #60) |
 | Agent has no model | `UnsupportedCapabilityError` ("This agent has no model configured"); nothing is sent |
-| A tool is selected (tool loop not implemented yet) | `UnsupportedCapabilityError`; nothing is sent (M5 #60, replaced by #61) |
 | `COMPLETED` with text | The text is returned |
 | `COMPLETED` with empty text | `IncompleteOutputError` |
 | `LENGTH` | `IncompleteOutputError` with `partial_text` set to the text received (M4 #54); never returned directly |
@@ -261,6 +261,67 @@ still apply; these come first or are added:
 Transient-provider retries are unchanged and never retry a validation failure.
 Hosted, a returned instance becomes one A2A data part `{"value": {...}}`, and
 `OutputValidationError` fails the task with its safe message.
+
+#### Implemented tool calling (M5 #61)
+
+With `tools=`, `ctx.generate` runs a small loop: call the model; if the
+response asks for tool calls, append it as an `assistant` message (keeping its
+`tool_calls` and `provider_items`), run each call one at a time in the model's
+order, append each result as a `tool` message with the matching
+`tool_call_id`, and call the model again. The first response without tool
+calls is the final answer, handled by the tables above (text, or `output=`
+validation). Tool results are untrusted content and only ever go in `tool`
+messages, never `system` messages. The provider's parallel tool calling is not
+disabled; parallel calls simply run sequentially.
+
+```python
+from agentframe import Agent, Inject, RunContext, agent, skill, tool
+
+
+class OrderStore:  # Application-supplied placeholder.
+    async def status(self, order_id: str) -> str: ...
+
+
+@tool(description="Look up an order's status.", idempotent=True)
+async def lookup_order(order_id: str, orders: Inject[OrderStore]) -> str:
+    return await orders.status(order_id)
+
+
+@agent(name="Orders", description="Answers order questions.", version="0.1.0")
+class Orders(Agent):
+    @skill(id="ask", description="Answer an order question.", tags=["orders"])
+    async def ask(self, question: str, ctx: RunContext) -> str:
+        return await ctx.generate(question, tools=[lookup_order])
+
+
+# Orders(model=..., tools=[lookup_order]), run with
+# Runtime(services=...) providing OrderStore.
+```
+
+Each tool call is validated and run like this: `call.arguments` (raw JSON) is
+validated against the tool's parameters; `Inject[T]` services are resolved
+from the run's scope, so a scoped service is shared with the skill and closed
+when the run ends; `ctx` is passed only when the tool declares it; sync tools
+are called inline and async tools awaited; the return value is validated
+against the annotation and sent as JSON text.
+
+| Situation | Result |
+| --- | --- |
+| The model calls a tool that was offered, with valid arguments | It runs; its JSON result is sent back and the loop continues |
+| Several calls in one response | Run one at a time in the model's order; every result is sent back |
+| Unknown tool name, or a tool that was not offered (including when none were) | Nothing runs; the model gets `{"error": "Unknown tool. ..."}` |
+| Invalid JSON or arguments | Nothing runs; the model gets `{"error": "Invalid arguments: ..."}` naming field locations and problems, never values |
+| The tool raises | The exception propagates unchanged and fails the run like a skill exception (hosted: generic `FAILED`, details logged with the `invocation_id`); its text is never sent to the model |
+| The tool returns a value that does not match its annotation | `OutputValidationError` ("Tool '...' returned an invalid value: ...") |
+| `max_tool_calls` reached | `ToolCallLimitExceededError` before the extra call runs. Every model-requested call counts, including unknown and invalid ones |
+| A continuation would exceed `max_model_calls` or the token budget | `ModelCallLimitExceededError` / `TokenLimitExceededError`; each continuation is an ordinary counted, reserved model call |
+| The run's timeout expires during a tool | The tool is cancelled; `TimeoutLimitExceededError`; scoped services are still cleaned up |
+| The run is cancelled during a tool | The tool is cancelled and cancellation propagates; scoped services are cleaned up |
+| The model does not report tool support | `UnsupportedCapabilityError`; nothing is sent |
+
+Tools are never automatically retried; a model retry re-sends the same request,
+which already holds earlier tool results. Action authorization before each tool
+runs is #62.
 
 Hosted runs map these errors to task `FAILED` with their safe message and the
 run's `invocation_id` (see [result and failure mapping](hosting.md#result-and-failure-mapping)). Token limits and
