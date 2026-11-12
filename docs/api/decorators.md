@@ -143,13 +143,16 @@ tool, optional per agent. Decoration validates the function and attaches a
 agent, offers it to a model, nor publishes an A2A skill or MCP tool.
 
 **Signature status:** decided and implemented in M5 (#58, decisions confirmed
-2026-11-12). Agent registration and `ctx.generate(..., tools=[...])` selection
-(#60), the bounded tool loop (#61) and tool authorization (#62) are not
-implemented yet.
+2026-11-12). Agent registration through `Agent(tools=[...])` and
+`ctx.generate(..., tools=[...])` selection are implemented (#60); the bounded
+tool loop (#61) and tool authorization (#62) are not implemented yet.
 
 ```text
 @tool(*, description: str | None = None, side_effects: bool = False, idempotent: bool = False)
 ```
+
+Always call it with parentheses, `@tool()` or `@tool(description=...)`; bare
+`@tool` is not supported.
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
@@ -200,13 +203,15 @@ directly callable and testable. Tools are module-level functions (nested
 functions are accepted) or static methods with `@tool` written above
 `@staticmethod`; bound or unbound methods, lambdas and other callables are
 rejected. `async def` and plain `def` are both accepted; sync tools run inline
-on the event loop, so use `async def` for any I/O. Every parameter and the
+on the event loop, so use `async def` for any I/O. Generator and async generator
+functions are rejected; a tool returns one value. Every parameter and the
 return need annotations; `*args`, `**kwargs` and positional-only parameters
 are rejected. Parameters annotated `Inject[T]` are resolved from the run's
 services, and an optional `ctx: RunContext` parameter gives access to
 `principal` and `invocation_id`; neither appears in the argument schema. A
 business parameter cannot be named `principal`. The tool name is the function
-name and must match `^[a-zA-Z0-9_-]{1,64}$`. Every violation raises
+name and must be 1-64 ASCII letters, digits, `_` or `-` (the whole name,
+`[a-zA-Z0-9_-]{1,64}`). Every violation raises
 `DefinitionError` naming the tool when the function is decorated (import time).
 
 No tool is ever retried automatically, whatever its flags (#63), so a forgotten
@@ -245,9 +250,11 @@ from `agentframe`.
 `json_schema()` returns the JSON Schema of the business arguments: the Pydantic
 schema of those parameters, never including `ctx` or `Inject[T]` parameters.
 
+Read the definitions of an agent's registered tools from its read-only
+[`tools`](agents.md#agent) mapping, keyed by tool name:
+
 ```python
-from agentframe import tool
-from agentframe.authoring.decorators import tool_definition
+from agentframe import Agent, RunContext, agent, skill, tool
 
 
 @tool(description="Convert Celsius to Fahrenheit.")
@@ -255,13 +262,20 @@ def to_fahrenheit(celsius: float) -> float:
     return celsius * 9 / 5 + 32
 
 
-schema = tool_definition(to_fahrenheit).json_schema()
+@agent(version="0.1.0")
+class Weather(Agent):
+    """Answers weather questions."""
+
+    @skill("ask", tags=["weather"])
+    async def ask(self, question: str, ctx: RunContext) -> str:
+        """Answer a weather question."""
+        return await ctx.generate(question, tools=[to_fahrenheit])
+
+
+weather = Weather(tools=[to_fahrenheit])
+schema = weather.tools["to_fahrenheit"].json_schema()
 assert schema["required"] == ["celsius"]
 ```
-
-`tool_definition(function)` is an internal helper that raises `DefinitionError`
-for an undecorated function; how registered tools are read from an agent is
-#60.
 
 **Related:** [`@tool`](#tool), [`Inject[T]`](agents.md#injectt).
 
