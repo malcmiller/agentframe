@@ -84,8 +84,7 @@ authenticator; no remote host starts without a choice.
   `Principal`, with permissions from `HostConfig.role_permissions`; the SDK
   scopes tasks by the principal's ID.
 - Each message runs as one `Runtime.run`, so validation, permissions, the
-  authorization policy, timeouts and per-run services all apply. Tasks live in
-  the SDK's in-memory task store and are lost on restart.
+  authorization policy, timeouts and per-run services all apply.
 - Interim request format, until the structured extension (#5) and routing (#6):
   the skill ID goes in message metadata under `agentframe.skill`, and the
   arguments in a single JSON data part (omit it for no arguments).
@@ -94,7 +93,26 @@ authenticator; no remote host starts without a choice.
   carries the run's `invocation_id`. For now every failure ends the task in
   `FAILED` with a safe message; the full error mapping (`REJECTED`, protocol
   errors) arrives with #7. Exceptions raised by a skill are logged and reported
-  only as "The skill failed.". Cancellation arrives with task operations (#8).
+  only as "The skill failed.".
+- Task operations are the SDK's native A2A 1.0 core methods; they are not
+  advertised on the card. `SendMessage` blocks and returns the finished task by
+  default. With `configuration.returnImmediately: true` it returns the task at
+  once while the skill keeps running, and the caller polls with `GetTask`.
+  `GetTask`, `ListTasks`, `CancelTask` and follow-up messages that name a
+  `taskId` only reach the caller's own tasks: another caller's task gets the
+  same `TaskNotFoundError` as an ID that does not exist.
+- `CancelTask` on a running task marks it `CANCELED` and cancels the skill with
+  ordinary `asyncio` cancellation, so its per-run (scoped) services are still
+  cleaned up. Cancelling a finished task returns the standard
+  `TaskNotCancelableError`.
+- Tasks live only in the SDK's in-memory store and are lost on restart; a
+  durable store is pluggable later.
+- All `AllowAnonymous()` callers share one task namespace, so any anonymous
+  caller holding a task's ID can get or cancel it. IDs are random UUIDs, but
+  treat them as bearer secrets. `ListTasks` is refused to anonymous callers with
+  `UnsupportedOperationError`, because it would otherwise reveal every
+  anonymous caller's tasks, inputs and results. Use an authenticator when
+  callers must not see each other's tasks.
 
 ```python
 import os
