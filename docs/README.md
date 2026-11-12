@@ -87,8 +87,8 @@ role mapping. Factory/error wire layouts and other unspecified details remain op
 The [milestone plan](roadmap.md#delivery-milestones) starts with M0
 development setup and M1 model-free proof; M2 proves A2A with custom routing only,
 and M3 meets the README's Foundry/Llama configuration-switching success criterion.
-M4 structured outputs, M5 bounded tools, M6 built-in opt-in model routing (after
-M3/M4), and M7 hardening complete the first usable single-agent release.
+M4 adds typed structured outputs (complete); M5 bounded tools, M6 built-in
+opt-in model routing (after M3/M4), and M7 hardening complete the first usable single-agent release.
 M8+ then delivers 1 to N independently deployable specialists and ordinary
 orchestrator skills cooperating over A2A, including with other frameworks'
 A2A agents. Discovery/native calls and identity/budget/trace propagation are

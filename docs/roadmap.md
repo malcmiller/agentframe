@@ -85,7 +85,7 @@ framework base class.
 
 | Deliverable | Confirmed direction | Still open |
 | --- | --- | --- |
-| First usable release | One `ctx.generate`: text, `output=Summary` for validated Pydantic output, `tools=[...]` for registered bounded continuations; complete validated results, not partial streams. AgentFrame owns normalized model types; unsupported capabilities fail before sending; refusals/truncation raise typed errors. | Normalized field layouts/schema subset; no implicit partial-output success (explicit opt-in: catch `IncompleteOutputError`, read `.partial_text`, M4 #54). |
+| First usable release | One `ctx.generate`: text, `output=Summary` for validated Pydantic output, `tools=[...]` for registered bounded continuations; complete validated results, not partial streams. AgentFrame owns normalized model types; unsupported capabilities fail before sending; refusals/truncation raise typed errors. | Normalized usage layouts; provider schema subsets are documented per adapter (M4 #55/#56); no implicit partial-output success (explicit opt-in: catch `IncompleteOutputError`, read `.partial_text`, M4 #54). |
 | Services and results | `Inject[T]`, `Services.add` / `add_scoped`, `services=` on app/runtime; startup missing-service errors. `invoke` returns a value; `run` returns `RunResult` independent of tracing. | Factory/disposal interfaces, generic typing, duration unit, usage marker fields and failed-run metadata access. |
 | Errors and identity | Named [safe error hierarchy](api/runtime.md#agentframeerror); `Authenticator` with `EntraIDAuth`, `APIKeyAuth`, explicit `AllowAnonymous()`. `HostConfig.auth` is mandatory remotely; `role_permissions` maps verified claims. | Error constructors/startup correlation and exact transport mapping, principal/custom-auth methods, API-key entries and scope/permission merge rules. |
 | Retry and host defaults | Transient model failures only, two retries/backoff, SDK retries disabled; side-effecting tools never auto-retry. Same caller/A2A message ID dedupes for 10 minutes (memory, pluggable store), not exactly-once. Host defaults 32 runs/1 MiB request/4 MiB response/30 seconds drain; `/health` and `/ready`. | Retry/store configuration, atomicity/payload conflicts, byte measurement, busy binding/probe schema; defaults themselves decided. |
@@ -270,7 +270,7 @@ development tooling; M1 adds model-free authoring and local execution.
 | 1 | Model-free authoring and `Runtime.invoke` (complete) | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; invalid definitions, missing services and invalid arguments fail explicitly before skill effects. Prove annotated `Inject[T]`, singleton/scoped ownership, isolated context and validated outputs without network access. `invoke` returns the value; `run` exposes local `RunResult` metadata. |
 | 2 | Native A2A hosting with structured requests and custom routing only (complete) | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Add `agentframe run module:create_app` serving the application's configured `AgentApp`, plus a localhost-only anonymous `module:Class --dev` mode. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
 | 3 | Text generation through the shared `Model` contract (complete) | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
-| 4 | Typed structured outputs | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
+| 4 | Typed structured outputs (complete) | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
 | 5 | Bounded tool calling | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
 | 6 | Built-in opt-in model router | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
 | 7 | Hardening and first usable release | Prove decided defaults/precedence within ceilings, deadlines/cancellation, DI startup/scoped cleanup, `RunResult` without telemetry, safe correlated errors and identity/resource/policy failures. Prove host admission/byte/shutdown limits, health/readiness and A2A deduplication/caller isolation without exactly-once claims; installed-wheel examples return complete validated results. No built-in approval pause/resume. |
@@ -317,10 +317,25 @@ client, two scripted models, a model-free skill that runs without inference and
 the hosted usage snapshot; the opt-in `tests/integration/test_providers.py` runs the same
 contract against real Ollama and Foundry.
 
+M4 typed structured outputs were completed on **2026-11-12**: its stories
+(#53-#57, after the #98 restructure) are merged. `ctx.generate(text, output=Summary)` returns a validated
+Pydantic instance; `FoundryModel` sends a strict JSON schema (#55) and
+`OllamaModel` the schema as `format` (#56); invalid output, refusal and
+truncation raise `OutputValidationError`, `ModelRefusalError` and
+`IncompleteOutputError`, and a model without structured output fails before
+sending with `UnsupportedCapabilityError`. Truncated text is an explicit
+opt-in through `.partial_text` (#54); structured output never has one.
+`examples/assistant.py` gained a `summarize` skill, and
+`tests/integration/test_structured_example.py` calls it with the official A2A
+client offline in CI: one data part `{"value": {...}}` with the usage snapshot,
+and safe `FAILED` tasks for every failure. The opt-in
+`tests/integration/test_providers.py` proves structured calls, structured
+truncation and the hosted example against real Ollama and Foundry.
+
 M1 is the first proof: a model-free agent. M2 adds independent native A2A
 interoperability; M3 meets the [README success criterion](../README.md#first-success-criterion)
-with interchangeable Foundry/Ollama configuration. Typed structured output,
-bounded tool continuations and built-in opt-in model routing remain required
+with interchangeable Foundry/Ollama configuration; M4 adds typed structured
+output. Bounded tool continuations and built-in opt-in model routing remain required
 before the M7 first usable release, not prerequisites for M2.
 
 ### Resolved M0 platform and API decisions
@@ -418,10 +433,10 @@ belongs to that release even though telemetry exporters/integration stay optiona
 ## Open design decisions
 
 - Exact AgentFrame-normalized usage layouts (message/tool-call layouts and
-  finish reasons are settled, M5 #59), supported structured-output schemas and provider mappings.
-  Partial-text opt-in is decided: catch `IncompleteOutputError` and read
-  `.partial_text` (M4 #54).
-  Ownership of normalization, `output=` / `tools=` and typed failures are decided.
+  finish reasons are settled, M5 #59).
+  Ownership of normalization, `output=` / `tools=` (combined, M5 #61), typed
+  failures, the partial-text opt-in (M4 #54) and per-provider structured-output
+  schema mappings (Foundry strict schema #55, Ollama `format` #56) are decided.
 - Scoped factory/disposal interfaces, explicit local startup method and app/runtime
   service-container conflict handling; `Inject`, `Services`, ownership and startup
   validation are decided, as are the M1 scoped-factory forms (sync, async,

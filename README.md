@@ -28,6 +28,10 @@ A2A 1.0 endpoint, proven end to end with the official A2A client, and
 complete: an injected `OllamaModel` (local Llama) or
 `FoundryModel` (Foundry GPT deployment) serves the same agent, switched by
 configuration only (see the [first success criterion](#first-success-criterion)).
+M4 typed structured output is complete: `ctx.generate(text, output=Summary)`
+returns a validated Pydantic instance with either provider, and hosted skills
+return it as an A2A data part; invalid output, refusal and truncation fail
+with typed errors, never fake success.
 There is no published release yet, and the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
 interfaces remain open. Examples beyond the M1 surface are design proposals.
@@ -178,16 +182,25 @@ are not required. A deterministic model-free example must work without cloud
 credentials, model downloads, or an inference server.
 
 This works from source today. The agent in
-[`examples/assistant.py`](examples/assistant.py) has one model-backed skill and
-one model-free skill, and never names a model host:
+[`examples/assistant.py`](examples/assistant.py) has a text skill, a typed
+structured-output skill and a model-free skill, and never names a model host:
 
 ```python
+from pydantic import BaseModel
+
 from agentframe import Agent, ModelSettings, RunContext, RunLimits, agent, skill
+
+
+class Summary(BaseModel):
+    """A one-sentence summary of some text and its key points."""
+
+    text: str
+    key_points: list[str]
 
 
 @agent(version="1.0.0")
 class Assistant(Agent):
-    """Answers questions and counts words."""
+    """Answers questions, summarizes text and counts words."""
 
     instructions = "Answer in one short sentence."
     model_settings = ModelSettings(max_output_tokens=512)
@@ -198,6 +211,16 @@ class Assistant(Agent):
     async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer a question briefly."""
         return await ctx.generate(question)
+
+    @skill("summarize", tags=["text"])
+    async def summarize(self, text: str, ctx: RunContext) -> Summary:
+        """Summarize some text as a sentence and its key points."""
+        return await ctx.generate(
+            text,
+            # Ollama sees only the schema, so describe the shape here too.
+            instructions="Reply with JSON: a one-sentence text and 1-3 key_points.",
+            output=Summary,
+        )
 
     @skill("count_words", tags=["text"])
     async def count_words(self, text: str, ctx: RunContext) -> int:
@@ -233,12 +256,16 @@ default in the official `a2a-sdk` client), which a model call can exceed.
 The example accepts anonymous callers as a **development placeholder** for a
 localhost server; production hosts need real authentication and authorization
 (see [hosting over A2A](#hosting-over-a2a)). Any A2A 1.0 client can fetch the
-card and call `answer` or `count_words` through the
+card and call `answer`, `summarize` or `count_words` through the
 [skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format);
-the completed task's metadata reports the run's token usage.
+`summarize` returns one data part `{"value": {"text": ..., "key_points": [...]}}`,
+and the completed task's metadata reports the run's token usage.
 `tests/integration/test_success_criterion.py` proves this offline in CI: the official A2A
 client calls the same agent served with two different scripted models, with no
-code change, and `count_words` runs without inference. The opt-in
+code change, and `count_words` runs without inference.
+`tests/integration/test_structured_example.py` proves `summarize` the same way,
+including safe `FAILED` tasks for invalid output, refusal, truncation and a
+model without structured output. The opt-in
 [real-provider tests](AGENTS.md#real-provider-tests-opt-in-local-only) run the
 same contract against Ollama and Foundry.
 

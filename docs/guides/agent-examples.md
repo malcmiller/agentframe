@@ -168,9 +168,11 @@ this switch (the [README success criterion](../../README.md#first-success-criter
 Its `create_app()` builds `OllamaModel` (with `context_window=8192`) or
 `FoundryModel` (signed in through the Azure CLI's Entra ID credential) from
 environment variables and serves one unchanged agent class, which mixes a
-model-backed skill with a model-free one. `tests/integration/test_success_criterion.py`
-calls it over A2A with the official client using two scripted models, and the
-opt-in real-provider tests run the same contract against Ollama and Foundry.
+text skill, a typed structured-output `summarize` skill and a model-free one.
+`tests/integration/test_success_criterion.py` and
+`tests/integration/test_structured_example.py` call it over A2A with the
+official client using scripted models, and the opt-in real-provider tests run
+the same contract against Ollama and Foundry.
 
 ## Mixing both kinds of skill
 
@@ -346,8 +348,9 @@ Declaring a Pydantic skill return type alone does not configure model structured
 generation; pass `output=`. Only `BaseModel` subclasses are accepted (not
 `RootModel`); wrap a list in a model field. AgentFrame sends the class's JSON
 schema as `ModelRequest.output` and validates the reply; adapters translate the
-schema to their provider. Provider schema subsets are documented with each
-adapter as it gains support. Hosted, the returned instance becomes one A2A data
+schema to their provider; each adapter documents its schema subset
+([Foundry](../api/models.md#structured-output),
+[Ollama](../api/models.md#structured-output-ollama)). Hosted, the returned instance becomes one A2A data
 part `{"value": {...}}`.
 
 This tool example uses the implemented registration and selection shape (M5

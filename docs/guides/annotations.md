@@ -208,7 +208,7 @@ Pydantic schema example: `ctx.generate(..., output=Summary)` returns a validated
 instance. Unsupported requested capability fails before sending; refusal raises
 `ModelRefusalError` and truncation `IncompleteOutputError` by default. A skill
 that accepts truncated text catches the error and reads `.partial_text` (text
-only); the supported schema subset remains open; see
+only); each adapter documents its provider's schema subset; see
 [structured generation examples](agent-examples.md#typed-structured-output-and-bounded-tools).
 Return complete validated results first; future [streaming/AG-UI](../design/streaming.md)
 does not authorize partial output or automatic frontend tools.

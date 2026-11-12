@@ -313,7 +313,7 @@ A2A parameter dispatch; media types are not full schemas. Structured A2A part
 mapping and supported MCP schemas need version-specific verification.
 Typed model structured generation is a first-release requirement, not merely
 skill return validation. Use `ctx.generate(..., output=Summary)` for a validated
-Pydantic result; supported schema subset remains open. A skill return annotation
+Pydantic result; each model adapter documents its provider's schema subset. A skill return annotation
 alone does not configure the provider.
 
 **Related:** [data-contract rationale](../guides/annotations.md#small-data-contract-example),
