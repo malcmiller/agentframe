@@ -16,6 +16,7 @@ from starlette.applications import Starlette
 
 from agentframe import (
     Agent,
+    AgentApp,
     AllowAnonymous,
     APIKey,
     APIKeyAuth,
@@ -25,11 +26,14 @@ from agentframe import (
     HostConfig,
     Inject,
     RunContext,
+    Services,
     VerifiedCaller,
     agent,
     skill,
+    tool,
 )
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.hosting.routing import eligible_skills
 
 # Test-only value; real applications load keys from the environment.
 SECRET_KEY = "test-secret-key"
@@ -225,6 +229,31 @@ async def test_api_key_host_declares_the_api_key_header() -> None:
         "apiKey": {"apiKeySecurityScheme": {"location": "header", "name": "X-API-Key"}}
     }
     assert card["securityRequirements"] == [{"schemes": {"apiKey": {}}}]
+
+
+@tool(description="Look up a term in the house glossary.")
+def define_term(term: str) -> str:
+    return term
+
+
+async def test_registered_tools_change_neither_card_nor_router_skills() -> None:
+    services = Services()
+    services.add(Glossary, Glossary())
+    app = AgentApp(
+        agent=Writer(tools=[define_term]),
+        host=HostConfig(
+            public_url="https://writer.example.com/", auth=AllowAnonymous()
+        ),
+        services=services,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(AGENT_CARD_WELL_KNOWN_PATH)
+
+    assert response.json() == await served_card(AllowAnonymous())
+    assert "define_term" not in response.text
+    router_skills = eligible_skills(Writer.definition(), principal=None)
+    assert [skill.id for skill in router_skills] == ["summarize", "translate"]
 
 
 async def test_card_contains_no_internals_or_secrets() -> None:

@@ -4,14 +4,14 @@ Rejection tests define tools only to trigger definition errors, so those
 functions are never called.
 """
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any, Literal, Protocol
 
 import pytest
 from pydantic import BaseModel, Field
 
 from agentframe import DefinitionError, Inject, RunContext, ToolDefinition, tool
-from agentframe.authoring.decorators import tool_definition
+from agentframe.authoring.definitions import tool_definition
 
 
 class OrderStatus(BaseModel):
@@ -184,7 +184,13 @@ def test_rejects_names_providers_cannot_accept() -> None:
     long_name = "x" * 65
     too_long = _renamed(café, long_name)
 
-    for function in (café, too_long):
+    def lookup(text: str) -> str:
+        return text
+
+    # A trailing newline must not slip past the name check.
+    newline = _renamed(lookup, "lookup\n")
+
+    for function in (café, too_long, newline):
         with pytest.raises(DefinitionError, match="name must be 1-64 ASCII"):
             _define(function)
 
@@ -239,3 +245,16 @@ def test_rejects_unsupported_annotations() -> None:
 
     with pytest.raises(DefinitionError, match="unsupported type annotation"):
         _define(opaque)
+
+
+def test_rejects_generators() -> None:
+    def numbers(count: int) -> Iterator[int]:
+        yield from range(count)
+
+    async def stream(count: int) -> AsyncIterator[int]:
+        for number in range(count):
+            yield number
+
+    for function in (numbers, stream):
+        with pytest.raises(DefinitionError, match="generators cannot be tools"):
+            _define(function)

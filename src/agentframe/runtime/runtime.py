@@ -81,10 +81,13 @@ class Runtime:
 
         Raises:
             DefinitionError: The agent's class is not decorated with ``@agent``,
-                or a skill's ``Inject[T]`` parameter has no registered service.
+                or an ``Inject[T]`` parameter of a skill or registered tool has
+                no registered service.
         """
         for skill in type(agent).definition().skills.values():
-            self._check_services(skill)
+            self._check_services(f"Skill '{skill.id}'", skill.injected)
+        for tool in agent.tools.values():
+            self._check_services(f"Tool '{tool.name}'", tool.injected)
 
     async def validate_model(self, agent: Agent) -> None:
         """Check that every skill knows its input token limit before any runs.
@@ -256,7 +259,7 @@ class Runtime:
             raise InputValidationError(
                 f"Agent '{definition.name}' has no skill with the requested id"
             )
-        self._check_services(skill)
+        self._check_services(f"Skill '{skill.id}'", skill.injected)
         _check_permissions(skill, principal)
         validated_arguments = _validate_arguments(skill, arguments)
 
@@ -274,6 +277,7 @@ class Runtime:
             settings=model_settings,
             limits=limits,
             accounting=accounting,
+            tools=agent.tools,
         )
         ctx = RunContext(invocation_id, principal, deadline, generation)
         try:
@@ -321,12 +325,11 @@ class Runtime:
                 f"Skill '{skill.id}' was denied by the authorization policy"
             )
 
-    def _check_services(self, skill: SkillDefinition) -> None:
-        for parameter_name, service_type in skill.injected.items():
+    def _check_services(self, where: str, injected: Mapping[str, object]) -> None:
+        for parameter_name, service_type in injected.items():
             if not self._services.is_registered(service_type):
                 raise DefinitionError(
-                    f"Skill '{skill.id}': no service registered for "
-                    f"parameter '{parameter_name}'"
+                    f"{where}: no service registered for parameter '{parameter_name}'"
                 )
 
 
