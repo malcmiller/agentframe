@@ -103,7 +103,7 @@ class AgentApp:
         runtime.validate(agent)
         card = build_agent_card(type(agent).definition(), host)
         handler = _RequestHandler(
-            routes_free_text=router is not None,
+            router=router,
             agent_executor=RuntimeExecutor(agent, runtime, router),
             task_store=InMemoryTaskStore(),
             agent_card=card,
@@ -205,20 +205,20 @@ class _RequestHandler(DefaultRequestHandler):
     anonymous caller's tasks.
 
     Args:
-        routes_free_text: Whether a ``SkillRouter`` handles free text.
+        router: The executor's router; ``None`` refuses free text.
         **sdk_options: Passed to the SDK's ``DefaultRequestHandler``.
     """
 
-    def __init__(self, *, routes_free_text: bool, **sdk_options: Any) -> None:
+    def __init__(self, *, router: SkillRouter | None, **sdk_options: Any) -> None:
         super().__init__(**sdk_options)
-        self._routes_free_text = routes_free_text
+        self._router = router
 
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext
     ) -> Message | Task:
         if is_skill_call(context.requested_extensions):
             read_skill_call(params.message)
-        elif not self._routes_free_text:
+        elif self._router is None:
             raise UnsupportedOperationError(
                 "This agent has no skill router for free-text requests. Activate "
                 f"the '{SKILL_CALL_EXTENSION_URI}' extension and name a skill."
@@ -235,6 +235,10 @@ class _RequestHandler(DefaultRequestHandler):
 
         An answer that omits its ``contextId`` joins the task's context; the SDK
         would otherwise give it a new one.
+
+        Two answers sent at once can both pass this check; the SDK runs one
+        task's messages one at a time, so the later answer is routed after the
+        earlier one finishes or fails on the finished task.
 
         Raises:
             UnsupportedOperationError: The task is working or finished.

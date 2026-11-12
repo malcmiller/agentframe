@@ -656,9 +656,13 @@ Pass it as `AgentApp(agent=..., host=..., router=GreetingRouter())`.
   (`-32001`), as for any task operation. All `AllowAnonymous()` callers share
   one owner, so treat task IDs as bearer secrets there.
 - A message for a task that is working or finished is refused with
-  `UnsupportedOperationError` (`-32004`) and changes nothing.
-- **Bounded routing:** routing must finish within the agent's
-  `limits.timeout_seconds`, and the time it takes counts against the selected
+  `UnsupportedOperationError` (`-32004`) and changes nothing. Two answers sent
+  at the same moment can both pass that check; the SDK processes one task's
+  messages in order, so the second is handled after the first (and refused if
+  the task has finished by then).
+- **Bounded routing:** the skill is not known while routing, so routing must
+  finish within the agent-level `limits.timeout_seconds` (not a skill's own
+  limits), and the time it takes counts against the selected
   skill's timeout: the skill's deadline is measured from when routing started.
 - A router cannot grant permissions; selection is not authorization.
   Clarification is not human approval or durable workflow resumption.

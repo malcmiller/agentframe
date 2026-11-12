@@ -229,6 +229,8 @@ class RuntimeExecutor(AgentExecutor):
         assert self._router is not None
         conversation = [*_earlier_messages(context.current_task), context.message]
         definition = type(self._agent).definition()
+        # The skill is not known yet, so routing is bounded by the agent's
+        # timeout; the selected skill's deadline counts from the same start.
         deadline = started_at + type(self._agent).limits.timeout_seconds
         return await route(
             self._router,
