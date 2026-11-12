@@ -437,7 +437,8 @@ belongs to that release even though telemetry exporters/integration stay optiona
 - Structured skill-input mappings and minimal-message versus task lifecycle behavior.
 - Foundry deployment capability discovery beyond a configured context window;
   credential wrapping, injected-client lifecycle and response mapping are
-  implemented in M3 #39 (`openai==3.49.0`, `azure-identity==1.27.0`).
+  implemented in M3 #39 (`openai==3.49.0`, `azure-identity==1.27.0`;
+  `aiohttp==3.14.5` added in M3 #40 for async Entra credentials).
 - Host output-ceiling carrier,
   error constructors/startup ID allocation/transport mapping and named limit
   subtypes. Approved defaults and error class names are no longer open.

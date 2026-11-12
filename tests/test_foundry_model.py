@@ -12,6 +12,8 @@ import openai
 import pytest
 from azure.core.credentials import AccessToken
 from azure.core.exceptions import ClientAuthenticationError
+from azure.core.pipeline.transport import AioHttpTransport
+from azure.identity.aio import DefaultAzureCredential
 
 from agentframe import (
     DefinitionError,
@@ -270,6 +272,21 @@ async def test_entra_token_failure_is_not_transient(
 
     assert caught.value.transient is False
     assert server.requests == []
+
+
+async def test_the_foundry_extra_supports_default_azure_credential() -> None:
+    # The async credential chain needs azure-core's aiohttp transport, which the
+    # foundry extra installs. Nothing here touches the network.
+    async with (
+        AioHttpTransport(),
+        DefaultAzureCredential() as credential,
+        FoundryModel(
+            endpoint="https://example.openai.azure.com/openai/v1/",
+            deployment="gpt-test",
+            credential=credential,
+        ),
+    ):
+        pass
 
 
 async def test_refusal_content_means_refused_even_beside_text(
