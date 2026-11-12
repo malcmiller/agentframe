@@ -5,6 +5,7 @@ from typing import ClassVar
 from agentframe.definitions import AgentDefinition
 from agentframe.errors import DefinitionError
 from agentframe.limits import RunLimits
+from agentframe.models import Model, ModelSettings
 
 DEFINITION_ATTRIBUTE = "__agentframe_definition__"
 
@@ -12,12 +13,27 @@ DEFINITION_ATTRIBUTE = "__agentframe_definition__"
 class Agent:
     """Base class for agents: declare skills with @skill, describe it with @agent.
 
+    Args:
+        model: The model ``ctx.generate`` calls. Model-free agents omit it.
+            The application owns the model and closes it.
+
     Attributes:
         limits: Default execution limits for this agent's skills. A skill's own
             ``limits`` take precedence.
+        instructions: Trusted instructions sent as the first ``system`` message
+            of every ``ctx.generate`` call. Never put untrusted content here.
+        model_settings: Settings for every model call this agent makes.
+        model: The model passed to the constructor, or ``None``.
     """
 
     limits: ClassVar[RunLimits] = RunLimits()
+    instructions: ClassVar[str | None] = None
+    model_settings: ClassVar[ModelSettings] = ModelSettings()
+    # A class default keeps subclasses that do not call super().__init__() working.
+    model: Model | None = None
+
+    def __init__(self, *, model: Model | None = None) -> None:
+        self.model = model
 
     @classmethod
     def definition(cls) -> AgentDefinition:

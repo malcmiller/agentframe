@@ -25,6 +25,7 @@ from agentframe.errors import (
     PermissionDeniedError,
     PolicyUnavailableError,
 )
+from agentframe.generation import GenerationState
 from agentframe.principal import Principal
 from agentframe.services import Services
 from agentframe.usage import FinishReason, Usage
@@ -41,9 +42,6 @@ class RunResult[T]:
     tool_calls: int
     duration: timedelta
     finish_reason: FinishReason
-
-
-_NO_USAGE = Usage(input_tokens=0, output_tokens=0, total_tokens=0, estimated=False)
 
 
 class Runtime:
@@ -150,7 +148,7 @@ class Runtime:
         """
         started = time.perf_counter()
         try:
-            value = await self._run(
+            value, generation = await self._run(
                 invocation_id, agent, skill, arguments, principal, started_at
             )
         except AgentFrameError as error:
@@ -159,8 +157,8 @@ class Runtime:
         return RunResult(
             value=value,
             invocation_id=invocation_id,
-            usage=_NO_USAGE,
-            model_calls=0,
+            usage=generation.usage,
+            model_calls=generation.model_calls,
             tool_calls=0,
             duration=timedelta(seconds=time.perf_counter() - started),
             finish_reason=FinishReason.COMPLETED,
@@ -174,7 +172,8 @@ class Runtime:
         arguments: Mapping[str, Any],
         principal: Principal | None,
         started_at: float | None,
-    ) -> Any:
+    ) -> tuple[Any, GenerationState]:
+        """Run the skill; return its validated value and the run's model state."""
         definition = type(agent).definition()
         skill = definition.skills.get(skill_id)
         if skill is None:
@@ -192,7 +191,13 @@ class Runtime:
             started_at = asyncio.get_running_loop().time()
         deadline = started_at + limits.timeout_seconds
         await self._check_policy(skill, principal, validated_arguments, deadline)
-        ctx = RunContext(invocation_id, principal, deadline)
+        generation = GenerationState(
+            model=agent.model,
+            instructions=agent.instructions,
+            settings=agent.model_settings,
+            limits=limits,
+        )
+        ctx = RunContext(invocation_id, principal, deadline, generation)
         try:
             async with (
                 asyncio.timeout_at(deadline) as timeout,
@@ -207,7 +212,7 @@ class Runtime:
                 f"Skill '{skill.id}' exceeded its timeout of "
                 f"{limits.timeout_seconds} seconds"
             ) from None
-        return _validate_output(skill, result)
+        return _validate_output(skill, result), generation
 
     async def _check_policy(
         self,

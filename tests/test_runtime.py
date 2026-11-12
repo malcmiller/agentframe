@@ -47,7 +47,7 @@ class Vault(Agent):
         return text
 
     @skill(id="context", tags=["test"])
-    async def context(self, ctx: RunContext) -> RunContext:
+    async def context(self, ctx: RunContext) -> object:
         """Return the run context."""
         return ctx
 
