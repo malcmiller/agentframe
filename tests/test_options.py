@@ -69,6 +69,7 @@ AGENT_LIMITS = RunLimits(
     max_total_tokens=50_000,
     max_model_calls=4,
     max_input_tokens=8_000,
+    max_model_retries=1,
 )
 
 
@@ -143,7 +144,10 @@ async def test_an_agent_that_sets_nothing_gets_the_library_defaults() -> None:
 
     assert limits == DEFAULT_LIMITS
     assert limits == RunLimits(
-        timeout_seconds=120, max_total_tokens=100_000, max_model_calls=10
+        timeout_seconds=120,
+        max_total_tokens=100_000,
+        max_model_calls=10,
+        max_model_retries=2,
     )
     assert settings == ModelSettings(max_output_tokens=4096)
     assert timeout == pytest.approx(120, abs=1)

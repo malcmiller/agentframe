@@ -1,7 +1,11 @@
-"""Per-run model generation behind ``RunContext.generate``, with token accounting."""
+"""Per-run model generation behind ``RunContext.generate``.
+
+Includes token accounting and retries of transient provider failures.
+"""
 
 import asyncio
 import math
+import random
 from dataclasses import dataclass, field
 
 from agentframe.errors import (
@@ -10,6 +14,7 @@ from agentframe.errors import (
     ModelCallLimitExceededError,
     ModelError,
     ModelRefusalError,
+    ProviderError,
     TimeoutLimitExceededError,
     TokenLimitExceededError,
     UnsupportedCapabilityError,
@@ -36,6 +41,12 @@ CHARACTERS_PER_TOKEN = 4
 A common rule of thumb for English text. It is a best-effort estimate, not a
 guaranteed bound: some text, such as code or other languages, uses more tokens.
 """
+
+INITIAL_BACKOFF_SECONDS = 0.5
+"""Longest wait before the first retry when the provider gives no hint."""
+
+MAX_BACKOFF_SECONDS = 8.0
+"""Longest wait before any retry when the provider gives no hint."""
 
 
 @dataclass
@@ -151,7 +162,8 @@ class GenerationState:
             ModelCallLimitExceededError: The run has made ``max_model_calls``.
             ModelRefusalError: The model refused, or a content filter blocked it.
             IncompleteOutputError: The output was cut short or empty.
-            ProviderError: The provider call failed.
+            ProviderError: The provider call failed, and was not transient,
+                used every retry, or would have to wait past the deadline.
             TimeoutLimitExceededError: The run's deadline passed during the call.
         """
         if self.model is None:
@@ -160,7 +172,7 @@ class GenerationState:
         request = ModelRequest(messages=messages, settings=self.settings)
         try:
             async with asyncio.timeout_at(deadline) as timeout:
-                response = await self._call(self.model, request)
+                response = await self._call_with_retries(self.model, request, deadline)
         except TimeoutError:
             if not timeout.expired():
                 raise
@@ -168,6 +180,30 @@ class GenerationState:
                 "The run's timeout expired during a model call"
             ) from None
         return text_from(response)
+
+    async def _call_with_retries(
+        self, model: Model, request: ModelRequest, deadline: float
+    ) -> ModelResponse:
+        """Call the model, retrying transient provider failures with backoff.
+
+        Every retry is a new call through ``_call``, so it reserves tokens and
+        counts toward ``max_model_calls``. Other errors, including refusals and
+        incomplete output, are raised at once. When the wait before a retry
+        would reach the deadline, the provider error is raised instead.
+        """
+        max_retries = self.limits.max_model_retries
+        assert max_retries is not None  # Set by defaults.
+        for retry in range(max_retries):
+            try:
+                return await self._call(model, request)
+            except ProviderError as error:
+                if not error.transient:
+                    raise
+                delay = backoff_seconds(error, retry)
+                if asyncio.get_running_loop().time() + delay >= deadline:
+                    raise
+            await wait_before_retry(delay)
+        return await self._call(model, request)
 
     async def _call(self, model: Model, request: ModelRequest) -> ModelResponse:
         """Reserve tokens, call the model, then settle the call's actual usage."""
@@ -194,6 +230,24 @@ class GenerationState:
             reservation, with_estimates(response.usage, input_estimate, response.text)
         )
         return response
+
+
+def backoff_seconds(error: ProviderError, retry: int) -> float:
+    """Return how long to wait before retry number ``retry`` (counting from 0).
+
+    The provider's ``retry_after`` hint is used when present. Otherwise the
+    wait is a random time up to an exponentially growing bound ("full
+    jitter"), so many failed runs do not all retry at the same moment.
+    """
+    if error.retry_after is not None:
+        return error.retry_after
+    bound = min(MAX_BACKOFF_SECONDS, INITIAL_BACKOFF_SECONDS * 2**retry)
+    return random.uniform(0, bound)
+
+
+async def wait_before_retry(seconds: float) -> None:
+    """Wait ``seconds`` before retrying a model call. Tests replace this."""
+    await asyncio.sleep(seconds)
 
 
 def input_token_limit(limits: RunLimits, capabilities: ModelCapabilities) -> int:

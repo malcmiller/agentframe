@@ -272,7 +272,7 @@ async def test_incomplete_answers_raise_and_return_no_partial_text(
 
 
 async def test_provider_error_is_re_raised_with_the_invocation_id() -> None:
-    error = ProviderError("The model provider is unavailable", transient=True)
+    error = ProviderError("The model provider is unavailable", transient=False)
 
     with pytest.raises(ProviderError) as raised:
         await run_writer(ScriptedModel([error]), "rewrite", "Text.")

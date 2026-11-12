@@ -206,7 +206,7 @@ async def test_a_failed_call_with_unknown_usage_keeps_its_reservation() -> None:
 
 async def test_a_failed_call_with_known_usage_settles_to_it() -> None:
     model = ScriptedModel(
-        [ProviderError("Down", transient=True, usage=usage(1, 0)), "Two."]
+        [ProviderError("Down", transient=False, usage=usage(1, 0)), "Two."]
     )
 
     result = await run_echo(
