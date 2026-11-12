@@ -85,7 +85,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/` (root) | `errors.py`, `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run`). |
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
 | `src/agentframe/runtime/` | `Runtime`, generation, `RunLimits`, `RunOptions`, `Usage`. |
-| `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`. |
+| `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`; `strict_schema.py` (OpenAI strict JSON-schema converter). |
 | `src/agentframe/hosting/` | `AgentApp`, `HostConfig`, Agent Card, A2A executor, routing. |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
@@ -106,8 +106,8 @@ unique, since test folders are not packages.
 `tests/integration/test_providers.py` runs one agent against a real Ollama
 server and a real Foundry deployment: text generation with usage, a tiny
 `max_output_tokens` raising `IncompleteOutputError`, a clear error for an
-unknown model/deployment, and a hosted structured call through the official A2A
-client. They are marked `ollama` / `foundry` and skipped unless enabled, so
+unknown model/deployment, a hosted structured call through the official A2A
+client, and (Foundry) a validated typed `output=` result. They are marked `ollama` / `foundry` and skipped unless enabled, so
 default `uv run pytest` and CI never call a provider (no secrets in CI for M3;
 revisit a manual Foundry workflow at M7). Endpoints and model names come only
 from environment variables:
