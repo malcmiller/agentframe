@@ -243,6 +243,8 @@ Every task operation requires authentication; the public Agent Card does not.
 ```python
 from collections.abc import Mapping
 
+from a2a.types import APIKeySecurityScheme, SecurityScheme
+
 from agentframe import AuthenticationError, VerifiedCaller
 
 
@@ -257,6 +259,10 @@ class ServiceTokenAuth:
         if caller_id is None:
             raise AuthenticationError("Invalid credentials.")
         return VerifiedCaller(id=caller_id, roles=frozenset({"Reader"}))
+
+    def card_security(self) -> dict[str, SecurityScheme]:
+        scheme = APIKeySecurityScheme(location="header", name="X-Service-Token")
+        return {"serviceToken": SecurityScheme(api_key_security_scheme=scheme)}
 ```
 
 For brevity this sketch assumes lower-case header names and uses a plain
@@ -268,7 +274,36 @@ case-insensitively and compare secrets in constant time, as `APIKeyAuth` does.
 grants still pass through skill/resource policy. Custom authenticators and
 resource policies plug into the same enforcement interfaces.
 
-**Related:** [`HostConfig`](hosting.md#hostconfig), [`Principal`](#principal).
+**Related:** [`HostConfig`](hosting.md#hostconfig), [`Principal`](#principal),
+[`DeclaresCardSecurity`](#declarescardsecurity).
+
+## `DeclaresCardSecurity`
+
+**Purpose / decision:** let an authenticator describe how callers authenticate
+on the public Agent Card. In A2A 1.0 a card without security schemes means no
+credentials are needed, so hosting refuses an authenticator that cannot describe
+itself rather than publish a card that looks open.
+
+**Signature status:** implemented as a runtime-checkable protocol (M2 story #2).
+
+```text
+class DeclaresCardSecurity(Protocol):
+    def card_security(self) -> dict[str, SecurityScheme]
+```
+
+| Name | Type | Meaning and constraints |
+| --- | --- | --- |
+| Return | `dict[str, a2a.types.SecurityScheme]` | Card security schemes keyed by name, using the official SDK type. Callers must satisfy all of them. `{}` declares open access. |
+
+`APIKeyAuth` returns an `apiKey` scheme for the `X-API-Key` header and
+`AllowAnonymous` returns `{}`. See the `ServiceTokenAuth` example under
+[`Authenticator`](#authenticator) for a custom implementation.
+
+**Behavior / failures:** card generation raises `DefinitionError` naming the
+authenticator class when it does not implement `card_security()`. The
+declaration is descriptive; the authenticator still enforces credentials.
+
+**Related:** [Agent Card fields](hosting.md#agentapp).
 
 ## `EntraIDAuth`
 

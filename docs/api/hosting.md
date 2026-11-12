@@ -93,7 +93,7 @@ by a deterministic, I/O-free function from the `@agent`/`@skill` definition and
 | `skills` | Each skill's `id`, `name`, `description` and `tags`; nothing else. |
 | `supportedInterfaces` | `HostConfig.public_url` + `/a2a`, `JSONRPC`, protocol `1.0`. |
 | `capabilities` | `streaming` and `pushNotifications` false; one extension, `https://github.com/malcmiller/agentframe/extensions/skill-call/v1` (`required: false`), whose `params.skills` maps each skill ID to the JSON Schema of its business arguments. |
-| `securitySchemes`, `securityRequirements` | `APIKeyAuth`: an `apiKey` scheme in the `X-API-Key` header. `AllowAnonymous` and custom authenticators declare none, since AgentFrame cannot describe a custom scheme. |
+| `securitySchemes`, `securityRequirements` | The authenticator's [`card_security()`](authorization.md#declarescardsecurity), all required. `APIKeyAuth`: an `apiKey` scheme in the `X-API-Key` header. `AllowAnonymous`: none (open access). A custom authenticator without `card_security()` makes card generation raise `DefinitionError`, rather than publish a card that looks open. |
 | `defaultInputModes`, `defaultOutputModes` | `text/plain` and `application/json`. |
 
 `ctx`, `Inject[T]` parameters, method names, instructions, credentials and other
@@ -172,9 +172,11 @@ Foundry templates later, not infrastructure deployment management.
 agent defaults and adapter-specific settings.
 
 **Constructor status:** `auth`, `role_permissions` and protection fields/defaults
-below are decided. `HostConfig(public_url=..., auth=...)` is implemented for card
-generation (M2 #2): `public_url` must be an absolute http(s) URL, otherwise
-`DefinitionError`. The remaining fields arrive with `AgentApp` (#3). Existing URL/ceiling composition is illustrative where not specified.
+below are decided. `HostConfig(public_url=..., auth=...)` is implemented for
+card generation (M2 #2): `public_url` must be an absolute http(s) URL without
+credentials, query or fragment, otherwise `DefinitionError`. The remaining
+fields arrive with `AgentApp` (#3). Existing URL/ceiling composition is
+illustrative where not specified.
 
 ```text
 HostConfig(
