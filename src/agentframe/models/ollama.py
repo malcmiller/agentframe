@@ -35,6 +35,12 @@ class OllamaModel:
     Every request sends the context window explicitly (Ollama's ``num_ctx``),
     so the server never silently truncates input to a smaller default.
 
+    For structured output, the request's JSON schema is sent as Ollama's
+    ``format``, which constrains generation to that schema. Nothing is added
+    to the prompt, so describe the expected format in the agent's trusted
+    ``instructions``. Ollama has no refusal signal: a reply in prose instead
+    of JSON fails validation in the generation layer.
+
     Prefer an explicit ``context_window`` sized for your inputs, such as
     ``8192``. The metadata size is usually the model's maximum, and Ollama
     allocates memory for the whole window: ``llama3.2:3b`` (131072 tokens)
@@ -91,9 +97,13 @@ class OllamaModel:
             "num_ctx": context_window,
             "num_predict": request.settings.max_output_tokens,
         }
+        output_format = request.output.json_schema if request.output else None
         async with _provider_errors(self.model):
             response = await self._client.chat(
-                model=self.model, messages=messages, options=options
+                model=self.model,
+                messages=messages,
+                options=options,
+                format=output_format,
             )
         return ModelResponse(
             text=response.message.content or "",
@@ -102,13 +112,18 @@ class OllamaModel:
         )
 
     async def capabilities(self) -> ModelCapabilities:
-        """Return the context window; structured output and tools are unsupported.
+        """Return the context window and structured-output support; no tools.
+
+        Structured output is reported for every model, because the server
+        constrains generation to the schema rather than the model.
 
         Raises:
             ProviderError: The model's metadata could not be read, or it does
                 not report a context length and none was configured.
         """
-        return ModelCapabilities(context_window=await self._get_context_window())
+        return ModelCapabilities(
+            context_window=await self._get_context_window(), structured_output=True
+        )
 
     async def close(self) -> None:
         """Close the HTTP client this model created."""
