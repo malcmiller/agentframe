@@ -57,6 +57,7 @@ async def test_summarize_returns_a_typed_summary_as_a_data_part(
         "total_tokens": 60,
         "estimated": False,
         "model_calls": 1,
+        "tool_calls": 0,
     }
     [request] = model.requests
     assert request.output is not None
