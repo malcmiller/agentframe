@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable, Mapping
+from contextlib import AsyncExitStack
 from typing import Annotated, Any
 
 import httpx
@@ -33,6 +34,7 @@ from agentframe import (
     RunContext,
     RunLimits,
     Runtime,
+    Services,
     ToolCall,
     ToolSpec,
     UnsupportedCapabilityError,
@@ -40,6 +42,7 @@ from agentframe import (
     agent,
     skill,
 )
+from agentframe.authoring.services import ServiceScope
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS
 from agentframe.runtime.generation import GenerationState, estimate_input_tokens
@@ -610,6 +613,7 @@ def usage_snapshot(tokens: Usage, model_calls: int) -> dict[str, Any]:
         "total_tokens": tokens.total_tokens,
         "estimated": tokens.estimated,
         "model_calls": model_calls,
+        "tool_calls": 0,
     }
 
 
@@ -683,14 +687,14 @@ def ask(*messages: Message, tools: tuple[ToolSpec, ...] = ()) -> ModelRequest:
 
 
 async def test_tools_on_a_model_without_tool_support_fail_before_reserving() -> None:
-    # ctx.generate does not send tools until the tool loop (#61), so this
-    # drives the per-call check directly.
+    # Drives the per-call check directly, with tools but no prior tool messages.
     model = ScriptedModel(["Unused."])  # Default capabilities: no tools.
     state = GenerationState(
         model=model,
         instructions=None,
         settings=DEFAULT_MODEL_SETTINGS,
         limits=DEFAULT_LIMITS,
+        services=ServiceScope(Services(), AsyncExitStack()),
     )
     deadline = asyncio.get_running_loop().time() + 5
 

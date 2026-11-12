@@ -58,6 +58,7 @@ async def test_the_same_agent_serves_either_model_over_a2a(
         "total_tokens": input_tokens + output_tokens,
         "estimated": False,
         "model_calls": 1,
+        "tool_calls": 0,
     }
     assert model.requests[0].messages[-1].content == QUESTION
     # The model-free skill runs without inference.

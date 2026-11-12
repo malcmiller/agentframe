@@ -70,24 +70,28 @@ class RunContext:
                 validated into an instance. Invalid output is never repaired
                 or re-requested.
             tools: ``@tool`` functions to offer the model, each registered on
-                the agent. Omitted or empty offers no tools; registered tools
-                are never offered unless selected here.
+                the agent and selected once. Omitted or empty offers no
+                tools; registered tools are never offered unless selected
+                here. The model's tool calls run one at a time, in its
+                order, and their results are sent back until it answers.
+                A call naming a tool that was not offered, or with invalid
+                arguments, runs nothing; the model is told what was wrong.
 
         Returns:
             The model's complete answer, or an ``output`` instance when
-            ``output`` is given.
+            ``output`` is given. With tools, the answer after the tool calls.
 
         Raises:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
                 a ``RootModel``, or a selected tool is not registered on the
-                agent. Raised before anything is sent.
+                agent or is selected twice. Raised before anything is sent.
             UnsupportedCapabilityError: The agent has no model configured, or
                 the model lacks something the request needs, such as
-                structured output. Tool calling is not implemented yet, so
-                selecting any tool raises this too. Raised before anything is
+                structured output or tool calling. Raised before anything is
                 sent.
             OutputValidationError: The structured reply is not valid JSON or
-                does not match ``output``.
+                does not match ``output``, or a tool returned a value that
+                does not match its return annotation.
             ModelRefusalError: The model refused, or a content filter blocked
                 its output.
             IncompleteOutputError: The output was cut short at the token
@@ -95,13 +99,15 @@ class RunContext:
                 for text cut short at the limit, the error's ``partial_text``
                 holds what arrived, and a skill may catch it and use it.
             ProviderError: The model provider call failed.
-            LimitExceededError: The call does not fit the run's limits, or the
-                run's timeout expired during the call.
+            LimitExceededError: A model call does not fit the run's limits,
+                the run has made ``max_tool_calls`` tool calls, or the run's
+                timeout expired during a model or tool call.
+
+        Exceptions raised by a tool propagate unchanged and fail the run;
+        their text is never sent to the model.
         """
         if output is None:
-            return await self._generation.generate_text(
-                text, instructions, self.deadline, tools
-            )
+            return await self._generation.generate_text(self, text, instructions, tools)
         return await self._generation.generate_output(
-            text, instructions, output, self.deadline, tools
+            self, text, instructions, output, tools
         )

@@ -150,6 +150,10 @@ class ModelCallLimitExceededError(LimitExceededError):
     """A model call would exceed the run's ``max_model_calls``; it is not sent."""
 
 
+class ToolCallLimitExceededError(LimitExceededError):
+    """A tool call would exceed the run's ``max_tool_calls``; it does not run."""
+
+
 class TimeoutLimitExceededError(LimitExceededError):
     """The run's ``timeout_seconds`` expired."""
 

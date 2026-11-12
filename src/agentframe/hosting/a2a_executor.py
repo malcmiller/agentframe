@@ -29,7 +29,8 @@ Outcomes map to native A2A results as follows:
 
 Every task status carries the run's ``invocation_id`` and a ``usage``
 snapshot in its metadata: ``input_tokens``, ``output_tokens``,
-``total_tokens`` (``null`` when unknown), ``estimated`` and ``model_calls``.
+``total_tokens`` (``null`` when unknown), ``estimated``, ``model_calls``
+and ``tool_calls``.
 A cancelled task reports the usage its run had reached when it was cancelled.
 """
 
@@ -401,7 +402,8 @@ def run_metadata(invocation_id: str, accounting: RunAccounting) -> dict[str, Any
 
     Only safe values are included: the run's ID, token counts (``None`` when
     unknown, including while a model call is still running, as when a task is
-    cancelled), whether any count is estimated, and the number of model calls.
+    cancelled), whether any count is estimated, and the numbers of model
+    and tool calls.
     """
     usage = accounting.current_usage()
     return {
@@ -412,6 +414,7 @@ def run_metadata(invocation_id: str, accounting: RunAccounting) -> dict[str, Any
             "total_tokens": usage.total_tokens,
             "estimated": usage.estimated,
             "model_calls": accounting.model_calls,
+            "tool_calls": accounting.tool_calls,
         },
     }
 

@@ -67,23 +67,41 @@ class Services:
         """Return whether ``service_type`` has been registered."""
         return service_type in self._singletons or service_type in self._scoped
 
-    async def resolve(
-        self, needed: Mapping[str, object], stack: AsyncExitStack
-    ) -> dict[str, object]:
-        """Return service instances for one run, keyed by parameter name.
+    def _check_not_registered(self, service_type: object) -> None:
+        if self.is_registered(service_type):
+            raise DefinitionError(
+                f"Service {_type_name(service_type)} is already registered"
+            )
 
-        Scoped services are created once per type for the run. Their cleanup is
-        registered on ``stack``; singletons are never closed.
+
+class ServiceScope:
+    """The services of one run, shared by its skill and the tools it calls.
+
+    Scoped services are created at most once per type for the run. Their
+    cleanup is registered on the run's exit stack; singletons are never closed.
+
+    Args:
+        services: The registered services.
+        stack: Exit stack that lives exactly as long as the run.
+    """
+
+    def __init__(self, services: Services, stack: AsyncExitStack) -> None:
+        # Same module, so reading the registry's private maps is deliberate.
+        self._singletons = services._singletons
+        self._scoped = services._scoped
+        self._stack = stack
+        self._created: dict[object, object] = {}
+
+    async def resolve(self, needed: Mapping[str, object]) -> dict[str, object]:
+        """Return service instances keyed by parameter name.
 
         Args:
             needed: Parameter name to requested service type.
-            stack: Exit stack that lives exactly as long as the run.
 
         Raises:
             DefinitionError: If a requested service type is not registered, or a
                 generator factory does not yield exactly once.
         """
-        created: dict[object, object] = {}
         resolved: dict[str, object] = {}
         for parameter_name, service_type in needed.items():
             if service_type in self._singletons:
@@ -93,17 +111,11 @@ class Services:
                 raise DefinitionError(
                     f"Service {_type_name(service_type)} is not registered"
                 )
-            if service_type not in created:
+            if service_type not in self._created:
                 factory = self._scoped[service_type]
-                created[service_type] = await _create_scoped(factory, stack)
-            resolved[parameter_name] = created[service_type]
+                self._created[service_type] = await _create_scoped(factory, self._stack)
+            resolved[parameter_name] = self._created[service_type]
         return resolved
-
-    def _check_not_registered(self, service_type: object) -> None:
-        if self.is_registered(service_type):
-            raise DefinitionError(
-                f"Service {_type_name(service_type)} is already registered"
-            )
 
 
 async def _create_scoped(

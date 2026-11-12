@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, RootModel, ValidationError
 
+from agentframe.authoring.services import ServiceScope
 from agentframe.errors import (
     DefinitionError,
     IncompleteOutputError,
@@ -24,6 +25,7 @@ from agentframe.errors import (
     ProviderError,
     TimeoutLimitExceededError,
     TokenLimitExceededError,
+    ToolCallLimitExceededError,
     UnsupportedCapabilityError,
     describe_validation_error,
 )
@@ -37,10 +39,17 @@ from agentframe.models.base import (
     OutputSchema,
 )
 from agentframe.runtime.limits import RunLimits
+from agentframe.runtime.tools import (
+    assistant_message,
+    run_tool_call,
+    tool_message,
+    tool_spec,
+)
 from agentframe.runtime.usage import FinishReason, Usage
 
 if TYPE_CHECKING:
-    # Imported only for type checking: definitions imports this module.
+    # Imported only for type checking: both modules import this one.
+    from agentframe.authoring.context import RunContext
     from agentframe.authoring.definitions import ToolDefinition
 
 NO_USAGE = Usage(input_tokens=0, output_tokens=0, total_tokens=0, estimated=False)
@@ -66,7 +75,7 @@ TRUNCATED_MESSAGE = "The model's output was cut short at its output token limit"
 
 @dataclass
 class RunAccounting:
-    """The tokens and model calls of one run, shared by all its model calls.
+    """The tokens, model calls and tool calls of one run.
 
     Before a call, ``reserve`` holds the most tokens it can use (its input
     estimate plus its output cap). After it, ``settle`` replaces the hold with
@@ -77,6 +86,8 @@ class RunAccounting:
     Attributes:
         usage: Tokens used by finished calls, as reported or estimated.
         model_calls: Calls started so far, including failed and running ones.
+        tool_calls: Tool calls the models asked for so far, including ones
+            that did not run because of an unknown tool or invalid arguments.
         committed_tokens: Tokens finished calls count against
             ``max_total_tokens``: their actual totals, or their reservations
             when the totals are unknown.
@@ -85,6 +96,7 @@ class RunAccounting:
 
     usage: Usage = NO_USAGE
     model_calls: int = 0
+    tool_calls: int = 0
     committed_tokens: int = 0
     reserved_tokens: int = 0
 
@@ -125,6 +137,20 @@ class RunAccounting:
         self.model_calls -= 1
         self.reserved_tokens -= tokens
 
+    def count_tool_call(self, limits: RunLimits) -> None:
+        """Count one more tool call, before it runs.
+
+        Raises:
+            ToolCallLimitExceededError: The run has made ``max_tool_calls``.
+        """
+        max_calls = limits.max_tool_calls
+        assert max_calls is not None  # Set by defaults.
+        if self.tool_calls >= max_calls:
+            raise ToolCallLimitExceededError(
+                f"The run reached its limit of {max_calls} tool calls"
+            )
+        self.tool_calls += 1
+
     def settle(self, tokens: int, usage: Usage) -> None:
         """Replace a call's reservation of ``tokens`` with its actual ``usage``."""
         self.reserved_tokens -= tokens
@@ -137,7 +163,7 @@ class RunAccounting:
 
 @dataclass
 class GenerationState:
-    """One run's model, effective settings and accounting.
+    """One run's model, effective settings, accounting, tools and services.
 
     The runtime creates a fresh state for every run, so concurrent runs never
     share usage totals or call counts.
@@ -147,7 +173,8 @@ class GenerationState:
         instructions: The agent's shared trusted instructions, if any.
         settings: Effective settings for every model call in this run.
         limits: Effective limits for this run.
-        accounting: Tokens and model calls this run has used so far.
+        services: The run's services, for the tools' ``Inject[T]`` parameters.
+        accounting: Tokens, model calls and tool calls this run has used so far.
         tools: The agent's registered tools by name.
     """
 
@@ -155,6 +182,7 @@ class GenerationState:
     instructions: str | None
     settings: ModelSettings
     limits: RunLimits
+    services: ServiceScope
     accounting: RunAccounting = field(default_factory=RunAccounting)
     tools: "Mapping[str, ToolDefinition]" = field(
         default_factory=lambda: MappingProxyType({})
@@ -162,39 +190,44 @@ class GenerationState:
 
     async def generate_text(
         self,
+        ctx: "RunContext",
         text: str,
         instructions: str | None,
-        deadline: float,
         tools: Iterable[Callable[..., Any]] = (),
     ) -> str:
         """Send ``text`` to the model and return its complete answer.
 
+        When ``tools`` are given, the model's tool calls are run and their
+        results sent back until the model answers (see ``_generate``).
+
         Args:
+            ctx: The run's context: its deadline, and what tools receive.
             text: Untrusted content, sent as a ``user`` message.
             instructions: Trusted call-specific instructions, sent after the
                 agent's own instructions as a separate ``system`` message.
-            deadline: Event-loop time when the run times out.
             tools: Registered ``@tool`` functions to offer the model.
 
         Raises:
-            DefinitionError: A selected tool is not registered on the agent,
-                or the model reports no context window and no
-                ``max_input_tokens`` is set.
-            UnsupportedCapabilityError: The agent has no model, the model
-                lacks something the request needs, or tools were selected
-                (running tools is not implemented yet).
-            TokenLimitExceededError: The call does not fit the input limit,
+            DefinitionError: A selected tool is not registered on the agent
+                or is selected twice, or the model reports no context window
+                and no ``max_input_tokens`` is set.
+            UnsupportedCapabilityError: The agent has no model, or the model
+                lacks something the request needs.
+            TokenLimitExceededError: A call does not fit the input limit,
                 the context window or the run's remaining tokens.
             ModelCallLimitExceededError: The run has made ``max_model_calls``.
+            ToolCallLimitExceededError: The run has made ``max_tool_calls``.
             ModelRefusalError: The model refused, or a content filter blocked it.
             IncompleteOutputError: The output was cut short or empty. When it
                 stopped at the output token limit, ``partial_text`` holds the
                 text received so far.
             ProviderError: The provider call failed, and was not transient,
                 used every retry, or would have to wait past the deadline.
-            TimeoutLimitExceededError: The run's deadline passed during the call.
+            OutputValidationError: A tool returned an invalid value.
+            TimeoutLimitExceededError: The run's deadline passed during a
+                model or tool call.
         """
-        response = await self._generate(text, instructions, None, deadline, tools)
+        response = await self._generate(ctx, text, instructions, None, tools)
         if response.finish_reason is FinishReason.LENGTH and response.text:
             # Only text keeps what arrived before the limit, so a skill can
             # catch the error and choose to use it. Structured output never does.
@@ -203,24 +236,25 @@ class GenerationState:
 
     async def generate_output[T: BaseModel](
         self,
+        ctx: "RunContext",
         text: str,
         instructions: str | None,
         output: type[T],
-        deadline: float,
         tools: Iterable[Callable[..., Any]] = (),
     ) -> T:
         """Send ``text`` to the model and return its reply validated as ``output``.
 
         The model is asked for JSON matching ``output``'s schema. Invalid
-        output is never repaired or re-requested. Besides the errors below,
-        this raises everything ``generate_text`` raises.
+        output is never repaired or re-requested. With ``tools``, the final
+        answer after the tool calls is the one validated. Besides the errors
+        below, this raises everything ``generate_text`` raises.
 
         Args:
+            ctx: The run's context (see ``generate_text``).
             text: Untrusted content, sent as a ``user`` message.
             instructions: Trusted call-specific instructions (see
                 ``generate_text``).
             output: The Pydantic model class the reply must validate as.
-            deadline: Event-loop time when the run times out.
             tools: Registered ``@tool`` functions to offer the model.
 
         Raises:
@@ -232,61 +266,96 @@ class GenerationState:
                 match ``output``. The message lists field locations only.
         """
         schema = output_schema(output)
-        response = await self._generate(text, instructions, schema, deadline, tools)
+        response = await self._generate(ctx, text, instructions, schema, tools)
         return validate_output(text_from(response), output)
 
     async def _generate(
         self,
+        ctx: "RunContext",
         text: str,
         instructions: str | None,
         output: OutputSchema | None,
-        deadline: float,
         tools: Iterable[Callable[..., Any]],
     ) -> ModelResponse:
-        """Build the request and call the model within the run's deadline."""
+        """Run the model and the tools it calls within the run's deadline.
+
+        Returns:
+            The model's final response: the first one that calls no tools.
+        """
         selected_tools = self.select_tools(tools)
         if self.model is None:
             raise UnsupportedCapabilityError("This agent has no model configured")
-        if selected_tools:
-            # The tool-calling loop is not implemented yet. Fail rather than
-            # send a request that silently leaves the selected tools out.
-            raise UnsupportedCapabilityError("Tool calling is not available yet")
         messages = build_messages(self.instructions, instructions, text)
-        request = ModelRequest(messages=messages, settings=self.settings, output=output)
         try:
-            async with asyncio.timeout_at(deadline) as timeout:
-                return await self._call_with_retries(self.model, request, deadline)
+            async with asyncio.timeout_at(ctx.deadline) as timeout:
+                return await self._tool_loop(
+                    self.model, ctx, messages, output, selected_tools
+                )
         except TimeoutError:
             if not timeout.expired():
                 raise
             raise TimeoutLimitExceededError(
-                "The run's timeout expired during a model call"
+                "The run's timeout expired during a model or tool call"
             ) from None
+
+    async def _tool_loop(
+        self,
+        model: Model,
+        ctx: "RunContext",
+        messages: tuple[Message, ...],
+        output: OutputSchema | None,
+        tools: Mapping[str, "ToolDefinition"],
+    ) -> ModelResponse:
+        """Call the model, run the tools it asks for, and repeat until it answers.
+
+        Each model call is an ordinary call: it counts toward
+        ``max_model_calls`` and the token budget. Tool calls in one response
+        run one at a time, in the model's order, and each counts toward
+        ``max_tool_calls`` before it runs. The loop ends because those limits
+        are finite. A tool call is never retried.
+        """
+        specs = tuple(tool_spec(tool) for tool in tools.values())
+        while True:
+            request = ModelRequest(
+                messages=messages, settings=self.settings, output=output, tools=specs
+            )
+            response = await self._call_with_retries(model, request, ctx.deadline)
+            # Checked before the finish reason: a tool-call response has no text.
+            if not response.tool_calls:
+                return response
+            messages += (assistant_message(response),)
+            for call in response.tool_calls:
+                self.accounting.count_tool_call(self.limits)
+                result = await run_tool_call(call, tools, self.services, ctx)
+                messages += (tool_message(call, result),)
 
     def select_tools(
         self, functions: Iterable[Callable[..., Any]]
-    ) -> tuple["ToolDefinition", ...]:
-        """Return the definitions of ``functions``, in the order given.
+    ) -> Mapping[str, "ToolDefinition"]:
+        """Return the definitions of ``functions`` by name, in the order given.
 
         Only tools registered on the agent can be selected; registering a
         tool never offers it to a model on its own.
 
         Raises:
-            DefinitionError: A function is not a tool registered on the agent.
+            DefinitionError: A function is not a tool registered on the agent,
+                or is selected more than once.
         """
         by_function = {tool.function: tool for tool in self.tools.values()}
-        selected: list[ToolDefinition] = []
+        selected: dict[str, ToolDefinition] = {}
         for function in functions:
             definition = by_function.get(function)
+            # Tool names are author-defined, never caller data.
+            name = getattr(function, "__name__", repr(function))
             if definition is None:
-                # Tool names are author-defined, never caller data.
-                name = getattr(function, "__name__", repr(function))
                 raise DefinitionError(
                     f"Tool '{name}' is not registered on this agent; pass it "
                     "to the agent's tools=[...]"
                 )
-            selected.append(definition)
-        return tuple(selected)
+            if definition.name in selected:
+                raise DefinitionError(f"Tool '{name}' is selected more than once")
+            selected[definition.name] = definition
+        return MappingProxyType(selected)
 
     async def _call_with_retries(
         self, model: Model, request: ModelRequest, deadline: float
