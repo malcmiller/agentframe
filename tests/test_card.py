@@ -8,6 +8,7 @@ from typing import Annotated, Any
 import httpx
 import pytest
 from a2a.server.routes import create_agent_card_routes
+from a2a.types import HTTPAuthSecurityScheme, SecurityScheme
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from pydantic import BaseModel, Field
 from starlette.applications import Starlette
@@ -159,18 +160,42 @@ def test_card_never_advertises_streaming_or_push_notifications() -> None:
     assert card.capabilities.extensions[0].required is False
 
 
-class HeaderTokenAuth:
-    """A custom authenticator whose scheme AgentFrame cannot describe."""
+class BearerTokenAuth:
+    """A custom authenticator that describes its scheme on the card."""
+
+    async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
+        return VerifiedCaller(id="custom")
+
+    def card_security(self) -> dict[str, SecurityScheme]:
+        scheme = HTTPAuthSecurityScheme(scheme="Bearer")
+        return {"bearer": SecurityScheme(http_auth_security_scheme=scheme)}
+
+
+class UndescribedAuth:
+    """A custom authenticator that cannot describe its scheme."""
 
     async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
         return VerifiedCaller(id="custom")
 
 
-@pytest.mark.parametrize("auth", [AllowAnonymous(), HeaderTokenAuth()])
-async def test_anonymous_and_custom_hosts_declare_no_security(
-    auth: Authenticator,
-) -> None:
-    card = await served_card(auth)
+async def test_custom_authenticator_declares_its_own_scheme() -> None:
+    card = await served_card(BearerTokenAuth())
+
+    assert card["securitySchemes"] == {
+        "bearer": {"httpAuthSecurityScheme": {"scheme": "Bearer"}}
+    }
+    assert card["securityRequirements"] == [{"schemes": {"bearer": {}}}]
+
+
+def test_authenticator_without_card_security_is_refused() -> None:
+    host = HostConfig(public_url="https://writer.example.com", auth=UndescribedAuth())
+
+    with pytest.raises(DefinitionError, match=r"UndescribedAuth.*card_security"):
+        build_agent_card(Writer.definition(), host)
+
+
+async def test_anonymous_host_declares_no_security() -> None:
+    card = await served_card(AllowAnonymous())
 
     assert "securitySchemes" not in card
     assert "securityRequirements" not in card
@@ -218,11 +243,22 @@ def test_card_generation_is_deterministic_and_offline(
 
 
 @pytest.mark.parametrize(
-    "public_url", ["", "writer.example.com", "ftp://writer.example.com", "https://"]
+    "public_url",
+    [
+        "",
+        "writer.example.com",
+        "ftp://writer.example.com",
+        "https://",
+        "https://user:hunter2@writer.example.com",
+        "https://writer.example.com/?tenant=a",
+        "https://writer.example.com/#top",
+    ],
 )
-def test_host_config_rejects_a_non_http_public_url(public_url: str) -> None:
-    with pytest.raises(DefinitionError, match="public_url"):
+def test_host_config_rejects_an_unpublishable_public_url(public_url: str) -> None:
+    with pytest.raises(DefinitionError, match="public_url") as error:
         HostConfig(public_url=public_url, auth=AllowAnonymous())
+
+    assert "hunter2" not in str(error.value)
 
 
 async def test_public_card_is_readable_without_credentials() -> None:

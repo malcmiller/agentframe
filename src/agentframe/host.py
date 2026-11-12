@@ -22,16 +22,25 @@ class HostConfig:
             ``AllowAnonymous()`` to accept anonymous callers explicitly.
 
     Raises:
-        DefinitionError: ``public_url`` is not an absolute http(s) URL.
+        DefinitionError: ``public_url`` is not an absolute http(s) URL, or it
+            contains credentials, a query or a fragment.
     """
 
     public_url: str
     auth: Authenticator
 
     def __post_init__(self) -> None:
+        # The URL is published on the public card, so credentials in it would
+        # leak; the error message does not echo it for the same reason.
         parts = urlsplit(self.public_url)
-        if parts.scheme not in ("http", "https") or not parts.netloc:
+        if (
+            parts.scheme not in ("http", "https")
+            or not parts.hostname
+            or "@" in parts.netloc
+            or parts.query
+            or parts.fragment
+        ):
             raise DefinitionError(
-                "HostConfig public_url must be an absolute http(s) URL, "
-                f"got '{self.public_url}'."
+                "HostConfig public_url must be an absolute http(s) URL without "
+                "credentials, query or fragment."
             )

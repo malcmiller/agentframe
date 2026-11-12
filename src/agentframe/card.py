@@ -12,15 +12,15 @@ from a2a.types import (
     AgentExtension,
     AgentInterface,
     AgentSkill,
-    APIKeySecurityScheme,
     SecurityRequirement,
     SecurityScheme,
     StringList,
 )
 from a2a.utils.constants import PROTOCOL_VERSION_1_0, TransportProtocol
 
-from agentframe.auth import API_KEY_HEADER, APIKeyAuth, Authenticator
+from agentframe.auth import Authenticator, DeclaresCardSecurity
 from agentframe.definitions import AgentDefinition, SkillDefinition
+from agentframe.errors import DefinitionError
 from agentframe.host import HostConfig
 
 A2A_PATH = "/a2a"
@@ -29,8 +29,6 @@ SKILL_CALL_EXTENSION_URI = (
 )
 # Callers send free text or JSON arguments, and receive text or JSON results.
 MEDIA_TYPES = ["text/plain", "application/json"]
-
-_API_KEY_SCHEME_NAME = "apiKey"
 
 
 def build_agent_card(definition: AgentDefinition, host: HostConfig) -> AgentCard:
@@ -47,6 +45,10 @@ def build_agent_card(definition: AgentDefinition, host: HostConfig) -> AgentCard
 
     Returns:
         The native A2A Agent Card.
+
+    Raises:
+        DefinitionError: The host's authenticator cannot describe its security
+            scheme (it does not implement ``DeclaresCardSecurity``).
     """
     skills = list(definition.skills.values())
     security_schemes, security_requirements = _security(host.auth)
@@ -118,17 +120,19 @@ def _skill_call_extension(skills: list[SkillDefinition]) -> AgentExtension:
 def _security(
     auth: Authenticator,
 ) -> tuple[dict[str, SecurityScheme], list[SecurityRequirement]]:
-    """Return the card's security schemes and requirements for ``auth``.
+    """Return the card's security schemes and the requirement to satisfy them all.
 
-    Anonymous and custom authenticators declare no scheme: the card describes
-    only schemes AgentFrame knows the host enforces.
+    Raises:
+        DefinitionError: ``auth`` does not implement ``DeclaresCardSecurity``.
     """
-    if not isinstance(auth, APIKeyAuth):
-        return {}, []
-    scheme = SecurityScheme(
-        api_key_security_scheme=APIKeySecurityScheme(
-            location="header", name=API_KEY_HEADER
+    if not isinstance(auth, DeclaresCardSecurity):
+        raise DefinitionError(
+            f"Authenticator {type(auth).__name__} must implement "
+            "card_security() so the Agent Card can describe how callers "
+            "authenticate; without it the card would advertise open access."
         )
-    )
-    requirement = SecurityRequirement(schemes={_API_KEY_SCHEME_NAME: StringList()})
-    return {_API_KEY_SCHEME_NAME: scheme}, [requirement]
+    schemes = auth.card_security()
+    if not schemes:
+        return {}, []
+    requirement = SecurityRequirement(schemes={name: StringList() for name in schemes})
+    return schemes, [requirement]

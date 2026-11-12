@@ -6,6 +6,7 @@ from agentframe.auth import (
     APIKey,
     APIKeyAuth,
     Authenticator,
+    DeclaresCardSecurity,
     VerifiedCaller,
 )
 from agentframe.authorization import AuthorizationPolicy
@@ -39,6 +40,7 @@ __all__ = [
     "AuthenticationError",
     "Authenticator",
     "AuthorizationPolicy",
+    "DeclaresCardSecurity",
     "DefinitionError",
     "FinishReason",
     "HostConfig",

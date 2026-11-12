@@ -8,7 +8,9 @@ into a 401 response before any task is created.
 import hmac
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
+
+from a2a.types import APIKeySecurityScheme, SecurityScheme
 
 from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.principal import Principal
@@ -44,6 +46,24 @@ class Authenticator(Protocol):
 
         Raises:
             AuthenticationError: Credentials are missing or invalid.
+        """
+        ...
+
+
+@runtime_checkable
+class DeclaresCardSecurity(Protocol):
+    """An authenticator that can describe itself on the public Agent Card.
+
+    Hosting requires it: a card without security schemes tells A2A clients that
+    no credentials are needed, so an authenticator that cannot describe its
+    scheme must not produce a card that looks open.
+    """
+
+    def card_security(self) -> dict[str, SecurityScheme]:
+        """Return the security schemes the card advertises, keyed by name.
+
+        Callers must satisfy all returned schemes. An empty mapping declares
+        that the host accepts callers without credentials.
         """
         ...
 
@@ -102,6 +122,11 @@ class APIKeyAuth:
     def __repr__(self) -> str:
         return f"APIKeyAuth(<{len(self._keys)} keys>)"
 
+    def card_security(self) -> dict[str, SecurityScheme]:
+        """Return the ``apiKey`` scheme: an API key in the ``X-API-Key`` header."""
+        scheme = APIKeySecurityScheme(location="header", name=API_KEY_HEADER)
+        return {"apiKey": SecurityScheme(api_key_security_scheme=scheme)}
+
     async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
         """Verify the API key in the request's ``X-API-Key`` header.
 
@@ -141,6 +166,10 @@ class AllowAnonymous:
 
     def __repr__(self) -> str:
         return "AllowAnonymous()"
+
+    def card_security(self) -> dict[str, SecurityScheme]:
+        """Return no schemes: callers need no credentials."""
+        return {}
 
     async def authenticate(self, headers: Mapping[str, str]) -> None:
         """Accept every request as anonymous, ignoring any credentials sent.
