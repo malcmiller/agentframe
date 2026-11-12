@@ -8,11 +8,13 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 
 from pydantic import ValidationError
 
 from agentframe.agent import Agent
+from agentframe.authorization import AuthorizationPolicy
 from agentframe.context import RunContext
 from agentframe.definitions import SkillDefinition
 from agentframe.errors import (
@@ -22,6 +24,7 @@ from agentframe.errors import (
     LimitExceededError,
     OutputValidationError,
     PermissionDeniedError,
+    PolicyUnavailableError,
 )
 from agentframe.principal import Principal
 from agentframe.services import Services
@@ -73,10 +76,18 @@ class Runtime:
 
     Args:
         services: Services available to ``Inject[T]`` parameters.
+        authorization: Application policy that checks each run against the
+            requested resource. ``None`` means no resource checks.
     """
 
-    def __init__(self, *, services: Services | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        services: Services | None = None,
+        authorization: AuthorizationPolicy | None = None,
+    ) -> None:
         self._services = services or Services()
+        self._authorization = authorization
 
     async def invoke(
         self,
@@ -117,7 +128,10 @@ class Runtime:
         Raises:
             InputValidationError: Unknown skill or invalid arguments.
             DefinitionError: Undecorated agent or unregistered service.
-            PermissionDeniedError: The principal lacks a required permission.
+            PermissionDeniedError: The principal lacks a required permission
+                or the authorization policy denied the run.
+            PolicyUnavailableError: The authorization policy raised an error
+                or did not answer before the run's deadline.
             LimitExceededError: The run exceeded its timeout.
             OutputValidationError: The skill returned an invalid value.
 
@@ -164,6 +178,7 @@ class Runtime:
         limits = skill.limits or type(agent).limits
         method = getattr(agent, skill.method_name)
         deadline = asyncio.get_running_loop().time() + limits.timeout_seconds
+        await self._check_policy(skill, principal, validated_arguments, deadline)
         ctx = RunContext(invocation_id, principal, deadline)
         try:
             async with (
@@ -180,6 +195,34 @@ class Runtime:
                 f"{limits.timeout_seconds} seconds"
             ) from None
         return _validate_output(skill, result)
+
+    async def _check_policy(
+        self,
+        skill: SkillDefinition,
+        principal: Principal | None,
+        arguments: dict[str, Any],
+        deadline: float,
+    ) -> None:
+        """Ask the authorization policy about this run, failing closed."""
+        if self._authorization is None:
+            return
+        try:
+            # The policy shares the run's deadline; running out of time while
+            # waiting for it is a policy outage, not permission.
+            async with asyncio.timeout_at(deadline):
+                allowed = await self._authorization.check(
+                    principal, skill, MappingProxyType(arguments)
+                )
+        except Exception as error:
+            raise PolicyUnavailableError(
+                f"Authorization policy for skill '{skill.id}' is unavailable"
+            ) from error
+        if allowed is not True:
+            # Deliberately generic so a denial never reveals whether the
+            # requested resource exists.
+            raise PermissionDeniedError(
+                f"Skill '{skill.id}' was denied by the authorization policy"
+            )
 
     def _check_services(self, skill: SkillDefinition) -> None:
         for parameter_name, service_type in skill.injected.items():

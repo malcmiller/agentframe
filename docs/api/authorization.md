@@ -3,7 +3,8 @@
 [Reference index and status conventions](README.md). These are mostly
 unimplemented design contracts. M1 implements `Principal` and permission checks;
 M2 story #4 implements `Authenticator`, `APIKeyAuth` and `AllowAnonymous` as
-standalone units, which the HTTP host (#3) wires in. Authentication, authorization,
+standalone units, which the HTTP host (#3) wires in. M2 story #19 implements
+`AuthorizationPolicy` with the local `Runtime`. Authentication, authorization,
 and prompt/content checks are separate responsibilities.
 
 ## `Principal`
@@ -59,23 +60,75 @@ omission. Python execution in the host process is not sandboxed.
 grants and resource-specific rules, alongside mandatory declared skill
 permissions.
 
-**Signature status:** structural interface intended; constructor, method names,
-arguments, and typed decisions remain open. Do not infer an `authorize()` method
-from the responsibility description.
-
-| Policy input/concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Verified caller | `Principal` | Required for protected work | Never supplied as user/model business input. |
-| Skill requirements | All-of `requires_permissions` declaration | Mandatory when declared | Custom policy may restrict further but cannot waive requirements. |
-| Validated resource arguments and authoritative state | Application data; exact policy interface open | Needed for applicable resource checks | Tenant, ownership, approval, destination, and current resource state are application-owned decisions. |
+**Signature status:** decided and implemented in M2 (#19) for local
+`Runtime.run`/`invoke` as a structural `Protocol` with one async method; any
+class with a matching `check` works without inheritance. A richer decision type
+than `bool` remains open. Hosted wiring through
+[`AgentApp(..., authorization=policy)`](hosting.md#agentapp) and re-checks on
+A2A continuation calls arrive with the hosting and task stories (#3, #6). Over A2A a
+denial maps to `REJECTED` and a policy outage to `FAILED`.
 
 ```python
-from agentframe import AuthorizationPolicy, Runtime
-
-
-def protected_runtime(authorization_policy: AuthorizationPolicy) -> Runtime:
-    return Runtime(authorization=authorization_policy)
+class AuthorizationPolicy(Protocol):
+    async def check(
+        self,
+        principal: Principal | None,
+        skill: SkillDefinition,
+        arguments: Mapping[str, object],
+    ) -> bool: ...
 ```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `principal` | `Principal \| None` | Always passed; `None` when the run has no identity | Verified caller supplied by trusted code, never business input. |
+| `skill` | `SkillDefinition` | Always passed | Definition of the selected skill, including its `id` and declared `requires_permissions`. |
+| `arguments` | `Mapping[str, object]` | Always passed | The skill's validated business arguments as a read-only mapping; never `ctx`, injected services or principal. |
+| Return | `bool` | Required | Only `True` allows the run. `False` or any other value denies it. |
+
+The policy checks the actual resource. This one allows `read` only for
+documents the caller owns; `ownership` stands for application-owned
+authoritative data:
+
+```python
+from collections.abc import Mapping
+
+from agentframe import Principal, Runtime, SkillDefinition
+
+
+class OwnerOnly:
+    def __init__(self, ownership: Mapping[str, str]) -> None:
+        self.ownership = ownership  # document ID -> owner principal ID
+
+    async def check(
+        self,
+        principal: Principal | None,
+        skill: SkillDefinition,
+        arguments: Mapping[str, object],
+    ) -> bool:
+        if principal is None or skill.id != "read":
+            return False
+        owner = self.ownership.get(str(arguments["document_id"]))
+        return owner == principal.id
+
+
+runtime = Runtime(authorization=OwnerOnly({"doc_123": "alice"}))
+```
+
+`Runtime` runs the policy after argument validation and the declared
+`requires_permissions` check, and before scoped services are resolved or the
+skill body runs:
+
+- `True` lets the run continue.
+- Any other result raises `PermissionDeniedError` with a generic message that
+  does not reveal whether the requested resource exists.
+- An exception from the policy, or the run's deadline expiring while the
+  policy is still deciding, raises `PolicyUnavailableError`. It fails closed and
+  never allows. Policy time counts against the run's timeout, so a slow policy
+  leaves less time for the skill body.
+
+Without `authorization=`, `Runtime` performs no resource checks; this is only
+appropriate for unprotected local use. Content checks belong to
+[`ExecutionPolicy`](#executionpolicy), which remains a later milestone.
 
 The application implements/supplies the policy; no default role directory,
 identity database, token issuer, wildcard grants, or `admin` bypass is implied.

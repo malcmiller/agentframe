@@ -6,7 +6,7 @@ AgentFrame is in early development: M1 model-free authoring (`@agent`, `@skill`,
 `FinishReason` and the M1 error classes) is available from source. There is no
 published release or stable import surface. This reference organizes the
 current contracts for iteration; it does not turn illustrative signatures into
-implemented release commitments. Entries note where M1 implements them. Explicitly approved names/defaults are design
+implemented release commitments. Entries note where M1 or M2 implements them. Explicitly approved names/defaults are design
 decisions, not still-unresolved recommendations.
 
 **Decision** identifies agreed behavior or a product boundary. **Proposed shape**
@@ -182,7 +182,7 @@ binding, protocol 1.0 only.
 | Invocation | Exact generic typing, duration unit, usage completeness/estimate representation and failed-run usage access; per-run options/partial-field composition, startup ID allocation and error constructors/limit subtype names. `invoke`, `run`, `RunResult` and defaults are decided. |
 | Models | Exact normalized field layouts/finish enums, schema subset and output/tools combinations, partial-result opt-in, provider mappings/settings, credential wrapping/lifecycle. AgentFrame normalization ownership, `output=` / `tools=`, fail-before-send and typed refusal/truncation are decided. |
 | Accounting | Token-counting support, strict-mode contract, unknown-usage reconciliation and provider-specific output/reasoning semantics. |
-| Identity and policy | Principal construction, authorization/content-check methods, Entra scope mapping and delegation trust. `auth`, built-ins, `role_permissions` and explicit `AllowAnonymous()` are decided; the `Authenticator` protocol, `APIKey`/`APIKeyAuth` (`X-API-Key` header) and union-of-roles permission mapping are implemented (M2 #4). |
+| Identity and policy | Principal construction, content-check methods, a richer `AuthorizationPolicy` decision type, Entra scope mapping and delegation trust. `auth`, built-ins, `role_permissions` and explicit `AllowAnonymous()` are decided; the `Authenticator` protocol, `APIKey`/`APIKeyAuth` (`X-API-Key` header) and union-of-roles permission mapping are implemented (M2 #4), as is `AuthorizationPolicy.check` with local `Runtime` (M2 #19). |
 | Hosting | SDK pin/transport binding; structured extension URI/name/schema/selector/advertisement; native result/error metadata mappings, follow-up lifecycle, routers/extraction/clarification; MCP mappings/auth; byte measurement, busy binding, probe bodies and host output-ceiling carrier. Protection defaults and probe purposes are decided. |
 | Streaming | Native event/version/binding and ID/typed-result mapping, bounds/backpressure/write/shutdown details. `AGUIConfig`, `ag_ui=`, `/ag-ui`, tool names/status, whole-answer buffering, disconnect cancellation and no initial reconnect/resume decided; no blanket conformance. |
 | Discovery | YAML name/URL key schema, environment encoding, source conflict/order, find combinations/pagination/enrichment bounds, resolver auth/destination/source reconciliation/cache isolation/stale-age/ownership details, Foundry mapping/RBAC/pagination. Sources, directory host wiring, find, 300s TTL/on-stale refresh and startup named binding validation decided. |

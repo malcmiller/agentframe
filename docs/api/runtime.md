@@ -4,7 +4,8 @@
 contracts. As of M1, `Runtime(services=...)`, `invoke`, `run`, `RunResult`,
 `Usage`, `FinishReason` and the `AgentFrameError`, `DefinitionError`,
 `InputValidationError`, `OutputValidationError`, `PermissionDeniedError` and
-`LimitExceededError` classes are implemented from source; the remaining
+`LimitExceededError` classes are implemented from source. M2 adds
+`Runtime(authorization=...)` and `PolicyUnavailableError`; the remaining
 parameters and errors arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
 
@@ -37,8 +38,10 @@ runtime = Runtime()
 ```
 
 This unprotected local construction requires no identity provider, model, or
-telemetry integration. It does not declare any remote access policy. M1
-implements only `Runtime(*, services: Services | None = None)`.
+telemetry integration. It does not declare any remote access policy. M2
+implements `Runtime(*, services: Services | None = None, authorization:
+AuthorizationPolicy | None = None)`; omitting `authorization` means no resource
+checks.
 
 **Behavior / failures:** no inference on construction. Validate definitions and
 configuration; create invocation-scoped context, enforce policy/limits, validate
@@ -109,8 +112,12 @@ successful values.
 M1 runs these steps in order: create the invocation ID; resolve the skill
 (unknown -> `InputValidationError`); check service registrations
 (`DefinitionError`); check all-of `requires_permissions` against the principal
-(`PermissionDeniedError`); validate arguments (`InputValidationError`); resolve
-scoped services and call the skill within the timeout (`LimitExceededError`);
+(`PermissionDeniedError`); validate arguments (`InputValidationError`); start
+the run's deadline; ask the configured
+[`AuthorizationPolicy`](authorization.md#authorizationpolicy) within that
+deadline (deny -> `PermissionDeniedError`, policy exception or deadline expiry
+-> `PolicyUnavailableError`); resolve scoped services and call the skill
+within the remaining time (`LimitExceededError`);
 validate the output (`OutputValidationError`). Effective M1 limits are the
 skill's `limits` if set, otherwise the agent class `limits`. Exceptions raised
 by the skill itself propagate unchanged; a `TimeoutError` the skill raises
@@ -335,7 +342,9 @@ def denied(error: PermissionDeniedError) -> object:
 
 **Behavior / failures:** no protected effects on denial. M1 raises it when a
 skill declares `requires_permissions` and the principal is `None` or lacks any
-listed permission; the message names the missing permissions.
+listed permission; the message names the missing permissions. Since M2 it is
+also raised when the `AuthorizationPolicy` denies a run, with a generic message
+that does not reveal whether the requested resource exists.
 **Related:** [`AuthorizationPolicy`](authorization.md#authorizationpolicy), [`AgentFrameError`](#agentframeerror).
 
 ## `PolicyUnavailableError`
@@ -355,8 +364,12 @@ def policy_failure(error: PolicyUnavailableError) -> object:
     return error.invocation_id
 ```
 
-**Behavior / failures:** fail closed; an overall run timeout remains a limit failure.
-**Related:** [`ExecutionPolicy`](authorization.md#executionpolicy), [`AgentFrameError`](#agentframeerror).
+**Behavior / failures:** fail closed. Since M2, `Runtime` raises it when the
+[`AuthorizationPolicy`](authorization.md#authorizationpolicy) raises or the run's
+deadline expires while the policy is deciding; a deadline that expires in the
+skill body remains a `LimitExceededError`. The message never includes the
+policy's own error; the original exception is chained for server-side diagnostics.
+**Related:** [`AuthorizationPolicy`](authorization.md#authorizationpolicy), [`ExecutionPolicy`](authorization.md#executionpolicy), [`AgentFrameError`](#agentframeerror).
 
 ## `ModelError`
 
