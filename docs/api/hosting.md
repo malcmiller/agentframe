@@ -228,7 +228,8 @@ A2AConfig(*, enabled: bool = ..., path: str = ...)
 | --- | --- | --- | --- |
 | `enabled` | `bool` | A2A enabled by default on `AgentApp`; field default open | Controls the adapter, not caller authorization. |
 | `path` | `str` | `/a2a` in examples; concrete default open | Selected A2A binding endpoint, not a route per skill. |
-| Binding, task-store integration, supported capabilities | Exact fields/types open | Select/pin and verify before release | Reuse SDK interfaces; first-release complete results only. Do not advertise streaming/push/task features the host cannot execute. |
+| Binding | No constructor field | JSON-RPC over HTTP, A2A 1.0 only (decided M2) | Advertised as `protocolBinding: "JSONRPC"`, `protocolVersion: "1.0"`. No gRPC, HTTP+JSON/REST or 0.3 compatibility; requests without `A2A-Version: 1.0` are rejected. |
+| Task-store integration, supported capabilities | Exact fields/types open | Select/verify before release | Reuse SDK interfaces; first-release complete results only. Do not advertise streaming/push/task features the host cannot execute. |
 | Structured requests | A2A extension declaration/activation, data-part arguments; exact fields open | Preferred request style; no new constructor keyword selected | Card declares support; caller selects a skill under that extension, bypassing routing but not authorization/typed validation/limits/accounting/tracing. |
 | Prompt clarification | Native A2A task/status message; exact contract open | Required for ambiguous/missing prompt input | Return `TASK_STATE_INPUT_REQUIRED` with an ask-back, not a guessed invocation or successful final result. |
 | Duplicate requests | Same caller + A2A `messageId`; store/window fields open | 10-minute window, in-memory default; configurable/pluggable | Return original task instead of re-running; multi-instance store support, no exactly-once claim or task-access bypass. |
@@ -422,10 +423,16 @@ Reuse official A2A `AgentCard`, `AgentSkill`, `Message`, `Part`, `Task`, and
 Reuse native MCP tool results and SDK protocol handling. These are **not new
 AgentFrame classes** or separately maintained wire schemas.
 
-A2A protocol 1.0 and the official `a2a-sdk` are selected (1.3.0 observed on
-2026-11-11; specification release v1.0.1). Exact SDK pins, native imports and
-transport binding must be proven at implementation; no compatibility testing
-has occurred. MCP version selection is separate. Constructor signatures/imports
+A2A protocol 1.0 and the official `a2a-sdk` are selected (specification
+release v1.0.1). M2 pins `a2a-sdk[http-server]==1.3.0` as a core dependency,
+not an `agentframe[server]` extra, because A2A hosting is the default interface;
+the `http-server` extra is listed explicitly rather than relied on transitively.
+The selected binding is **JSON-RPC over HTTP** for protocol 1.0 only, with the
+SDK's 0.3 compatibility disabled. `tests/test_a2a_binding.py` proves an official
+SDK client exchanging a message over that binding and the rejection of pre-1.0
+requests; CI imports the server binding from a clean wheel install. Native type
+mappings and independent-client interoperability with AgentFrame hosting remain
+to be proven in later M2 stories. MCP version selection is separate. Constructor signatures/imports
 are deliberately not copied as stable AgentFrame APIs. See
 [resolved platform/API choices](../initial-outline.md#resolved-m0-platform-and-api-decisions).
 No fabricated

@@ -307,10 +307,11 @@ before the M7 first usable release, not prerequisites for M2.
 ### Resolved M0 platform and API decisions
 
 Approved and source-checked on **2026-11-11**. These resolve the Python, A2A
-protocol/SDK target and Foundry API choices. Protocol/provider packages are not
-installed dependencies or evidence of compatibility testing. Their observed
-versions are snapshots, not pins; pin and test them when introduced in their
-milestones. M0 configures the Python/tooling matrix; future releases are not
+protocol/SDK target and Foundry API choices. Observed versions are snapshots,
+not pins; pin and test each protocol/provider package when introduced in its
+milestone. M2 has pinned the A2A SDK and selected its binding (row below); the
+other packages are not yet installed dependencies or evidence of compatibility
+testing. M0 configures the Python/tooling matrix; future releases are not
 automatically tested.
 
 Human readability is a top-priority acceptance criterion: simple, focused code
@@ -327,7 +328,7 @@ and `RUF`. See [development commands](../README.md#development-and-contributions
 | --- | --- | --- |
 | Python | Support 3.13+ and test 3.13, 3.14 and 3.15. Python has no LTS designation; the [official release-cycle data](https://peps.python.org/api/release-cycle.json) lists 3.15 in bugfix since 2026-10-09 and 3.13 in security maintenance. | The M0 CI matrix is configured; retain all three versions as the implementation grows. |
 | Development tooling | Ruff formatter/linter instead of Black/flake8/isort, PEP 8 conventions with 88-character lines; strict mypy on `agentframe` and tests; pytest with pytest-asyncio auto mode. | Configured in `pyproject.toml`, CI and pre-commit. All four checks must pass before committing; tests run in CI rather than on every commit. Avoid rules that contort readable code. |
-| A2A | Target protocol **1.0**, using the official `a2a-sdk` Python package. [Latest specification release observed: v1.0.1](https://github.com/a2aproject/A2A/releases/tag/v1.0.1), published 2026-05-28; [SDK observed: 1.3.0, Python >=3.10](https://pypi.org/project/a2a-sdk/1.3.0/). Do not advertise 0.3 support. | Add and pin the exact compatible SDK in M2; prove transport binding, native type mappings and independent-client interoperability. Selecting protocol 1.0 does not select every optional binding/capability. |
+| A2A | Target protocol **1.0**, using the official `a2a-sdk` Python package. [Latest specification release observed: v1.0.1](https://github.com/a2aproject/A2A/releases/tag/v1.0.1), published 2026-05-28; [SDK observed: 1.3.0, Python >=3.10](https://pypi.org/project/a2a-sdk/1.3.0/). Do not advertise 0.3 support. **M2 (2026-11-12):** pinned `a2a-sdk[http-server]==1.3.0` as a core dependency (hosting is the default interface, so there is no `agentframe[server]` extra); the `http-server` extra explicitly supplies Starlette/SSE. Selected binding: **JSON-RPC over HTTP** (`JSONRPC`, protocol version `1.0`), the most widely supported 1.0 binding. The SDK's 0.3 compatibility mode stays disabled, so requests without `A2A-Version: 1.0` are rejected; gRPC and HTTP+JSON/REST are not offered. `tests/test_a2a_binding.py` and the CI wheel check prove the supported install. | Prove native type mappings and independent-client interoperability with AgentFrame hosting (later M2 stories). Upgrade the SDK only deliberately, with the binding tests. Selecting JSON-RPC does not select every optional capability. |
 | Foundry model inference | Use OpenAI v1 **Responses API**, base URL `https://<resource>.openai.azure.com/openai/v1/`, via official `openai`. Inject either an API key or Microsoft Entra ID token provider (`azure-identity` `get_bearer_token_provider`, scope `https://ai.azure.com/.default`). The [Azure AI Inference SDK is retired](https://learn.microsoft.com/en-us/azure/foundry/how-to/model-inference-to-openai-migration); do not use it. | Keep `openai`/`azure-identity` optional provider extras; pin compatible dependencies and prove M3 deployment/capability/auth and client-lifecycle behavior. AgentFrame constructor/credential wrapping remains proposed. |
 | Foundry discovery (M8+) | Choose the project agents API through `azure-ai-projects` **2.x** ([2.10.0 observed](https://pypi.org/project/azure-ai-projects/2.10.0/)), project endpoint `https://{account}.services.ai.azure.com/api/projects/{project}`. [Incoming A2A documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint) shows prompt agents enabling A2A with `agent_card` and protocol configuration, publishing cards and accepting A2A requests. Select GA protocol 1.0 explicitly. | Prove listed-agent to card-URL mapping, filter to A2A-enabled agents, settle authentication/RBAC and pagination. This is read discovery of existing agents, not deployment of AgentFrame agents to Foundry. |
 
@@ -413,7 +414,8 @@ belongs to that release even though telemetry exporters/integration stay optiona
 - Exact compatible runtime dependency pins when each is introduced. M0 tool
   pins, Ruff rules and pytest-asyncio auto integration are configured; Python
   3.13+ with testing through 3.15 and the A2A 1.0/official SDK target are decided above.
-- Concrete A2A 1.0 transport binding and tested compatibility policy.
+- A2A compatibility policy beyond the exact `a2a-sdk==1.3.0` pin and JSON-RPC
+  binding (SDK upgrade cadence, independent-client matrix).
 - Structured skill-input mappings and minimal-message versus task lifecycle behavior.
 - Foundry Responses deployment capabilities, injected credential/client wrapping
   and lifecycle; OpenAI v1/official `openai` and Entra token/API-key paths are decided.

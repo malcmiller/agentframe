@@ -97,9 +97,10 @@ framework to obtain AG-UI support. No AG-UI dependency/version is selected yet.
 
 Platform/API choices approved on 2026-11-11: support Python 3.13+ and test 3.13,
 3.14 and 3.15; Python has no LTS designation. Target A2A protocol 1.0 via the
-official `a2a-sdk` (1.3.0 observed; specification release v1.0.1). Pin compatible
-exact versions when introduced (A2A in M2), not from observed-version snapshots;
-no protocol/provider compatibility testing has occurred. Sources and remaining implementation
+official `a2a-sdk` (specification release v1.0.1). M2 pins the core dependency
+`a2a-sdk[http-server]==1.3.0` and selects JSON-RPC over HTTP, protocol 1.0 only
+(0.3 compatibility disabled). Pin other packages exactly when introduced, not
+from observed-version snapshots; no provider compatibility testing has occurred. Sources and remaining implementation
 decisions are in `docs/initial-outline.md#resolved-m0-platform-and-api-decisions`.
 
 ## Authoring decisions
@@ -414,7 +415,7 @@ follow-ups after M7; cross-agent trace/correlation propagation is M8+ core scope
 Do not move multi-agent composition into the M7 single-agent release.
 The Python 3.13+/test-through-3.15, A2A 1.0/official SDK and Foundry API choices
 are resolved. Ruff/mypy/pytest are selected above; exact compatible pins,
-final tool configuration, concrete A2A transport binding and provider mappings
+final tool configuration, A2A native type mappings and provider mappings
 still need implementation proof. Do not silently change approved targets or
 choose remaining interfaces unilaterally.
 
