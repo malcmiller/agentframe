@@ -20,11 +20,16 @@ from agentframe import (
     AgentFrameError,
     CancelledError,
     DefinitionError,
+    IncompleteOutputError,
     InputValidationError,
     LimitExceededError,
+    ModelError,
+    ModelRefusalError,
     OutputValidationError,
     PermissionDeniedError,
     PolicyUnavailableError,
+    ProviderError,
+    UnsupportedCapabilityError,
 )
 from agentframe.a2a_executor import (
     failure_state,
@@ -114,6 +119,28 @@ def test_failure_state_for_each_error(
     error_type: type[AgentFrameError], state: TaskState
 ) -> None:
     assert failure_state(error_type("safe")) == state
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        UnsupportedCapabilityError("This agent has no model configured."),
+        ModelRefusalError("The model refused the request."),
+        IncompleteOutputError("The model's output was cut short."),
+        ProviderError("The model provider is unavailable.", transient=True),
+    ],
+    ids=lambda error: type(error).__name__,
+)
+async def test_model_errors_fail_the_task_with_their_safe_message(
+    error: ModelError,
+) -> None:
+    task, queue = recording_task()
+
+    await publish_failure(task, error)
+
+    status = only_status(queue).status
+    assert status.state == TaskState.TASK_STATE_FAILED
+    assert status.message.parts[0].text == error.message
 
 
 async def test_cancelled_run_ends_the_task_canceled() -> None:
