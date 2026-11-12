@@ -272,7 +272,7 @@ APIKeyAuth(*, keys: Mapping[str, APIKey])
 | --- | --- | --- | --- |
 | `keys` | `Mapping[str, APIKey]` | Required, non-empty | Maps each accepted key to its identity. Load keys from the environment or a secret store, never source code. |
 | `APIKey.caller_id` | `str` | Required, non-empty | Becomes `Principal.id`; the key itself never does. Several keys may share one `caller_id`, for example during rotation. |
-| `APIKey.roles` | `Iterable[str]` | `()` | Role names mapped to permissions by `HostConfig(role_permissions=...)`. A single string is rejected. |
+| `APIKey.roles` | `Iterable[str]`, stored as `frozenset[str]` | `()` | Role names mapped to permissions by `HostConfig(role_permissions=...)`. A single string is rejected. |
 
 Clients send the key in the `X-API-Key` header.
 

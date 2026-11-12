@@ -48,11 +48,13 @@ class Authenticator(Protocol):
         ...
 
 
-@dataclass(frozen=True)
+# The roles field is a frozenset so grants cannot change after configuration,
+# while the constructor accepts any iterable such as a list of role names.
+@dataclass(frozen=True, init=False)
 class APIKey:
     """The identity behind one API key.
 
-    Attributes:
+    Args:
         caller_id: Stable caller identifier; becomes ``Principal.id``. Several
             keys may share one ``caller_id``, for example during key rotation.
         roles: Roles granted to the caller.
@@ -62,15 +64,15 @@ class APIKey:
     """
 
     caller_id: str
-    roles: Iterable[str] = ()
+    roles: frozenset[str]
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.caller_id, str) or not self.caller_id:
+    def __init__(self, caller_id: str, roles: Iterable[str] = ()) -> None:
+        if not isinstance(caller_id, str) or not caller_id:
             raise DefinitionError("APIKey caller_id must be a non-empty string.")
-        if isinstance(self.roles, str):
+        if isinstance(roles, str):
             raise DefinitionError("APIKey roles must be a list of role names.")
-        # Freeze roles so a caller's grants cannot change after configuration.
-        object.__setattr__(self, "roles", frozenset(self.roles))
+        object.__setattr__(self, "caller_id", caller_id)
+        object.__setattr__(self, "roles", frozenset(roles))
 
 
 class APIKeyAuth:
@@ -118,7 +120,7 @@ class APIKeyAuth:
         identity = self._find(sent_key.encode())
         if identity is None:
             raise AuthenticationError("Invalid credentials.")
-        return VerifiedCaller(id=identity.caller_id, roles=frozenset(identity.roles))
+        return VerifiedCaller(id=identity.caller_id, roles=identity.roles)
 
     def _find(self, sent_key: bytes) -> APIKey | None:
         # Compare against every key in constant time so response timing does
