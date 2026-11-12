@@ -50,6 +50,7 @@ from agentframe.services import Inject, Services
 from agentframe.usage import FinishReason, Usage
 
 if TYPE_CHECKING:
+    from agentframe.foundry_model import FoundryModel as FoundryModel
     from agentframe.ollama_model import OllamaModel as OllamaModel
 
 __version__ = "0.1.0.dev0"
@@ -108,6 +109,10 @@ __all__ = [
 def __getattr__(name: str) -> object:
     # Provider adapters are imported on first use so that ``import agentframe``
     # works without their optional extras installed.
+    if name == "FoundryModel":
+        from agentframe.foundry_model import FoundryModel as FoundryModel
+
+        return FoundryModel
     if name == "OllamaModel":
         from agentframe.ollama_model import OllamaModel as OllamaModel
 
