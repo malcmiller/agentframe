@@ -12,6 +12,8 @@ from a2a.server.routes import (
     create_jsonrpc_routes,
 )
 from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import ListTasksRequest, ListTasksResponse
+from a2a.utils.errors import UnsupportedOperationError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -37,8 +39,11 @@ class AgentApp:
 
     Serves the public Agent Card at ``/.well-known/agent-card.json`` and the
     JSON-RPC A2A endpoint at ``/a2a``. Every request to ``/a2a`` must pass the
-    host's authenticator, then runs through the runtime. Constructing the app
-    validates everything and starts nothing; serve it with any ASGI server.
+    host's authenticator, then runs through the runtime. Tasks live in the
+    SDK's in-memory store, scoped to the caller, and are lost on restart;
+    anonymous callers share one namespace and cannot list tasks. Constructing
+    the app validates everything and starts nothing; serve it with any ASGI
+    server.
 
     Args:
         agent: Instance of an ``@agent``-decorated class.
@@ -75,7 +80,7 @@ class AgentApp:
             runtime = Runtime(services=services, authorization=authorization)
         runtime.validate(agent)
         card = build_agent_card(type(agent).definition(), host)
-        handler = DefaultRequestHandler(
+        handler = _TaskRequestHandler(
             agent_executor=RuntimeExecutor(agent, runtime),
             task_store=InMemoryTaskStore(),
             agent_card=card,
@@ -122,6 +127,25 @@ def _require_authentication(endpoint: Endpoint, host: HostConfig) -> Endpoint:
         return await endpoint(request)
 
     return authenticated_endpoint
+
+
+class _TaskRequestHandler(DefaultRequestHandler):
+    """The SDK's request handler, with task listing refused to anonymous callers.
+
+    All anonymous callers share one task namespace. Fetching or cancelling a
+    task needs its unguessable ID, but listing would hand every anonymous
+    caller the IDs, inputs and results of every other anonymous caller's tasks.
+    """
+
+    async def on_list_tasks(
+        self, params: ListTasksRequest, context: ServerCallContext
+    ) -> ListTasksResponse:
+        if not context.user.is_authenticated:
+            raise UnsupportedOperationError(
+                "Listing tasks requires an authenticated caller."
+            )
+        page: ListTasksResponse = await super().on_list_tasks(params, context)
+        return page
 
 
 class _CallerContextBuilder(DefaultServerCallContextBuilder):
