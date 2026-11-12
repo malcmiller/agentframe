@@ -20,6 +20,7 @@ from agentframe import (
     DefinitionError,
     FinishReason,
     HostConfig,
+    IncompleteOutputError,
     Inject,
     Message,
     ModelCallLimitExceededError,
@@ -324,6 +325,40 @@ async def test_tool_free_and_model_free_runs_report_zero_tool_calls() -> None:
     )
 
     assert (tool_free.tool_calls, model_free.tool_calls) == (0, 0)
+
+
+def truncated(text: str) -> ModelResponse:
+    return ModelResponse(
+        text=text,
+        usage=Usage(input_tokens=5, output_tokens=5, total_tokens=10, estimated=False),
+        finish_reason=FinishReason.LENGTH,
+    )
+
+
+async def test_a_truncated_text_answer_after_tool_calls_keeps_its_partial_text() -> (
+    None
+):
+    model = scripted(lookup("A1"), truncated("Order A1 has"))
+
+    with pytest.raises(IncompleteOutputError) as raised:
+        await runtime_with(OrderStore()).invoke(
+            assistant(model), skill="ask", arguments={"question": "?"}
+        )
+
+    assert raised.value.partial_text == "Order A1 has"
+
+
+async def test_a_truncated_structured_answer_after_tool_calls_has_no_partial_text() -> (
+    None
+):
+    model = scripted(lookup("A1"), truncated('{"status": "sh'))
+
+    with pytest.raises(IncompleteOutputError) as raised:
+        await runtime_with(OrderStore()).invoke(
+            assistant(model), skill="ask_typed", arguments={"question": "?"}
+        )
+
+    assert raised.value.partial_text is None
 
 
 # Calls that do not run
