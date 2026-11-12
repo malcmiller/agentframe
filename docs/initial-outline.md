@@ -268,7 +268,7 @@ development tooling; M1 adds model-free authoring and local execution.
 | 0 | Development setup (complete) | Installable typed `src/` skeleton, no runtime dependencies, exact development pins and `uv.lock`. Ruff formatting/lint (88-character lines), strict mypy, pytest-asyncio auto mode, pre-commit Ruff/mypy, CI checks on Python 3.13/3.14/3.15 and isolated wheel import. All checks passed locally and on `main`. |
 | 1 | Model-free authoring and `Runtime.invoke` (complete) | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; invalid definitions, missing services and invalid arguments fail explicitly before skill effects. Prove annotated `Inject[T]`, singleton/scoped ownership, isolated context and validated outputs without network access. `invoke` returns the value; `run` exposes local `RunResult` metadata. |
 | 2 | Native A2A hosting with structured requests and custom routing only (complete) | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Add `agentframe run module:create_app` serving the application's configured `AgentApp`, plus a localhost-only anonymous `module:Class --dev` mode. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
-| 3 | Text generation through the shared `Model` contract | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
+| 3 | Text generation through the shared `Model` contract (complete) | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
 | 4 | Typed structured outputs | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
 | 5 | Bounded tool calling | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
 | 6 | Built-in opt-in model router | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
@@ -306,6 +306,15 @@ card discovery, structured requests with typed model/constrained arguments and r
 task, API-key authentication, permission and policy rejection, safe failures,
 non-blocking send, cancellation and caller isolation. CI runs it with no
 network beyond localhost.
+
+M3 text generation was completed on **2026-11-12**: its stories (#33-#42) are
+merged. `examples/assistant.py` serves one agent class with `OllamaModel` or
+`FoundryModel`, chosen only by environment variables, meeting the
+[README success criterion](../README.md#first-success-criterion).
+`tests/test_success_criterion.py` proves it offline in CI with the official A2A
+client, two scripted models, a model-free skill that runs without inference and
+the hosted usage snapshot; the opt-in `tests/test_providers.py` runs the same
+contract against real Ollama and Foundry.
 
 M1 is the first proof: a model-free agent. M2 adds independent native A2A
 interoperability; M3 meets the [README success criterion](../README.md#first-success-criterion)
@@ -428,7 +437,8 @@ belongs to that release even though telemetry exporters/integration stay optiona
 - Structured skill-input mappings and minimal-message versus task lifecycle behavior.
 - Foundry deployment capability discovery beyond a configured context window;
   credential wrapping, injected-client lifecycle and response mapping are
-  implemented in M3 #39 (`openai==3.49.0`, `azure-identity==1.27.0`).
+  implemented in M3 #39 (`openai==3.49.0`, `azure-identity==1.27.0`;
+  `aiohttp==3.14.5` added in M3 #40 for async Entra credentials).
 - Host output-ceiling carrier,
   error constructors/startup ID allocation/transport mapping and named limit
   subtypes. Approved defaults and error class names are no longer open.

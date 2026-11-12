@@ -131,8 +131,10 @@ not used.
 
 **Signature status:** implemented (M3 #39); decisions confirmed 2026-11-12.
 Requires the optional extra `agentframe[foundry]`, which pins
-[`openai`](https://github.com/openai/openai-python) (`3.49.0`) and
-[`azure-identity`](https://pypi.org/project/azure-identity/) (`1.27.0`).
+[`openai`](https://github.com/openai/openai-python) (`3.49.0`),
+[`azure-identity`](https://pypi.org/project/azure-identity/) (`1.27.0`) and
+[`aiohttp`](https://pypi.org/project/aiohttp/) (`3.14.5`), azure-core's async
+HTTP transport for credentials that call Entra ID over the network.
 `import agentframe` works without it; using `FoundryModel` without it raises
 `ImportError` naming the extra.
 
@@ -155,14 +157,14 @@ FoundryModel(
 | `store` | `bool` | `False` | Whether Foundry stores responses server-side. Controls response storage only, not every provider retention mechanism. |
 
 ```python
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 
 from agentframe import FoundryModel
 
 
 async def main(endpoint: str, deployment: str) -> None:
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         FoundryModel(
             endpoint=endpoint, deployment=deployment, credential=credential
         ) as model,
@@ -171,7 +173,9 @@ async def main(endpoint: str, deployment: str) -> None:
 ```
 
 The application supplies the endpoint, deployment and credential; no
-credential chain is selected implicitly.
+credential chain is selected implicitly. `AzureCliCredential` signs in through
+`az login` for local development; production hosts can use
+`DefaultAzureCredential` or `ManagedIdentityCredential` with the `foundry` extra.
 
 **Behavior / failures:** implements [`Model.generate`](#modelgenerate) with one
 non-streaming Responses call.

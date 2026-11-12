@@ -24,9 +24,11 @@ serves an agent as an ASGI application with its Agent Card and an authenticated
 A2A 1.0 endpoint, proven end to end with the official A2A client, and
 `agentframe run` serves it with one command (see
 [hosting over A2A](#hosting-over-a2a) and
-[development](docs/development.md#one-agent-m2)). Text generation through an injected model (`ctx.generate`, M3) works with the
-`ScriptedModel` test helper; there is no published release or provider adapter yet, and
-the API is not stable. Reviewed capability and contract decisions are recorded below and in
+[development](docs/development.md#one-agent-m2)). M3 text generation is
+complete: an injected `OllamaModel` (local Llama) or
+`FoundryModel` (Foundry GPT deployment) serves the same agent, switched by
+configuration only (see the [first success criterion](#first-success-criterion)).
+There is no published release yet, and the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
 interfaces remain open. Examples beyond the M1 surface are design proposals.
 
@@ -174,6 +176,71 @@ configuration. Host bootstrap and credential setup are documented separately.
 The same public contract must work with both hosts; identical generated answers
 are not required. A deterministic model-free example must work without cloud
 credentials, model downloads, or an inference server.
+
+This works from source today. The agent in
+[`examples/assistant.py`](examples/assistant.py) has one model-backed skill and
+one model-free skill, and never names a model host:
+
+```python
+from agentframe import Agent, ModelSettings, RunContext, RunLimits, agent, skill
+
+
+@agent(version="1.0.0")
+class Assistant(Agent):
+    """Answers questions and counts words."""
+
+    instructions = "Answer in one short sentence."
+    model_settings = ModelSettings(max_output_tokens=512)
+    # Foundry does not report a deployment's context window, so cap the input.
+    limits = RunLimits(max_input_tokens=4000)
+
+    @skill("answer", tags=["questions"])
+    async def answer(self, question: str, ctx: RunContext) -> str:
+        """Answer a question briefly."""
+        return await ctx.generate(question)
+
+    @skill("count_words", tags=["text"])
+    async def count_words(self, text: str, ctx: RunContext) -> int:
+        """Count the words in some text, without calling the model."""
+        return len(text.split())
+```
+
+Its `create_app()` reads `AGENTFRAME_MODEL_PROVIDER` and builds an
+`OllamaModel` or a `FoundryModel` from environment variables; endpoints and
+names never live in code. From a source checkout (`uv sync` installs the
+server and provider extras for development), serve it with local Llama through
+Ollama (the model tag must already be installed; nothing is downloaded):
+
+```shell
+AGENTFRAME_MODEL_PROVIDER=ollama AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \
+    agentframe run examples.assistant:create_app
+```
+
+or with a Foundry GPT deployment, signed in with Microsoft Entra ID through the
+Azure CLI (`az login`; no API key):
+
+```shell
+AGENTFRAME_MODEL_PROVIDER=foundry \
+    AGENTFRAME_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com/openai/v1/ \
+    AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> \
+    agentframe run examples.assistant:create_app
+```
+
+`AGENTFRAME_OLLAMA_ENDPOINT` optionally overrides `http://localhost:11434`.
+Each provider is imported only when selected, so an install with one provider
+extra is enough. A2A clients apply their own request timeout (5 seconds by
+default in the official `a2a-sdk` client), which a model call can exceed.
+The example accepts anonymous callers as a **development placeholder** for a
+localhost server; production hosts need real authentication and authorization
+(see [hosting over A2A](#hosting-over-a2a)). Any A2A 1.0 client can fetch the
+card and call `answer` or `count_words` through the
+[skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format);
+the completed task's metadata reports the run's token usage.
+`tests/test_success_criterion.py` proves this offline in CI: the official A2A
+client calls the same agent served with two different scripted models, with no
+code change, and `count_words` runs without inference. The opt-in
+[real-provider tests](AGENTS.md#real-provider-tests-opt-in-local-only) run the
+same contract against Ollama and Foundry.
 
 ## Initial scope
 
