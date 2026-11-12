@@ -239,7 +239,7 @@ still apply; these come first or are added:
 | Model's `capabilities().structured_output` is `False` | `UnsupportedCapabilityError` ("The model does not support structured output"); nothing is sent or reserved, `model_calls` unchanged |
 | Schema makes the call too large | The serialized schema counts toward the input estimate, so `TokenLimitExceededError` before sending |
 | `COMPLETED` with JSON matching the schema | A validated instance of `output` |
-| `COMPLETED` with invalid JSON or JSON that does not match | `OutputValidationError` listing field locations and problems, never the model's text; the call's usage is recorded; no repair or re-ask |
+| `COMPLETED` with invalid JSON or JSON that does not match | `OutputValidationError` listing field locations and problems, never the model's text (location parts that are not schema property names, such as model-chosen dictionary keys, appear as `<key>`); the call's usage is recorded; no repair or re-ask |
 | `LENGTH` | `IncompleteOutputError`; the text is never parsed, even if it happens to be valid JSON |
 | `REFUSED` / `CONTENT_FILTER` | `ModelRefusalError` |
 

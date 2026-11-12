@@ -462,15 +462,36 @@ def validate_output[T: BaseModel](text: str, output: type[T]) -> T:
 
     Raises:
         OutputValidationError: ``text`` is not valid JSON or does not match
-            ``output``. The message names field locations, never the text.
+            ``output``. The message names field locations, never the text;
+            location parts that are not schema property names are masked.
     """
     try:
         return output.model_validate_json(text)
     except ValidationError as error:
+        field_names = schema_property_names(output.model_json_schema())
         raise OutputValidationError(
             f"The model's output is not a valid '{output.__name__}': "
-            f"{describe_validation_error(error)}"
+            f"{describe_validation_error(error, field_names)}"
         ) from None
+
+
+def schema_property_names(schema: object) -> set[str]:
+    """Return every property name declared anywhere in a JSON ``schema``.
+
+    Error locations show only these names; other parts, such as dictionary
+    keys the model chose, are masked.
+    """
+    names: set[str] = set()
+    if isinstance(schema, dict):
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            names.update(properties)
+        for value in schema.values():
+            names |= schema_property_names(value)
+    elif isinstance(schema, list):
+        for item in schema:
+            names |= schema_property_names(item)
+    return names
 
 
 def add_usage(total: Usage, extra: Usage) -> Usage:

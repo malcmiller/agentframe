@@ -264,6 +264,36 @@ async def test_invalid_output_lists_field_locations_but_not_model_text(
     assert len(model.requests) == 1  # Never repaired or re-requested.
 
 
+async def test_dictionary_keys_chosen_by_the_model_are_masked() -> None:
+    class Inventory(BaseModel):
+        counts: dict[str, int]
+        shelves: list[dict[str, int]]
+
+    @agent(version="1.0.0")
+    class Stocktaker(Agent):
+        """Counts stock."""
+
+        @skill("count", tags=["text"])
+        async def count(self, text: str, ctx: RunContext) -> int:
+            """Count stock with the model."""
+            return len((await ctx.generate(text, output=Inventory)).counts)
+
+    reply = '{"counts": {"SECRET-KEY": "x"}, "shelves": [{"OTHER-SECRET": "y"}]}'
+    model = ScriptedModel([reply], capabilities=STRUCTURED)
+
+    with pytest.raises(OutputValidationError) as raised:
+        await Runtime().invoke(
+            Stocktaker(model=model), skill="count", arguments={"text": "a"}
+        )
+
+    assert raised.value.message == (
+        "The model's output is not a valid 'Inventory': "
+        "counts.<key>: Input should be a valid integer, unable to parse string "
+        "as an integer; shelves.0.<key>: Input should be a valid integer, "
+        "unable to parse string as an integer"
+    )
+
+
 async def test_invalid_output_still_records_the_call_usage() -> None:
     model = ScriptedModel(
         [response("not json", FinishReason.COMPLETED)], capabilities=STRUCTURED
