@@ -49,7 +49,7 @@ async def test_the_same_agent_serves_either_model_over_a2a(
             counted = await call_skill(client, "count_words", {"text": "one two"})
 
     assert card.name == "Assistant"
-    assert sorted(s.id for s in card.skills) == ["answer", "count_words"]
+    assert sorted(s.id for s in card.skills) == ["answer", "count_words", "summarize"]
     assert answered.status.state == TaskState.TASK_STATE_COMPLETED
     assert get_artifact_text(answered.artifacts[0]) == answer
     assert answered.metadata["usage"] == {

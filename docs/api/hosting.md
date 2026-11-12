@@ -144,7 +144,7 @@ Every other outcome follows this table:
 | Unknown skill, invalid arguments, permission or policy denied | Task `REJECTED`, safe message |
 | Clarification needed | Task `INPUT_REQUIRED` |
 | Timeout, output validation failure, skill or router exception, router timeout, policy unavailable | Task `FAILED`, safe message |
-| Model error: unsupported capability, refusal, incomplete output, provider failure (M3 #33) | Task `FAILED`, safe message |
+| Model error: unsupported capability, refusal, incomplete output, provider failure (M3 #33; structured output proven end to end in M4 #57) | Task `FAILED`, safe message; never the model's text |
 | Token, model-call or tool-call limit exceeded (M3 #36, M5 #61) | Task `FAILED`, safe message |
 | A tool raises (M5 #61) | Task `FAILED`, reported like a skill exception: "The skill failed.", details logged with the `invocation_id` |
 | Cancelled | Task `CANCELED` |

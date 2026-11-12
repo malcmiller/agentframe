@@ -22,6 +22,8 @@ longer, so callers may need to raise it.
 
 import os
 
+from pydantic import BaseModel
+
 from agentframe import (
     Agent,
     AgentApp,
@@ -36,9 +38,16 @@ from agentframe import (
 )
 
 
+class Summary(BaseModel):
+    """A one-sentence summary of some text and its key points."""
+
+    text: str
+    key_points: list[str]
+
+
 @agent(version="1.0.0")
 class Assistant(Agent):
-    """Answers questions and counts words."""
+    """Answers questions, summarizes text and counts words."""
 
     instructions = "Answer in one short sentence."
     model_settings = ModelSettings(max_output_tokens=512)
@@ -49,6 +58,16 @@ class Assistant(Agent):
     async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer a question briefly."""
         return await ctx.generate(question)
+
+    @skill("summarize", tags=["text"])
+    async def summarize(self, text: str, ctx: RunContext) -> Summary:
+        """Summarize some text as a sentence and its key points."""
+        return await ctx.generate(
+            text,
+            # Ollama sees only the schema, so describe the shape here too.
+            instructions="Reply with JSON: a one-sentence text and 1-3 key_points.",
+            output=Summary,
+        )
 
     @skill("count_words", tags=["text"])
     async def count_words(self, text: str, ctx: RunContext) -> int:

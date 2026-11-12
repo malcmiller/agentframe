@@ -19,7 +19,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import httpx
 import pytest
 from a2a.client import A2ACardResolver
-from a2a.helpers import get_artifact_text
+from a2a.helpers import get_artifact_text, get_data_parts
 from a2a.types import TaskState
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
@@ -44,6 +44,7 @@ from agentframe import (
     skill,
 )
 from agentframe.models.ollama import DEFAULT_ENDPOINT
+from examples.assistant import Summary, create_app
 from local_server import ServeLocally
 
 # A name no provider has, to prove an unknown model fails clearly.
@@ -218,6 +219,21 @@ async def test_agent_returns_a_validated_structured_output(model: Model) -> None
     assert not result.usage.estimated
 
 
+async def test_tiny_output_limit_cuts_structured_output_short(model: Model) -> None:
+    tiny = RunOptions(model_settings=ModelSettings(max_output_tokens=16))
+
+    with pytest.raises(IncompleteOutputError, match="output token limit") as raised:
+        await Runtime().run(
+            Geographer(model=model),
+            skill="capital",
+            arguments={"country": "France, with twenty nicknames for the city"},
+            options=tiny,
+        )
+
+    assert raised.value.partial_text is None
+    assert raised.value.invocation_id
+
+
 # Hosted: the official A2A client calls the agent with a structured request
 
 
@@ -242,5 +258,28 @@ async def test_hosted_agent_answers_a_structured_a2a_call(
     usage = task.metadata["usage"]
     assert usage["input_tokens"]
     assert usage["output_tokens"]
+    assert usage["model_calls"] == 1
+    assert not usage["estimated"]
+
+
+async def test_example_summarizes_over_a2a(
+    serve: ServeLocally, model: Model, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def make_app(public_url: str) -> AgentApp:
+        monkeypatch.setenv("ASSISTANT_PUBLIC_URL", public_url)
+        return create_app(model)
+
+    async with serve(make_app) as base_url, await connect(base_url) as client:
+        task = await call_skill(
+            client, "summarize", {"text": "Cats sleep a lot. Cats like fish."}
+        )
+
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    [data] = get_data_parts(task.artifacts[0].parts)
+    summary = Summary.model_validate(data["value"])
+    assert summary.text
+    assert summary.key_points
+    usage = task.metadata["usage"]
+    assert usage["total_tokens"]
     assert usage["model_calls"] == 1
     assert not usage["estimated"]

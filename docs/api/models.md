@@ -221,7 +221,8 @@ non-streaming Responses call.
   unsupported. Without `context_window=`, an agent using this model needs an
   explicit `RunLimits(max_input_tokens=...)`; otherwise `AgentApp` startup
   fails with `DefinitionError` ([limits accounting](../guides/limits.md#implemented-token-accounting-m3), M3 #36).
-- Opt-in real tests (`tests/integration/test_providers.py`, marker `foundry`, M3 #41):
+- Opt-in real tests (`tests/integration/test_providers.py`, marker `foundry`, M3 #41;
+  structured output M4 #55/#57):
   set `AGENTFRAME_TEST_FOUNDRY=1`, `AGENTFRAME_FOUNDRY_ENDPOINT` and
   `AGENTFRAME_FOUNDRY_DEPLOYMENT`; they sign in with the Azure CLI credential.
   Default test runs and CI never call Foundry. See `AGENTS.md`.
@@ -350,7 +351,8 @@ server, silently switches models, or enables cloud execution.
   non-transient one. Messages are safe and do not repeat the server's error
   text. The 0.6 client has no retry loop of its own; AgentFrame retries are
   separate.
-- Opt-in real tests (`tests/integration/test_providers.py`, marker `ollama`, M3 #41): set
+- Opt-in real tests (`tests/integration/test_providers.py`, marker `ollama`, M3 #41;
+  structured output M4 #56/#57): set
   `AGENTFRAME_TEST_OLLAMA=1` and `AGENTFRAME_OLLAMA_MODEL` (optionally
   `AGENTFRAME_OLLAMA_ENDPOINT`). Default test runs and CI never call Ollama.
   See `AGENTS.md`.

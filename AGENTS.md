@@ -10,10 +10,12 @@ orchestrator agents, interoperable with other frameworks' A2A agents. Deliver
 single-agent M0-M7 first, then A2A multi-agent composition as the next core
 release (M8+), not an optional add-on or a hosting platform.
 
-This repository contains the M0 development tooling and the M1 model-free
-authoring/local `Runtime` implementation alongside design documentation. There
+This repository contains the M0 development tooling, M1 model-free
+authoring/local `Runtime`, M2 native A2A hosting, M3 Ollama/Foundry text
+generation and M4 typed structured outputs alongside design documentation. There
 is no published package or stable API, and later-milestone features are not
-implemented. Keep design API examples beyond M1 labeled as unimplemented; explicitly approved names/defaults
+implemented. Keep design API examples beyond the implemented surface labeled
+as unimplemented; explicitly approved names/defaults
 are decisions, not still-unresolved recommendations. Do not scaffold implementation or
 add dependencies merely to make design snippets executable.
 
@@ -105,9 +107,11 @@ unique, since test folders are not packages.
 
 `tests/integration/test_providers.py` runs one agent against a real Ollama
 server and a real Foundry deployment: text generation with usage, a tiny
-`max_output_tokens` raising `IncompleteOutputError`, a clear error for an
-unknown model/deployment, a hosted structured call through the official A2A
-client, and (Foundry) a validated typed `output=` result. They are marked `ollama` / `foundry` and skipped unless enabled, so
+`max_output_tokens` raising `IncompleteOutputError` (text and structured), a
+clear error for an unknown model/deployment, a hosted structured call through
+the official A2A client, a validated typed `output=` result and the example's
+`summarize` skill returning a typed data part over A2A. They are marked
+`ollama` / `foundry` and skipped unless enabled, so
 default `uv run pytest` and CI never call a provider (no secrets in CI for M3;
 revisit a manual Foundry workflow at M7). Endpoints and model names come only
 from environment variables:
@@ -438,8 +442,9 @@ No hosting platform is implied. See `docs/guides/development.md`.
 The first usable release supports text generation, typed structured outputs,
 and bounded execution of explicitly registered tools with generation
 continuations. Return complete validated results by default; streaming is later.
-Normalized usage layouts and schema subsets remain open,
-not normalization ownership, generation syntax or approved limits/errors. Do not
+Normalized usage layouts remain open, not normalization ownership, generation
+syntax or approved limits/errors; provider schema subsets are documented per
+adapter (M4). Do not
 reintroduce wholesale deferral of tools/structured outputs.
 
 Applications own human approval workflows; no built-in approval pause/resume
