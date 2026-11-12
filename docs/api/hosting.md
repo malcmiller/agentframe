@@ -87,9 +87,11 @@ authenticator; no remote host starts without a choice.
   scopes tasks by the principal's ID.
 - Each message runs as one `Runtime.run`, so validation, permissions, the
   authorization policy, timeouts and per-run services all apply.
-- Interim request format, until the structured extension (#5) and routing (#6):
-  the skill ID goes in message metadata under `agentframe.skill`, and the
-  arguments in a single JSON data part (omit it for no arguments).
+- Messages are skill calls through the AgentFrame
+  [skill-call extension](#structured-skill-call-wire-format) (M2 #5). A message
+  sent without activating the extension is free text; free-text routing
+  arrives with #6, so until then it is refused with the JSON-RPC
+  `UnsupportedOperationError` (`-32004`) and creates no task.
 - Results and failures map to native A2A as described in
   [result and failure mapping](#result-and-failure-mapping) (#7).
 - Task operations are the SDK's native A2A 1.0 core methods; they are not
@@ -135,10 +137,9 @@ Every other outcome follows this table:
 | Timeout, output validation failure, skill or router exception, router timeout, policy unavailable | Task `FAILED`, safe message |
 | Cancelled | Task `CANCELED` |
 
-- A message without an `agentframe.skill` metadata ID, with more than one data
-  part, or whose data part is not a JSON object is refused with JSON-RPC
-  `InvalidParams` (`-32602`) before the SDK creates a task. Malformed JSON-RPC is
-  rejected by the SDK the same way. Extension activation rules arrive with #5.
+- A malformed [skill call](#structured-skill-call-wire-format) is refused with
+  JSON-RPC `InvalidParams` (`-32602`) before the SDK creates a task. Malformed
+  JSON-RPC is rejected by the SDK the same way.
 - `REJECTED` and `FAILED` tasks carry the error's safe message as the status
   message: no stack traces, provider payloads, submitted values (including the
   requested skill ID) or secrets. Exceptions raised by a skill (or, with #6, a
@@ -154,6 +155,81 @@ Every other outcome follows this table:
 - `CancelTask` ends a running task in `CANCELED` through AgentFrame's
   [`CancelledError`](runtime.md#cancellederror) mapping, with the status message
   "The task was cancelled." and the run's `invocation_id`.
+
+### Structured skill-call wire format
+
+Implemented in M2 #5. A caller names a skill and sends JSON arguments; the
+runtime validates and runs exactly that skill. A router is never consulted.
+
+| Element | Wire format |
+| --- | --- |
+| Extension | `https://github.com/malcmiller/agentframe/extensions/skill-call/v1`, declared on the Agent Card with `required: false`. Its `params.skills` maps each skill ID to the JSON Schema of its arguments; requests are validated against the same schema. |
+| Activation | The caller lists the URI in the `A2A-Extensions` HTTP request header (comma-separated with any others). Activation is per request. |
+| Acknowledgement | The response to every authenticated request that activated it carries `A2A-Extensions: <uri>`. Other requested URIs are not supported and are ignored. |
+| Skill ID | Message metadata key `agentframe.skill`: a non-empty string. |
+| Arguments | Exactly one message part, a data part holding a JSON object (`{}` for a skill without arguments). |
+| Other metadata | Other `agentframe.`-prefixed metadata keys are unknown fields. Keys outside that namespace belong to other extensions and are ignored. |
+
+```http
+POST /a2a HTTP/1.1
+Content-Type: application/json
+A2A-Version: 1.0
+A2A-Extensions: https://github.com/malcmiller/agentframe/extensions/skill-call/v1
+X-API-Key: <development key>
+
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "9b2f4c1e-0d3a-4a51-8a54-2f0b9f7f8e10",
+      "role": "ROLE_USER",
+      "parts": [{"data": {"name": "Ada"}}],
+      "metadata": {"agentframe.skill": "greet"}
+    }
+  }
+}
+```
+
+| Request | Result |
+| --- | --- |
+| Extension activated, valid skill ID and arguments | The skill runs through `Runtime.run`; the task completes with its result. |
+| Extension activated, but no skill ID, not exactly one part, a part that is not a JSON-object data part, or an unknown `agentframe.` metadata field | JSON-RPC `InvalidParamsError` (`-32602`); no task is created. Never reinterpreted as free text. |
+| Extension activated, unknown skill ID or invalid arguments | Task `REJECTED` with a safe message. |
+| Extension not activated | Free text, even if `agentframe.skill` is present; refused until routing (#6). |
+
+With the official Python client, activate the extension per call:
+
+```python
+from a2a.client import Client, ClientCallContext
+from a2a.client.service_parameters import (
+    ServiceParametersFactory,
+    with_a2a_extensions,
+)
+from a2a.helpers import new_data_part
+from a2a.types import Message, Role, SendMessageRequest
+
+SKILL_CALL = "https://github.com/malcmiller/agentframe/extensions/skill-call/v1"
+
+
+async def greet(client: Client, name: str) -> None:
+    message = Message(
+        message_id="m-1",
+        role=Role.ROLE_USER,
+        parts=[new_data_part({"name": name})],
+        metadata={"agentframe.skill": "greet"},
+    )
+    activate = ClientCallContext(
+        service_parameters=ServiceParametersFactory.create(
+            [with_a2a_extensions([SKILL_CALL])]
+        )
+    )
+    async for response in client.send_message(
+        SendMessageRequest(message=message), context=activate
+    ):
+        print(response.task.status.state)
+```
 
 ```python
 import os
@@ -373,7 +449,7 @@ A2AConfig(*, enabled: bool = ..., path: str = ...)
 | `path` | `str` | `/a2a` in examples; concrete default open | Selected A2A binding endpoint, not a route per skill. |
 | Binding | No constructor field | JSON-RPC over HTTP, A2A 1.0 only (decided M2) | Advertised as `protocolBinding: "JSONRPC"`, `protocolVersion: "1.0"`. No gRPC, HTTP+JSON/REST or 0.3 compatibility; requests without `A2A-Version: 1.0` are rejected. |
 | Task-store integration, supported capabilities | Exact fields/types open | Select/verify before release | Reuse SDK interfaces; first-release complete results only. Do not advertise streaming/push/task features the host cannot execute. |
-| Structured requests | A2A extension declaration/activation, data-part arguments; exact fields open | Preferred request style; no new constructor keyword selected | Card declares support; caller selects a skill under that extension, bypassing routing but not authorization/typed validation/limits/accounting/tracing. |
+| Structured requests | A2A extension declaration/activation, data-part arguments; [wire format implemented (M2 #5)](#structured-skill-call-wire-format) | Preferred request style; no constructor keyword | Card declares support; caller selects a skill under that extension, bypassing routing but not authorization/typed validation/limits/accounting/tracing. |
 | Prompt clarification | Native A2A task/status message; exact contract open | Required for ambiguous/missing prompt input | Return `TASK_STATE_INPUT_REQUIRED` with an ask-back, not a guessed invocation or successful final result. |
 | Duplicate requests | Same caller + A2A `messageId`; store/window fields open | 10-minute window, in-memory default; configurable/pluggable | Return original task instead of re-running; multi-instance store support, no exactly-once claim or task-access bypass. |
 | Response correlation/errors | Native response metadata/task states; exact mappings open | Only invocation ID exposed from run internals | Safe failed/rejected states as appropriate; no `RunResult`, raw provider exception, stack trace or secrets. |
@@ -392,8 +468,8 @@ or invalid arguments fail explicitly, without falling back to prompt routing.
 Extension-unaware callers use free text; ambiguous/missing prompt input asks
 back using the native input-required task state, never the first registered
 skill or a guess. Native [extension/part/task mechanisms](../mcp-skills.md#a2a-request-styles-and-extension-boundary)
-are verified against A2A 1.0, but extension URI/name/schema, selector placement,
-support advertisement details and clarification/follow-up API remain open.
+are verified against A2A 1.0, and the [skill-call wire format](#structured-skill-call-wire-format)
+is implemented; the clarification/follow-up API remains open.
 Typed business-input/output mappings and task lifecycle still need
 version-specific evidence, including typed structured outputs. Re-authorize protected task/resource access.
 Invalid/unsupported configuration and protocol failures must be explicit and

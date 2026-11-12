@@ -50,16 +50,27 @@ standard built-in `skill` field. Source-checked on 2026-11-11:
 | Mechanism | Native A2A 1.0 contract | AgentFrame decision / still open |
 | --- | --- | --- |
 | Declaration | [`AgentCapabilities.extensions`](https://a2a-protocol.org/latest/specification/#443-agentcapabilities) contains `AgentExtension` declarations; [extension declaration](https://a2a-protocol.org/latest/topics/extensions/#extension-declaration) describes `uri`, `description`, `required` and `params`. | Implemented (M2 #2): the card declares `https://github.com/malcmiller/agentframe/extensions/skill-call/v1` with `required: false`; `params.skills` maps each skill ID to the JSON Schema of its business arguments (no `ctx` or `Inject[T]` parameters). This is an AgentFrame extension, not an official standard one. Configuration surface remains open. |
-| Activation | The [extension activation guide](https://a2a-protocol.org/latest/topics/extensions/#extension-activation) says extensions are inactive by default. An HTTP client requests activation using comma-separated URIs in `A2A-Extensions`; the response SHOULD identify activated extensions with that header. Other bindings use their specified mechanisms. | The structured client must establish compatible support/activation. Do not mark the extension globally required for prompt-capable clients or silently downgrade a typed call if unsupported. Exact client failure/negotiation contract remains open. |
-| Arguments and selection metadata | [`Part.data`](https://a2a-protocol.org/latest/specification/#416-part) carries a JSON value, with exactly one content member per part. [`Message.extensions` and `Message.metadata`](https://a2a-protocol.org/latest/specification/#414-message) identify contributing extensions and carry extension context; [extension points](https://a2a-protocol.org/latest/specification/#462-extensions-points) allow message metadata. | Business arguments go in a data part; the extension defines skill selection and how it relates to that part. Exact selector placement/keys, argument schema/versioning and metadata layout are open. Do not add custom top-level protocol fields or use metadata as trusted identity. |
+| Activation | The [extension activation guide](https://a2a-protocol.org/latest/topics/extensions/#extension-activation) says extensions are inactive by default. An HTTP client requests activation using comma-separated URIs in `A2A-Extensions`; the response SHOULD identify activated extensions with that header. Other bindings use their specified mechanisms. | Implemented (M2 #5): the caller activates the URI per request in `A2A-Extensions`, and the response acknowledges it with `A2A-Extensions: <uri>`. The extension stays `required: false`; a message without activation is free text, never a skill call. |
+| Arguments and selection metadata | [`Part.data`](https://a2a-protocol.org/latest/specification/#416-part) carries a JSON value, with exactly one content member per part. [`Message.extensions` and `Message.metadata`](https://a2a-protocol.org/latest/specification/#414-message) identify contributing extensions and carry extension context; [extension points](https://a2a-protocol.org/latest/specification/#462-extensions-points) allow message metadata. | Implemented (M2 #5): the skill ID goes in message metadata under `agentframe.skill`; the message has exactly one part, a data part with the arguments object, validated against the card's `params.skills` schema. No skill ID, other parts or unknown `agentframe.` metadata keys are a JSON-RPC `InvalidParamsError` with no task; unknown skills or invalid arguments end the task without running anything else. No custom top-level protocol fields; metadata is never trusted identity. |
 | Clarification | [`TASK_STATE_INPUT_REQUIRED`](https://a2a-protocol.org/latest/specification/#413-taskstate) is the A2A 1.0 interrupted state for additional input; [`TaskStatus.message`](https://a2a-protocol.org/latest/specification/#412-taskstatus) can convey the agent's question. | For free-text ambiguity or missing arguments, ask back through an input-required task rather than guess. Exact question/missing-field schema, follow-up mapping and router decision API remain open. This is not a successful skill result or built-in approval/durable workflow. |
 
-Only the business arguments might look like this for `summarize`; this is **not**
-a complete A2A request or the extension schema:
+A structured `SendMessage` for `summarize`, sent with the header
+`A2A-Extensions: https://github.com/malcmiller/agentframe/extensions/skill-call/v1`
+(full rules in the [wire format reference](api/hosting.md#structured-skill-call-wire-format)):
 
 ```json
 {
-  "text": "The document to summarize."
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "5d0c7f8e-2b1a-4c9e-9f3d-7a6b5c4d3e2f",
+      "role": "ROLE_USER",
+      "parts": [{"data": {"text": "The document to summarize."}}],
+      "metadata": {"agentframe.skill": "summarize"}
+    }
+  }
 }
 ```
 

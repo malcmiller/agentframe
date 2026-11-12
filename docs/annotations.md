@@ -138,8 +138,8 @@ arguments; ambiguity or missing input asks back via an A2A
 `TASK_STATE_INPUT_REQUIRED` task, never guesses. A matching single skill still
 needs valid arguments.
 
-The extension URI/name/schema, selector placement, exact support advertisement,
-router decision and clarification/follow-up contract remain open. Local
+The extension's [wire format](api/hosting.md#structured-skill-call-wire-format)
+is implemented (M2 #5); the router decision and clarification/follow-up contract remain open. Local
 `skill=` is not a standard A2A wire field, and this extension is not claimed as
 an official standard skill-dispatch API. See the [verified A2A 1.0 extension,
 data-part and task-state mechanisms](mcp-skills.md#a2a-request-styles-and-extension-boundary).
