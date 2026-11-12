@@ -11,32 +11,36 @@ Outcomes map to native A2A results as follows:
   message metadata under ``agentframe.skill`` and the arguments in exactly one
   JSON data part. A malformed skill call is a JSON-RPC ``InvalidParams`` error
   and creates no task (the app's request handler checks it before the SDK
-  creates one). A message without the extension is free text, refused until
-  routing arrives.
+  creates one).
+- A message without the extension is free text. The application's
+  ``SkillRouter`` selects the skill and its arguments from the task's
+  conversation, or asks the caller a question; without a router free text is
+  refused before a task exists. Routing time counts against the run's timeout.
 - A result becomes the artifact of a ``COMPLETED`` task: a ``str`` is one text
   part, anything else one data part ``{"value": ...}`` in Pydantic JSON mode.
 - Unknown skills, invalid arguments and denied permissions end the task in
   ``REJECTED``; every other failure ends it in ``FAILED``; ``CancelTask`` ends
   it in ``CANCELED`` through AgentFrame's ``CancelledError``.
-- A question for the caller leaves the task in ``INPUT_REQUIRED``.
+- A router's question leaves the task in ``INPUT_REQUIRED``; the caller answers
+  with a new message in the same task, which is routed again with the earlier
+  messages.
+- Router exceptions and timeouts end the task in ``FAILED``; invalid router
+  decisions in ``REJECTED``.
 
 Every task status carries the run's ``invocation_id`` in its metadata.
-
-Free-text routing (#6) replaces the refusal in ``read_skill_call`` and publishes
-its questions with ``publish_input_required``.
 """
 
+import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
 from typing import Any
 
 from a2a.helpers import get_data_parts, new_data_part, new_task, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import Message, Part, TaskState
-from a2a.utils.errors import InvalidParamsError, UnsupportedOperationError
+from a2a.types import Message, Part, Task, TaskState
+from a2a.utils.errors import InvalidParamsError
 from pydantic_core import to_jsonable_python
 
 from agentframe.agent import Agent
@@ -50,6 +54,13 @@ from agentframe.errors import (
     PermissionDeniedError,
 )
 from agentframe.principal import Principal
+from agentframe.routing import (
+    Clarification,
+    SkillCall,
+    SkillRouter,
+    eligible_skills,
+    route,
+)
 from agentframe.runtime import Runtime
 
 SKILL_METADATA_NAMESPACE = "agentframe."
@@ -73,45 +84,40 @@ HOST_MISCONFIGURED_MESSAGE = "The agent is not configured correctly."
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class SkillCall:
-    """The skill a request asks for and its unvalidated arguments."""
+def is_skill_call(requested_extensions: set[str]) -> bool:
+    """Return whether a request activated the skill-call extension.
 
-    skill: str
-    arguments: dict[str, Any]
+    Only such a request is a skill call; any other message is free text.
+
+    Args:
+        requested_extensions: Extension URIs the caller activated with the
+            ``A2A-Extensions`` header.
+    """
+    return SKILL_CALL_EXTENSION_URI in requested_extensions
 
 
-def read_skill_call(message: Message, requested_extensions: set[str]) -> SkillCall:
+def read_skill_call(message: Message) -> SkillCall:
     """Read the skill id and JSON arguments of a skill-call extension message.
 
-    Only a request that activates the skill-call extension is a skill call.
-    The skill id comes from the ``agentframe.skill`` metadata key and the
-    arguments from the message's only part, a data part holding a JSON object.
-    Other metadata keys starting with ``agentframe.`` are unknown fields; keys
-    outside that namespace belong to other extensions and are ignored.
+    Call it only for requests that activated the extension. The skill id comes
+    from the ``agentframe.skill`` metadata key and the arguments from the
+    message's only part, a data part holding a JSON object. Other metadata
+    keys starting with ``agentframe.`` are unknown fields; keys outside that
+    namespace belong to other extensions and are ignored.
 
     Args:
         message: The caller's message.
-        requested_extensions: Extension URIs the caller activated with the
-            ``A2A-Extensions`` header.
 
     Returns:
         The requested skill call; the runtime validates the skill id and
         arguments.
 
     Raises:
-        UnsupportedOperationError: The caller did not activate the extension,
-            so the message is free text. Free-text routing arrives with #6.
         InvalidParamsError: The message names no skill, carries unknown
             ``agentframe.`` metadata, or does not have exactly one part that is
             a JSON object data part. This is a protocol error, not a task
             failure, and the message is never reinterpreted as free text.
     """
-    if SKILL_CALL_EXTENSION_URI not in requested_extensions:
-        raise UnsupportedOperationError(
-            "Free-text requests are not supported yet. Activate the "
-            f"'{SKILL_CALL_EXTENSION_URI}' extension and name a skill."
-        )
     metadata = dict(message.metadata.items())
     unknown = sorted(
         key
@@ -142,14 +148,19 @@ class RuntimeExecutor(AgentExecutor):
     Args:
         agent: The hosted agent instance.
         runtime: The runtime that validates, authorizes and limits every run.
+        router: Selects the skill for free-text messages. ``None`` means the
+            request handler refuses free text before it reaches the executor.
     """
 
-    def __init__(self, agent: Agent, runtime: Runtime) -> None:
+    def __init__(
+        self, agent: Agent, runtime: Runtime, router: SkillRouter | None = None
+    ) -> None:
         self._agent = agent
         self._runtime = runtime
+        self._router = router
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Run the requested skill and publish the task's final state."""
+        """Run the requested or routed skill and publish the task's new state."""
         # The SDK always fills these in before calling the executor.
         assert context.task_id is not None and context.context_id is not None
         assert context.message is not None
@@ -166,19 +177,30 @@ class RuntimeExecutor(AgentExecutor):
         principal: Principal | None = context.call_context.state.get(
             PRINCIPAL_STATE_KEY
         )
-        # The request handler has already refused malformed requests.
-        call = read_skill_call(context.message, context.requested_extensions)
         invocation_id = _new_invocation_id()
         # Stored on the task now so a later cancel can report the same ID.
         await task.update_status(
             TaskState.TASK_STATE_WORKING, metadata=_invocation_metadata(invocation_id)
         )
+        started_at = asyncio.get_running_loop().time()
         try:
+            call = await self._choose_skill(
+                context, principal, started_at, invocation_id
+            )
+            if isinstance(call, Clarification):
+                await publish_input_required(task, call.question, invocation_id)
+                return
             result = await self._runtime._run_invocation(
-                invocation_id, self._agent, call.skill, call.arguments, principal
+                invocation_id,
+                self._agent,
+                call.skill,
+                call.arguments,
+                principal,
+                started_at,
             )
             part = result_part(result.value, invocation_id)
         except AgentFrameError as error:
+            error.invocation_id = invocation_id
             await publish_failure(task, error)
             return
         except Exception:
@@ -190,6 +212,31 @@ class RuntimeExecutor(AgentExecutor):
             await publish_failure(task, failure)
             return
         await publish_result(task, part, invocation_id)
+
+    async def _choose_skill(
+        self,
+        context: RequestContext,
+        principal: Principal | None,
+        started_at: float,
+        invocation_id: str,
+    ) -> SkillCall | Clarification:
+        """Read the skill call, or ask the router about the free-text message."""
+        assert context.message is not None
+        if is_skill_call(context.requested_extensions):
+            # The request handler has already refused malformed skill calls.
+            return read_skill_call(context.message)
+        # The request handler refuses free text when there is no router.
+        assert self._router is not None
+        conversation = [*_earlier_messages(context.current_task), context.message]
+        definition = type(self._agent).definition()
+        deadline = started_at + type(self._agent).limits.timeout_seconds
+        return await route(
+            self._router,
+            conversation,
+            eligible_skills(definition, principal),
+            deadline,
+            invocation_id,
+        )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Mark the task ``CANCELED``; the SDK then stops the running skill.
@@ -293,6 +340,20 @@ async def publish_input_required(
         message=message,
         metadata=_invocation_metadata(invocation_id),
     )
+
+
+def _earlier_messages(task: Task | None) -> list[Message]:
+    """Return a task's messages before the current one, oldest first.
+
+    The SDK keeps the agent's latest question in the task status, not yet in
+    the history, and appends the caller's new message only after the run.
+    """
+    if task is None:
+        return []
+    earlier = list(task.history)
+    if task.status.HasField("message"):
+        earlier.append(task.status.message)
+    return earlier
 
 
 def _safe_message(error: AgentFrameError) -> str:

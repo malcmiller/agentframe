@@ -373,7 +373,7 @@ async def test_without_the_extension_a_message_is_free_text_not_a_skill_call(
     http: httpx.AsyncClient,
 ) -> None:
     # The skill id in metadata is ignored: only activation makes a skill call.
-    # Free-text routing arrives with #6; until then free text is refused.
+    # This app has no skill router, so free text is refused.
     response = await post(
         http, send_skill("greet", {"name": "Ada"}), activate_extension=False
     )

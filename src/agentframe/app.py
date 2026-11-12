@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from a2a.auth.user import UnauthenticatedUser, User
 from a2a.extensions.common import HTTP_EXTENSION_HEADER, get_requested_extensions
@@ -15,13 +16,15 @@ from a2a.server.routes import (
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
     AgentCard,
+    GetTaskRequest,
     ListTasksRequest,
     ListTasksResponse,
     Message,
     SendMessageRequest,
     Task,
+    TaskState,
 )
-from a2a.utils.errors import UnsupportedOperationError
+from a2a.utils.errors import TaskNotFoundError, UnsupportedOperationError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -31,6 +34,7 @@ from starlette.types import Receive, Scope, Send
 from agentframe.a2a_executor import (
     PRINCIPAL_STATE_KEY,
     RuntimeExecutor,
+    is_skill_call,
     read_skill_call,
 )
 from agentframe.agent import Agent
@@ -40,6 +44,7 @@ from agentframe.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
 from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.host import HostConfig
 from agentframe.principal import Principal
+from agentframe.routing import SkillRouter
 from agentframe.runtime import Runtime
 from agentframe.services import Services
 
@@ -53,7 +58,9 @@ class AgentApp:
     JSON-RPC A2A endpoint at ``/a2a``. Every request to ``/a2a`` must pass the
     host's authenticator, then runs through the runtime. Tasks live in the
     SDK's in-memory store, scoped to the caller, and are lost on restart;
-    anonymous callers share one namespace and cannot list tasks. Constructing
+    anonymous callers share one namespace and cannot list tasks. Messages that
+    do not activate the skill-call extension are free text, routed by
+    ``router``. Constructing
     the app validates everything and starts nothing; serve it with any ASGI
     server.
 
@@ -66,6 +73,8 @@ class AgentApp:
             not given.
         authorization: Resource authorization policy, when ``runtime`` is not
             given.
+        router: Selects the skill for free-text messages or asks the caller a
+            question. ``None`` refuses free text with a protocol error.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
@@ -82,6 +91,7 @@ class AgentApp:
         runtime: Runtime | None = None,
         services: Services | None = None,
         authorization: AuthorizationPolicy | None = None,
+        router: SkillRouter | None = None,
     ) -> None:
         if runtime is not None and (services is not None or authorization is not None):
             raise DefinitionError(
@@ -93,7 +103,8 @@ class AgentApp:
         runtime.validate(agent)
         card = build_agent_card(type(agent).definition(), host)
         handler = _RequestHandler(
-            agent_executor=RuntimeExecutor(agent, runtime),
+            routes_free_text=router is not None,
+            agent_executor=RuntimeExecutor(agent, runtime, router),
             task_store=InMemoryTaskStore(),
             agent_card=card,
         )
@@ -177,24 +188,69 @@ def _acknowledge_skill_call_extension(endpoint: Endpoint) -> Endpoint:
 
 
 class _RequestHandler(DefaultRequestHandler):
-    """The SDK's request handler with AgentFrame's two up-front refusals.
+    """The SDK's request handler with AgentFrame's up-front refusals.
 
-    - A malformed skill call, or free text before routing exists, gets a
-      protocol error. The SDK creates a task
-      before it calls the executor, so the check must happen here for the
-      caller to get no task.
-    - Anonymous callers cannot list tasks. They share one task namespace:
-      fetching or cancelling a task needs its unguessable ID, but listing would
-      hand every anonymous caller the IDs, inputs and results of every other
-      anonymous caller's tasks.
+    The SDK creates or resumes a task before it calls the executor, so a
+    message that must get a protocol error instead must be refused here:
+
+    - a malformed skill call;
+    - free text when no ``SkillRouter`` is configured;
+    - a message for one of the caller's tasks that is not waiting for input.
+      The SDK already hides other callers' tasks behind ``TaskNotFoundError``,
+      so only the task's owner can answer its question.
+
+    Anonymous callers cannot list tasks. They share one task namespace:
+    fetching or cancelling a task needs its unguessable ID, but listing would
+    hand every anonymous caller the IDs, inputs and results of every other
+    anonymous caller's tasks.
+
+    Args:
+        routes_free_text: Whether a ``SkillRouter`` handles free text.
+        **sdk_options: Passed to the SDK's ``DefaultRequestHandler``.
     """
+
+    def __init__(self, *, routes_free_text: bool, **sdk_options: Any) -> None:
+        super().__init__(**sdk_options)
+        self._routes_free_text = routes_free_text
 
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext
     ) -> Message | Task:
-        read_skill_call(params.message, context.requested_extensions)
+        if is_skill_call(context.requested_extensions):
+            read_skill_call(params.message)
+        elif not self._routes_free_text:
+            raise UnsupportedOperationError(
+                "This agent has no skill router for free-text requests. Activate "
+                f"the '{SKILL_CALL_EXTENSION_URI}' extension and name a skill."
+            )
+        if params.message.task_id:
+            await self._prepare_answer(params.message, context)
         response: Message | Task = await super().on_message_send(params, context)
         return response
+
+    async def _prepare_answer(
+        self, message: Message, context: ServerCallContext
+    ) -> None:
+        """Check that ``message`` answers a task waiting for the caller's input.
+
+        An answer that omits its ``contextId`` joins the task's context; the SDK
+        would otherwise give it a new one.
+
+        Raises:
+            UnsupportedOperationError: The task is working or finished.
+        """
+        try:
+            task: Task = await self.on_get_task(
+                GetTaskRequest(id=message.task_id), context
+            )
+        except TaskNotFoundError:
+            return  # The SDK reports it the same way for the message.
+        if task.status.state != TaskState.TASK_STATE_INPUT_REQUIRED:
+            raise UnsupportedOperationError(
+                f"Task {task.id} is not waiting for input; start a new task."
+            )
+        if not message.context_id:
+            message.context_id = task.context_id
 
     async def on_list_tasks(
         self, params: ListTasksRequest, context: ServerCallContext

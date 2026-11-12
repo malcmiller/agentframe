@@ -162,15 +162,20 @@ class Runtime:
         skill: str,
         arguments: Mapping[str, Any],
         principal: Principal | None,
+        started_at: float | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
         Package-internal: the A2A host allocates the ID itself so it can report
-        the run's ID for skill exceptions, which propagate without one.
+        the run's ID for skill exceptions, which propagate without one. It
+        passes ``started_at``, the event-loop time its run began, so time spent
+        routing the request counts against the skill's timeout.
         """
         started = time.perf_counter()
         try:
-            value = await self._run(invocation_id, agent, skill, arguments, principal)
+            value = await self._run(
+                invocation_id, agent, skill, arguments, principal, started_at
+            )
         except AgentFrameError as error:
             error.invocation_id = invocation_id
             raise
@@ -191,6 +196,7 @@ class Runtime:
         skill_id: str,
         arguments: Mapping[str, Any],
         principal: Principal | None,
+        started_at: float | None,
     ) -> Any:
         definition = type(agent).definition()
         skill = definition.skills.get(skill_id)
@@ -205,7 +211,9 @@ class Runtime:
 
         limits = skill.limits or type(agent).limits
         method = getattr(agent, skill.method_name)
-        deadline = asyncio.get_running_loop().time() + limits.timeout_seconds
+        if started_at is None:
+            started_at = asyncio.get_running_loop().time()
+        deadline = started_at + limits.timeout_seconds
         await self._check_policy(skill, principal, validated_arguments, deadline)
         ctx = RunContext(invocation_id, principal, deadline)
         try:
