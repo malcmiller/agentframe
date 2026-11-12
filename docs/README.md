@@ -1,7 +1,9 @@
 # AgentFrame documentation
 
 These documents record decided design contracts and still-open API details,
-not an implemented or stable SDK.
+not an implemented or stable agent SDK. The repository includes an installable
+M0 package skeleton and development tooling; see the
+[setup and check commands](../README.md#development-and-contributions).
 
 ## Proposed API reference
 
@@ -94,9 +96,10 @@ The [resolved M0 choices](initial-outline.md#resolved-m0-platform-and-api-decisi
 are support for Python 3.13+ with planned tests through 3.15, A2A 1.0/official `a2a-sdk`, and Foundry
 OpenAI v1 Responses via `openai`, with injected Entra token-provider or API-key
 auth. M8+ Foundry discovery uses the chosen projects agents API via
-`azure-ai-projects` 2.x. M0 tooling is decided: Ruff formatting/linting,
-strict mypy on `agentframe` and pytest, with CI/pre-commit checks.
+`azure-ai-projects` 2.x. M0 tooling is configured: uv, hatchling, Ruff
+formatting/linting, strict mypy on `agentframe` and tests, and pytest with
+pytest-asyncio auto mode, with CI/pre-commit checks.
 Follow the [readability-first contributor rules](../AGENTS.md#code-quality-and-readability).
-Final configuration, exact compatible pins, transport and provider mappings
-still need implementation evidence; no configuration, compatibility testing
-or package installation is claimed.
+Exact development pins live in `pyproject.toml` and `uv.lock`. Protocol/provider
+dependencies are not installed in M0; transport and provider compatibility
+still need implementation evidence in their milestones.

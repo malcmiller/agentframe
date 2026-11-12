@@ -10,8 +10,9 @@ orchestrator agents, interoperable with other frameworks' A2A agents. Deliver
 single-agent M0-M7 first, then A2A multi-agent composition as the next core
 release (M8+), not an optional add-on or a hosting platform.
 
-This repository currently contains design documentation only. There is no
-implemented SDK, published package, stable API, or test/build command. Keep
+This repository contains the M0 installable package skeleton and development
+tooling alongside design documentation. There is no implemented agent SDK,
+published package, or stable API. Keep
 design API examples labeled as unimplemented; explicitly approved names/defaults
 are decisions, not still-unresolved recommendations. Do not scaffold implementation or
 add dependencies merely to make design snippets executable.
@@ -43,19 +44,38 @@ add dependencies merely to make design snippets executable.
 - Follow Python best practices and PEP 8 conventions, with an approved line
   length of **88**. Use **Ruff** for Black-compatible formatting (`ruff format`)
   and linting (`ruff check`), replacing separate Black, flake8 and isort tools.
-- Start with a modest Ruff rule set; suggested families are `E`, `W`, `F`, `I`,
+- Use the modest Ruff rule set configured in `pyproject.toml`: `E`, `W`, `F`, `I`,
   `B`, `UP`, `SIM`, `N`, `C4` and `RUF`. Do not enable noisy rules that force
-  contorted code. Final rule selection/exceptions are configured in M0.
+  contorted code. Ruff targets Python files, not unimplemented Markdown examples.
 - Use **mypy**, strict on the `agentframe` package, with full public API hints.
-- Use **pytest** with `pytest-asyncio` or anyio for async tests. Make tests
-  readable as usage examples; choose the async integration during M0 setup.
-- Target the approved Python 3.13+ matrix. In M0, create `pyproject.toml` for
-  tool configuration and pin exact compatible tool/dependency versions.
-- Configure CI and pre-commit to run format checks (`ruff format --check`),
-  lint, type checks and tests. Code must pass these checks before merge.
+- Use **pytest** with **pytest-asyncio in auto mode** for async tests. Make tests
+  readable as usage examples.
+- Target the approved Python 3.13+ matrix, testing 3.13, 3.14 and 3.15.
+  `pyproject.toml` pins development tools and hatchling; commit `uv.lock`.
+- CI runs format checks (`ruff format --check`), lint, type checks and tests.
+  Pre-commit runs Ruff and mypy; tests stay in CI rather than on every commit.
 
-These are approved tooling decisions, not installed/configured tools. Do not
-create package, CI or pre-commit configuration before M0 implementation is requested.
+Use uv 0.13.1 (also pinned in CI). From a fresh clone, `uv sync` creates `.venv`,
+installs the package and development tools, and downloads Python if needed:
+
+```bash
+uv sync
+uv run ruff format
+uv run ruff check --fix
+uv run mypy
+uv run pytest
+uv run pre-commit install
+uv run pre-commit run --all-files
+uv build
+```
+
+Before committing, all four checks must pass: `uv run ruff format --check`,
+`uv run ruff check`, `uv run mypy` and `uv run pytest`. Run the matrix locally
+with `uv run --python 3.13 pytest` (repeat for 3.14 and 3.15).
+In PyCharm, select `.venv/bin/python`, mark `src` as Sources Root and `tests`
+as Test Sources Root, and use pytest as the test runner.
+Do not implement M1+ features or add runtime dependencies just to execute design
+snippets.
 
 ## Confirmed dependency boundary
 
@@ -78,8 +98,8 @@ framework to obtain AG-UI support. No AG-UI dependency/version is selected yet.
 Platform/API choices approved on 2026-11-11: support Python 3.13+ and test 3.13,
 3.14 and 3.15; Python has no LTS designation. Target A2A protocol 1.0 via the
 official `a2a-sdk` (1.3.0 observed; specification release v1.0.1). Pin compatible
-exact versions at M0 implementation time, not from observed-version snapshots;
-no compatibility testing has occurred. Sources and remaining implementation
+exact versions when introduced (A2A in M2), not from observed-version snapshots;
+no protocol/provider compatibility testing has occurred. Sources and remaining implementation
 decisions are in `docs/initial-outline.md#resolved-m0-platform-and-api-decisions`.
 
 ## Authoring decisions

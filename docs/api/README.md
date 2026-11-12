@@ -1,7 +1,7 @@
 # Proposed API reference
 
-AgentFrame is a documentation-only proposal: there is no implemented SDK,
-installable release, or stable import surface. This reference organizes the
+AgentFrame has an installable M0 package skeleton, but no implemented agent SDK,
+published release, or stable agent import surface. This reference organizes the
 current contracts for iteration; it does not turn illustrative signatures into
 implemented release commitments. Explicitly approved names/defaults are design
 decisions, not still-unresolved recommendations.

@@ -260,12 +260,12 @@ the negotiated M8+ extension separately reports downstream accounting usage.
 
 Each milestone is independently releasable and testable; M7 completes the first
 usable single-agent release. Earlier milestones prove narrower slices, not the entire
-first-release capability set. No implementation or development tooling is
-introduced here; the approved platform/API choices are recorded below.
+first-release capability set. M0 introduces only the package skeleton and
+development tooling; agent features remain unimplemented.
 
 | Milestone | Deliverable | Acceptance |
 | --- | --- | --- |
-| 0 | Development setup | Establish a small, human-readable package layout for Python 3.13+, testing 3.13 through 3.15. Configure Ruff formatting/lint (88-character lines), strict mypy on `agentframe`, pytest with async support, and CI/pre-commit format/lint/type/test checks that pass before merge. Apply the readability-first contributor rules; pin compatible tools/SDK/dependencies and create `pyproject.toml` during implementation, not this docs update. |
+| 0 | Development setup (CI confirmation pending) | Installable typed `src/` skeleton, no runtime dependencies, exact development pins and `uv.lock`. Ruff formatting/lint (88-character lines), strict mypy, pytest-asyncio auto mode, pre-commit Ruff/mypy, CI checks on Python 3.13/3.14/3.15 and isolated wheel import. Mark complete only after CI is green on `main`. |
 | 1 | Model-free authoring and `Runtime.invoke` | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; invalid definitions, missing services and invalid arguments fail explicitly before skill effects. Prove annotated `Inject[T]`, singleton/scoped ownership, isolated context and validated outputs without network access. `invoke` returns the value; `run` exposes local `RunResult` metadata. |
 | 2 | Native A2A hosting with structured requests and custom routing only | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Add `agentframe run module:Class` with explicit host config. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
 | 3 | Text generation through the shared `Model` contract | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
@@ -283,22 +283,27 @@ before the M7 first usable release, not prerequisites for M2.
 ### Resolved M0 platform and API decisions
 
 Approved and source-checked on **2026-11-11**. These resolve the Python, A2A
-protocol/SDK target and Foundry API choices; they are not installed dependencies
-or evidence of compatibility testing. Observed package versions are snapshots,
-not pins. M0 implementation must pin compatible exact versions and exercise the
-Python matrix before claiming support; future releases are not automatically tested.
+protocol/SDK target and Foundry API choices. Protocol/provider packages are not
+installed dependencies or evidence of compatibility testing. Their observed
+versions are snapshots, not pins; pin and test them when introduced in their
+milestones. M0 configures the Python/tooling matrix; future releases are not
+automatically tested.
 
 Human readability is a top-priority acceptance criterion: simple, focused code
 and reviewable diffs, not speculative abstractions. Follow the
 [coding-agent and contributor rules](../AGENTS.md#code-quality-and-readability).
-The M0 tool choices below are approved; final configuration and exact versions
-are implementation work, not an instruction to create configuration now.
+M0 uses uv **0.13.1** (pinned in CI), hatchling **1.33.0**, Ruff **0.17.4**,
+mypy **2.4.1**, pytest **9.2.0**, pytest-asyncio **1.4.1.post1** in **auto** mode,
+and pre-commit **4.7.0**. Build/development dependencies are exactly pinned in
+`pyproject.toml`; transitive development versions are locked in `uv.lock`.
+The Ruff rule families are `E`, `W`, `F`, `I`, `B`, `UP`, `SIM`, `N`, `C4`
+and `RUF`. See [development commands](../README.md#development-and-contributions).
 
 | Area | Decision | Implementation work still needed |
 | --- | --- | --- |
-| Python | Support 3.13+ and test 3.13, 3.14 and 3.15. Python has no LTS designation; the [official release-cycle data](https://peps.python.org/api/release-cycle.json) lists 3.15 in bugfix since 2026-10-09 and 3.13 in security maintenance. | Establish the M0 test/CI matrix with the selected tools; do not imply tests have run. |
-| Development tooling | Ruff formatter/linter instead of Black/flake8/isort, PEP 8 conventions with 88-character lines; strict mypy on `agentframe`; pytest with pytest-asyncio or anyio; CI and pre-commit enforce format/lint/type/test checks before merge. | Create tool configuration in `pyproject.toml` at M0, pin versions, choose the async test integration and finalize a modest Ruff rule set (suggested `E`, `W`, `F`, `I`, `B`, `UP`, `SIM`, `N`, `C4`, `RUF`). Avoid rules that contort readable code; no tooling/configuration is added here. |
-| A2A | Target protocol **1.0**, using the official `a2a-sdk` Python package. [Latest specification release observed: v1.0.1](https://github.com/a2aproject/A2A/releases/tag/v1.0.1), published 2026-05-28; [SDK observed: 1.3.0, Python >=3.10](https://pypi.org/project/a2a-sdk/1.3.0/). Do not advertise 0.3 support. | Pin the exact compatible SDK at M0; prove M2 transport binding, native type mappings and independent-client interoperability. Selecting protocol 1.0 does not select every optional binding/capability. |
+| Python | Support 3.13+ and test 3.13, 3.14 and 3.15. Python has no LTS designation; the [official release-cycle data](https://peps.python.org/api/release-cycle.json) lists 3.15 in bugfix since 2026-10-09 and 3.13 in security maintenance. | The M0 CI matrix is configured; retain all three versions as the implementation grows. |
+| Development tooling | Ruff formatter/linter instead of Black/flake8/isort, PEP 8 conventions with 88-character lines; strict mypy on `agentframe` and tests; pytest with pytest-asyncio auto mode. | Configured in `pyproject.toml`, CI and pre-commit. All four checks must pass before committing; tests run in CI rather than on every commit. Avoid rules that contort readable code. |
+| A2A | Target protocol **1.0**, using the official `a2a-sdk` Python package. [Latest specification release observed: v1.0.1](https://github.com/a2aproject/A2A/releases/tag/v1.0.1), published 2026-05-28; [SDK observed: 1.3.0, Python >=3.10](https://pypi.org/project/a2a-sdk/1.3.0/). Do not advertise 0.3 support. | Add and pin the exact compatible SDK in M2; prove transport binding, native type mappings and independent-client interoperability. Selecting protocol 1.0 does not select every optional binding/capability. |
 | Foundry model inference | Use OpenAI v1 **Responses API**, base URL `https://<resource>.openai.azure.com/openai/v1/`, via official `openai`. Inject either an API key or Microsoft Entra ID token provider (`azure-identity` `get_bearer_token_provider`, scope `https://ai.azure.com/.default`). The [Azure AI Inference SDK is retired](https://learn.microsoft.com/en-us/azure/foundry/how-to/model-inference-to-openai-migration); do not use it. | Keep `openai`/`azure-identity` optional provider extras; pin compatible dependencies and prove M3 deployment/capability/auth and client-lifecycle behavior. AgentFrame constructor/credential wrapping remains proposed. |
 | Foundry discovery (M8+) | Choose the project agents API through `azure-ai-projects` **2.x** ([2.10.0 observed](https://pypi.org/project/azure-ai-projects/2.10.0/)), project endpoint `https://{account}.services.ai.azure.com/api/projects/{project}`. [Incoming A2A documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint) shows prompt agents enabling A2A with `agent_card` and protocol configuration, publishing cards and accepting A2A requests. Select GA protocol 1.0 explicitly. | Prove listed-agent to card-URL mapping, filter to A2A-enabled agents, settle authentication/RBAC and pagination. This is read discovery of existing agents, not deployment of AgentFrame agents to Foundry. |
 
@@ -379,9 +384,9 @@ belongs to that release even though telemetry exporters/integration stay optiona
   backoff/transient codes; dedupe store/window API, atomicity, changed payloads
   and message-only interactions. Protection defaults and no-side-effect replay
   are decided.
-- Exact compatible tool/dependency pins, final Ruff rules/configuration and
-  pytest async integration. Ruff/mypy/pytest, Python 3.13+ with testing through
-  3.15 and the A2A 1.0/official SDK target are decided above.
+- Exact compatible runtime dependency pins when each is introduced. M0 tool
+  pins, Ruff rules and pytest-asyncio auto integration are configured; Python
+  3.13+ with testing through 3.15 and the A2A 1.0/official SDK target are decided above.
 - Concrete A2A 1.0 transport binding and tested compatibility policy.
 - Structured skill-input mappings and minimal-message versus task lifecycle behavior.
 - Foundry Responses deployment capabilities, injected credential/client wrapping

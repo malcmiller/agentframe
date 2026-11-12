@@ -16,8 +16,9 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 
 ## Status
 
-This repository currently contains initial design documentation only. There is
-no implemented SDK, installable release, or supported public API yet. Reviewed
+This repository contains an installable M0 package skeleton and development
+tooling alongside design documentation. There is no implemented agent SDK,
+published release, or supported agent API yet. Reviewed
 capability and contract decisions are recorded below and in the reference.
 Approved names/defaults are design decisions; unspecified interfaces remain
 open. No example implies an installed SDK or tested compatibility.
@@ -193,15 +194,37 @@ platform or durable workflow engine is not a prerequisite for either.
 
 ## Development and contributions
 
-The project is in API-design discovery. Proposals should connect to the first
-success criterion and identify interoperability, safety, and authoring tradeoffs.
-There are no build or test commands until the Python package is introduced.
+The M0 skeleton is installable locally; agent features start in M1. Proposals
+should connect to the first success criterion and identify interoperability,
+safety, and authoring tradeoffs.
 Human readability is a top-priority contribution rule: prefer simple,
-maintainable code over cleverness or speculative abstractions. M0 will use
-Ruff for formatting/linting (88-character lines), strict mypy on `agentframe`
-and pytest, enforced through CI and pre-commit. See
+maintainable code over cleverness or speculative abstractions. Use uv 0.13.1
+(install with `brew install uv` on macOS, checking the installed version).
+From a fresh clone, one command sets up the package and development environment:
+
+```bash
+uv sync
+```
+
+Python is downloaded if needed. The default interpreter is Python 3.13.
+Development commands:
+
+```bash
+uv run ruff format
+uv run ruff check --fix
+uv run mypy
+uv run pytest
+uv run pre-commit install
+uv run pre-commit run --all-files
+uv build
+```
+
+All four checks must pass before committing: `uv run ruff format --check`,
+`uv run ruff check`, `uv run mypy` and `uv run pytest`. CI runs them on Python
+3.13, 3.14 and 3.15 and verifies an isolated wheel import. Pre-commit runs Ruff
+and mypy; tests run in CI, not on every commit. See
 [code quality and readability](AGENTS.md#code-quality-and-readability) for the
-agent/contributor rules; configuration and exact pins come with M0 implementation.
+contributor rules, local matrix commands and PyCharm setup.
 The [approved platform/API decisions](docs/initial-outline.md#resolved-m0-platform-and-api-decisions)
 (2026-11-11) are Python **3.13+**, testing through **3.15** (Python has no LTS);
 A2A protocol **1.0** through official `a2a-sdk` (1.3.0 observed, specification
@@ -211,9 +234,11 @@ authentication. Do not use the retired Azure AI Inference SDK.
 Foundry registry reads use the project agents API through `azure-ai-projects`
 2.x (2.10.0 observed), separately from model inference and still in M8+.
 These are decisions, not compatibility-test results or dependency pins.
-M0 still must configure the selected tooling, pin compatible tool/SDK/dependency
-versions and establish the Python test matrix; concrete A2A transport binding
-and provider mappings remain implementation work.
+M0 pins development tools and hatchling in `pyproject.toml`, with transitive
+versions in `uv.lock`. It has no runtime dependencies. Add Pydantic in M1,
+the official A2A SDK in M2 and provider extras in M3, pinning and verifying them
+when used; concrete A2A transport binding and provider mappings remain
+implementation work.
 
 The intended repository and distribution name is `agentframe`; the intended
 Python import is `agentframe`. Package-index names are not reserved by creating
