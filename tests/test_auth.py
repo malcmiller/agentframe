@@ -147,7 +147,7 @@ def test_api_key_requires_caller_id_and_role_list() -> None:
 class Documents(Agent):
     """Reads documents."""
 
-    @skill(id="read", requires_permissions=["documents:read"])
+    @skill(id="read", requires_permissions=["documents:read"], tags=["test"])
     async def read(self, document_id: str, ctx: RunContext) -> str:
         """Read a document."""
         return f"{ctx.principal.id if ctx.principal else None} read {document_id}"

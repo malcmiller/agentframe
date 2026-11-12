@@ -34,7 +34,8 @@ def skill[F: Callable[..., Any]](
         id: Stable skill identifier that callers select.
         name: Display name. Defaults to the title-cased method name.
         description: What the skill does. Defaults to the method docstring.
-        tags: Descriptive discovery tags.
+        tags: Descriptive discovery tags. At least one non-blank tag is
+            required (A2A 1.0); ``@agent`` rejects a skill without one.
         requires_permissions: Permissions the caller must all hold.
         limits: Execution limits for this skill, overriding the agent's.
 

@@ -30,27 +30,27 @@ class Address(BaseModel):
 class Forms(Agent):
     """Handles typed forms."""
 
-    @skill(id="double")
+    @skill(id="double", tags=["test"])
     async def double(self, number: int, ctx: RunContext) -> int:
         """Double a number."""
         return number * 2
 
-    @skill(id="city")
+    @skill(id="city", tags=["test"])
     async def city(self, address: Address, ctx: RunContext) -> str:
         """Return the city of an address."""
         return address.city
 
-    @skill(id="greet")
+    @skill(id="greet", tags=["test"])
     async def greet(self, name: str, ctx: RunContext, punctuation: str = "!") -> str:
         """Greet with optional punctuation."""
         return f"Hello, {name}{punctuation}"
 
-    @skill(id="time")
+    @skill(id="time", tags=["test"])
     async def time(self, clock: Inject[Clock], ctx: RunContext) -> str:
         """Tell the time."""
         return clock.now()
 
-    @skill(id="broken")
+    @skill(id="broken", tags=["test"])
     async def broken(self, ctx: RunContext) -> int:
         """Return the wrong type."""
         return SECRET  # type: ignore[return-value]

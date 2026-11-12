@@ -32,7 +32,7 @@ class Documents(Agent):
     def __init__(self) -> None:
         self.reads: list[str] = []
 
-    @skill(id="read", requires_permissions=["documents:read"])
+    @skill(id="read", requires_permissions=["documents:read"], tags=["test"])
     async def read(self, document_id: str, ctx: RunContext) -> str:
         """Return a document's text."""
         self.reads.append(document_id)
@@ -48,7 +48,7 @@ class SlowReader(Agent):
     def __init__(self) -> None:
         self.finished = False
 
-    @skill(id="read")
+    @skill(id="read", tags=["test"])
     async def read(self, ctx: RunContext) -> str:
         """Read slowly."""
         await asyncio.sleep(0.15)

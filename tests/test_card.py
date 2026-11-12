@@ -1,6 +1,7 @@
 """Tests for generating the native A2A Agent Card."""
 
 import json
+import logging
 import socket
 from collections.abc import Mapping
 from typing import Annotated, Any
@@ -59,7 +60,12 @@ class Writer(Agent):
         """Summarize a document."""
         return Summary(text=text, word_count=max_words)
 
-    @skill("translate", name="Translate text", description="Translate to French.")
+    @skill(
+        "translate",
+        name="Translate text",
+        description="Translate to French.",
+        tags=["translation"],
+    )
     async def translate(self, text: str, ctx: RunContext) -> str:
         return text
 
@@ -98,8 +104,18 @@ async def test_card_describes_the_agent_and_its_skills() -> None:
             "id": "translate",
             "name": "Translate text",
             "description": "Translate to French.",
+            "tags": ["translation"],
         },
     ]
+
+
+async def test_card_is_served_without_spec_compliance_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        await served_card(AllowAnonymous())
+
+    assert "not spec-compliant" not in caplog.text
 
 
 async def test_card_advertises_the_a2a_endpoint_at_the_public_url() -> None:

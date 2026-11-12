@@ -64,7 +64,7 @@ class Echo(Agent):
         """Return the text unchanged."""
         return text
 
-    @skill(id="greet")
+    @skill(id="greet", tags=["greeting"])
     async def greet(self, name: str, greeter: Inject[Greeter], ctx: RunContext) -> str:
         """Greet someone by name."""
         return greeter.greet(name)

@@ -78,6 +78,7 @@ def build_skill_definition(
     _check_annotations(where, parameters, hints)
     if "ctx" not in {parameter.name for parameter in parameters}:
         raise DefinitionError(f"{where} needs a 'ctx: RunContext' parameter")
+    _check_tags(where, metadata.tags)
 
     injected: dict[str, object] = {}
     arguments: list[inspect.Parameter] = []
@@ -116,6 +117,20 @@ def build_skill_definition(
         arguments_adapter=arguments_adapter,
         return_adapter=return_adapter,
     )
+
+
+def _check_tags(where: str, tags: tuple[str, ...]) -> None:
+    """Require at least one non-blank tag.
+
+    A2A 1.0 marks ``AgentSkill.tags`` REQUIRED, and required arrays must
+    contain at least one element (spec section 5.7).
+    """
+    if not tags:
+        raise DefinitionError(
+            f"{where} needs at least one tag; A2A 1.0 requires skill tags"
+        )
+    if any(not tag.strip() for tag in tags):
+        raise DefinitionError(f"{where} has a blank tag")
 
 
 def _business_and_ctx_parameters(

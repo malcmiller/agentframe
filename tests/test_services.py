@@ -33,12 +33,12 @@ class Session:
 class Store(Agent):
     """Uses injected services."""
 
-    @skill(id="database")
+    @skill(id="database", tags=["test"])
     async def database(self, db: Inject[Database], ctx: RunContext) -> int:
         """Return the identity of the injected database."""
         return id(db)
 
-    @skill(id="session")
+    @skill(id="session", tags=["test"])
     async def session(
         self, first: Inject[Session], second: Inject[Session], ctx: RunContext
     ) -> int:
@@ -46,12 +46,12 @@ class Store(Agent):
         assert first is second
         return id(first)
 
-    @skill(id="fail")
+    @skill(id="fail", tags=["test"])
     async def fail(self, db: Inject[Database], ctx: RunContext) -> None:
         """Always fail."""
         raise RuntimeError("boom")
 
-    @skill(id="hang", limits=RunLimits(timeout_seconds=0.01))
+    @skill(id="hang", limits=RunLimits(timeout_seconds=0.01), tags=["test"])
     async def hang(self, db: Inject[Database], ctx: RunContext) -> None:
         """Never finish in time."""
         await asyncio.sleep(10)
@@ -151,7 +151,7 @@ async def test_missing_service_is_rejected_before_the_skill_runs() -> None:
     class Tracker(Agent):
         """Records calls."""
 
-        @skill(id="track")
+        @skill(id="track", tags=["test"])
         async def track(self, db: Inject[Database], ctx: RunContext) -> None:
             """Record a call."""
             calls.append("ran")
