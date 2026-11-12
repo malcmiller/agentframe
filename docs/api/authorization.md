@@ -10,8 +10,12 @@ and prompt/content checks are separate responsibilities.
 **Purpose / decision:** immutable verified caller identity supplied through
 trusted host/local context, exposed to skills as `ctx.principal`.
 
-**Signature status:** fields and construction/trust APIs remain open. The
-concepts below are not finalized constructor keywords.
+**Signature status:** M1 implements a minimal frozen dataclass
+`Principal(id: str, permissions: frozenset[str] = frozenset())`, constructed by
+trusted application code. `Runtime` enforces all-of `requires_permissions`
+against `permissions`; a missing principal or permission raises
+`PermissionDeniedError`. Further identity fields and host construction/trust APIs
+remain open; the concepts below are not finalized constructor keywords.
 
 | Information | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |

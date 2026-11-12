@@ -10,10 +10,10 @@ orchestrator agents, interoperable with other frameworks' A2A agents. Deliver
 single-agent M0-M7 first, then A2A multi-agent composition as the next core
 release (M8+), not an optional add-on or a hosting platform.
 
-This repository contains the M0 installable package skeleton and development
-tooling alongside design documentation. There is no implemented agent SDK,
-published package, or stable API. Keep
-design API examples labeled as unimplemented; explicitly approved names/defaults
+This repository contains the M0 development tooling and the M1 model-free
+authoring/local `Runtime` implementation alongside design documentation. There
+is no published package or stable API, and later-milestone features are not
+implemented. Keep design API examples beyond M1 labeled as unimplemented; explicitly approved names/defaults
 are decisions, not still-unresolved recommendations. Do not scaffold implementation or
 add dependencies merely to make design snippets executable.
 

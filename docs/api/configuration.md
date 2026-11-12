@@ -86,7 +86,10 @@ limits = RunLimits(
 ```
 
 **Behavior / failures:** validate finite settings; exact numeric ranges, zero
-semantics, and partial-field composition remain open. Model-free skills still
+semantics, and partial-field composition remain open. M1 implements a frozen
+`RunLimits(timeout_seconds: float = 120.0)` only; the other fields arrive with
+model and tool milestones. A `timeout_seconds` that is not greater than zero
+raises `DefinitionError`, and exceeding it raises `LimitExceededError`. Model-free skills still
 have deadlines but consume no model tokens. Concurrency/request-size controls
 are separate host requirements, not invented fields on this type.
 

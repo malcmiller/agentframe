@@ -1,7 +1,12 @@
 # Local runtime
 
 [Reference index and status conventions](README.md). Decided calls are design
-contracts, not implemented APIs. Managed local invocation is not an A2A wire operation.
+contracts. As of M1, `Runtime(services=...)`, `invoke`, `run`, `RunResult`,
+`Usage`, `FinishReason` and the `AgentFrameError`, `DefinitionError`,
+`InputValidationError`, `OutputValidationError`, `PermissionDeniedError` and
+`LimitExceededError` classes are implemented from source; the remaining
+parameters and errors arrive in later milestones. Managed local invocation is
+not an A2A wire operation.
 
 ## `Runtime`
 
@@ -32,13 +37,16 @@ runtime = Runtime()
 ```
 
 This unprotected local construction requires no identity provider, model, or
-telemetry integration. It does not declare any remote access policy.
+telemetry integration. It does not declare any remote access policy. M1
+implements only `Runtime(*, services: Services | None = None)`.
 
 **Behavior / failures:** no inference on construction. Validate definitions and
 configuration; create invocation-scoped context, enforce policy/limits, validate
 outputs, and surface the [decided error hierarchy](#agentframeerror).
 Definition and missing-service validation happens at startup/preflight, before
 executing skills; exact explicit local startup/lifecycle methods remain open.
+In M1, definitions validate at class creation and each run checks its skill's
+service registrations before any skill code or scoped factory runs.
 Do not infer extra public registration/close methods from this description.
 First release owns bounded registered-tool calls/results and generation
 continuations as well as typed structured output; it returns complete validated
@@ -53,18 +61,18 @@ orchestration. Future [streaming/AG-UI](streaming.md) is a separate surface.
 **Purpose / decision:** explicitly select a registered local skill by ID and
 return its validated value through the managed execution pipeline.
 
-**Decided value-return call; exact generic/container typing remains illustrative:**
+**Decided value-return call** (implemented in M1; generic typing remains open):
 
 ```python
 async def invoke(
     self, agent: Agent, *, skill: str,
-    arguments: Mapping[str, object], principal: Principal = ...,
-) -> object: ...
+    arguments: Mapping[str, Any] | None = None, principal: Principal | None = None,
+) -> Any: ...
 ```
 
 `Mapping` is from `collections.abc`. The return is the selected skill's declared
 value (for example `str` or `int`), not a result envelope;
-`object` above does not settle generic typing or concrete accepted containers.
+`Any` above does not settle future generic typing.
 The value-return path is decided. Use [`run`](#runtimerun) for a `RunResult`
 containing execution metadata; both paths use the same pipeline.
 
@@ -72,8 +80,8 @@ containing execution metadata; both paths use the same pipeline.
 | --- | --- | --- | --- |
 | `agent` | `Agent` instance | Required | Valid definition with registered declared/inherited skills. |
 | `skill` | `str` | Required | Stable registered skill ID, not arbitrary method lookup or implicit model routing. |
-| `arguments` | String-keyed mapping of business values | Explicit mapping in current examples; empty/default syntax open | Validated against selected skill. No `self`, `ctx`, `Inject[T]` parameters, principal, credentials or execution-policy overrides. |
-| `principal` | Trusted `Principal` | Required trusted context for protected work; omission allowed for unprotected local examples | Supplied by trusted application code, never deserialized from untrusted arguments. Absent representation open. |
+| `arguments` | String-keyed mapping of business values | Optional; `None` (default) means no arguments | Validated against selected skill. No `self`, `ctx`, `Inject[T]` parameters, principal, credentials or execution-policy overrides: those names count as unknown arguments. |
+| `principal` | Trusted `Principal \| None` | Default `None`; required for skills with `requires_permissions` | Supplied by trusted application code, never deserialized from untrusted arguments. `None` means no identity. |
 
 Supply the [`Echo`](agents.md#agent) instance defined in the agent reference.
 `Echo` is an author-defined class, not an AgentFrame export.
@@ -98,6 +106,16 @@ use the decided typed errors below. Refused/incomplete
 generation, invalid structured results and action denials must not appear as
 successful values.
 
+M1 runs these steps in order: create the invocation ID; resolve the skill
+(unknown -> `InputValidationError`); check service registrations
+(`DefinitionError`); check all-of `requires_permissions` against the principal
+(`PermissionDeniedError`); validate arguments (`InputValidationError`); resolve
+scoped services and call the skill within the timeout (`LimitExceededError`);
+validate the output (`OutputValidationError`). Effective M1 limits are the
+skill's `limits` if set, otherwise the agent class `limits`. Exceptions raised
+by the skill itself propagate unchanged; a `TimeoutError` the skill raises
+itself is not converted into a limit failure.
+
 Direct `await echo.echo(...)` is an ordinary Python call and bypasses this
 pipeline. Per-skill limits use `@skill(limits=RunLimits(...))`; the per-run
 options keyword/container remains open and separate from business arguments.
@@ -113,7 +131,8 @@ weaken security, or extend a parent deadline.
 **Purpose / decision:** execute the same managed invocation as `invoke`, returning
 the validated value plus local execution metadata.
 
-**Decided call shape** (generic result typing remains open):
+**Decided call shape** (implemented in M1; returns `RunResult[Any]`, generic
+result typing remains open):
 
 ```text
 await runtime.run(agent, skill=..., arguments=..., principal=...) -> RunResult
@@ -143,18 +162,25 @@ Exact failed-run usage access/retention remains open.
 **Purpose / decision:** complete local result and operational metadata, independent
 of OpenTelemetry. Not the remote A2A response envelope.
 
-**Signature status:** fields below are decided; constructor, generic typing,
-usage type/marker names, duration unit/type and finish-reason values remain open.
+**Signature status:** fields below are decided and implemented in M1 as a
+frozen generic dataclass `RunResult[T]`. Finish-reason values beyond
+`COMPLETED` arrive with model milestones.
 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `value` | Selected skill's validated return type | Present on successful run | Same value as `invoke`. |
-| `invocation_id` | Correlation identifier; exact type open | Every run | Library-generated, independent of trace IDs; never authentication. |
-| `usage` | Normalized input/output/total token usage | Present; completeness/estimate representation open | Mark complete or estimated; unknown is not zero or a fabricated estimate. Preserve unavailable/partial usage explicitly; no hard billing guarantee. |
-| `model_calls` | Count | Present | Dispatched inference attempts including retries. |
-| `tool_calls` | Count | Present | Managed tool executions; exact attempted/denied-call breakdown remains open. |
-| `duration` | Elapsed duration; unit/type open | Present | Run duration, not a provider-only time. |
-| `finish_reason` | AgentFrame-normalized finish reason; values open | Present | Completion information, not raw provider data or private reasoning. |
+| `value` | `T`, the selected skill's validated return type | Present on successful run | Same value as `invoke`. |
+| `invocation_id` | `str` (UUID 4) | Every run | Library-generated, independent of trace IDs; never authentication. |
+| `usage` | `Usage` | Present | Normalized token usage; see below. |
+| `model_calls` | `int` | Present | Dispatched inference attempts including retries; `0` for model-free runs. |
+| `tool_calls` | `int` | Present | Managed tool executions; `0` in M1. Exact attempted/denied-call breakdown remains open. |
+| `duration` | `datetime.timedelta` | Present | Run duration, not a provider-only time. |
+| `finish_reason` | `FinishReason` (`StrEnum`) | Present | Completion information, not raw provider data or private reasoning. M1 uses only `FinishReason.COMPLETED`. |
+
+`Usage(input_tokens, output_tokens, total_tokens, estimated)` is a frozen
+dataclass. Each count is `int | None`, where `None` means unknown, never zero;
+`estimated: bool` marks estimates. Model-free runs report
+`Usage(0, 0, 0, estimated=False)`. Provider completeness details and no hard
+billing guarantee remain as described in [accounting](../limits.md#accounting-and-enforcement).
 
 ```python
 from agentframe import RunResult
@@ -178,13 +204,14 @@ Model-free runs have zero model usage/calls, not guessed inference.
 **Purpose / decision:** base for public safe failures, distinct from raw provider
 exceptions. All errors below inherit the shared correlation/message contract.
 
-**Signature status:** class name and inherited fields decided; constructor and
+**Signature status:** decided and implemented in M1:
+`AgentFrameError(message: str, *, invocation_id: str | None = None)`. Host
 startup correlation allocation details remain open.
 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `invocation_id` | Correlation identifier; exact type open | Every error | Available even on failure; startup/pre-invocation identifier allocation is still to specify. |
-| Safe message | Text; accessor/constructor spelling open | Every error | No secrets, provider payloads or stack traces. |
+| `invocation_id` | `str \| None` | Set on every error raised during a run | The run's UUID. `None` only for definition errors raised while a class is being defined. |
+| `message` | `str` | Every error | Safe text: no secrets, submitted values, provider payloads or stack traces. Validation errors list field locations and problems only, and are raised without a chained Pydantic exception. |
 
 ```python
 from agentframe import AgentFrameError
@@ -220,6 +247,10 @@ def definition_failure(error: DefinitionError) -> object:
 ```
 
 **Behavior / failures:** do not defer missing registrations until a request.
+M1 raises it at class definition for invalid `@agent` / `@skill` usage, for
+invalid `RunLimits`, for duplicate `Services` registrations, from `definition()`
+on undecorated classes, and before running a skill whose `Inject[T]`
+registration is missing.
 **Related:** [`Services`](agents.md#services), [`AgentFrameError`](#agentframeerror).
 
 ## `InputValidationError`
@@ -239,7 +270,8 @@ def invalid_input(error: InputValidationError) -> object:
     return error.invocation_id
 ```
 
-**Behavior / failures:** no skill effects on invalid input.
+**Behavior / failures:** no skill effects on invalid input. M1 raises it for an
+unknown skill id and for unknown, missing or invalid arguments.
 **Related:** [`Runtime.invoke`](#runtimeinvoke), [`AgentFrameError`](#agentframeerror).
 
 ## `OutputValidationError`
@@ -299,7 +331,9 @@ def denied(error: PermissionDeniedError) -> object:
     return error.invocation_id
 ```
 
-**Behavior / failures:** no protected effects on denial.
+**Behavior / failures:** no protected effects on denial. M1 raises it when a
+skill declares `requires_permissions` and the principal is `None` or lacks any
+listed permission; the message names the missing permissions.
 **Related:** [`AuthorizationPolicy`](authorization.md#authorizationpolicy), [`AgentFrameError`](#agentframeerror).
 
 ## `PolicyUnavailableError`
@@ -443,6 +477,8 @@ def exhausted(error: LimitExceededError) -> object:
 ```
 
 **Behavior / failures:** do not silently clamp/truncate or reset budgets.
+M1 raises the base class when a run exceeds `RunLimits.timeout_seconds`;
+scoped-service cleanup still runs.
 **Related:** [`RunLimits`](configuration.md#runlimits), [`AgentFrameError`](#agentframeerror).
 
 ## `CancelledError`

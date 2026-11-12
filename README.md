@@ -16,12 +16,14 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 
 ## Status
 
-This repository contains an installable M0 package skeleton and development
-tooling alongside design documentation. There is no implemented agent SDK,
-published release, or supported agent API yet. Reviewed
-capability and contract decisions are recorded below and in the reference.
-Approved names/defaults are design decisions; unspecified interfaces remain
-open. No example implies an installed SDK or tested compatibility.
+Early development; M1 model-free authoring is available from source. You can
+define agents with `@agent` / `@skill`, inject services, and run skills locally
+through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
+permission checks and a timeout. There is no published release, network
+hosting (A2A arrives in M2) or model support (M3+) yet, and the API is not
+stable. Reviewed capability and contract decisions are recorded below and in
+the reference. Approved names/defaults are design decisions; unspecified
+interfaces remain open. Examples beyond the M1 surface are design proposals.
 
 ## Goals
 
@@ -35,23 +37,47 @@ open. No example implies an installed SDK or tested compatibility.
 - Build and deploy 1..N agents; compose specialists through ordinary orchestrator
   skills using interoperable A2A calls, not a required workflow/graph engine.
 
-## Proposed authoring experience
+## Authoring experience
 
-This is design syntax, not an implemented API. Decorators describe the agent;
-an `Agent` subclass implements behavior. Models and infrastructure are injected.
-Each ability is a separate `@skill` method; no abstract `handle()` or manual
-dispatch method is required.
+Decorators describe the agent; an `Agent` subclass implements behavior. Models
+and infrastructure are injected. Each ability is a separate `@skill` method; no
+abstract `handle()` or manual dispatch method is required. This M1 example works
+from source today (it is kept in `tests/test_example.py`); run the `await` lines
+inside an async function or `asyncio.run`:
 
 ```python
-from agentframe import Agent, RunContext, agent, skill
+from agentframe import Agent, Inject, RunContext, Runtime, Services, agent, skill
 
 
-@agent(name="Echo", description="Returns supplied text.", version="0.1.0")
+class Greeter:
+    def greet(self, name: str) -> str:
+        return f"Hello, {name}!"
+
+
+@agent(version="0.1.0")
 class Echo(Agent):
-    @skill(id="echo", name="Echo text", description="Return text.", tags=["text"])
+    """Returns supplied text or a greeting."""
+
+    @skill(id="echo", tags=["text"])
     async def echo(self, text: str, ctx: RunContext) -> str:
+        """Return the text unchanged."""
         return text
+
+    @skill(id="greet")
+    async def greet(self, name: str, greeter: Inject[Greeter], ctx: RunContext) -> str:
+        """Greet someone by name."""
+        return greeter.greet(name)
+
+
+services = Services()
+services.add(Greeter, Greeter())
+runtime = Runtime(services=services)
+
+value = await runtime.invoke(Echo(), skill="echo", arguments={"text": "hi"})
+result = await runtime.run(Echo(), skill="greet", arguments={"name": "Ada"})
 ```
+
+Names default to the class/method name and descriptions to docstrings.
 
 The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
 need no provider configuration. See [agents with and without models](docs/agent-examples.md)
@@ -194,7 +220,7 @@ platform or durable workflow engine is not a prerequisite for either.
 
 ## Development and contributions
 
-The M0 skeleton is installable locally; agent features start in M1. Proposals
+M1 model-free authoring and local execution are installable from source. Proposals
 should connect to the first success criterion and identify interoperability,
 safety, and authoring tradeoffs.
 Human readability is a top-priority contribution rule: prefer simple,
@@ -234,9 +260,9 @@ authentication. Do not use the retired Azure AI Inference SDK.
 Foundry registry reads use the project agents API through `azure-ai-projects`
 2.x (2.10.0 observed), separately from model inference and still in M8+.
 These are decisions, not compatibility-test results or dependency pins.
-M0 pins development tools and hatchling in `pyproject.toml`, with transitive
-versions in `uv.lock`. It has no runtime dependencies. Add Pydantic in M1,
-the official A2A SDK in M2 and provider extras in M3, pinning and verifying them
+Development tools and hatchling are pinned in `pyproject.toml`, with transitive
+versions in `uv.lock`. M1 added the first runtime dependency, Pydantic
+(`>=2.14,<3`). Add the official A2A SDK in M2 and provider extras in M3, pinning and verifying them
 when used; concrete A2A transport binding and provider mappings remain
 implementation work.
 

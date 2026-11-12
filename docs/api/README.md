@@ -1,9 +1,12 @@
 # Proposed API reference
 
-AgentFrame has an installable M0 package skeleton, but no implemented agent SDK,
-published release, or stable agent import surface. This reference organizes the
+AgentFrame is in early development: M1 model-free authoring (`@agent`, `@skill`,
+`Agent`, `RunContext`, `Inject`, `Services`, `Principal`, `RunLimits` with
+`timeout_seconds`, local `Runtime.invoke` / `run`, `RunResult`, `Usage`,
+`FinishReason` and the M1 error classes) is available from source. There is no
+published release or stable import surface. This reference organizes the
 current contracts for iteration; it does not turn illustrative signatures into
-implemented release commitments. Explicitly approved names/defaults are design
+implemented release commitments. Entries note where M1 implements them. Explicitly approved names/defaults are design
 decisions, not still-unresolved recommendations.
 
 **Decision** identifies agreed behavior or a product boundary. **Proposed shape**

@@ -260,13 +260,13 @@ the negotiated M8+ extension separately reports downstream accounting usage.
 
 Each milestone is independently releasable and testable; M7 completes the first
 usable single-agent release. Earlier milestones prove narrower slices, not the entire
-first-release capability set. M0 introduces only the package skeleton and
-development tooling; agent features remain unimplemented.
+first-release capability set. M0 introduced the package skeleton and
+development tooling; M1 adds model-free authoring and local execution.
 
 | Milestone | Deliverable | Acceptance |
 | --- | --- | --- |
 | 0 | Development setup (complete) | Installable typed `src/` skeleton, no runtime dependencies, exact development pins and `uv.lock`. Ruff formatting/lint (88-character lines), strict mypy, pytest-asyncio auto mode, pre-commit Ruff/mypy, CI checks on Python 3.13/3.14/3.15 and isolated wheel import. All checks passed locally and on `main`. |
-| 1 | Model-free authoring and `Runtime.invoke` | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; invalid definitions, missing services and invalid arguments fail explicitly before skill effects. Prove annotated `Inject[T]`, singleton/scoped ownership, isolated context and validated outputs without network access. `invoke` returns the value; `run` exposes local `RunResult` metadata. |
+| 1 | Model-free authoring and `Runtime.invoke` (implemented; CI confirmation pending) | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; invalid definitions, missing services and invalid arguments fail explicitly before skill effects. Prove annotated `Inject[T]`, singleton/scoped ownership, isolated context and validated outputs without network access. `invoke` returns the value; `run` exposes local `RunResult` metadata. |
 | 2 | Native A2A hosting with structured requests and custom routing only | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Add `agentframe run module:Class` with explicit host config. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
 | 3 | Text generation through the shared `Model` contract | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
 | 4 | Typed structured outputs | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
@@ -281,6 +281,22 @@ builds, and an isolated wheel import/type marker check passed. The
 at commit `8d6a825` passed all three Python jobs and the build/import job.
 CI uses `actions/checkout@v7` and `astral-sh/setup-uv@v10.3.3`; the plan's
 `setup-uv@v10` alias did not resolve, so the verified release tag is pinned.
+
+M1 decisions confirmed on **2026-11-11** and implemented: `@agent` name/description
+default to the class name/docstring (`version` required); `@skill` requires `id`,
+with name defaulting to the title-cased method name, description to the method
+docstring (a description is required for agents and skills), and empty
+tags/permissions. Definitions validate at class creation without I/O. Subclasses
+inherit skills; redefining a skill needs `@skill` again, and duplicate ids across
+methods fail. Pydantic lax validation rejects unknown/missing arguments (`ctx`,
+injected names and `principal` count as unknown) with value-free messages.
+`Services.add` is app-owned; `add_scoped` accepts sync, async or async-generator
+factories whose post-`yield` cleanup always runs; duplicates fail. `RunResult`
+uses a UUID-string `invocation_id`, `timedelta` duration, `Usage(0, 0, 0,
+estimated=False)` for model-free runs and `FinishReason.COMPLETED`. A frozen
+`Principal(id, permissions)` enforces all-of `requires_permissions`, and
+`RunLimits.timeout_seconds` (default 120) raises `LimitExceededError`.
+Mark M1 complete only after CI is green on `main`.
 
 M1 is the first proof: a model-free agent. M2 adds independent native A2A
 interoperability; M3 meets the [README success criterion](../README.md#first-success-criterion)
@@ -386,7 +402,9 @@ belongs to that release even though telemetry exporters/integration stay optiona
   Ownership of normalization, `output=` / `tools=` and typed failures are decided.
 - Scoped factory/disposal interfaces, explicit local startup method and app/runtime
   service-container conflict handling; `Inject`, `Services`, ownership and startup
-  validation are decided. `RunResult` generics, duration unit, usage markers and
+  validation are decided, as are the M1 scoped-factory forms (sync, async,
+  async generator), `timedelta` duration and `Usage(..., estimated)` markers.
+  `RunResult` generics for `run`, provider usage completeness details and
   failed-run usage access remain open, not whether local metadata exists.
 - Host byte measurement, busy-error binding and probe bodies; retry configuration/
   backoff/transient codes; dedupe store/window API, atomicity, changed payloads

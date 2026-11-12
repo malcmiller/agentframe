@@ -1,7 +1,8 @@
 # Decorators and data contracts
 
 [Reference index and status conventions](README.md). Approved fields below are
-decisions, not implemented APIs; imports and unspecified details remain illustrative.
+decisions. `@agent` and `@skill` are implemented from source as of M1 (model-free,
+local `Runtime` only); `@tool` and unspecified details remain illustrative.
 Decorators describe/register behavior; Python
 types describe validated data. Neither replaces runtime enforcement.
 
@@ -10,18 +11,18 @@ types describe validated data. Neither replaces runtime enforcement.
 **Purpose / decision:** declare an `Agent` subclass's identity and collect its
 declared/inherited skills without I/O, inference, or process-global registration.
 
-**Proposed identity shape:** existing metadata names are illustrated below;
-fallback/format details remain open.
+**Signature status:** decided and implemented in M1 (2026-11-11). Version
+format constraints remain open.
 
 ```text
-@agent(name: str, description: str, version: str)
+@agent(version: str, *, name: str | None = None, description: str | None = None)
 ```
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `name` | `str` | Explicit in current examples; fallback open | Descriptive agent name, not a network route. |
-| `description` | `str` | Non-empty description required | Docstring fallback may be supported when unambiguous; exact fallback rules open. |
-| `version` | `str` | Explicit version required | Agent identity version, not the A2A protocol version; format constraints open. |
+| `version` | `str` | Required | Agent identity version, not the A2A protocol version; format constraints open. Omitting it raises `TypeError`. |
+| `name` | `str` | Optional; defaults to the class name | Descriptive agent name, not a network route. |
+| `description` | `str` | Optional; defaults to the docstring written on the class itself | A non-empty description is required: no explicit value and no own docstring raises `DefinitionError`. `Agent`'s docstring is never inherited. |
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -35,9 +36,13 @@ class Echo(Agent):
 ```
 
 **Behavior / failures:** preserve class identity, inheritance, signatures, and
-introspection. Require at least one valid declared/inherited skill; reject
-malformed metadata and duplicate IDs rather than dropping declarations.
-Definition errors fail startup with `DefinitionError`; override rules remain open. Optional
+introspection; the decorator returns the same class. Definitions are validated
+when the class is defined (import time), without I/O. Require at least one valid
+declared/inherited skill; reject malformed metadata and duplicate IDs rather than
+dropping declarations, raising `DefinitionError` that names the class, method and
+problem. Only `Agent` subclasses can be decorated. Subclasses inherit their
+parents' skills but must be decorated themselves: `definition()` on an
+undecorated subclass raises `DefinitionError` instead of reusing the parent's. Optional
 documentation/provider identity metadata has no finalized parameter contract.
 Cards also need truthful host settings; decoration does not start a server.
 
@@ -49,25 +54,24 @@ Cards also need truthful host settings; decoration does not start a server.
 **Purpose / decision:** register one async method under a stable skill ID, with
 descriptive A2A metadata and optional mandatory all-of permission requirements.
 
-**Signature status:** `limits=RunLimits(...)` is decided; the rest of the
-existing skill shape remains illustrative where details are unspecified.
+**Signature status:** decided and implemented in M1 (2026-11-11).
 
 ```text
 @skill(
-    id: str, name: str, description: str, tags: list[str],
-    requires_permissions: list[str] = ...,
-    limits: RunLimits = ...,
+    id: str, *, name: str | None = None, description: str | None = None,
+    tags: Iterable[str] = (), requires_permissions: Iterable[str] = (),
+    limits: RunLimits | None = None,
 )
 ```
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `id` | `str` | Required stable ID | Unique among registered skills, including inheritance; not necessarily the Python method name. |
-| `name` | `str` | Explicit in examples; fallback open | Human-readable advertised skill name. |
-| `description` | `str` | Explicit in examples; fallback open | Describes the ability; unambiguous docstring fallback is a design option. |
-| `tags` | `list[str]` in examples | Explicit in examples; omission/default open | Descriptive discovery tags, not execution instructions or permissions. |
-| `requires_permissions` | `list[str]` in examples | Optional declaration; concrete container/default open | All listed permissions required. Application-defined exact strings; no inferred wildcard/role semantics. |
-| `limits` | `RunLimits` | Optional per-skill overrides | Library -> agent -> skill -> per-run, within host ceilings. Partial-field merge mechanics remain open. |
+| `id` | `str` | Required, non-empty stable ID | Unique among registered skills, including inheritance; not necessarily the Python method name. |
+| `name` | `str` | Optional; defaults to the title-cased method name | Human-readable advertised skill name (`find_sources` -> `"Find Sources"`). |
+| `description` | `str` | Optional; defaults to the method docstring | Describes the ability. No explicit value and no docstring raises `DefinitionError`. |
+| `tags` | Iterable of `str` (lists in examples) | Optional; default empty | Descriptive discovery tags, not execution instructions or permissions. A single string is rejected. |
+| `requires_permissions` | Iterable of `str` (lists in examples) | Optional; default empty | All listed permissions required. Application-defined exact strings; no inferred wildcard/role semantics. A single string is rejected so `"admin"` cannot become characters. |
+| `limits` | `RunLimits` | Optional per-skill overrides | In M1 the skill's `limits` replace the agent class `limits` as a whole. Library -> agent -> skill -> per-run precedence within host ceilings; partial-field merge mechanics remain open. |
 
 ```python
 from typing import Protocol
@@ -106,7 +110,16 @@ the app directory at startup. Reject invalid definitions at startup with
 `DefinitionError`, including missing required services,
 unsupported annotations, and duplicate IDs. Undecorated helpers are not skills;
 no mandatory `handle()` or manual dispatch is needed. Inherited overrides must
-not accidentally discard permission requirements; exact rules remain open.
+not accidentally discard permission requirements: to change an inherited skill,
+redefine the same method with `@skill` again (the same id is allowed); overriding
+a skill method without `@skill` raises `DefinitionError`, as do two different
+methods with the same skill id.
+
+Skills must be `async def`, take a `ctx: RunContext` parameter and annotate every
+parameter and the return. Parameters must be named (no `*args`, `**kwargs` or
+positional-only parameters), and a business parameter cannot be named
+`principal`. The decorator only records metadata; `@agent` inspects the method
+once the class exists.
 
 This metadata is not an A2A RPC endpoint or an invented Agent Card permission
 field. Empty/omitted requirements do not grant anonymous remote access.
@@ -186,7 +199,12 @@ class SummaryInput(BaseModel):
 ```
 
 **Behavior / failures:** managed calls validate supported input/output contracts
-and fail explicitly on invalid data. Python schemas do not establish standard
+and fail explicitly on invalid data. M1 uses Pydantic in lax mode (for example
+`"5"` converts to `int`, and dicts convert to `BaseModel` arguments) with one
+validator per skill built at definition time. Unknown or missing arguments raise
+`InputValidationError`; a return value that fails its annotation raises
+`OutputValidationError`. Messages list field locations and problems, never
+submitted values. Python schemas do not establish standard
 A2A parameter dispatch; media types are not full schemas. Structured A2A part
 mapping and supported MCP schemas need version-specific verification.
 Typed model structured generation is a first-release requirement, not merely

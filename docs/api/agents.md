@@ -1,7 +1,9 @@
 # Agents and invocation context
 
 [Reference index and status conventions](README.md). The decisions below are
-approved contracts, not an installed SDK. Unspecified details remain open.
+approved contracts. `Agent`, `RunContext` (without `generate`), `Inject[T]` and
+`Services` are implemented from source as of M1; model, configuration and tool
+features are not yet. Unspecified details remain open.
 Models are dependencies, not a second kind of agent base class.
 
 ## `Agent`
@@ -17,7 +19,14 @@ Echo(*, model: Model = ..., config: AgentConfig = ..., tools = ...)
 ```
 
 `Echo` is defined below, not a library class. Exact base constructor, accepted
-containers, and omission representations remain open.
+containers, and omission representations remain open. In M1 `Agent` has no
+constructor logic; the `model`/`config`/`tools` arguments arrive with their
+milestones. M1 adds a class attribute and a class method:
+
+| Member | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `limits` | `ClassVar[RunLimits]` | `RunLimits()` | Agent-wide execution limits; a skill's own `limits` replace them for that skill. |
+| `definition()` | class method returning the validated agent definition | — | Returns metadata built by `@agent`; raises `DefinitionError` if this exact class was not decorated. |
 
 | Parameter/configuration | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
@@ -42,8 +51,9 @@ echo = Echo()
 
 **Behavior / failures:** preserve ordinary Python inheritance and immutable
 authoring configuration. Do not keep mutable caller/conversation state on the
-shared agent. Reject invalid skill definitions and duplicate IDs; explicit
-override semantics remain open. Construction/import performs no inference,
+shared agent. Reject invalid skill definitions and duplicate IDs. Subclasses
+inherit skills; redefining a skill requires `@skill` again, and an override
+without it raises `DefinitionError` (see [`@skill`](decorators.md#skill)). Construction/import performs no inference,
 download, server startup, or cloud fallback. Missing model configuration must
 fail when generation is attempted, not when model-free work is invoked.
 Outside `Services`, injected clients remain application-owned unless ownership
@@ -60,16 +70,18 @@ and scoped ownership follows the explicit rules below.
 it as `ctx: RunContext`; they do not construct/subclass it or accept it from
 request arguments.
 
-**Signature status:** no public constructor is specified. The known public
-method is [`generate`](#runcontextgenerate); context accessor details beyond the
-illustrated attributes below remain open.
+**Signature status:** applications do not construct it. M1 implements a frozen
+dataclass with the attributes below; [`generate`](#runcontextgenerate) arrives
+in M3. Further accessors remain open.
 
 | Attribute/concern | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `principal` | Verified immutable `Principal` when established; absent representation open | Runtime-supplied; required for protected work | Never supplied as business data or inferred from model output, roles, session IDs, or tracing. |
+| `invocation_id` | `str` (UUID) | Always set | Same value as `RunResult.invocation_id` and error `invocation_id`; correlation, never authentication. |
+| `principal` | `Principal \| None` | Runtime-supplied; `None` when no identity was supplied | Verified immutable identity, required for protected work. Never supplied as business data or inferred from model output, roles, session IDs, or tracing. |
+| `deadline` | `float` | Always set | Event-loop time (`loop.time()`) when the run's timeout expires, as used by `asyncio.timeout_at`. |
 | Service injection | Skill parameters annotated `Inject[T]` | Services registered by trusted application | No untyped context service bag; injected parameters are excluded from caller input and all published schemas/cards. |
 | Model access | Injected `Model` through `generate` | Model optional until used | No implicit model or fallback. No additional public model accessor is specified. |
-| Deadline, cancellation, correlation, run state | Exact accessors/types open | Managed per invocation | Enforce effective limits and isolation; IDs/accounting work without tracing. |
+| Cancellation, run state | Exact accessors/types open | Managed per invocation | Enforce effective limits and isolation; IDs/accounting work without tracing. |
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -169,8 +181,8 @@ resistance. Cancellation does not guarantee no provider charges.
 **Purpose / decision:** mark a skill parameter as a trusted service dependency,
 not caller-supplied business data.
 
-**Signature status:** `Inject[T]` annotation is decided; its internal typing
-implementation remains open. It is not a service constructor.
+**Signature status:** decided and implemented in M1 as a PEP 695 type alias over
+`Annotated[T, marker]`, so type checkers see `T`. It is not a service constructor.
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -199,8 +211,9 @@ permissions and current resource/action policy; DI is not authorization.
 
 **Behavior / failures:** resolve and validate service registrations before
 serving/invocation; reject caller attempts to supply injected parameters with
-`InputValidationError`. Local `Runtime(services=...)` uses the same injection.
-Exact factory signatures and disposal protocol remain open.
+`InputValidationError`. Local `Runtime(services=...)` uses the same injection;
+in M1 it checks every `Inject[T]` registration before running the skill and raises
+`DefinitionError` naming the parameter if one is missing.
 
 **Related:** [`Services`](#services), [`Runtime`](runtime.md#runtime),
 [ownership rationale](../base-classes.md#authoring-and-extension-decisions).
@@ -225,9 +238,11 @@ runtime = Runtime(services=services)
 ```
 
 **Behavior / failures:** registrations cannot be populated from request data.
-For local use the application owns singleton lifetime too; do not make a run
-close shared singletons. Startup/preflight API, factory async support and exact
-close protocol remain open, not implicit public methods.
+For local use the application owns singleton lifetime too; a run never closes
+shared singletons. Registering the same type twice, across `add` and
+`add_scoped`, raises `DefinitionError`. M1 also provides
+`is_registered(service_type) -> bool`. A startup/preflight API for hosts remains
+open.
 
 **Related:** [`Inject[T]`](#injectt), [`AgentApp`](hosting.md#agentapp).
 
@@ -235,7 +250,7 @@ close protocol remain open, not implicit public methods.
 
 **Purpose / decision:** register an app-wide singleton.
 
-**Decided call:** `services.add(DocumentStore, my_store)`; return value unspecified.
+**Decided call:** `services.add(DocumentStore, my_store)`; returns `None`.
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -253,8 +268,8 @@ def register_store(services: Services, store_type: type, my_store: object) -> No
 This generic registration helper receives an application type/instance; it does
 not settle runtime compatibility checks or permit arbitrary mismatched services.
 
-**Behavior / failures:** validate required registrations at startup.
-Duplicate-registration/replacement rules remain open.
+**Behavior / failures:** validate required registrations before running.
+A duplicate registration raises `DefinitionError`; there is no replacement.
 
 **Related:** [`Services`](#services), [`Inject[T]`](#injectt).
 
@@ -263,27 +278,37 @@ Duplicate-registration/replacement rules remain open.
 **Purpose / decision:** register a factory for a fresh service per run, closed
 automatically afterward by AgentFrame.
 
-**Decided call:** `services.add_scoped(DbSession, make_session)`; factory and return
-typing remain open.
+**Decided call:** `services.add_scoped(DbSession, make_session)`; returns `None`.
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | Service type | `T` | Required | Key matched by `Inject[T]`. |
-| Factory | Callable producing a run-scoped service | Required | New per run; only AgentFrame-created scoped instances are closed by AgentFrame, including failure/cancellation cleanup. |
+| Factory | Zero-argument sync function, async function, or async generator function | Required | Created once per type per run; only AgentFrame-created scoped instances are closed by AgentFrame. For a generator, code after its single `yield` is cleanup and always runs after success, skill failure or timeout. |
 
 ```python
-from collections.abc import Callable
+from collections.abc import AsyncIterator
 from agentframe import Services
 
 
-def register_session(
-    services: Services, session_type: type, make_session: Callable[[], object],
-) -> None:
-    services.add_scoped(session_type, make_session)
+class DbSession:
+    async def close(self) -> None: ...
+
+
+async def open_session() -> AsyncIterator[DbSession]:
+    session = DbSession()
+    yield session
+    await session.close()
+
+
+services = Services()
+services.add_scoped(DbSession, open_session)
 ```
 
-`session_type` and factory are application-supplied. Exact factory dependency
-resolution and synchronous/asynchronous disposal interfaces are still open.
+`DbSession` is an application-supplied placeholder. Unlike
+`contextlib.asynccontextmanager`, the run's exception is not thrown into the
+generator, so cleanup after `yield` runs without `try`/`finally`; a generator
+that yields more than once raises `DefinitionError`. Factories take no
+arguments; factory dependency resolution remains open.
 
 **Behavior / failures:** never reuse a scoped instance across runs; preflight
 missing service registrations before accepting work. Factory execution failures

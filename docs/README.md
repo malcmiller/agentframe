@@ -1,8 +1,9 @@
 # AgentFrame documentation
 
 These documents record decided design contracts and still-open API details,
-not an implemented or stable agent SDK. The repository includes an installable
-M0 package skeleton and development tooling; see the
+not a stable agent SDK. The repository includes the M0 development tooling and
+M1 model-free authoring with local `Runtime.invoke` / `run`, available from
+source; later-milestone features remain design proposals. See the
 [setup and check commands](../README.md#development-and-contributions).
 
 ## Proposed API reference
@@ -101,5 +102,5 @@ formatting/linting, strict mypy on `agentframe` and tests, and pytest with
 pytest-asyncio auto mode, with CI/pre-commit checks.
 Follow the [readability-first contributor rules](../AGENTS.md#code-quality-and-readability).
 Exact development pins live in `pyproject.toml` and `uv.lock`. Protocol/provider
-dependencies are not installed in M0; transport and provider compatibility
+dependencies are not installed yet (M1 added only Pydantic); transport and provider compatibility
 still need implementation evidence in their milestones.
