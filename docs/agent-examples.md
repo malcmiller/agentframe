@@ -161,6 +161,17 @@ Do not use the retired Azure AI Inference SDK. See
 [API choice and source](initial-outline.md#resolved-m0-platform-and-api-decisions).
 No skill code changes when the configured model host changes.
 
+### Choose the host by configuration
+
+[`examples/assistant.py`](../examples/assistant.py) is the runnable version of
+this switch (the [README success criterion](../README.md#first-success-criterion)).
+Its `create_app()` builds `OllamaModel` (with `context_window=8192`) or
+`FoundryModel` (signed in through the Azure CLI's Entra ID credential) from
+environment variables and serves one unchanged agent class, which mixes a
+model-backed skill with a model-free one. `tests/test_success_criterion.py`
+calls it over A2A with the official client using two scripted models, and the
+opt-in real-provider tests run the same contract against Ollama and Foundry.
+
 ## Mixing both kinds of skill
 
 An agent may inherit existing skills and add model-free behavior. Injecting a
