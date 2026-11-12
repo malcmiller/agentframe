@@ -21,7 +21,8 @@ define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
 permission checks and a timeout. M2 A2A hosting is in progress: `AgentApp`
 serves an agent as an ASGI application with its Agent Card and an authenticated
-A2A endpoint. There is no published release or model support (M3+) yet, and
+A2A endpoint, and `agentframe run` serves it with one command (see
+[development](docs/development.md#one-agent-m2)). There is no published release or model support (M3+) yet, and
 the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
 interfaces remain open. Examples beyond the M1 surface are design proposals.
@@ -173,7 +174,8 @@ No orchestration helpers in the first multi-agent release: use plain Python
 `await`, `asyncio.TaskGroup` and `directory.find(skill=... / tags=...)`.
 Typed `Remote[ResearchAgent]` proxies are a later option, not proprietary RPC.
 
-M2 adds `agentframe run module:Class`; M8+ adds `agentframe dev` reading
+M2 adds `agentframe run module:create_app` (and `module:Class --dev` for
+local anonymous development); M8+ adds `agentframe dev` reading
 `agentframe.yaml`, local registry/development API-key wiring and tagged combined
 logs. Package one container per agent, with a Dockerfile template and generated
 Compose example; Foundry/Kubernetes templates are later. See the

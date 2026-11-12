@@ -43,3 +43,9 @@ jobs:
           python -c "import agentframe, starlette, sse_starlette;
           from a2a.server.routes import create_jsonrpc_routes;
           print(agentframe.__version__)"
+      - name: Run the agentframe command from the wheel's server extra
+        working-directory: ${{ runner.temp }}
+        run: >-
+          uv run --isolated --no-project --python 3.13
+          --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server]"
+          agentframe run --help
