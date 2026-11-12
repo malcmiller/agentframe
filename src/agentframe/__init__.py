@@ -28,6 +28,7 @@ from agentframe.errors import (
 from agentframe.host import HostConfig
 from agentframe.limits import RunLimits
 from agentframe.principal import Principal
+from agentframe.routing import Clarification, SkillCall, SkillRouter
 from agentframe.runtime import FinishReason, RunResult, Runtime, Usage
 from agentframe.services import Inject, Services
 
@@ -44,6 +45,7 @@ __all__ = [
     "Authenticator",
     "AuthorizationPolicy",
     "CancelledError",
+    "Clarification",
     "DeclaresCardSecurity",
     "DefinitionError",
     "FinishReason",
@@ -60,7 +62,9 @@ __all__ = [
     "RunResult",
     "Runtime",
     "Services",
+    "SkillCall",
     "SkillDefinition",
+    "SkillRouter",
     "Usage",
     "VerifiedCaller",
     "__version__",
