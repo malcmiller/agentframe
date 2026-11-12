@@ -11,17 +11,26 @@ from typing import Any
 import httpx
 import ollama
 import pytest
+from pydantic import BaseModel
 
 from agentframe import (
+    Agent,
     DefinitionError,
     FinishReason,
     Message,
+    ModelError,
     ModelRequest,
     ModelSettings,
     OllamaModel,
+    OutputSchema,
+    OutputValidationError,
     ProviderError,
+    RunContext,
+    Runtime,
     ToolSpec,
     UnsupportedCapabilityError,
+    agent,
+    skill,
 )
 
 type Handler = Callable[[httpx.Request], httpx.Response]
@@ -167,7 +176,7 @@ async def test_context_window_is_read_once_from_model_metadata(
         await model.generate(ask("Two"))
 
     assert capabilities.context_window == 8192
-    assert capabilities.structured_output is False
+    assert capabilities.structured_output is True
     assert capabilities.tools is False
     assert server.paths() == ["/api/show", "/api/chat", "/api/chat"]
 
@@ -326,3 +335,106 @@ async def test_tools_are_not_supported_yet_and_nothing_is_sent(
             await model.generate(TOOL_REQUEST)
 
     assert server.paths() == []
+
+
+# Structured output
+
+
+class Summary(BaseModel):
+    text: str
+    points: list[str] = []
+
+
+@agent(version="1.0.0")
+class Summarizer(Agent):
+    """Summarizes text as a typed summary."""
+
+    @skill("summarize", tags=["text"])
+    async def summarize(self, text: str, ctx: RunContext) -> Summary:
+        """Summarize text."""
+        return await ctx.generate(text, output=Summary)
+
+    @skill("failure", tags=["text"])
+    async def failure(self, text: str, ctx: RunContext) -> str:
+        """Return the name of the error a structured call raises."""
+        try:
+            await ctx.generate(text, output=Summary)
+        except (ModelError, OutputValidationError) as error:
+            return type(error).__name__
+        return "no error"
+
+
+def ask_for_summary() -> ModelRequest:
+    return ModelRequest(
+        messages=(Message(role="user", content="Summarize"),),
+        settings=ModelSettings(max_output_tokens=100),
+        output=OutputSchema(name="Summary", json_schema=Summary.model_json_schema()),
+    )
+
+
+async def test_structured_requests_send_the_schema_as_format(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    server = FakeOllama()
+    use_server(server)
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        await model.generate(ask_for_summary())
+
+    [body] = server.chat_bodies()
+    assert body["format"] == Summary.model_json_schema()
+    assert body["messages"] == [{"role": "user", "content": "Summarize"}]
+
+
+async def test_text_requests_send_no_format(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    server = FakeOllama()
+    use_server(server)
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        await model.generate(ask("Say hello"))
+
+    [body] = server.chat_bodies()
+    assert "format" not in body
+
+
+async def test_structured_reply_is_validated_into_the_output_type(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    reply = chat_reply('{"text": "Short."}', prompt_eval_count=12, eval_count=3)
+    use_server(FakeOllama(chat=reply))
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        summary = await Runtime().invoke(
+            Summarizer(model=model), skill="summarize", arguments={"text": "Long."}
+        )
+
+    assert summary == Summary(text="Short.", points=[])
+
+
+@pytest.mark.parametrize(
+    ("ollama_reply", "error"),
+    [
+        (chat_reply('{"text": "Sh', done_reason="length"), "IncompleteOutputError"),
+        (chat_reply("I would rather not."), "OutputValidationError"),
+    ],
+    ids=["truncated", "prose-instead-of-json"],
+)
+async def test_failed_structured_replies_raise_typed_errors_with_usage(
+    use_server: Callable[[FakeOllama], None],
+    ollama_reply: dict[str, Any],
+    error: str,
+) -> None:
+    use_server(
+        FakeOllama(chat={**ollama_reply, "prompt_eval_count": 12, "eval_count": 3})
+    )
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        result = await Runtime().run(
+            Summarizer(model=model), skill="failure", arguments={"text": "Long."}
+        )
+
+    assert result.value == error
+    assert result.model_calls == 1
+    assert result.usage.total_tokens == 15
