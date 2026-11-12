@@ -770,9 +770,9 @@ release v1.0.1). M2 pins `a2a-sdk[http-server]==1.3.0` as a core dependency
 because A2A hosting is the default interface (the optional `agentframe[server]`
 extra only adds Uvicorn for `agentframe run`); the `http-server` extra is listed explicitly rather than relied on transitively.
 The selected binding is **JSON-RPC over HTTP** for protocol 1.0 only, with the
-SDK's 0.3 compatibility disabled. `tests/test_a2a_binding.py` proves an official
+SDK's 0.3 compatibility disabled. `tests/unit/hosting/test_a2a_binding.py` proves an official
 SDK client exchanging a message over that binding and the rejection of pre-1.0
-requests; CI imports the server binding from a clean wheel install. `tests/test_interoperability.py`
+requests; CI imports the server binding from a clean wheel install. `tests/integration/test_interoperability.py`
 proves native type mappings and independent official-client interoperability
 with AgentFrame hosting end to end over localhost HTTP (M2 #10). MCP version selection is separate. Constructor signatures/imports
 are deliberately not copied as stable AgentFrame APIs. See

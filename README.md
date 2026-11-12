@@ -49,7 +49,7 @@ interfaces remain open. Examples beyond the M1 surface are design proposals.
 Decorators describe the agent; an `Agent` subclass implements behavior. Models
 and infrastructure are injected. Each ability is a separate `@skill` method; no
 abstract `handle()` or manual dispatch method is required. This M1 example works
-from source today (it is kept in `tests/test_example.py`); run the `await` lines
+from source today (it is kept in `tests/integration/test_example.py`); run the `await` lines
 inside an async function or `asyncio.run`:
 
 ```python
@@ -91,7 +91,7 @@ Names default to the class/method name and descriptions to docstrings.
 ### Hosting over A2A
 
 Serve the same agent to any A2A 1.0 client with a `create_app()` function (also
-kept working in `tests/test_example.py`). The
+kept working in `tests/integration/test_example.py`). The
 API key and policy below are **development placeholders**: production hosts
 need your real identity provider and resource checks. Remote hosts always
 require an explicit `auth=` choice.
@@ -151,7 +151,7 @@ endpoint at `/a2a`; callers send the key in the `X-API-Key` header. Callers can
 name a skill with JSON arguments through the
 [skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format),
 or send free text to a custom [`SkillRouter`](docs/api/hosting.md#skillrouter).
-`tests/test_interoperability.py` drives every case with the official A2A client.
+`tests/integration/test_interoperability.py` drives every case with the official A2A client.
 
 The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
 need no provider configuration. See [agents with and without models](docs/agent-examples.md)
@@ -236,7 +236,7 @@ localhost server; production hosts need real authentication and authorization
 card and call `answer` or `count_words` through the
 [skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format);
 the completed task's metadata reports the run's token usage.
-`tests/test_success_criterion.py` proves this offline in CI: the official A2A
+`tests/integration/test_success_criterion.py` proves this offline in CI: the official A2A
 client calls the same agent served with two different scripted models, with no
 code change, and `count_words` runs without inference. The opt-in
 [real-provider tests](AGENTS.md#real-provider-tests-opt-in-local-only) run the

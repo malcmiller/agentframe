@@ -168,7 +168,7 @@ this switch (the [README success criterion](../README.md#first-success-criterion
 Its `create_app()` builds `OllamaModel` (with `context_window=8192`) or
 `FoundryModel` (signed in through the Azure CLI's Entra ID credential) from
 environment variables and serves one unchanged agent class, which mixes a
-model-backed skill with a model-free one. `tests/test_success_criterion.py`
+model-backed skill with a model-free one. `tests/integration/test_success_criterion.py`
 calls it over A2A with the official client using two scripted models, and the
 opt-in real-provider tests run the same contract against Ollama and Foundry.
 

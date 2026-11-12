@@ -77,7 +77,7 @@ as Test Sources Root, and use pytest as the test runner.
 
 ### Real-provider tests (opt-in, local only)
 
-`tests/test_providers.py` runs one agent against a real Ollama server and a real
+`tests/integration/test_providers.py` runs one agent against a real Ollama server and a real
 Foundry deployment: text generation with usage, a tiny `max_output_tokens`
 raising `IncompleteOutputError`, a clear error for an unknown model/deployment,
 and a hosted structured call through the official A2A client. They are marked
