@@ -22,6 +22,7 @@ from agentframe.errors import (
     PermissionDeniedError,
     PolicyUnavailableError,
 )
+from agentframe.host import HostConfig
 from agentframe.limits import RunLimits
 from agentframe.principal import Principal
 from agentframe.runtime import FinishReason, RunResult, Runtime, Usage
@@ -40,6 +41,7 @@ __all__ = [
     "AuthorizationPolicy",
     "DefinitionError",
     "FinishReason",
+    "HostConfig",
     "Inject",
     "InputValidationError",
     "LimitExceededError",
