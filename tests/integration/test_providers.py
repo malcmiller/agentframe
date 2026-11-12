@@ -75,6 +75,9 @@ class Capital(BaseModel):
 class Geographer(Agent):
     """Answers geography questions with typed data."""
 
+    # Ollama sees only the schema in format=, so describe the shape here.
+    instructions = "Reply with JSON: the country, its capital city and nicknames."
+
     # Reasoning deployments count reasoning tokens toward the output cap.
     model_settings = ModelSettings(max_output_tokens=256)
     limits = RunLimits(max_input_tokens=1000)
@@ -200,19 +203,13 @@ async def test_unknown_model_fails_with_a_clear_error(open_model: OpenModel) -> 
     assert raised.value.invocation_id
 
 
-# Structured output (Foundry; Ollama follows in its own story)
+# Structured output
 
 
-@pytest.mark.foundry
-@pytest.mark.skipif(
-    os.environ.get("AGENTFRAME_TEST_FOUNDRY") != "1",
-    reason="set AGENTFRAME_TEST_FOUNDRY=1",
-)
-async def test_foundry_returns_a_validated_structured_output() -> None:
-    async with foundry_model() as model:
-        result = await Runtime().run(
-            Geographer(model=model), skill="capital", arguments={"country": "France"}
-        )
+async def test_agent_returns_a_validated_structured_output(model: Model) -> None:
+    result = await Runtime().run(
+        Geographer(model=model), skill="capital", arguments={"country": "France"}
+    )
 
     assert isinstance(result.value, Capital)
     assert result.value.city == "Paris"
