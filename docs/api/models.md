@@ -192,17 +192,19 @@ non-streaming Responses call.
   `server_error` and `rate_limit_exceeded`; `cancelled`, `queued` and
   `in_progress` raise a non-transient `ProviderError`.
 - Usage (`input_tokens`, `output_tokens`, `total_tokens`) is parsed whenever
-  present, including on a `ProviderError` from a failed response; missing
-  usage is unknown (`None`), not zero.
+  present, including on a `ProviderError` from a failed response and on the
+  `IncompleteOutputError` for an early stop, so the run's accounting settles to
+  it; missing usage is unknown (`None`), not zero.
 - HTTP 408, 429 and 5xx, connection failures and timeouts are transient
-  `ProviderError`s (with a numeric `Retry-After` hint as `retry_after`);
+  `ProviderError`s (with the retry hint as `retry_after` in seconds, read from
+  `retry-after-ms` when present, else a numeric `Retry-After`);
   401/403, 404, other 4xx and Entra token failures are not. Messages never
   include the service's error text or credentials.
 - [`capabilities`](#modelcapabilities-1) does no I/O and reports the
   configured `context_window` (or `None`); structured output and tools are
-  unsupported. Failing at startup when the context window is unknown and the
-  run sets no explicit `max_input_tokens` is part of
-  [limits accounting](../limits.md) (M3 #36), not the adapter.
+  unsupported. Without `context_window=`, an agent using this model needs an
+  explicit `RunLimits(max_input_tokens=...)`; otherwise `AgentApp` startup
+  fails with `DefinitionError` ([limits accounting](../limits.md#implemented-token-accounting-m3), M3 #36).
 - Opt-in real test: set `AGENTFRAME_TEST_FOUNDRY=1`,
   `AGENTFRAME_FOUNDRY_ENDPOINT` and `AGENTFRAME_FOUNDRY_DEPLOYMENT`; it signs in
   with the Azure CLI credential. Default test runs never call Foundry.
@@ -294,7 +296,7 @@ ScriptedModel(replies: Iterable[str | ModelResponse | Exception] = (), *, capabi
 | Parameter / attribute | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `replies` | `Iterable[str \| ModelResponse \| Exception]` | Default empty | One reply per `generate` call, in order. A `str` returns a `COMPLETED` response with unknown usage; a `ModelResponse` is returned as given (scripted usage/finish reason); an exception, such as `ProviderError(..., transient=True)`, is raised. |
-| `capabilities` | `ModelCapabilities \| None` | Default `ModelCapabilities()` | Returned by `capabilities()`. |
+| `capabilities` | `ModelCapabilities \| None` | Default `ModelCapabilities(context_window=SCRIPTED_CONTEXT_WINDOW)` (128000) | Returned by `capabilities()`. Pass `ModelCapabilities()` to test a model that reports no context window. |
 | `requests` | `list[ModelRequest]` | Attribute | Every request `generate` received, for asserting on assembled messages and settings. |
 | `closed` | `bool` | Attribute | Whether `close()` (or `async with` exit) ran. |
 

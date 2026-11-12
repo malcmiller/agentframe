@@ -196,14 +196,19 @@ before any error is raised. Unknown usage stays unknown, never zero.
 | `LENGTH` | `IncompleteOutputError`; no partial text |
 | `REFUSED` | `ModelRefusalError` |
 | `CONTENT_FILTER` | `ModelRefusalError` (blocked by a content filter) |
-| Model raises `ProviderError` | Re-raised unchanged; its reported usage, or unknown usage, is recorded |
+| Model raises another `ModelError` (such as `ProviderError`) | Re-raised unchanged; the usage it carries, or unknown usage, is recorded |
 | Model raises `UnsupportedCapabilityError` | Re-raised; not counted, because nothing was sent |
-| Run timeout expires during the call | The call is cancelled; `LimitExceededError` |
+| Model reports no context window and no `max_input_tokens` is set | `DefinitionError`; nothing is sent (M3 #36) |
+| Input, context window or remaining `max_total_tokens` too small for the call | `TokenLimitExceededError`; nothing is sent (M3 #36) |
+| `max_model_calls` reached | `ModelCallLimitExceededError`; nothing is sent (M3 #36) |
+| Run timeout expires during the call | The call is cancelled; `TimeoutLimitExceededError` |
 | Run cancelled during the call | The call is cancelled |
 
 Hosted runs map these errors to task `FAILED` with their safe message and the
 run's `invocation_id` (see [result and failure mapping](hosting.md#result-and-failure-mapping)). Token limits and
-reservations (#36) and retries (#37) are not implemented yet. Every call uses
+reservations work as described in
+[implemented token accounting](../limits.md#implemented-token-accounting-m3);
+retries (#37) are not implemented yet. Every call uses
 the run's effective `model_settings`, merged field by field (see
 [precedence](configuration.md#precedence)).
 

@@ -390,7 +390,8 @@ Errors derive from `AgentFrameError`: `DefinitionError`, `InputValidationError`,
 `OutputValidationError`, `AuthenticationError`, `PermissionDeniedError`,
 `PolicyUnavailableError`, `ModelError` (`UnsupportedCapabilityError`,
 `ModelRefusalError`, `IncompleteOutputError`, `ProviderError`),
-`LimitExceededError` (token/model/tool/timeout subtype names open) and AgentFrame
+`LimitExceededError` (`TokenLimitExceededError`, `ModelCallLimitExceededError`,
+`TimeoutLimitExceededError`; tool subtype name open) and AgentFrame
 `CancelledError` distinct from `asyncio.CancelledError`. Every error carries
 invocation ID and safe message; constructor/startup-ID/transport details open.
 A2A failures use safe failed/rejected states as appropriate; no raw provider

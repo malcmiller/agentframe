@@ -69,9 +69,9 @@ RunLimits(
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `max_input_tokens` | `int`; omitted-value representation open | Defaults to model-reported context size | Bounds assembled input, including instructions/history/user content/tool schemas/results; actual input plus reserved output must also fit context. Unknown capacity is not unlimited; explicit overflow fails, never truncates. |
-| `max_total_tokens` | `int` | `100000`, configurable | Aggregate input/output across a run, retries and continuations, without double-counting overlapping usage. |
-| `max_model_calls` | `int` | `10`, configurable | Dispatched inference attempts including retries, not just successful completions. |
+| `max_input_tokens` | `int \| None` (implemented M3 #36) | Unset (`None`) means the model-reported context window; unknown window plus unset limit is a `DefinitionError` | Bounds assembled input, including instructions/history/user content/tool schemas/results; actual input plus reserved output must also fit context. Unknown capacity is not unlimited; explicit overflow fails, never truncates. |
+| `max_total_tokens` | `int \| None` (implemented M3 #36) | `100000`, configurable | Aggregate input/output across a run, retries and continuations, without double-counting overlapping usage. |
+| `max_model_calls` | `int \| None` (implemented M3 #36) | `10`, configurable | Dispatched inference attempts including retries, not just successful completions. |
 | `max_tool_calls` | `int` | `20`, configurable | Bounds managed tool executions/continuations; detailed attempted/denied call counting remains open. |
 | `timeout_seconds` | Numeric seconds; accepted numeric type open | `120`, configurable | Wall-clock invocation deadline including model/tool work; retries never reset it. |
 
@@ -87,20 +87,36 @@ limits = RunLimits(
 )
 ```
 
-**Behavior / failures:** validate finite settings; exact numeric ranges and zero
-semantics remain open. Implemented so far: a frozen, keyword-only
-`RunLimits(*, timeout_seconds: float | None = None)`; the other fields arrive
-with model and tool milestones. Every field defaults to `None`, meaning
-"unset", and is inherited field by field (see [precedence](#precedence)); the
-library defaults are `DEFAULT_LIMITS = RunLimits(timeout_seconds=120.0)`. A
-`timeout_seconds` that is set but not greater than zero raises
-`DefinitionError`, and exceeding it raises `LimitExceededError`. Model-free skills still
-have deadlines but consume no model tokens. Concurrency/request-size controls
-are separate host requirements, not invented fields on this type.
+**Behavior / failures:** implemented so far: a frozen, keyword-only
+`RunLimits(*, timeout_seconds: float | None = None, max_total_tokens: int | None
+= None, max_model_calls: int | None = None, max_input_tokens: int | None =
+None)`; `max_tool_calls` arrives with tools (M5). Every field defaults to
+`None`, meaning "unset", and is inherited field by field (see
+[precedence](#precedence)); the library defaults are `DEFAULT_LIMITS =
+RunLimits(timeout_seconds=120.0, max_total_tokens=100_000, max_model_calls=10)`,
+with `max_input_tokens` unset so it falls back to the model's context window. A
+field that is set but not greater than zero raises `DefinitionError`. Exceeding
+a limit raises a `LimitExceededError` subclass naming it:
+`TimeoutLimitExceededError`, `TokenLimitExceededError` or
+`ModelCallLimitExceededError`. Model-free skills still have deadlines but
+consume no model tokens and need no context window. Concurrency/request-size
+controls are separate host requirements, not invented fields on this type.
 
-Preflight assembled input and actual context capacity; atomically reserve
-input/output allowances and reconcile available usage. Unknown usage is not
-zero. Strict accounting must reject work without a sufficiently reliable bound;
+**Implemented accounting (M3 #36):** before each model call the runtime reads
+`Model.capabilities()`, estimates the assembled input and checks it against the
+input limit and, with the full `max_output_tokens`, against the context window.
+It then atomically reserves input estimate + `max_output_tokens` against what is
+left of `max_total_tokens` and counts the call against `max_model_calls`;
+concurrent calls in one run cannot both take the same tokens. If the
+reservation does not fit, the call is not sent and `TokenLimitExceededError` is
+raised; the output cap is never lowered to make it fit. After the call the
+reservation is replaced by actual usage; a failed call whose usage is unknown
+keeps its reservation. When the model reports no context window and no level
+sets `max_input_tokens`, `AgentApp` fails startup (`Runtime.validate_model`) and
+a local run fails with `DefinitionError` before its first model call. See
+[limits](../limits.md#implemented-token-accounting-m3) for the estimate.
+
+Unknown usage is not zero. Strict accounting must reject work without a sufficiently reliable bound;
 strict-mode names/capabilities remain open. Model-backed routing must be
 budgeted before selection and pass remaining allowance to the skill. Retries,
 continuations, and explicit child work cannot reset or double-spend budgets.
@@ -112,8 +128,9 @@ Host admission/bytes/shutdown defaults live on `HostConfig`, not this type.
 
 Invalid/excessive requests, input overflow, exhausted budgets, unavailable
 strict accounting, deadline, cancellation, and provider errors are distinct
-failures in the [decided hierarchy](runtime.md#agentframeerror); token, model-call,
-tool-call and timeout subtype names remain open. Never silently truncate, discard
+failures in the [decided hierarchy](runtime.md#agentframeerror); the token,
+model-call and timeout subtypes are implemented, the tool-call subtype name
+remains open. Never silently truncate, discard
 history, disable validation, or switch models to fit a limit. Accounting works
 without tracing and is not an unqualified financial cap or free-cancellation
 guarantee.

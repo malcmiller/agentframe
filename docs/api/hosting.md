@@ -74,6 +74,11 @@ authenticator; no remote host starts without a choice.
   invalid agent, a missing service or an authenticator without
   [`card_security()`](authorization.md#declarescardsecurity) raises
   `DefinitionError` before anything is served.
+- Server startup (the ASGI lifespan) then runs
+  [`Runtime.validate_model`](runtime.md#runtimevalidate_model) (M3 #36): when
+  the agent's model reports no context window and a skill has no
+  `RunLimits.max_input_tokens`, startup fails with `DefinitionError` and no
+  request is served. A context size is never guessed.
 - `GET /.well-known/agent-card.json` serves the generated card publicly, without
   credentials.
 - `POST /a2a` is the A2A 1.0 JSON-RPC endpoint from the official SDK. Every
@@ -140,6 +145,7 @@ Every other outcome follows this table:
 | Clarification needed | Task `INPUT_REQUIRED` |
 | Timeout, output validation failure, skill or router exception, router timeout, policy unavailable | Task `FAILED`, safe message |
 | Model error: unsupported capability, refusal, incomplete output, provider failure (M3 #33) | Task `FAILED`, safe message |
+| Token or model-call limit exceeded (M3 #36) | Task `FAILED`, safe message |
 | Cancelled | Task `CANCELED` |
 
 - A malformed [skill call](#structured-skill-call-wire-format) is refused with
@@ -155,6 +161,26 @@ Every other outcome follows this table:
   including failures. The host allocates the ID before the run, so the caller,
   the skill's `ctx.invocation_id` and the log entry for a skill exception all
   share it. A failure raised before a run starts gets a new ID.
+- Since M3 #36 every task status also carries a safe `usage` snapshot next to
+  `invocation_id`, on success, failure, input-required and cancel:
+
+  ```json
+  {
+    "invocation_id": "3f2c...",
+    "usage": {
+      "input_tokens": 17,
+      "output_tokens": 8,
+      "total_tokens": 25,
+      "estimated": false,
+      "model_calls": 2
+    }
+  }
+  ```
+
+  Token counts are `null` when unknown, never `0`: for example a cancelled task
+  whose model call was still running. `estimated` is `true` when any count is
+  a character-based estimate. Model-free runs report zeros. No provider
+  payloads, `RunResult`, prompts or outputs are included.
 - `INPUT_REQUIRED` with the question as the status message is published when
   a [`SkillRouter`](#skillrouter) asks for clarification (#6).
 - `CancelTask` ends a running task in `CANCELED` through AgentFrame's
