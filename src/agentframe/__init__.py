@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 from agentframe.authoring.agent import Agent
 from agentframe.authoring.context import RunContext
-from agentframe.authoring.decorators import agent, skill
-from agentframe.authoring.definitions import SkillDefinition
+from agentframe.authoring.decorators import agent, skill, tool
+from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
 from agentframe.authoring.services import Inject, Services
 from agentframe.errors import (
     AgentFrameError,
@@ -105,12 +105,14 @@ __all__ = [
     "SkillRouter",
     "TimeoutLimitExceededError",
     "TokenLimitExceededError",
+    "ToolDefinition",
     "UnsupportedCapabilityError",
     "Usage",
     "VerifiedCaller",
     "__version__",
     "agent",
     "skill",
+    "tool",
 ]
 
 
