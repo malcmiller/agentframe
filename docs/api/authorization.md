@@ -3,7 +3,8 @@
 [Reference index and status conventions](README.md). These are mostly
 unimplemented design contracts. M1 implements `Principal` and permission checks;
 M2 story #4 implements `Authenticator`, `APIKeyAuth` and `AllowAnonymous` as
-standalone units, which the HTTP host (#3) wires in. M2 story #19 implements
+standalone units, which the HTTP host [`AgentApp`](hosting.md#agentapp) (#3)
+wires in. M2 story #19 implements
 `AuthorizationPolicy` with the local `Runtime`. Authentication, authorization,
 and prompt/content checks are separate responsibilities.
 
@@ -64,9 +65,10 @@ permissions.
 `Runtime.run`/`invoke` as a structural `Protocol` with one async method; any
 class with a matching `check` works without inheritance. A richer decision type
 than `bool` remains open. Hosted wiring through
-[`AgentApp(..., authorization=policy)`](hosting.md#agentapp) and re-checks on
-A2A continuation calls arrive with the hosting and task stories (#3, #6). Over A2A a
-denial maps to `REJECTED` and a policy outage to `FAILED`.
+[`AgentApp(..., authorization=policy)`](hosting.md#agentapp) is implemented
+(#3); re-checks on A2A continuation calls arrive with #6. Over A2A a denial will
+map to `REJECTED` and a policy outage to `FAILED` (#7); until then both end the
+task in `FAILED`.
 
 ```python
 class AuthorizationPolicy(Protocol):
@@ -219,8 +221,9 @@ state/tool declarations are untrusted, not `Principal` or trusted dependencies.
 **Purpose / decision:** common interface for verified remote identity, with
 built-in Entra ID, API-key and explicit anonymous implementations.
 
-**Signature status:** implemented as a structural protocol (M2 story #4). The
-HTTP host wiring arrives with `AgentApp` (#3); `EntraIDAuth` is M7.
+**Signature status:** implemented as a structural protocol (M2 story #4) and
+wired into HTTP by `AgentApp` (#3): missing or invalid credentials on `/a2a`
+get HTTP 401 with no task. `EntraIDAuth` is M7.
 
 ```text
 class Authenticator(Protocol):
@@ -367,15 +370,18 @@ Clients send the key in the `X-API-Key` header.
 ```python
 import os
 
-from agentframe import APIKey, APIKeyAuth
+from agentframe import APIKey, APIKeyAuth, HostConfig
 
 auth = APIKeyAuth(
     keys={
         os.environ["BILLING_KEY"]: APIKey(caller_id="billing-svc", roles=["Reader"]),
     }
 )
-# With HostConfig (story #3, not yet implemented):
-# HostConfig(public_url=..., auth=auth, role_permissions={"Reader": ["documents:read"]})
+host = HostConfig(
+    public_url="https://docs.example.com",
+    auth=auth,
+    role_permissions={"Reader": ["documents:read"]},
+)
 ```
 
 **Behavior / failures:** invalid configuration raises `DefinitionError`. A

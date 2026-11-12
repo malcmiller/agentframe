@@ -1,7 +1,7 @@
 """Smoke tests for the pinned A2A SDK and the selected A2A 1.0 binding.
 
-AgentFrame hosting is not implemented yet. These tests prove that the supported
-install provides an A2A 1.0 JSON-RPC over HTTP server and client, and that the
+These tests use a bare SDK app, independent of ``AgentApp``, to prove that the
+supported install provides an A2A 1.0 JSON-RPC over HTTP server and client, and that the
 pinned SDK rejects pre-1.0 requests while 0.3 compatibility stays disabled.
 """
 

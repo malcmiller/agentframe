@@ -19,9 +19,10 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 Early development; M1 model-free authoring is available from source. You can
 define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
-permission checks and a timeout. There is no published release, network
-hosting (A2A arrives in M2) or model support (M3+) yet, and the API is not
-stable. Reviewed capability and contract decisions are recorded below and in
+permission checks and a timeout. M2 A2A hosting is in progress: `AgentApp`
+serves an agent as an ASGI application with its Agent Card and an authenticated
+A2A endpoint. There is no published release or model support (M3+) yet, and
+the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
 interfaces remain open. Examples beyond the M1 surface are design proposals.
 

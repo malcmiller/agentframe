@@ -47,9 +47,10 @@ checks.
 configuration; create invocation-scoped context, enforce policy/limits, validate
 outputs, and surface the [decided error hierarchy](#agentframeerror).
 Definition and missing-service validation happens at startup/preflight, before
-executing skills; exact explicit local startup/lifecycle methods remain open.
-In M1, definitions validate at class creation and each run checks its skill's
-service registrations before any skill code or scoped factory runs.
+executing skills. In M1, definitions validate at class creation and each run
+checks its skill's service registrations before any skill code or scoped factory
+runs. M2 adds [`Runtime.validate`](#runtimevalidate), which `AgentApp` calls
+before serving; other lifecycle methods remain open.
 Do not infer extra public registration/close methods from this description.
 First release owns bounded registered-tool calls/results and generation
 continuations as well as typed structured output; it returns complete validated
@@ -58,6 +59,32 @@ orchestration. Future [streaming/AG-UI](streaming.md) is a separate surface.
 
 **Related:** [`Runtime.invoke`](#runtimeinvoke), [`AgentApp`](hosting.md#agentapp),
 [runtime design](../base-classes.md#agent-authoring-and-execution).
+
+## `Runtime.validate`
+
+**Purpose / decision:** check that an agent can run on this runtime before
+accepting any work. [`AgentApp`](hosting.md#agentapp) calls it on construction.
+
+**Signature status:** implemented in M2 (#3) as
+`Runtime.validate(agent: Agent) -> None`.
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `agent` | `Agent` instance | Required | Instance of an `@agent`-decorated class. |
+
+```python
+from agentframe import Agent, Runtime, Services
+
+
+def check(agent: Agent, services: Services) -> None:
+    Runtime(services=services).validate(agent)
+```
+
+**Behavior / failures:** raises `DefinitionError` when the agent's class is not
+decorated with `@agent` or any skill's `Inject[T]` parameter has no registered
+service. It runs no skill code and creates no scoped services.
+
+**Related:** [`Runtime`](#runtime), [`Services`](agents.md#services).
 
 ## `Runtime.invoke`
 

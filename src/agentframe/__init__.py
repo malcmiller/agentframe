@@ -1,6 +1,7 @@
 """AgentFrame: define agents with Python, communicate through A2A."""
 
 from agentframe.agent import Agent
+from agentframe.app import AgentApp
 from agentframe.auth import (
     AllowAnonymous,
     APIKey,
@@ -35,6 +36,7 @@ __all__ = [
     "APIKey",
     "APIKeyAuth",
     "Agent",
+    "AgentApp",
     "AgentFrameError",
     "AllowAnonymous",
     "AuthenticationError",

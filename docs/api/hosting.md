@@ -12,9 +12,11 @@ hosting and optional MCP, rather than require a server subclass. Use one server,
 one shared runtime and an endpoint per caller audience, not per skill: A2A for
 agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 
-**Constructor status:** `services=`, M8+ `directory=` and later `ag_ui=` are
-decided; the surrounding composition
-shape and unspecified omission details remain illustrative.
+**Constructor status:** implemented in M2 (#3) as
+`AgentApp(*, agent, host, runtime=None, services=None, authorization=None)`;
+the other parameters below arrive with their stories (`router=` #6, `a2a=`/`mcp=`
+later, M8+ `directory=`, later `ag_ui=`). `services=`, `directory=` and `ag_ui=`
+are decided; unspecified omission details remain illustrative.
 
 ```text
 AgentApp(
@@ -29,11 +31,12 @@ AgentApp(
 | --- | --- | --- | --- |
 | `agent` | `Agent` instance | Required in current shape | Valid registered skills and identity; no per-method A2A RPC endpoints. |
 | `host` | `HostConfig` | Explicit in current examples; omission contract open | Advertised origin, authentication integration, independent resource ceilings. |
-| `runtime` | `Runtime` | Optional in examples; default construction details open | Shared managed validation, authorization, checks, limits, accounting and tracing for all enabled entry points. |
+| `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization)` | The single authoritative runtime and service container for every request. Passing it together with `services=` or `authorization=` raises `DefinitionError`. |
 | `a2a` | `A2AConfig` | A2A enabled by default; exact object default open | Selected native binding and implemented features only. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
 | `router` | `SkillRouter` implementation | Configured for free-text A2A selection/extraction | Custom router in M2 or built-in opt-in model router in M6. Activated structured selection bypasses it, not runtime controls. No finalized extraction/clarification interface. |
-| `services` | `Services` | Register dependencies used by `Inject[T]` | Startup validates required services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. Shared with runtime; conflicting app/runtime container handling remains open. |
+| `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
+| `authorization` | `AuthorizationPolicy` | Optional; only without `runtime=` | Resource policy applied to every run, as on [`Runtime`](runtime.md#runtime). |
 | `directory` | `AgentDirectory` | M8+ when remote bindings need discovery | Resolve `Remote["name"]`; validate configured names at startup. Sources/cache lifecycle follows ownership, not automatic transfer. |
 | `ag_ui` | `AGUIConfig` | Later explicit opt-in, off unless enabled | `AGUIConfig(enabled=True)` serves `/ag-ui` with the same auth/permissions/limits. |
 
@@ -63,6 +66,56 @@ def build_app(
 Supply `EntraIDAuth`, `APIKeyAuth`, explicit `AllowAnonymous`, or a custom
 authenticator; no remote host starts without a choice.
 
+**Implemented behavior (M2 #3):**
+
+- `AgentApp` is an ASGI application; serve it with any ASGI server.
+  Constructing it starts nothing and opens no sockets. It validates the agent
+  definition, every skill's `Inject[T]` service and the Agent Card first, so an
+  invalid agent, a missing service or an authenticator without
+  [`card_security()`](authorization.md#declarescardsecurity) raises
+  `DefinitionError` before anything is served.
+- `GET /.well-known/agent-card.json` serves the generated card publicly, without
+  credentials.
+- `POST /a2a` is the A2A 1.0 JSON-RPC endpoint from the official SDK. Every
+  request to it, including every task operation, first passes `host.auth`.
+  Missing or invalid credentials get HTTP 401 with the body
+  `{"error": "Authentication required."}`: no task is created and nothing about
+  the agent or its skills is revealed. A verified caller becomes the run's
+  `Principal`, with permissions from `HostConfig.role_permissions`; the SDK
+  scopes tasks by the principal's ID.
+- Each message runs as one `Runtime.run`, so validation, permissions, the
+  authorization policy, timeouts and per-run services all apply. Tasks live in
+  the SDK's in-memory task store and are lost on restart.
+- Interim request format, until the structured extension (#5) and routing (#6):
+  the skill ID goes in message metadata under `agentframe.skill`, and the
+  arguments in a single JSON data part (omit it for no arguments).
+- Results: a `str` becomes a text artifact part; any other value becomes a data
+  part `{"value": ...}` in Pydantic JSON mode. The completed task's metadata
+  carries the run's `invocation_id`. For now every failure ends the task in
+  `FAILED` with a safe message; the full error mapping (`REJECTED`, protocol
+  errors) arrives with #7. Exceptions raised by a skill are logged and reported
+  only as "The skill failed.". Cancellation arrives with task operations (#8).
+
+```python
+import os
+
+from agentframe import Agent, AgentApp, APIKey, APIKeyAuth, HostConfig, Services
+
+
+def create_app(echo: Agent, services: Services) -> AgentApp:
+    # Development placeholder: load real keys from secure configuration.
+    auth = APIKeyAuth(keys={os.environ["ECHO_KEY"]: APIKey("dev", roles=["User"])})
+    return AgentApp(
+        agent=echo,
+        host=HostConfig(
+            public_url="http://127.0.0.1:8000",
+            auth=auth,
+            role_permissions={"User": ["echo:use"]},
+        ),
+        services=services,
+    )
+```
+
 **Behavior / failures:** composing the ASGI application does not start a server.
 Generate a native card from identity/skills plus actual supported host features;
 do not expose instructions, secrets, private tools, or imaginary capabilities.
@@ -75,6 +128,8 @@ do not establish built-in human approval pause/resume. Ordinary A2A callers rece
 the invocation ID in response metadata, not internal `RunResult` fields.
 Safe failures map to failed/rejected task states as applicable; protocol failures
 and input-required clarification retain native semantics.
+
+**Not yet available (M7):** request deduplication, described next.
 
 Duplicate A2A requests from the same verified caller with the same `messageId`
 within the default 10-minute window return the original task instead of
@@ -172,11 +227,17 @@ Foundry templates later, not infrastructure deployment management.
 agent defaults and adapter-specific settings.
 
 **Constructor status:** `auth`, `role_permissions` and protection fields/defaults
-below are decided. `HostConfig(public_url=..., auth=...)` is implemented for
-card generation (M2 #2): `public_url` must be an absolute http(s) URL without
-credentials, query or fragment, otherwise `DefinitionError`. The remaining
-fields arrive with `AgentApp` (#3). Existing URL/ceiling composition is
-illustrative where not specified.
+below are decided. `HostConfig(public_url=..., auth=..., role_permissions=...)`
+is implemented (M2 #2, #3): `public_url` must be an absolute http(s) URL without
+credentials, query or fragment; `auth` must not be `None`; and each
+`role_permissions` value must be a list of permission names, not a bare string.
+Any violation raises `DefinitionError`. `role_permissions` defaults to no roles
+and is stored read-only.
+
+**Not yet available (M7):** `limits_ceiling`, `max_concurrent_runs`,
+`max_request_bytes`, `max_response_bytes`, `shutdown_grace_seconds` and the
+`/health` and `/ready` probes. Existing URL/ceiling composition is illustrative
+where not specified.
 
 ```text
 HostConfig(
@@ -191,7 +252,7 @@ HostConfig(
 | --- | --- | --- | --- |
 | `public_url` | `str` | Explicit in current shape | Advertised origin/endpoint configuration, not server binding or TLS setup. Do not derive it from untrusted forwarded headers. |
 | `auth` | `Authenticator` | Required for remote hosting; no default | Built-in Entra/API key/explicit anonymous or custom; omitted choice refuses startup. |
-| `role_permissions` | Role-to-permission mapping | Optional application mapping; omitted-container shape open | Maps verified roles, e.g. `{"Editor": ["documents:write"]}`; never trusts roles from skill arguments. Permissions are the union over the caller's verified roles; unknown roles grant nothing. Entra scope details remain open. |
+| `role_permissions` | `Mapping[str, Iterable[str]]` | Optional; default no roles (implemented) | Maps verified roles, e.g. `{"Editor": ["documents:write"]}`; never trusts roles from skill arguments. Permissions are the union over the caller's verified roles; unknown roles grant nothing. Entra scope details remain open. |
 | `limits_ceiling` | `RunLimits` | Independent host constraint; omission/default values open | Non-overridable ceilings, not agent defaults. Validate configured agent allowances before accepting work. |
 | `max_concurrent_runs` | `int` | `32`, configurable | Excess is rejected immediately with a standard busy error, not indefinitely queued; exact binding error mapping open. |
 | `max_request_bytes` | `int` | `1048576` (1 MiB), configurable | Bound ingress before work; protocol/encoding measurement details open. |
@@ -199,6 +260,7 @@ HostConfig(
 | `shutdown_grace_seconds` | Numeric seconds; exact type open | `30`, configurable | Stop accepting, drain up to grace, then cancel remaining runs and clean up scoped services. |
 
 ```python
+# Not yet available: limits_ceiling arrives in M7.
 from agentframe import Authenticator, HostConfig, RunLimits
 
 
