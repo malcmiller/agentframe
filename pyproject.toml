@@ -19,7 +19,9 @@ classifiers = [
     "Programming Language :: Python :: 3.15",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    "pydantic>=2.14,<3",
+]
 
 [project.urls]
 Repository = "https://github.com/malcmiller/agentframe"
