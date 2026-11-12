@@ -4,50 +4,83 @@
 AgentFrame-owned abstractions, not wrappers around another agent framework.
 Provider dependencies are optional and stay out of skill business logic.
 **Decided:** AgentFrame owns normalized messages, tool calls/results, token
-usage and finish reasons; adapters translate to/from provider types. Concrete
-field layouts and enum values not specified here remain open, not provider leaks.
+usage and finish reasons; adapters translate to/from provider types. M3 #33
+implements the text-generation layouts below (`Message`, `ModelSettings`,
+`ModelRequest`, `ModelResponse`, `ModelCapabilities`, the `Model` protocol)
+in `agentframe.models`, with no provider SDK imported. Tool-call, structured
+output and other layouts not specified here remain open, not provider leaks.
 
 ## `Model`
 
-**Purpose / decision:** a structural Python protocol for asynchronous generation.
-Custom implementations do not need to inherit from `Agent` or a vendor base.
+**Purpose / decision:** a structural Python protocol (`typing.Protocol`) for
+asynchronous generation. Any class with these methods is a `Model`; custom
+implementations do not inherit from an AgentFrame or vendor base.
 
-**Signature status:** no constructor; the known method is
-[`generate(request)`](#modelgenerate). Capability reporting and lifecycle
-requirements remain open.
+**Signature status:** implemented (M3 #33). Lifecycle decided 2026-11-12.
 
-| Contract concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Generation | Async method accepting `ModelRequest`, returning `ModelResponse` | Proposed complete-result operation | First release covers text, typed structured outputs, and tool calls/results with bounded continuations; translate provider data/errors explicitly. |
-| Capabilities/lifecycle | Exact members open | Must be specified before adapter support | Unknown features are not supported by assumption; injected clients remain caller-owned unless explicitly transferred. |
+| Member | Signature | Meaning and constraints |
+| --- | --- | --- |
+| [`generate`](#modelgenerate) | `async generate(request: ModelRequest) -> ModelResponse` | One complete, non-streaming call. |
+| [`capabilities`](#modelcapabilities-1) | `async capabilities() -> ModelCapabilities` | What the model actually supports; fetched lazily, then cached. |
+| [`close`](#modelclose) | `async close() -> None` | Releases only the clients the model created. |
+| `__aenter__` / `__aexit__` | `async with model:` | Enter returns the model; exit closes it. |
 
 ```python
-from agentframe import Model, ModelRequest, ModelResponse
+from types import TracebackType
+from typing import Self
+
+from agentframe import (
+    FinishReason,
+    Model,
+    ModelCapabilities,
+    ModelRequest,
+    ModelResponse,
+    Usage,
+)
 
 
-class CustomModel:
-    def __init__(self, client: Model) -> None:
-        self.client = client
-
+class EchoModel:
     async def generate(self, request: ModelRequest) -> ModelResponse:
-        return await self.client.generate(request)
+        unknown = Usage(None, None, None, estimated=False)
+        return ModelResponse(
+            text=request.messages[-1].content,
+            usage=unknown,
+            finish_reason=FinishReason.COMPLETED,
+        )
+
+    async def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(context_window=8192)
+
+    async def close(self) -> None:
+        pass
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self.close()
+
+
+model: Model = EchoModel()
 ```
 
-This structural delegation example wraps an already normalized `Model`, not an
-arbitrary vendor client.
-
-**Behavior / failures:** a real adapter must translate requests, responses,
-feature support, and failures. Do not silently drop requested settings, assume
-usage is known, or perform inference on import. Exact validation and provider
-exception mappings remain open.
-Normalized types are AgentFrame-owned; detailed layouts and provider mappings
-still need implementation evidence. Unsupported requested capabilities raise
-`UnsupportedCapabilityError` before sending. Managed generation returns text,
-validated Pydantic output via `output=`, or registered tool continuations via
-`tools=`. Refusal raises `ModelRefusalError`; token-limit truncation raises
-`IncompleteOutputError` unless a skill explicitly opts into partial results
-(syntax open). Streaming remains later, with optional [AG-UI](streaming.md) mapping
-from managed execution, not raw provider events.
+**Behavior / failures:** constructing a model does no I/O: no network calls,
+downloads or inference. A model closes only clients it created; clients the
+caller injects stay caller-owned. A real adapter translates requests,
+responses, feature support and failures explicitly: do not silently drop
+requested settings, assume usage is known, or return refusal as text. Provider
+exception mappings belong to each adapter (#38, #39). Unsupported requested
+capabilities raise [`UnsupportedCapabilityError`](runtime.md#unsupportedcapabilityerror)
+before sending. Managed generation (`ctx.generate`, #35) turns `REFUSED` into
+`ModelRefusalError` and `LENGTH` into `IncompleteOutputError`. Structured
+output (`output=`, M4), tools (`tools=`, M5) and streaming remain later, with
+optional [AG-UI](streaming.md) mapping from managed execution, not raw
+provider events.
 
 **Related:** [`ModelRequest`](#modelrequest), [`ModelResponse`](#modelresponse),
 [model interface rationale](../base-classes.md#model-interfaces).
@@ -57,7 +90,7 @@ from managed execution, not raw provider events.
 **Purpose / direction:** low-level provider-neutral generation used beneath
 the managed `RunContext.generate` helper.
 
-**Proposed minimal signature:**
+**Signature (implemented, M3 #33):**
 
 ```python
 async def generate(self, request: ModelRequest) -> ModelResponse: ...
@@ -65,7 +98,7 @@ async def generate(self, request: ModelRequest) -> ModelResponse: ...
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `request` | `ModelRequest` | Required | Normalized messages/settings and selected typed-output/tool contracts for first-release features; concrete fields open. |
+| `request` | [`ModelRequest`](#modelrequest) | Required | Messages plus the effective settings for this call. |
 
 ```python
 from agentframe import Model, ModelRequest, ModelResponse
@@ -75,19 +108,15 @@ async def delegate(model: Model, request: ModelRequest) -> ModelResponse:
     return await model.generate(request)
 ```
 
-**Behavior / failures:** returns normalized content, available usage, and
-completion status through `ModelResponse`. Unsupported features/settings and
-provider failures must be explicit. A raw adapter call is not a managed skill
-invocation and does not by itself establish authorization, invocation budgets,
-or context; skills should use [`ctx.generate`](agents.md#runcontextgenerate).
-Complete validated results are the first-release path; no streaming method/
-event contract is finalized. Refused/incomplete/invalid structured output and
-invalid tool calls/results must be distinguished from successful completion;
-exact normalized layouts remain open. Translate provider outcomes for the
-managed helper's decided [typed errors](runtime.md#modelerror); do not return
-refusal as fake text. Runtime retries only transient provider failures, default
-two retries with backoff and provider-SDK retries disabled; exact retry
-configuration syntax/backoff schedule remain open.
+**Behavior / failures:** returns a `ModelResponse` for every finish reason,
+including `LENGTH`, `REFUSED` and `CONTENT_FILTER`; the managed helper decides
+which are errors. Provider failures raise
+[`ProviderError`](runtime.md#providererror) with `transient`, optional
+`retry_after` and optional partial `usage`. A raw adapter call is not a managed
+skill invocation and does not by itself establish authorization, invocation
+budgets, or context; skills should use [`ctx.generate`](agents.md#runcontextgenerate).
+The runtime retries only transient provider failures, default two retries with
+backoff and provider-SDK retries disabled (#37).
 
 **Related:** [`Model`](#model), [`RunLimits`](configuration.md#runlimits),
 [provider boundaries](../initial-outline.md#initial-adapters).
@@ -187,15 +216,15 @@ client versions, and lifecycle details remain open.
 **Purpose / decision:** typed generation settings for individual model requests,
 separate from aggregate invocation budgets and actual model context capacity.
 
-**Decided canonical field/default:**
+**Signature (implemented, M3 #33):** frozen dataclass.
 
 ```text
-ModelSettings(*, max_output_tokens: int = 4096)
+ModelSettings(max_output_tokens: int = 4096)
 ```
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `max_output_tokens` | `int` | `4096`, configurable | Canonical per-model-call output allowance, not a second `RunLimits` field. Must fit model context, host ceilings and remaining run budget; reasoning-token inclusion is provider/API-specific. |
+| `max_output_tokens` | `int` | `4096`, configurable | Canonical per-model-call output allowance, not a second `RunLimits` field. Must be greater than zero (`DefinitionError` otherwise). Must fit model context, host ceilings and remaining run budget; reasoning-token inclusion is provider/API-specific. |
 
 ```python
 from agentframe import ModelSettings
@@ -208,10 +237,8 @@ settings = ModelSettings(max_output_tokens=800)
 settings against the actual deployment and effective limits; unsupported
 requested settings fail, not disappear. Typed provider-specific options are
 intended, but no universal temperature/reasoning fields or option registry are
-settled. Precedence is library → agent → skill → per-run within host ceilings.
-The exact skill/per-run carrier for model settings remains open; skill run
-budgets use `@skill(limits=RunLimits(...))`. Do not duplicate output tokens in
-that limits object.
+settled. Precedence is library → agent → skill → per-run within host ceilings,
+merged field by field (#42). Do not duplicate output tokens in `RunLimits`.
 
 **Related:** [`AgentConfig`](configuration.md#agentconfig),
 [`RunLimits`](configuration.md#runlimits), [limit scopes](../limits.md#separate-the-scopes).
@@ -219,66 +246,147 @@ that limits object.
 ## `ModelCapabilities`
 
 **Purpose / decision:** describe actual model/deployment support, not
-caller-configured promises.
+caller-configured promises. Returned by [`Model.capabilities()`](#modelcapabilities-1).
 
-**Signature status:** constructor, field names, and reporting mechanism open.
-The rows below are conceptual information, not proposed keyword arguments.
+**Signature (implemented, M3 #33, minimal for text generation):** frozen dataclass.
 
-| Information | Type | Required/default status | Meaning and constraints |
+```text
+ModelCapabilities(context_window: int | None = None, structured_output: bool = False, tools: bool = False)
+```
+
+| Field | Type | Default | Meaning and constraints |
 | --- | --- | --- | --- |
-| Context capacity | Representation open | Must be established for relevant preflight checks | Input plus reserved output must fit actual context, including provider-specific rules; unknown is not unlimited. |
-| Streaming, tools, structured output, modalities | Feature representation open | Only claim verified support | Do not assume feature parity across hosts or models. |
+| `context_window` | `int \| None` | `None` | Most input plus output tokens accepted. `None` is unknown, not unlimited. |
+| `structured_output` | `bool` | `False` | Whether schema-constrained output is supported (M4). |
+| `tools` | `bool` | `False` | Whether tool calling is supported (M5). |
 
 ```python
 from agentframe import ModelCapabilities
 
 
-def describe_capabilities(capabilities: ModelCapabilities) -> str:
-    return type(capabilities).__name__
+capabilities = ModelCapabilities(context_window=128000)
 ```
 
-**Behavior / failures:** no capability-construction API or property names are
-implied here. Unsupported requested capabilities fail before sending with
-`UnsupportedCapabilityError`; unknown is not supported by assumption.
-First-release text/structured/tool capabilities require corresponding adapter
-evidence on supported deployments. Streaming and additional modalities remain
-later; feature reporting and schema support cannot be assumed from host name.
+**Behavior / failures:** unknown support counts as unsupported. Unsupported
+requested capabilities fail before sending with `UnsupportedCapabilityError`.
+Streaming and additional modalities remain later; fields arrive only when a
+milestone needs them.
 
 **Related:** [`Model`](#model), [context capacity](../limits.md#separate-the-scopes).
+
+## `Model.capabilities`
+
+**Purpose / decision:** report what the model or deployment actually supports.
+
+**Signature (implemented, M3 #33):**
+
+```python
+async def capabilities(self) -> ModelCapabilities: ...
+```
+
+No parameters.
+
+```python
+from agentframe import Model
+
+
+async def context_window(model: Model) -> int | None:
+    return (await model.capabilities()).context_window
+```
+
+**Behavior / failures:** fetched lazily on first call (it may do I/O, for
+example reading model metadata), bounded by the caller's deadline, then cached.
+Failure to fetch raises `ProviderError`.
+
+**Related:** [`ModelCapabilities`](#modelcapabilities).
+
+## `Model.close`
+
+**Purpose / decision:** release clients the model created.
+
+**Signature (implemented, M3 #33):**
+
+```python
+async def close(self) -> None: ...
+```
+
+No parameters.
+
+```python
+from agentframe import Model
+
+
+async def finish(model: Model) -> None:
+    await model.close()
+```
+
+**Behavior / failures:** closes only clients the model created; injected
+clients stay caller-owned. `async with model:` calls `close()` on exit.
+
+**Related:** [`Model`](#model).
+
+## `Message`
+
+**Purpose / decision:** one text message in a model conversation.
+
+**Signature (implemented, M3 #33):** frozen dataclass.
+
+```text
+Message(role: Role, content: str)
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `role` | `Role` = `Literal["system", "user", "assistant"]` | Required | `system` holds trusted instructions only; untrusted user text is always a `user` message. |
+| `content` | `str` | Required | Text only in M3. |
+
+```python
+from agentframe import Message
+
+
+messages = (
+    Message(role="system", content="Answer in one sentence."),
+    Message(role="user", content="What is A2A?"),
+)
+```
+
+**Behavior / failures:** never concatenate untrusted text into a `system`
+message. Tool-call/result messages and other content types remain open (M5).
+
+**Related:** [`ModelRequest`](#modelrequest),
+[prompt safeguarding](../prompt-safeguarding.md).
 
 ## `ModelRequest`
 
 **Purpose / direction:** normalized outbound generation input shared by model
 adapters, keeping trusted instructions distinct from untrusted content.
 
-**Signature status:** constructor and exact fields open.
+**Signature (implemented, M3 #33):** frozen dataclass.
 
-| Information | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Messages/content | Provider-neutral representation open | Needed for generation | Preserve instruction/user/retrieval/tool provenance; never concatenate untrusted text into privileged instructions. |
-| Tool definitions/output contract | Types open | Optional per request; first-release capability | Only explicitly registered, authorized tools; typed structured output requires a supported schema/capability contract, not a text fallback. |
-| Generation settings | Permitted normalized settings; layout open | Effective settings apply | Validate actual model support, input size, output reservation, and remaining allowance before dispatch. |
-
-```python
-from agentframe import Model, ModelRequest, ModelResponse
-
-
-async def submit(model: Model, request: ModelRequest) -> ModelResponse:
-    return await model.generate(request)
+```text
+ModelRequest(messages: tuple[Message, ...], settings: ModelSettings)
 ```
 
-The caller supplies an already assembled request; no guessed wire fields or
-constructor are needed.
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `messages` | `tuple[Message, ...]` | Required | The conversation in order; preserves instruction/user provenance. |
+| `settings` | [`ModelSettings`](#modelsettings) | Required | The effective settings for this call. |
+
+```python
+from agentframe import Message, ModelRequest, ModelSettings
+
+
+request = ModelRequest(
+    messages=(Message(role="user", content="Hello"),),
+    settings=ModelSettings(),
+)
+```
 
 **Behavior / failures:** managed execution applies outbound checks to every
-request, including model-backed routing and later requests with tool/history
-content. Invalid/unsupported requests, denied egress, and exceeded allowances
-must stop dispatch. Exact validation types and hook decisions remain open.
-Messages, tool call/result linkage, usage and finish reasons use AgentFrame-owned
-normalized types. The separate author forms `ctx.generate(..., output=Summary)`
-and `ctx.generate(..., tools=[...])` are decided; exact normalized constructors,
-schema subset and combinations of
-typed output/tools remain open. No provider-specific skill business logic.
+request. Invalid/unsupported requests, denied egress and exceeded allowances
+must stop dispatch. Tool definitions and output contracts for
+`ctx.generate(..., output=Summary)` and `ctx.generate(..., tools=[...])` are
+decided author forms whose request fields remain open (M4, M5).
 
 **Related:** [`ExecutionPolicy`](authorization.md#executionpolicy),
 [outbound checks](../prompt-safeguarding.md#check-at-the-boundary-not-just-once).
@@ -288,33 +396,36 @@ typed output/tools remain open. No provider-specific skill business logic.
 **Purpose / direction:** normalized model result with honest usage/completion
 information, not an A2A or MCP transport envelope.
 
-**Signature status:** constructor and exact fields open.
+**Signature (implemented, M3 #33):** frozen dataclass.
 
-| Information | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Generated content | Normalized text/typed structured representation open | Depends on selected first-release operation/status | Return complete validated results; no partial JSON as validated output. |
-| Tool calls/results linkage | Representation open | Optional per request; first-release bounded loop capability | Model proposals are not permission; validate calls/results and feed authorized results into bounded generation continuations. |
-| Usage/completion/refusal/incomplete status | Typed representation open | Distinct outcomes needed; unknown usage stays unknown | Refusal or truncated output is not successful completion. Distinguish actuals, estimates and unresolved reservations without double-counting subdivisions. |
-
-```python
-from agentframe import ModelResponse
-
-
-def describe_response(response: ModelResponse) -> str:
-    return type(response).__name__
+```text
+ModelResponse(text: str, usage: Usage, finish_reason: FinishReason)
 ```
 
-**Behavior / failures:** provider failures cannot be disguised as successful
-generated text. Missing final usage after cancellation/failure is not zero or
-proof that a call was free. Exact normalized field names still need design;
-no hard billing guarantee is implied.
-The first release must not return success on a provider refusal, incomplete
-generation, invalid structured value or denied tool action. Refusal raises
-`ModelRefusalError`, invalid structured output `OutputValidationError`, and
-token-limit truncation `IncompleteOutputError` by default. A skill may explicitly
-allow partial results (opt-in syntax open), never invalid structured output.
-`Runtime.run` returns `RunResult` on success; errors carry `invocation_id`.
-Failed-run usage retrieval remains open, not a success-shaped response.
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `text` | `str` | Required | Generated text; possibly truncated when `finish_reason` is not `COMPLETED`. |
+| `usage` | [`Usage`](runtime.md#runresult) | Required | Tokens for this call; unknown counts are `None`, never zero; `estimated` marks estimates. |
+| `finish_reason` | [`FinishReason`](runtime.md#runresult) | Required | `COMPLETED`, `LENGTH`, `REFUSED` or `CONTENT_FILTER`. |
+
+```python
+from agentframe import FinishReason, ModelResponse, Usage
+
+
+response = ModelResponse(
+    text="A2A is an agent-to-agent protocol.",
+    usage=Usage(input_tokens=12, output_tokens=9, total_tokens=21, estimated=False),
+    finish_reason=FinishReason.COMPLETED,
+)
+```
+
+**Behavior / failures:** provider failures raise `ProviderError`, never
+success-shaped text. Refusal and truncation are reported through
+`finish_reason`; the managed helper raises `ModelRefusalError` and
+`IncompleteOutputError` (partial-result opt-in syntax open) and never returns
+them as success. Tool-call linkage and typed structured content remain open
+(M4, M5). Failed-run usage retrieval remains open; no hard billing guarantee
+is implied.
 
 **Related:** [`Model.generate`](#modelgenerate),
 [accounting and enforcement](../limits.md#accounting-and-enforcement).
