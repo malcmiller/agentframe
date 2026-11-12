@@ -91,8 +91,9 @@ merges the text into instructions. This does not guarantee resistance to prompt
 injection, and prompt wording does not replace authorization or other enforced
 policy.
 
-The agent above and text `ctx.generate` run from source today (M3 #35). Until
-the provider adapters below land, test it with the scripted test model:
+The agent above and text `ctx.generate` run from source today (M3 #35), with
+the Ollama and Foundry adapters below (M3 #38, #39). Tests can use the scripted
+test model instead of a provider:
 
 ```python
 from agentframe import Runtime
@@ -150,15 +151,14 @@ def build_writer(
     )
 ```
 
-The application supplies a supported endpoint, deployment, and credential.
-This proposes async token credentials from the optional Azure dependencies;
-the selected API is OpenAI v1 Responses through optional official `openai`,
-base URL `https://<resource>.openai.azure.com/openai/v1/`.
-Entra token-provider authentication (`azure-identity`
-`get_bearer_token_provider`, scope `https://ai.azure.com/.default`) or API keys
-are selected paths; final AgentFrame credential wrapping and async-client
-lifecycle remain open, not new constructor fields. Do not use the retired Azure
-AI Inference SDK. See the [API choice and source](initial-outline.md#resolved-m0-platform-and-api-decisions).
+The application supplies the endpoint, deployment and an API key or async
+Azure token credential; `FoundryModel` (implemented in M3 #39, extra
+`agentframe[foundry]`) calls the OpenAI v1 Responses API at
+`https://<resource>.openai.azure.com/openai/v1/` through the official `openai`
+package, wrapping a token credential for scope `https://ai.azure.com/.default`.
+Do not use the retired Azure AI Inference SDK. See
+[`FoundryModel`](api/models.md#foundrymodel) and the
+[API choice and source](initial-outline.md#resolved-m0-platform-and-api-decisions).
 No skill code changes when the configured model host changes.
 
 ## Mixing both kinds of skill

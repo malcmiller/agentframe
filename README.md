@@ -352,6 +352,7 @@ this repository, and no package availability or trademark clearance is guarantee
 - [Observed official Python SDK 1.3.0](https://pypi.org/project/a2a-sdk/1.3.0/)
 - [Python release-cycle data](https://peps.python.org/api/release-cycle.json)
 - [Ollama Python client](https://github.com/ollama/ollama-python)
+- [OpenAI Python library](https://github.com/openai/openai-python)
 - [Microsoft Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/)
 - [Foundry OpenAI SDK migration and Responses API](https://learn.microsoft.com/en-us/azure/foundry/how-to/model-inference-to-openai-migration)
 - [Foundry incoming A2A and authenticated cards](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint)

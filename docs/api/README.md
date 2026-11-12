@@ -176,7 +176,8 @@ Responses through optional `openai`, Entra token-provider/API-key auth), and
 the M8+ Foundry registry source (project agents API via `azure-ai-projects` 2.x,
 observed 2.10.0). Versions observed are not pins or tested compatibility,
 except the M2 A2A pin: `a2a-sdk[http-server]==1.3.0` with the JSON-RPC over HTTP
-binding, protocol 1.0 only.
+binding, protocol 1.0 only, and the M3 provider extras (`ollama==0.6.3`;
+`openai==3.49.0` and `azure-identity==1.27.0` for `FoundryModel`).
 
 | Area | Open contract |
 | --- | --- |
