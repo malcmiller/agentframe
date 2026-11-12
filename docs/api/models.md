@@ -115,8 +115,9 @@ which are errors. Provider failures raise
 `retry_after` and optional partial `usage`. A raw adapter call is not a managed
 skill invocation and does not by itself establish authorization, invocation
 budgets, or context; skills should use [`ctx.generate`](agents.md#runcontextgenerate).
-The runtime retries only transient provider failures, default two retries with
-backoff and provider-SDK retries disabled (#37).
+The runtime retries only transient provider failures, default two retries
+(`RunLimits.max_model_retries`) with backoff and provider-SDK retries disabled;
+see [retries](../limits.md#retries-and-duplicate-requests).
 
 **Related:** [`Model`](#model), [`RunLimits`](configuration.md#runlimits),
 [provider boundaries](../initial-outline.md#initial-adapters).

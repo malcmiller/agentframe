@@ -208,7 +208,9 @@ Hosted runs map these errors to task `FAILED` with their safe message and the
 run's `invocation_id` (see [result and failure mapping](hosting.md#result-and-failure-mapping)). Token limits and
 reservations work as described in
 [implemented token accounting](../limits.md#implemented-token-accounting-m3);
-retries (#37) are not implemented yet. Every call uses
+transient provider failures are
+[retried](../limits.md#retries-and-duplicate-requests) up to
+`RunLimits.max_model_retries` times. Every call uses
 the run's effective `model_settings`, merged field by field (see
 [precedence](configuration.md#precedence)).
 

@@ -15,6 +15,7 @@ and execution policy, whether called locally, through A2A, or through MCP.
 | `RunLimits.max_input_tokens` | Each model request | Defaults to model-reported context size; bounds assembled input including instructions, history, user content, tool schemas/results. |
 | `RunLimits.max_total_tokens` | One skill invocation | Default **100000** aggregate input/output tokens across requests and continuations, without double-counting subdivisions. |
 | `RunLimits.max_model_calls` | One skill invocation | Default **10** dispatched attempts including retries, not just successes. |
+| `RunLimits.max_model_retries` | Each model request | Default **2** retries of a transient provider failure; `0` disables retries. Each retry is a counted model call. |
 | `RunLimits.max_tool_calls` | One skill invocation | Default **20** managed tool calls; detailed attempted/denied call counting remains open. |
 | `RunLimits.timeout_seconds` | One skill invocation | Default **120** seconds including model/tool work and backoff; retries never reset it. |
 
@@ -207,7 +208,8 @@ Actual usage can exceed a reservation when the estimate was low; the next
 call then has less budget, so the total is a best-effort bound. `RunResult`
 reports the run's `usage` and `model_calls`; hosted tasks report the same
 values in a safe [usage snapshot](api/hosting.md#result-and-failure-mapping).
-Retries (#37) build on these reservations and are not implemented yet.
+Each [retry](#retries-and-duplicate-requests) is a new call with its own
+reservation and call count.
 
 ## Cross-agent budgets and depth (M8+)
 
@@ -240,11 +242,25 @@ URI/schema remain open; these are not invented standard A2A top-level fields.
 
 Only transient model provider failures (rate limit, provider timeout, server
 errors) retry, with backoff; the default is **2 retries** after the initial
-attempt, configurable. Use a single runtime retry layer and disable provider
-SDK retries. Each dispatched attempt consumes the same model-call/token budget
-and remaining deadline; no retry after exhaustion. Unsupported capabilities,
-refusal, validation or policy denials are not transient provider failures.
-Exact configuration keyword, backoff schedule and transient-code mapping remain open.
+attempt. Implemented in M3 #37:
+
+- `RunLimits.max_model_retries` sets the retries per `ctx.generate` call
+  (default `2`; `0` disables them), merged field by field like every other
+  limit ([precedence](api/configuration.md#precedence)).
+- The runtime's generate path is the single retry layer. Adapters only
+  classify failures as `ProviderError(transient=...)`; provider SDK retries
+  are disabled.
+- Before each retry the runtime waits the provider's `retry_after` hint when
+  given. Otherwise it waits a random time between 0 and an exponential bound
+  (0.5, 1, 2, 4, then at most 8 seconds) so failed runs do not retry in step.
+- A retry whose wait would reach the run's deadline is not made; the provider
+  error is raised at once. Waiting counts against `timeout_seconds`, which a
+  retry never resets.
+- Every attempt is a new model call: it reserves tokens, counts toward
+  `max_model_calls`, and its usage is reported. A retry that no longer fits
+  those limits fails with the limit error instead.
+- Non-transient provider errors, unsupported capabilities, refusals and
+  incomplete output are never retried.
 
 Tools declare `@tool(side_effects=True)` or `@tool(idempotent=True)`.
 Side-effecting tools are **never automatically retried**; an idempotence

@@ -117,7 +117,8 @@ timeout) and, for each skill, resolves the effective `RunLimits` (library →
 agent → skill). A skill whose `max_input_tokens` is unset while the model
 reports no context window raises `DefinitionError` naming the skill. Local runs
 that skip this check fail the same way before their first model call.
-`ProviderError` and `TimeoutError` propagate when capabilities cannot be read.
+`ProviderError` propagates when capabilities cannot be read; reading them past
+the agent's timeout raises a transient `ProviderError`.
 
 **Related:** [`RunLimits`](configuration.md#runlimits),
 [`ModelCapabilities`](models.md#modelcapabilities).
@@ -558,7 +559,8 @@ def provider_failure(error: ProviderError) -> object:
 
 **Behavior / failures:** transient rate-limit, timeout and server failures alone
 may retry with backoff, default two retries (three attempts); SDK retries disabled.
-Retry configuration keyword and backoff schedule remain open. Every attempt consumes
+Configured by `RunLimits.max_model_retries`; the wait honors `retry_after`, else
+exponential backoff with jitter, never past the deadline. Every attempt consumes
 the same token/model-call allowance and deadline; never replay a tool side effect.
 **Related:** [retry rules](../limits.md#retries-and-duplicate-requests), [`ModelError`](#modelerror).
 
