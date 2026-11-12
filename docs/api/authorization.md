@@ -66,9 +66,9 @@ permissions.
 class with a matching `check` works without inheritance. A richer decision type
 than `bool` remains open. Hosted wiring through
 [`AgentApp(..., authorization=policy)`](hosting.md#agentapp) is implemented
-(#3); re-checks on A2A continuation calls arrive with #6. Over A2A a denial will
-map to `REJECTED` and a policy outage to `FAILED` (#7); until then both end the
-task in `FAILED`.
+(#3); re-checks on A2A continuation calls arrive with #6. Over A2A a denial
+ends the task in `REJECTED` and a policy outage in `FAILED`
+([mapping](hosting.md#result-and-failure-mapping), #7).
 
 ```python
 class AuthorizationPolicy(Protocol):
@@ -238,7 +238,11 @@ class Authenticator(Protocol):
 | `VerifiedCaller.roles` | `frozenset[str]` | Verified roles, mapped to permissions by `HostConfig(role_permissions=...)`. |
 
 Missing or invalid credentials raise `AuthenticationError`, which the host maps
-to HTTP 401 before creating any task or revealing skill details. The host builds
+to HTTP 401 before creating any task or revealing skill details. The 401 carries
+a `WWW-Authenticate` header with one challenge per scheme from `card_security()`
+(#7): `APIKey location="header", name="X-API-Key"` for an API key, the scheme
+name (such as `Bearer`) for HTTP auth, and `Bearer` for OAuth 2 / OpenID Connect.
+The host builds
 the `Principal` from the verified caller: its permissions are the union of
 `role_permissions` for the caller's roles, and unknown roles grant nothing.
 Every task operation requires authentication; the public Agent Card does not.

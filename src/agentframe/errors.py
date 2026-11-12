@@ -45,3 +45,11 @@ class PolicyUnavailableError(AgentFrameError):
 
 class LimitExceededError(AgentFrameError):
     """A run exceeded one of its execution limits."""
+
+
+class CancelledError(AgentFrameError):
+    """A run was cancelled before it finished.
+
+    Distinct from ``asyncio.CancelledError``: this reports a cancelled run to
+    callers and does not cancel anything itself.
+    """

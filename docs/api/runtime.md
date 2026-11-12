@@ -5,7 +5,7 @@ contracts. As of M1, `Runtime(services=...)`, `invoke`, `run`, `RunResult`,
 `Usage`, `FinishReason` and the `AgentFrameError`, `DefinitionError`,
 `InputValidationError`, `OutputValidationError`, `PermissionDeniedError` and
 `LimitExceededError` classes are implemented from source. M2 adds
-`Runtime(authorization=...)` and `PolicyUnavailableError`; the remaining
+`Runtime(authorization=...)`, `PolicyUnavailableError` and `CancelledError`; the remaining
 parameters and errors arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
 
@@ -257,8 +257,9 @@ def error_correlation(error: AgentFrameError) -> object:
 
 **Behavior / failures:** A2A failures map to standard failed/rejected task states
 with a safe message; preserve protocol-level errors and input-required
-clarification rather than converting every response to a failed task.
-Exact per-class mappings remain open. Log diagnostics with redaction, never send
+clarification rather than converting every response to a failed task. The
+per-class mapping is in [result and failure mapping](hosting.md#result-and-failure-mapping)
+(M2 #7). Log diagnostics with redaction, never send
 raw provider exceptions, stack traces or secrets to callers.
 
 **Related:** [specific error classes](#definitionerror), [safe diagnostics](../tracing.md#safe-metadata).
@@ -527,8 +528,11 @@ scoped-service cleanup still runs.
 
 **Purpose / decision:** AgentFrame cancellation failure, distinct from
 `asyncio.CancelledError`.
-**Signature status:** public name decided; inheritance beyond `AgentFrameError`
-and cancellation translation details remain open.
+**Signature status:** implemented in M2 (#7) as a direct `AgentFrameError`
+subclass with the inherited constructor. Over A2A it ends the task in
+`CANCELED` ([mapping](hosting.md#result-and-failure-mapping)): the host
+reports an A2A `CancelTask` with it, while the running skill itself stops
+through ordinary `asyncio` cancellation. `Runtime.run` does not raise it.
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
@@ -544,7 +548,7 @@ def cancelled(error: AgentFrameCancelledError) -> object:
 
 **Behavior / failures:** preserve cancellation propagation and scoped cleanup;
 do not swallow Python task cancellation or present it as success. Native A2A
-cancellation retains protocol semantics; exact error/state translation is open.
+cancellation retains protocol semantics.
 **Related:** [`AgentFrameError`](#agentframeerror), [cancellation](../limits.md#accounting-and-enforcement).
 
 M8+ also adds [`ClarificationNeededError`](discovery.md#clarificationneedederror),

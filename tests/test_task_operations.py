@@ -60,11 +60,13 @@ class Worker(Agent):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.jobs: list[Job] = []
+        self.invocation_ids: list[str] = []
 
     @skill("wait", tags=["test"])
     async def wait(self, ctx: RunContext, job: Inject[Job]) -> str:
         """Wait to be released."""
         self.jobs.append(job)
+        self.invocation_ids.append(ctx.invocation_id)
         self.started.set()
         await self.release.wait()
         return "done"
@@ -254,6 +256,18 @@ async def test_cancel_stops_the_skill_and_cleans_up_its_services(
     stored = await get_task(http, task["id"])
     assert stored["status"]["state"] == "TASK_STATE_CANCELED"
     assert "artifacts" not in stored
+
+
+async def test_cancelled_task_reports_the_run_invocation_id(
+    http: httpx.AsyncClient, worker: Worker
+) -> None:
+    task = await start_waiting_task(http, worker)
+
+    cancelled = (await call(http, "CancelTask", {"id": task["id"]}))["result"]
+
+    assert cancelled["metadata"]["invocation_id"] == worker.invocation_ids[0]
+    message = cancelled["status"]["message"]["parts"][0]["text"]
+    assert message == "The task was cancelled."
 
 
 async def test_cancelling_a_finished_task_is_not_cancelable(

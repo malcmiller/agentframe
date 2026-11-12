@@ -17,6 +17,7 @@ from agentframe.definitions import SkillDefinition
 from agentframe.errors import (
     AgentFrameError,
     AuthenticationError,
+    CancelledError,
     DefinitionError,
     InputValidationError,
     LimitExceededError,
@@ -42,6 +43,7 @@ __all__ = [
     "AuthenticationError",
     "Authenticator",
     "AuthorizationPolicy",
+    "CancelledError",
     "DeclaresCardSecurity",
     "DefinitionError",
     "FinishReason",

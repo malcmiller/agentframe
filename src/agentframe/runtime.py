@@ -151,12 +151,26 @@ class Runtime:
             Every ``AgentFrameError`` carries this run's ``invocation_id``.
             Exceptions raised by the skill itself propagate unchanged.
         """
-        invocation_id = str(uuid.uuid4())
+        return await self._run_invocation(
+            str(uuid.uuid4()), agent, skill, arguments or {}, principal
+        )
+
+    async def _run_invocation(
+        self,
+        invocation_id: str,
+        agent: Agent,
+        skill: str,
+        arguments: Mapping[str, Any],
+        principal: Principal | None,
+    ) -> RunResult[Any]:
+        """Run like ``run``, under an invocation ID chosen by the caller.
+
+        Package-internal: the A2A host allocates the ID itself so it can report
+        the run's ID for skill exceptions, which propagate without one.
+        """
         started = time.perf_counter()
         try:
-            value = await self._run(
-                invocation_id, agent, skill, arguments or {}, principal
-            )
+            value = await self._run(invocation_id, agent, skill, arguments, principal)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
             raise
@@ -181,8 +195,9 @@ class Runtime:
         definition = type(agent).definition()
         skill = definition.skills.get(skill_id)
         if skill is None:
+            # The ID is not echoed: remote callers get this message too.
             raise InputValidationError(
-                f"Agent '{definition.name}' has no skill '{skill_id}'"
+                f"Agent '{definition.name}' has no skill with the requested id"
             )
         self._check_services(skill)
         _check_permissions(skill, principal)

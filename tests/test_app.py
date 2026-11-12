@@ -6,7 +6,8 @@ Requests travel over real localhost HTTP to an ``AgentApp`` served by uvicorn.
 import asyncio
 import socket
 from collections.abc import AsyncIterator, Mapping
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -14,7 +15,7 @@ from a2a.client import ClientConfig, ClientFactory
 from a2a.helpers import get_artifact_text, new_data_part
 from a2a.types import Message, Role, SendMessageRequest, TaskState
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH, TransportProtocol
-from pydantic import BaseModel
+from pydantic import BaseModel, PositiveInt
 
 from agentframe import (
     Agent,
@@ -80,10 +81,23 @@ class Greeter(Agent):
         await asyncio.sleep(5)
         return "too late"
 
+    failed_invocation_ids: ClassVar[list[str]] = []
+
     @skill("broken", tags=["test"])
     async def broken(self, ctx: RunContext) -> str:
         """Fail with a secret in the error."""
+        Greeter.failed_invocation_ids.append(ctx.invocation_id)
         raise RuntimeError("database password is hunter2")
+
+    @skill("count", tags=["test"])
+    async def count(self, ctx: RunContext) -> PositiveInt:
+        """Return a value that breaks the declared return type."""
+        return 0
+
+    @skill("opaque", tags=["test"])
+    async def opaque(self, ctx: RunContext) -> object:
+        """Return a value that has no JSON form."""
+        return object()
 
 
 def api_key_host(public_url: str) -> HostConfig:
@@ -159,6 +173,28 @@ async def run_task(
     return task
 
 
+async def list_tasks(http: httpx.AsyncClient) -> list[dict[str, Any]]:
+    response = await post(http, rpc("ListTasks", {}))
+    tasks: list[dict[str, Any]] = response.json()["result"].get("tasks", [])
+    return tasks
+
+
+@asynccontextmanager
+async def serve_with_policy(
+    serve: ServeLocally, policy: AuthorizationPolicy
+) -> AsyncIterator[httpx.AsyncClient]:
+    def make_app(public_url: str) -> AgentApp:
+        return AgentApp(
+            agent=Greeter(),
+            host=api_key_host(public_url),
+            services=clock_services(),
+            authorization=policy,
+        )
+
+    async with serve(make_app) as base_url, httpx.AsyncClient(base_url=base_url) as h:
+        yield h
+
+
 def status_text(task: Mapping[str, Any]) -> str:
     return " ".join(part["text"] for part in task["status"]["message"]["parts"])
 
@@ -228,62 +264,82 @@ async def test_structured_result_is_a_data_artifact(http: httpx.AsyncClient) -> 
     ]
 
 
-async def test_invalid_arguments_fail_without_echoing_the_value(
+# Mapping failures to A2A: one section per row of the documented table.
+# Missing or invalid credentials (HTTP 401) are tested under Authentication.
+
+
+@pytest.mark.parametrize(
+    ("message_change", "problem"),
+    [
+        pytest.param({"metadata": {}}, "agentframe.skill", id="no-skill-id"),
+        pytest.param(
+            {"parts": [{"data": {"name": "Ada"}}, {"data": {"name": "Bo"}}]},
+            "single JSON object",
+            id="two-data-parts",
+        ),
+        pytest.param(
+            {"parts": [{"data": ["Ada"]}]}, "single JSON object", id="not-an-object"
+        ),
+    ],
+)
+async def test_malformed_skill_call_is_a_protocol_error_without_a_task(
+    http: httpx.AsyncClient, message_change: dict[str, Any], problem: str
+) -> None:
+    body = send_skill("greet", {"name": "Ada"})
+    body["params"]["message"].update(message_change)
+
+    response = await post(http, body)
+
+    error = response.json()["error"]
+    assert error["code"] == -32602
+    assert problem in error["message"]
+    assert await list_tasks(http) == []
+
+
+async def test_malformed_json_rpc_is_a_protocol_error_without_a_task(
+    http: httpx.AsyncClient,
+) -> None:
+    response = await http.post(
+        "/a2a",
+        content=b"{not json",
+        headers={"A2A-Version": "1.0", "X-API-Key": READER_KEY},
+    )
+
+    assert response.json()["error"]["code"] == -32700
+    assert await list_tasks(http) == []
+
+
+async def test_unknown_skill_is_rejected(http: httpx.AsyncClient) -> None:
+    task = await run_task(http, "missing")
+
+    assert task["status"]["state"] == "TASK_STATE_REJECTED"
+    assert "no skill" in status_text(task)
+    assert "missing" not in status_text(task)
+    assert task["metadata"]["invocation_id"]
+
+
+async def test_invalid_arguments_are_rejected_without_echoing_the_value(
     http: httpx.AsyncClient,
 ) -> None:
     task = await run_task(http, "greet", {"name": ["secret-value"]})
 
-    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert task["status"]["state"] == "TASK_STATE_REJECTED"
     assert "name" in status_text(task)
     assert "secret-value" not in str(task["status"])
     assert task["metadata"]["invocation_id"]
 
 
-async def test_unknown_skill_fails(http: httpx.AsyncClient) -> None:
-    task = await run_task(http, "missing")
-
-    assert task["status"]["state"] == "TASK_STATE_FAILED"
-    assert "missing" in status_text(task)
-
-
-async def test_message_without_a_skill_id_fails(http: httpx.AsyncClient) -> None:
-    body = send_skill("greet", {"name": "Ada"})
-    del body["params"]["message"]["metadata"]
-
-    response = await post(http, body)
-
-    task = response.json()["result"]["task"]
-    assert task["status"]["state"] == "TASK_STATE_FAILED"
-    assert "agentframe.skill" in status_text(task)
-
-
-async def test_permissions_come_from_verified_roles(http: httpx.AsyncClient) -> None:
+async def test_missing_permission_is_rejected(http: httpx.AsyncClient) -> None:
     denied = await run_task(http, "time", key=READER_KEY)
     allowed = await run_task(http, "time", key=ADMIN_KEY)
 
-    assert denied["status"]["state"] == "TASK_STATE_FAILED"
+    assert denied["status"]["state"] == "TASK_STATE_REJECTED"
     assert "clock:read" in status_text(denied)
+    assert denied["metadata"]["invocation_id"]
     assert allowed["artifacts"][0]["parts"] == [{"text": "noon"}]
 
 
-async def test_skill_timeout_fails_the_task(http: httpx.AsyncClient) -> None:
-    task = await run_task(http, "slow")
-
-    assert task["status"]["state"] == "TASK_STATE_FAILED"
-    assert "timeout" in status_text(task)
-
-
-async def test_skill_exception_fails_with_a_safe_message(
-    http: httpx.AsyncClient,
-) -> None:
-    task = await run_task(http, "broken")
-
-    assert task["status"]["state"] == "TASK_STATE_FAILED"
-    assert status_text(task) == "The skill failed."
-    assert "hunter2" not in str(task)
-
-
-async def test_authorization_policy_is_applied(serve: ServeLocally) -> None:
+async def test_policy_denial_is_rejected(serve: ServeLocally) -> None:
     class DenyAll:
         async def check(
             self,
@@ -293,20 +349,77 @@ async def test_authorization_policy_is_applied(serve: ServeLocally) -> None:
         ) -> bool:
             return False
 
-    def make_app(public_url: str) -> AgentApp:
-        policy: AuthorizationPolicy = DenyAll()
-        return AgentApp(
-            agent=Greeter(),
-            host=api_key_host(public_url),
-            services=clock_services(),
-            authorization=policy,
-        )
+    async with serve_with_policy(serve, DenyAll()) as h:
+        task = await run_task(h, "greet", {"name": "Ada"})
 
-    async with serve(make_app) as base_url, httpx.AsyncClient(base_url=base_url) as h:
+    assert task["status"]["state"] == "TASK_STATE_REJECTED"
+    assert "denied" in status_text(task)
+    assert task["metadata"]["invocation_id"]
+
+
+async def test_skill_timeout_fails_the_task(http: httpx.AsyncClient) -> None:
+    task = await run_task(http, "slow")
+
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert "timeout" in status_text(task)
+    assert task["metadata"]["invocation_id"]
+
+
+async def test_invalid_output_fails_the_task(http: httpx.AsyncClient) -> None:
+    task = await run_task(http, "count")
+
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert "invalid value" in status_text(task)
+    assert task["metadata"]["invocation_id"]
+
+
+async def test_unserializable_result_fails_the_task(http: httpx.AsyncClient) -> None:
+    task = await run_task(http, "opaque")
+
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert "serialized" in status_text(task)
+    assert "artifacts" not in task
+    assert task["metadata"]["invocation_id"]
+
+
+async def test_skill_exception_fails_with_a_safe_message(
+    http: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    task = await run_task(http, "broken")
+
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert status_text(task) == "The skill failed."
+    assert "hunter2" not in str(task)
+    # The caller, the skill and the log all see the run's one ID.
+    invocation_id = task["metadata"]["invocation_id"]
+    assert Greeter.failed_invocation_ids[-1] == invocation_id
+    assert any(
+        invocation_id in record.getMessage() and record.exc_info
+        for record in caplog.records
+    )
+
+
+async def test_policy_outage_fails_the_task(serve: ServeLocally) -> None:
+    class BrokenPolicy:
+        async def check(
+            self,
+            principal: Principal | None,
+            skill: SkillDefinition,
+            arguments: Mapping[str, Any],
+        ) -> bool:
+            raise ConnectionError("policy service at 10.0.0.7 is down")
+
+    async with serve_with_policy(serve, BrokenPolicy()) as h:
         task = await run_task(h, "greet", {"name": "Ada"})
 
     assert task["status"]["state"] == "TASK_STATE_FAILED"
-    assert "denied" in status_text(task)
+    assert "unavailable" in status_text(task)
+    assert "10.0.0.7" not in str(task)
+    assert task["metadata"]["invocation_id"]
+
+
+# Clarification (INPUT_REQUIRED) and cancellation (CANCELED) need routing (#6)
+# and task operations (#8); test_a2a_executor.py covers their mapping.
 
 
 async def test_explicit_runtime_is_used(serve: ServeLocally) -> None:
@@ -333,9 +446,11 @@ async def test_bad_credentials_get_401_and_create_no_task(
     response = await post(http, send_skill("greet", {"name": "Ada"}), key=key)
 
     assert response.status_code == 401
+    assert response.headers["WWW-Authenticate"] == (
+        'APIKey location="header", name="X-API-Key"'
+    )
     assert response.json() == {"error": "Authentication required."}
-    tasks = await post(http, rpc("ListTasks", {}), key=READER_KEY)
-    assert tasks.json()["result"].get("tasks", []) == []
+    assert await list_tasks(http) == []
 
 
 @pytest.mark.parametrize(
@@ -367,7 +482,7 @@ async def test_anonymous_callers_must_be_allowed_explicitly(
         protected = await run_task(h, "time")
 
     assert greeted["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert protected["status"]["state"] == "TASK_STATE_FAILED"
+    assert protected["status"]["state"] == "TASK_STATE_REJECTED"
 
 
 # Startup validation

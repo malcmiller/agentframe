@@ -12,7 +12,14 @@ from a2a.server.routes import (
     create_jsonrpc_routes,
 )
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import ListTasksRequest, ListTasksResponse
+from a2a.types import (
+    AgentCard,
+    ListTasksRequest,
+    ListTasksResponse,
+    Message,
+    SendMessageRequest,
+    Task,
+)
 from a2a.utils.errors import UnsupportedOperationError
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -20,9 +27,13 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from agentframe.a2a_executor import PRINCIPAL_STATE_KEY, RuntimeExecutor
+from agentframe.a2a_executor import (
+    PRINCIPAL_STATE_KEY,
+    RuntimeExecutor,
+    read_skill_call,
+)
 from agentframe.agent import Agent
-from agentframe.auth import authenticate_request
+from agentframe.auth import authenticate_request, www_authenticate
 from agentframe.authorization import AuthorizationPolicy
 from agentframe.card import A2A_PATH, build_agent_card
 from agentframe.errors import AuthenticationError, DefinitionError
@@ -80,7 +91,7 @@ class AgentApp:
             runtime = Runtime(services=services, authorization=authorization)
         runtime.validate(agent)
         card = build_agent_card(type(agent).definition(), host)
-        handler = _TaskRequestHandler(
+        handler = _RequestHandler(
             agent_executor=RuntimeExecutor(agent, runtime),
             task_store=InMemoryTaskStore(),
             agent_card=card,
@@ -99,7 +110,7 @@ class AgentApp:
                 *create_agent_card_routes(card),
                 Route(
                     A2A_PATH,
-                    _require_authentication(a2a_route.endpoint, host),
+                    _require_authentication(a2a_route.endpoint, host, card),
                     methods=["POST"],
                 ),
             ],
@@ -111,8 +122,16 @@ class AgentApp:
         await self._app(scope, receive, send)
 
 
-def _require_authentication(endpoint: Endpoint, host: HostConfig) -> Endpoint:
-    """Wrap ``endpoint`` so it only runs for callers the host authenticates."""
+def _require_authentication(
+    endpoint: Endpoint, host: HostConfig, card: AgentCard
+) -> Endpoint:
+    """Wrap ``endpoint`` so it only runs for callers the host authenticates.
+
+    Rejected callers get a 401 whose ``WWW-Authenticate`` header names the
+    security schemes the Agent Card declares.
+    """
+    challenge = www_authenticate(card.security_schemes)
+    challenge_headers = {"WWW-Authenticate": challenge} if challenge else None
 
     async def authenticated_endpoint(request: Request) -> Response:
         try:
@@ -122,20 +141,33 @@ def _require_authentication(endpoint: Endpoint, host: HostConfig) -> Endpoint:
         except AuthenticationError:
             # Rejected before the A2A SDK sees the request: no task exists and
             # the reply reveals nothing about the agent or its skills.
-            return JSONResponse({"error": "Authentication required."}, 401)
+            return JSONResponse(
+                {"error": "Authentication required."}, 401, headers=challenge_headers
+            )
         request.state.principal = principal
         return await endpoint(request)
 
     return authenticated_endpoint
 
 
-class _TaskRequestHandler(DefaultRequestHandler):
-    """The SDK's request handler, with task listing refused to anonymous callers.
+class _RequestHandler(DefaultRequestHandler):
+    """The SDK's request handler with AgentFrame's two up-front refusals.
 
-    All anonymous callers share one task namespace. Fetching or cancelling a
-    task needs its unguessable ID, but listing would hand every anonymous
-    caller the IDs, inputs and results of every other anonymous caller's tasks.
+    - A malformed skill call gets a protocol error. The SDK creates a task
+      before it calls the executor, so the check must happen here for the
+      caller to get no task.
+    - Anonymous callers cannot list tasks. They share one task namespace:
+      fetching or cancelling a task needs its unguessable ID, but listing would
+      hand every anonymous caller the IDs, inputs and results of every other
+      anonymous caller's tasks.
     """
+
+    async def on_message_send(
+        self, params: SendMessageRequest, context: ServerCallContext
+    ) -> Message | Task:
+        read_skill_call(params.message)
+        response: Message | Task = await super().on_message_send(params, context)
+        return response
 
     async def on_list_tasks(
         self, params: ListTasksRequest, context: ServerCallContext

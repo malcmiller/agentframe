@@ -226,6 +226,36 @@ async def authenticate_request(
     return principal_for(caller, role_permissions)
 
 
+def www_authenticate(schemes: Mapping[str, SecurityScheme]) -> str:
+    """Build a 401 response's ``WWW-Authenticate`` value (RFC 9110, 11.6.1).
+
+    Lists one challenge per security scheme the Agent Card declares, so the
+    response names the same scheme callers find on the card. Mutual TLS is
+    negotiated below HTTP and has no challenge.
+
+    Args:
+        schemes: The authenticator's ``card_security()`` schemes.
+
+    Returns:
+        Comma-separated challenges, for example
+        ``APIKey location="header", name="X-API-Key"``; empty when no scheme
+        has an HTTP challenge.
+    """
+    challenges = []
+    for scheme in schemes.values():
+        match scheme.WhichOneof("scheme"):
+            case "api_key_security_scheme":
+                api_key = scheme.api_key_security_scheme
+                challenges.append(
+                    f'APIKey location="{api_key.location}", name="{api_key.name}"'
+                )
+            case "http_auth_security_scheme":
+                challenges.append(scheme.http_auth_security_scheme.scheme)
+            case "oauth2_security_scheme" | "open_id_connect_security_scheme":
+                challenges.append("Bearer")
+    return ", ".join(challenges)
+
+
 def _header(headers: Mapping[str, str], name: str) -> str | None:
     wanted = name.lower()
     for header_name, value in headers.items():
