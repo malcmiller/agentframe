@@ -262,10 +262,11 @@ attempt. Implemented in M3 #37:
 - Non-transient provider errors, unsupported capabilities, refusals and
   incomplete output are never retried.
 
-Tools declare `@tool(side_effects=True)` or `@tool(idempotent=True)`.
+Tools declare `@tool(side_effects=True)` or `@tool(idempotent=True)`; both
+default to `False` and may both be `True` (M5 #58).
 Side-effecting tools are **never automatically retried**; an idempotence
 declaration is not permission to replay or an exactly-once guarantee.
-Additional tool retry rules and flag-combination semantics remain open.
+Additional tool retry rules remain open.
 
 For A2A, **same verified caller + same `messageId` within 10 minutes** returns
 the original task instead of re-running. The window is configurable; storage

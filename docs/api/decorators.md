@@ -2,7 +2,9 @@
 
 [Reference index and status conventions](README.md). Approved fields below are
 decisions. `@agent` and `@skill` are implemented from source as of M1 (model-free,
-local `Runtime` only); `@tool` and unspecified details remain illustrative.
+local `Runtime` only); `@tool` and `ToolDefinition` are implemented as of M5
+(#58), without agent registration or tool execution yet. Unspecified details
+remain illustrative.
 Decorators describe/register behavior; Python
 types describe validated data. Neither replaces runtime enforcement.
 
@@ -135,51 +137,133 @@ MCP exposure and internal model-tool registration.
 
 ## `@tool`
 
-**Purpose / decision:** decoration for typed internal model-callable functions,
-optional per agent, with bounded execution/continuations in the first usable
-release. Decoration alone neither registers model access nor
-publishes an A2A skill or MCP tool.
+**Purpose / decision:** mark a typed function as an internal model-callable
+tool, optional per agent. Decoration validates the function and attaches a
+[`ToolDefinition`](#tooldefinition); it neither registers the tool with an
+agent, offers it to a model, nor publishes an A2A skill or MCP tool.
 
-**Signature status:** the `side_effects` / `idempotent` declarations are decided;
-flag defaults/combinations and description fallback details remain open.
+**Signature status:** decided and implemented in M5 (#58, decisions confirmed
+2026-11-12). Agent registration and `ctx.generate(..., tools=[...])` selection
+(#60), the bounded tool loop (#61) and tool authorization (#62) are not
+implemented yet.
 
 ```text
-@tool(description: str, side_effects: bool = ..., idempotent: bool = ...)
+@tool(*, description: str | None = None, side_effects: bool = False, idempotent: bool = False)
 ```
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `description` | `str` | Explicit in current example; fallback/default open | Describes an eligible callable; does not authorize actions. |
-| `side_effects` | `bool` | Explicit declaration supported; omitted semantics open | `True` marks consequential effects; never auto-retry these tools. |
-| `idempotent` | `bool` | Explicit declaration supported; omitted semantics open | `True` declares idempotence; not an automatic retry grant or exactly-once guarantee. Combination/validation rules remain open. |
+| `description` | `str` | Optional; defaults to the function docstring | Tells the model what the tool does; does not authorize actions. No explicit value and no docstring raises `DefinitionError`. |
+| `side_effects` | `bool` | Optional; default `False` | `True` marks consequential effects, such as cancelling an order. |
+| `idempotent` | `bool` | Optional; default `False` | `True` declares that repeating a call has no further effect. Not a retry grant or exactly-once guarantee. May be combined with `side_effects=True`. |
 
 ```python
-from agentframe import tool
+from typing import Literal, Protocol
+
+from pydantic import BaseModel
+
+from agentframe import Inject, tool
 
 
-@tool(description="Convert Celsius to Fahrenheit.", idempotent=True)
+class OrderStatus(BaseModel):
+    order_id: str
+    status: Literal["open", "shipped", "cancelled"]
+
+
+class OrderStore(Protocol):
+    async def status(self, order_id: str) -> OrderStatus: ...
+    async def cancel(self, order_id: str) -> None: ...
+
+
+@tool(description="Look up an order's status.", idempotent=True)
+async def lookup_order(order_id: str, orders: Inject[OrderStore]) -> OrderStatus:
+    return await orders.status(order_id)
+
+
+@tool(description="Cancel an order.", side_effects=True)
+async def cancel_order(order_id: str, orders: Inject[OrderStore]) -> None:
+    await orders.cancel(order_id)
+
+
+@tool(idempotent=True)
 def to_fahrenheit(celsius: float) -> float:
+    """Convert Celsius to Fahrenheit."""
     return celsius * 9 / 5 + 32
 ```
 
-**Behavior / failures:** the proposed agent constructor accepts an explicit
-`tools=[to_fahrenheit]` registration. No shell, filesystem, or network tools are
-granted by default. Validate tool arguments, enforce action authorization and
-content checks, and bound iterations before execution. Exact callable support,
-registration types and detailed normalized layouts remain open; the
-synchronous example does not settle synchronous *skill* support. Never
-automatically replay side-effecting tools on retry.
-Validated tool results feed generation continuations under the same budgets,
-deadlines and outbound checks. Authors select registered tools via
-`ctx.generate(..., tools=[to_fahrenheit])`. The defaults are 20 tool calls,
-10 model attempts and 120 seconds per run; model retries use one layer with
-two retries for transient provider failures only. Tool retry policy beyond
-the prohibition on auto-retrying side effects remains open. Application
-approval workflows are separate; no built-in human pause/resume in first
-release. Future AG-UI tool visibility grants no frontend execution authority.
+`OrderStore` is application-defined and registered through
+[`Services`](agents.md#services); the tool receives the run's instance (the same
+scoped instances as the skill). It is not model input.
+
+**Behavior / failures:** the decorator returns the same function, so it stays
+directly callable and testable. Tools are module-level functions (nested
+functions are accepted) or static methods with `@tool` written above
+`@staticmethod`; bound or unbound methods, lambdas and other callables are
+rejected. `async def` and plain `def` are both accepted; sync tools run inline
+on the event loop, so use `async def` for any I/O. Every parameter and the
+return need annotations; `*args`, `**kwargs` and positional-only parameters
+are rejected. Parameters annotated `Inject[T]` are resolved from the run's
+services, and an optional `ctx: RunContext` parameter gives access to
+`principal` and `invocation_id`; neither appears in the argument schema. A
+business parameter cannot be named `principal`. The tool name is the function
+name and must match `^[a-zA-Z0-9_-]{1,64}$`. Every violation raises
+`DefinitionError` naming the tool when the function is decorated (import time).
+
+No tool is ever retried automatically, whatever its flags (#63), so a forgotten
+flag cannot cause a replay. No shell, filesystem, or network tools are granted by
+default. Validated tool results will feed generation continuations under the
+same budgets, deadlines and outbound checks; defaults are 20 tool calls, 10 model
+attempts and 120 seconds per run. Application approval workflows are separate;
+no built-in human pause/resume in first release. Future AG-UI tool visibility
+grants no frontend execution authority.
 
 **Related:** [`Agent`](agents.md#agent), [`ExecutionPolicy`](authorization.md#executionpolicy),
 [`MCPConfig`](hosting.md#mcpconfig), [tool design](../guides/annotations.md#optional-tool-example).
+
+## `ToolDefinition`
+
+**Purpose / decision:** the validated, immutable description of a `@tool`
+function, built at decoration time. Later stages (registration, the tool loop,
+authorization) read it; applications rarely construct one directly.
+
+**Signature status:** implemented in M5 (#58) as a frozen dataclass exported
+from `agentframe`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The function name, the tool name a model calls. |
+| `description` | `str` | Explicit description or the docstring. |
+| `side_effects` | `bool` | As declared on `@tool`. |
+| `idempotent` | `bool` | As declared on `@tool`. |
+| `function` | callable | The decorated function (the underlying function for a static method). |
+| `takes_context` | `bool` | Whether the function has a `ctx: RunContext` parameter. |
+| `argument_names` | `tuple[str, ...]` | Business parameters, in declaration order. |
+| `injected` | `dict[str, object]` | `Inject[T]` parameters mapped to their service types. |
+| `arguments_adapter` | `TypeAdapter` | Validates business arguments; unknown names are rejected. |
+| `return_adapter` | `TypeAdapter` | Validates the return value. |
+
+`json_schema()` returns the JSON Schema of the business arguments: the Pydantic
+schema of those parameters, never including `ctx` or `Inject[T]` parameters.
+
+```python
+from agentframe import tool
+from agentframe.authoring.decorators import tool_definition
+
+
+@tool(description="Convert Celsius to Fahrenheit.")
+def to_fahrenheit(celsius: float) -> float:
+    return celsius * 9 / 5 + 32
+
+
+schema = tool_definition(to_fahrenheit).json_schema()
+assert schema["required"] == ["celsius"]
+```
+
+`tool_definition(function)` is an internal helper that raises `DefinitionError`
+for an undecorated function; how registered tools are read from an agent is
+#60.
+
+**Related:** [`@tool`](#tool), [`Inject[T]`](agents.md#injectt).
 
 ## Python and Pydantic data contracts
 

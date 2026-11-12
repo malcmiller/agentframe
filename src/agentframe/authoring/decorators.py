@@ -1,4 +1,4 @@
-"""The ``@agent`` and ``@skill`` decorators."""
+"""The ``@agent``, ``@skill`` and ``@tool`` decorators."""
 
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -8,7 +8,9 @@ from agentframe.authoring.definitions import (
     AgentDefinition,
     SkillDefinition,
     SkillMetadata,
+    ToolDefinition,
     build_skill_definition,
+    build_tool_definition,
     class_docstring,
 )
 from agentframe.errors import DefinitionError
@@ -16,6 +18,7 @@ from agentframe.models.base import ModelSettings
 from agentframe.runtime.limits import RunLimits
 
 _SKILL_ATTRIBUTE = "_skill_metadata"
+_TOOL_ATTRIBUTE = "_tool_definition"
 
 
 # noinspection PyShadowingBuiltins
@@ -143,3 +146,59 @@ def _skill_methods(agent_name: str, cls: type) -> dict[str, Callable[..., Any]]:
                     "overrides a skill without @skill"
                 )
     return methods
+
+
+def tool[F: Callable[..., Any]](
+    *,
+    description: str | None = None,
+    side_effects: bool = False,
+    idempotent: bool = False,
+) -> Callable[[F], F]:
+    """Mark a typed function as a tool a model may call.
+
+    The function is validated immediately and stays directly callable. Sync
+    functions run inline on the event loop, so use ``async def`` for any I/O.
+    Decorating grants nothing: the tool must still be registered on an agent
+    and selected by ``ctx.generate``.
+
+    Args:
+        description: What the tool does, shown to the model. Defaults to the
+            function docstring; one of them is required.
+        side_effects: Whether a call has consequential effects, such as
+            cancelling an order.
+        idempotent: Whether repeating a call with the same arguments has no
+            further effect. Not a retry grant: tools are never auto-retried.
+
+    Returns:
+        A decorator that attaches a ``ToolDefinition`` and returns the same
+        function (or ``staticmethod``).
+
+    Raises:
+        DefinitionError: If the function breaks a tool rule: it is a lambda or
+            method, has an invalid name, unannotated, ``*args``/``**kwargs`` or
+            positional-only parameters, an unsupported type, or no description.
+    """
+
+    def decorator(func: F) -> F:
+        definition = build_tool_definition(
+            func,
+            description=description,
+            side_effects=side_effects,
+            idempotent=idempotent,
+        )
+        setattr(definition.function, _TOOL_ATTRIBUTE, definition)
+        return func
+
+    return decorator
+
+
+def tool_definition(function: Callable[..., Any]) -> ToolDefinition:
+    """Return the definition ``@tool`` attached to ``function``.
+
+    Raises:
+        DefinitionError: If ``function`` is not decorated with ``@tool``.
+    """
+    definition = getattr(function, _TOOL_ATTRIBUTE, None)
+    if not isinstance(definition, ToolDefinition):
+        raise DefinitionError(f"{function!r} is not decorated with @tool")
+    return definition
