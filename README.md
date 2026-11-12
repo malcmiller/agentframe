@@ -105,8 +105,10 @@ approval pause/resume. Tool authorization/action checks remain mandatory.
 Protocol task support is not a resumable human workflow. The current core does
 not include a UI, durable workflow/graph engine, hosting/deployment service,
 federation, RAG system, evaluation platform, or Foundry-hosted agent deployment.
-Checkpointed multi-step workflows, pause/resume and crash recovery may be
-considered later; they are neither rejected nor committed.
+Revisit durable workflows after the multi-agent release based on real usage;
+no design now. If added, use an optional separate package (candidate
+`agentframe-workflows`). Long work uses A2A tasks with an in-memory default
+and pluggable persistent store, not automatic checkpoint/recovery or approvals.
 
 Token budgets and deadlines are runtime-enforced configuration. Tracing
 integration and MCP are separate optional follow-ups after M7. OpenTelemetry
@@ -129,16 +131,25 @@ transient model retries and A2A deduplication never promise exactly-once actions
 
 **The next core release (M8+) is multi-agent A2A composition**, not an optional
 discovery add-on. Read-first registries and a managed directory provide validated
-references, native card resolution, caching and explicit refresh; a separate
-`RemoteAgentClient` makes native A2A calls. Orchestrators are ordinary AgentFrame
+references, native card resolution, five-minute caching and stale refresh.
+Skills receive `Remote["name"]` bindings: `call("skill", ..., output=Type)`
+uses structured A2A, while `ask(text)` uses plain A2A text. Both await completion;
+input-required raises `ClarificationNeededError`, never automatic back-and-forth.
+Orchestrators are ordinary AgentFrame
 agents whose skills call specialists, not a workflow/graph engine. The release
 must carry identity/delegation, permissions, deadlines, remaining token allowance
 and trace/correlation across hops without amplifying authority or overriding
-remote services' limits. Typed remote calls and small delegation/fan-out helpers
-are options with open contracts, not approved APIs or proprietary RPC.
+remote services' limits. Per-remote Entra OBO or explicit service identity,
+remaining deadline/token ceilings and default maximum 5 hops constrain calls.
+No orchestration helpers in the first multi-agent release: use plain Python
+`await`, `asyncio.TaskGroup` and `directory.find(skill=... / tags=...)`.
+Typed `Remote[ResearchAgent]` proxies are a later option, not proprietary RPC.
 
-Deployment starts with running N agents together locally, then container
-packaging; Foundry/Kubernetes templates are later. AgentFrame does not become a
+M2 adds `agentframe run module:Class`; M8+ adds `agentframe dev` reading
+`agentframe.yaml`, local registry/development API-key wiring and tagged combined
+logs. Package one container per agent, with a Dockerfile template and generated
+Compose example; Foundry/Kubernetes templates are later. See the
+[development plan](docs/development.md). AgentFrame does not become a
 hosting platform. Discovery itself does not deploy agents, grant authority or
 invoke them automatically. Foundry registry discovery uses the chosen projects
 agents API (`azure-ai-projects` 2.x); A2A-enabled filtering, card mapping,
@@ -149,6 +160,10 @@ Streaming is a separate follow-up after M7, planned to support **AG-UI** as an
 optional agent-to-frontend
 protocol adapter, distinct from A2A agent-to-agent and MCP tool interfaces.
 A2A/cards stay first-class; no UI or major agent-framework dependency is implied.
+`AgentApp(ag_ui=AGUIConfig(enabled=True))` will serve `/ag-ui` with shared
+auth/limits/permissions: lifecycle, text deltas, tool names/status and safe errors.
+Whole-answer checks send complete text at end; disconnect cancels, with no
+first-version reconnect/resume. Frontend tools/shared state are later opt-in.
 The [streaming proposal](docs/streaming.md) scopes event mapping, trust and
 output-policy boundaries without claiming implemented AG-UI conformance or
 automatically advertising A2A streaming.
@@ -167,6 +182,7 @@ platform or durable workflow engine is not a prerequisite for either.
 - [Base classes and interfaces](docs/base-classes.md)
 - [Agent examples: model-free, model-backed, and mixed](docs/agent-examples.md)
 - [Read-first registries and managed agent discovery](docs/discovery.md)
+- [Local CLI development and container packaging plan](docs/development.md)
 - [Future streaming and the optional AG-UI adapter](docs/streaming.md)
 - [Execution limits and token accounting](docs/limits.md)
 - [Tracing and correlation](docs/tracing.md)

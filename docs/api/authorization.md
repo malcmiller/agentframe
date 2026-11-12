@@ -214,6 +214,13 @@ claim selection, key refresh and permission-merge rules remain open.
 
 **Related:** [`Authenticator`](#authenticator), [identity guide](../authorization.md).
 
+For M8+ remote calls, per-target `on_behalf_of` is the Entra-ingress default
+when a delegated user assertion is supported. Exchange for the target audience;
+never forward the incoming token. Explicit `service` uses agent identity.
+Exchange failure fails, never elevates via fallback. API-key/anonymous ingress
+supports only explicit service mode. Per-target configuration and claim/provider
+details remain open; see [OBO boundaries](../authorization.md#cross-agent-identity-propagation-m8).
+
 ## `APIKeyAuth`
 
 **Purpose / decision:** explicit API-key authentication for development or

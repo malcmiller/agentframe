@@ -111,7 +111,8 @@ deadlines and host resource bounds: source reads, bounded card HTTP fetches,
 refresh/enrichment fan-out and downstream calls do not reset allowance.
 Discovery itself is model-free; explicit model-assisted selection consumes
 model budget. Remote card metadata cannot impose a hard remote token/billing
-cap. Exact cross-service allowance/deadline APIs remain open.
+cap. M8+ author calls and propagation defaults are decided below; exact extension
+schema and reconciliation details remain open.
 
 ## Accounting and enforcement
 
@@ -160,9 +161,37 @@ even with tracing off. Usage marks completeness/estimation and never turns
 unknown into zero. Exact usage marker fields/failed-run retrieval remain open.
 Future [AG-UI streaming](streaming.md) must bound buffering,
 slow-consumer/backpressure and write/shutdown time within execution deadlines.
-Disconnect is not automatically cancellation; replay/reconnect cannot silently
-retry completed actions or reset budgets. Protocol usage events do not replace
+AG-UI disconnect cancels the run; its first version has no reconnect/resume.
+This does not redefine A2A task-disconnect semantics or retry completed actions.
+Protocol usage events do not replace
 the accounting ledger or establish remote billing guarantees.
+
+## Cross-agent budgets and depth (M8+)
+
+**Decided:** send the remaining deadline automatically. An AgentFrame receiver
+uses the minimum of that deadline and its own timeout; the caller independently
+enforces its local wait even with non-AgentFrame peers. Do not extend an ancestor
+deadline, reset it on task polling/retries or promise remote cancellation stops billing.
+
+`await research.call(..., max_total_tokens=20_000)` supplies a per-call ceiling;
+the default is the caller's remaining token allowance. AgentFrame receivers can
+only lower it and report actual usage back through the same AgentFrame A2A
+extension. Charge returned usage to the caller once, without double-counting
+local inference or nested-hop aggregates. Concurrent `asyncio.TaskGroup` calls
+share atomic reservations; each cannot spend the whole remaining allowance.
+Exact reservation allocation, descendant reconciliation and usage trust/markers
+remain open. Strict accounting cannot pretend an unbounded peer is bounded.
+
+Non-AgentFrame usage is **unknown, never zero**. Extension-unaware peers do not
+promise token enforcement/reporting, though caller-side waiting remains bounded.
+This negotiated accounting extension is a narrow exception to ordinary A2A
+invocation-ID-only metadata; it never exposes internal `RunResult` or raw provider data.
+
+Track remote call depth with a default maximum of **5 hops**; exceeding it fails
+instead of continuing a recursion loop. The configuration carrier, root/hop
+encoding and precise limit subtype name remain open. Deadline, token allowance/
+reported usage and depth use the same structured-request extension, whose
+URI/schema remain open; these are not invented standard A2A top-level fields.
 
 ## Retries and duplicate requests
 

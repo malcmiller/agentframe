@@ -134,7 +134,9 @@ limits, accounting and tracing.
 `invoke` returns a validated value; `Runtime.run` returns `RunResult` with
 value, invocation ID, usage, model/tool calls, duration and finish reason even
 without tracing. Usage marks completeness/estimation; unknown is not zero.
-Remote A2A gets only invocation ID response metadata, never internal results.
+Ordinary remote A2A gets only invocation ID execution metadata, never internal results.
+The negotiated M8+ extension additionally reports actual usage for accounting,
+not `RunResult` or raw provider details; ordinary callers retain ID-only correlation.
 Exact usage marker fields, duration unit and failed-run access remain open.
 
 Prefer structured A2A requests naming a skill with JSON arguments in a native
@@ -269,12 +271,15 @@ call specialists over A2A, not a workflow/graph engine.
 `AgentRegistry` is a small read-only abstract base with proposed async
 `get(agent_id) -> AgentReference` and `list(query: AgentQuery) ->
 list[AgentReference]`; pagination is unresolved. Environment/file adapters read
-explicit sources with a documented structured format (JSON initially proposed).
+explicit sources. `FileAgentRegistry("agents.yaml")` reads a YAML name+URL list
+(detailed keys/schema open); `EnvironmentAgentRegistry("AGENTFRAME_AGENTS")`
+uses an explicit variable (payload encoding open).
 `FoundryAgentRegistry` uses the chosen Foundry project agents API through
 `azure-ai-projects` 2.x (2.10.0 observed), project endpoint
 `https://{account}.services.ai.azure.com/api/projects/{project}`. Incoming A2A
 on prompt agents is documented via `agent_card` plus protocol configuration;
-target GA 1.0 explicitly. Listed-agent to card mapping, A2A-enabled filtering,
+target GA 1.0 explicitly. `FoundryAgentRegistry(project_endpoint=..., credential=...)`
+returns A2A-enabled agents only. Listed-agent to card mapping/filter implementation,
 authentication/RBAC and pagination remain open. Foundry User or higher enables
 incoming A2A; endpoint callers need Foundry Agent Consumer or another
 endpoint-access role. Verify registry-read permissions separately. Outbound
@@ -283,14 +288,20 @@ Model deployments are not agent endpoints; no AgentFrame-to-Foundry deployment
 or tested registry integration is claimed.
 
 Separate `AgentCardResolver` and library-managed `AgentDirectory` own native SDK
-card fetch/validation/cache/explicit refresh and owned-resource lifecycle, not
+card fetch/validation/cache/refresh and owned-resource lifecycle, not
 per-backend user HTTP loops. No import/construction I/O or implicit polling;
-background refresh is opt-in. Inject directories as application dependencies;
+background refresh is opt-in. Cache TTL defaults to 300 seconds; automatically
+refresh on stale access, failing unless `allow_stale=True` explicitly.
+Compose `AgentDirectory(sources=[...])`, inject via `AgentApp(directory=...)`,
+and validate configured `Remote["name"]` bindings at startup.
+`directory.find(skill="find_sources")` / `find(tags=["research"])` returns
+matching native cards from bounded validated enrichment, not assumed reference fields.
+Inject directories as application dependencies;
 caller-owned resources stay caller-owned unless explicitly transferred. No
 registration writes, deploy/start/stop/delete, leases/federation, or A2A task
 lifecycle in the discovery base.
 
-Keep reference/JSON/query/result fields explicitly proposed. Do not query
+Keep unspecified reference/YAML/query/result fields explicitly proposed. Do not query
 skills/tags absent from references without an explicit metadata/enrichment
 contract. Source failures are not empty results/deletion; refresh failures never
 make stale current. Reconciled removal ends new eligibility, not active tasks,
@@ -299,20 +310,39 @@ variants; freshness is not health, trust or permission. Keep secrets out of
 references/cards/source files; enforce application-selected outbound auth and
 destination/redirect policy, bounded reads/deadlines/cancellation and safe
 telemetry. Discovery does not delegate or auto-expose skills as tools. A separate
-`RemoteAgentClient` uses native A2A with invocation/action authorization; its API
-is open. See `docs/discovery.md` and `docs/api/discovery.md`.
+`RemoteAgentClient` may remain underlying/explicit client with construction open.
+Author skills use `Remote["name"]` (excluded from external schemas),
+`call("skill", ..., output=list[Source], max_total_tokens=...)` for structured
+A2A, or `ask(text)` for any compatible peer. Both wait within caller deadline;
+remote input-required raises `ClarificationNeededError` with question, no
+automatic back-and-forth. See `docs/discovery.md` and `docs/api/discovery.md`.
 
 Plan cross-hop verified identity/delegation without authority amplification,
 permissions, deadlines, remaining token allowance and trace/correlation;
-remote services authenticate and enforce their own limits. Trust/wire/accounting
-contracts remain open; do not invent A2A fields or hard remote billing guarantees.
-Typed remote calls to AgentFrame peers and small delegation/fan-out helpers are
-options, not approved signatures or proprietary RPC. If provided, typed peer
-calls always use structured extension selection, never prompt routing. Prove two or more
+remote services authenticate and enforce their own limits. Per-remote
+`on_behalf_of` defaults for Entra delegated callers, using standard target-scoped
+OBO exchange; explicit `service` uses agent identity. API-key/anonymous ingress
+supports service only. Never forward incoming tokens or fall back on exchange
+failure; validate target user/actor permissions without authority amplification.
+Send remaining deadline (receiver min with own timeout); per-call token cap
+defaults to caller remaining, receiver can only lower, actual peer usage charged
+once. Other-peer usage is unknown, never zero. TaskGroup fan-out shares atomic
+reservations. Default max 5 remote hops, excess fails. These controls use the
+same A2A extension; detailed config/wire/usage trust remains open, not base
+protocol fields or hard billing guarantees.
+No orchestration helpers in the first multi-agent release: plain await,
+asyncio.TaskGroup and directory.find. Later optional `Remote[ResearchAgent]`
+typed proxy always uses structured selection, never prompt routing. Prove two or more
 independently deployed AgentFrame agents, an orchestrator discovering/calling a
 specialist with propagated context, and non-AgentFrame A2A client/server interop.
 Development support starts with running N agents locally, then container
-packaging; Foundry/Kubernetes templates are later. No hosting platform is implied.
+packaging; Foundry/Kubernetes templates are later. M2 `agentframe run module:Class`
+starts one agent. M8+ `agentframe dev` reads agentframe.yaml (names/modules/ports),
+starts localhost agents, writes local registry, configures dev API keys and
+combines logs tagged by agent/invocation. One container per agent; Dockerfile
+template and generated docker-compose example. Exact schema/generation/key
+lifecycle remains open; no actual config files before implementation.
+No hosting platform is implied. See `docs/development.md`.
 
 ### Initial release boundaries
 
@@ -341,6 +371,8 @@ exception, stack trace or secret goes to callers. Log diagnostics with redaction
 Network host examples must include clearly labeled application-supplied
 development authentication/authorization placeholders where appropriate;
 loopback/omission is not access policy or a production-safe default.
+M8+ adds `ClarificationNeededError` under `AgentFrameError`; local client
+input-required question is not a failed remote task or durable resumption.
 
 Use explicit model selection, finite execution limits, validated inputs/outputs,
 isolated run state, cancellation propagation, redacted operational logs, and
@@ -368,7 +400,10 @@ choose remaining interfaces unilaterally.
 
 No workflow/graph engine, deployment service, federation or built-in approval
 workflow is in the current core. Durable checkpointed flows, pause/resume and
-crash recovery are possible later additions, neither rejected nor committed.
+crash recovery are revisited after multi-agent real usage, not designed now.
+If added, use an optional separate package (candidate `agentframe-workflows`).
+Long-running work uses A2A tasks with an in-memory default and pluggable
+persistent store; persisted tasks are not Python workflow crash recovery.
 Do not expand scope into UI, RAG infrastructure, evaluation platforms or hosted
 cloud-agent deployment without an explicit request; local/container packaging
 is part of the multi-agent direction, not a hosting service.
@@ -379,14 +414,19 @@ Future streaming should support a scoped optional AG-UI agent-to-frontend
 adapter, distinct from A2A agent-to-agent, MCP tools and OTel tracing. A2A/card-first
 remains; no UI framework, implicit frontend tool execution, shared-state
 persistence, human approval workflow, resumability or blanket feature/conformance
-claim. No adapter class/constructor/stream method is finalized. Use official
+claim. Decided later configuration is `AgentApp(ag_ui=AGUIConfig(enabled=True))`
+at `/ag-ui` on the same server/auth/permissions/limits. Stream run start/finish,
+text deltas, tool names/status (not raw arguments by default) and safe errors.
+Whole-answer checks release complete text at end; disconnect cancels run,
+first version has no reconnect/resume. Frontend tools/shared state later opt-in.
+No runtime stream method or event schema is finalized. Use official
 primary sources and native protocol types; select/test compatible SDK/schema/
 transport versions later. Do not advertise A2A streaming before implementation.
 Keep native thread/run/message/tool IDs separate from server invocation identity,
 isolate caller/tenant/history/events, treat frontend messages/state/tools as
 untrusted, gate output/events before release and expose no secrets/raw private
-reasoning. Cancellation/disconnect/buffering/backpressure/reconnection remain
-explicit contracts; tracing/accounting/enforcement work independently. See
+reasoning. Detailed cancellation translation/buffering/backpressure/shutdown
+remain open; tracing/accounting/enforcement work independently. See
 `docs/streaming.md` and `docs/api/streaming.md`.
 
 ## Documentation maintenance
@@ -395,7 +435,7 @@ Read `README.md` and `docs/README.md` first. Keep `docs/initial-outline.md`,
 `docs/annotations.md`, `docs/base-classes.md`, `docs/agent-examples.md`,
 `docs/limits.md`, `docs/tracing.md`, `docs/mcp-skills.md`,
 `docs/authorization.md`, `docs/prompt-safeguarding.md`, `docs/discovery.md`, and
-`docs/streaming.md` consistent, including discovery/streaming API pages and
+`docs/streaming.md`, and `docs/development.md` consistent, including discovery/streaming API pages and
 navigation. Preserve the distinction between confirmed product direction and
 illustrative API details.
 

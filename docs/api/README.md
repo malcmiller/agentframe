@@ -32,7 +32,9 @@ deliberately shows typed dependency use instead of inventing one.
 | [Identity, authorization and content policy](authorization.md) | [`Principal`](authorization.md#principal), [`AuthorizationPolicy`](authorization.md#authorizationpolicy), [`ExecutionPolicy`](authorization.md#executionpolicy), [`Authenticator`](authorization.md#authenticator), [`EntraIDAuth`](authorization.md#entraidauth), [`APIKeyAuth`](authorization.md#apikeyauth), [`AllowAnonymous`](authorization.md#allowanonymous). |
 | [Hosting](hosting.md) | [`AgentApp`](hosting.md#agentapp), [`HostConfig`](hosting.md#hostconfig), [`A2AConfig`](hosting.md#a2aconfig), [`MCPConfig`](hosting.md#mcpconfig), [`SkillRouter`](hosting.md#skillrouter); native SDK types. |
 | [Built-in model routing](hosting.md#built-in-model-based-router-planned-implementation) | Opt-in library implementation alongside custom routers; public implementation name/constructor still open. |
-| [Future streaming](streaming.md) | Planned optional [AG-UI adapter](streaming.md#optional-ag-ui-adapter) and [runtime event boundary](streaming.md#runtime-streaming-boundary); no selected public class/stream method. |
+| [Future streaming](streaming.md) | [`AGUIConfig`](streaming.md#aguiconfig), optional [AG-UI adapter](streaming.md#optional-ag-ui-adapter) and [runtime event boundary](streaming.md#runtime-streaming-boundary); runtime stream method open. |
+| [Remote authoring](discovery.md#remotename) | [`Remote["name"]`](discovery.md#remotename), [`call`](discovery.md#remotecall), [`ask`](discovery.md#remoteask), [`ClarificationNeededError`](discovery.md#clarificationneedederror), [`AgentDirectory.find`](discovery.md#agentdirectoryfind). |
+| [Development and packaging](../development.md) | M2 `agentframe run module:Class`; M8+ `agentframe dev`, `agentframe.yaml`, registry/API-key/log wiring and container templates; not installed tooling. |
 | [Multi-agent release discovery and calls](discovery.md) | [`AgentRegistry`](discovery.md#agentregistry), [`get`](discovery.md#agentregistryget), [`list`](discovery.md#agentregistrylist), [`AgentReference`](discovery.md#agentreference), [`AgentQuery`](discovery.md#agentquery), [`EnvironmentAgentRegistry`](discovery.md#environmentagentregistry), [`FileAgentRegistry`](discovery.md#fileagentregistry), [`FoundryAgentRegistry`](discovery.md#foundryagentregistry), [`AgentCardResolver`](discovery.md#agentcardresolver), [`CardCacheConfig`](discovery.md#cardcacheconfig), [`AgentDirectory`](discovery.md#agentdirectory), [`get`](discovery.md#agentdirectoryget), [`refresh`](discovery.md#agentdirectoryrefresh), [`__aenter__`](discovery.md#agentdirectory__aenter__), [`__aexit__`](discovery.md#agentdirectory__aexit__), [`RemoteAgentClient`](discovery.md#remoteagentclient). |
 
 AgentFrame owns its authoring and execution abstractions, not wrappers around a
@@ -53,14 +55,15 @@ policy, publishing, or routing implementation. Syntax checks do not prove SDK
 compatibility or runtime behavior.
 
 The authoring path is an `Agent` subclass with separate async `@skill` methods,
-Each accepting injected `ctx: RunContext`. Local managed calls select a stable
+each accepting injected `ctx: RunContext`. Local managed calls select a stable
 skill ID through `Runtime.invoke`. Remote A2A uses native messages/tasks and
 preferred structured skill selection through a card-declared, caller-activated
 extension and native data-part JSON arguments, or free-text routing/extraction.
 Descriptive A2A skills alone are not Python-method RPC.
 Optional MCP publishes allowlisted skills as native tools, not internal `@tool`
 functions. `Inject[T]` service parameters are excluded from all caller/card/MCP
-schemas; registered services are validated at startup. No custom REST skill API
+schemas; registered services and M8+ `Remote["name"]` bindings are validated at
+startup and remote annotations likewise excluded. No custom REST skill API
 is proposed for the initial slice.
 One server/shared runtime has an endpoint per caller audience, not per skill:
 A2A for agents, optional MCP for LLM apps/tools and AG-UI later for frontends.
@@ -83,8 +86,10 @@ controls or the selected skill's inference cost. Unknown skills/invalid
 arguments fail explicitly. Free-text ambiguity/missing input asks back via an
 A2A `TASK_STATE_INPUT_REQUIRED` task. See the [request-style decision and sources](../mcp-skills.md#a2a-request-styles-and-extension-boundary);
 extension URI/schema/name, detailed advertisement, router API and clarification
-contracts remain open. Any future typed AgentFrame peer calls use structured
-selection, with their method syntax still undecided.
+contracts remain open. M8+ `Remote.call` uses that structured extension;
+`ask` uses plain text with any compatible peer. Both wait within deadline;
+input-required raises `ClarificationNeededError`, not automatic dialogue.
+Later optional `Remote[ResearchAgent]` proxies use the same structured request.
 MCP exposure stays opt-in per skill, empty by default; quick typed/single-shot
 tool-like skills are candidates, while judgment/multi-turn/clarification skills
 usually stay A2A-only. That is guidance, not an enforced classifier.
@@ -114,9 +119,13 @@ lifecycle examples; the Foundry project agents API is chosen, while enabled-agen
 filtering, card mapping, auth/RBAC, pagination and compatibility remain to prove.
 Cross-hop identity/delegation, permissions, deadlines, remaining token allowance
 and trace/correlation are planned, without authority amplification or overriding
-remote limits. Typed remote calls and small delegation/fan-out helpers are
-options, not finalized signatures. Local N-agent development comes before
-container packaging; Foundry/Kubernetes templates are later, not a hosting
+remote limits. Per-target OBO/service identity, remaining deadlines and token
+ceilings, reported AgentFrame usage and maximum 5 hops are decided; wire/config
+details remain open. Directory `sources=[...]`, native card `find`, YAML files,
+300-second cache/stale refresh and `AgentApp(directory=...)` are decided.
+No initial orchestration helpers; use Python `await` / TaskGroup / find.
+M2 single-agent `run`, M8+ `dev`/local registry/auth/logging and one-container
+packaging are decided; Foundry/Kubernetes templates are later, not a hosting
 platform. Acceptance includes independent deployment and non-AgentFrame A2A
 client/server interoperability; see the [M8+ plan](../initial-outline.md#next-core-release-multi-agent-a2a-composition-m8).
 
@@ -136,7 +145,8 @@ failed/rejected states as appropriate; never expose raw provider exceptions,
 stack traces or secrets. Logs are redacted; clarification remains input-required.
 
 `invoke` returns a validated value; `run` returns `RunResult` with local metadata
-even without tracing. Remote A2A receives only invocation ID response metadata.
+even without tracing. Ordinary remote A2A receives only invocation ID execution
+metadata; negotiated M8+ extension usage is an accounting exchange, not `RunResult`.
 Services support app-owned singletons and AgentFrame-created/closed per-run
 instances. Defaults resolve library -> agent -> skill -> per-run within host
 ceilings: 120 seconds, 100000 total tokens, 10 model attempts, 20 tool calls;
@@ -169,11 +179,11 @@ observed 2.10.0). Versions observed are not pins or tested compatibility.
 | Accounting | Token-counting support, strict-mode contract, unknown-usage reconciliation and provider-specific output/reasoning semantics. |
 | Identity and policy | Principal construction, custom authenticator/authorization/content-check methods, API-key map schema, Entra scope mapping/permission merging and delegation trust. `auth`, built-ins, `role_permissions` and explicit `AllowAnonymous()` are decided. |
 | Hosting | SDK pin/transport binding; structured extension URI/name/schema/selector/advertisement; native result/error metadata mappings, follow-up lifecycle, routers/extraction/clarification; MCP mappings/auth; byte measurement, busy binding, probe bodies and host output-ceiling carrier. Protection defaults and probe purposes are decided. |
-| Streaming | Later runtime event API and scoped AG-UI version/binding/mapping, native vs invocation identifiers, tenant isolation, policy gating, cancellation/disconnect/buffering/backpressure/reconnect and typed-result serialization; no blanket conformance. |
-| Discovery | Reference/JSON schemas, query matching/enrichment/pagination, resolver auth/destination interfaces, source reconciliation, result/error types, TTL/stale/refresh/background contracts, cache isolation, ownership/host wiring, Foundry listed-agent/card mapping, A2A-enabled filtering, auth/RBAC and pagination, separate remote-client API. The project agents source API is chosen. |
-| Multi-agent release | Native A2A remote-call and optional typed-call mapping; trusted cross-hop identity/permission/deadline/budget/trace propagation, optional delegation/fan-out helpers, local N-agent development and container packaging. No chosen client/helper/deployment syntax. |
+| Streaming | Native event/version/binding and ID/typed-result mapping, bounds/backpressure/write/shutdown details. `AGUIConfig`, `ag_ui=`, `/ag-ui`, tool names/status, whole-answer buffering, disconnect cancellation and no initial reconnect/resume decided; no blanket conformance. |
+| Discovery | YAML name/URL key schema, environment encoding, source conflict/order, find combinations/pagination/enrichment bounds, resolver auth/destination/source reconciliation/cache isolation/stale-age/ownership details, Foundry mapping/RBAC/pagination. Sources, directory host wiring, find, 300s TTL/on-stale refresh and startup named binding validation decided. |
+| Multi-agent release | Extension URI/schema for structured selection, deadline/token/usage/depth, OBO/service config/claim validation, clock/hop semantics, atomic reservations/descendant usage, result mappings/reserved-name collisions. Remote.call/ask, clarification error, max 5 hops and no initial helpers decided. CLI config/loading/key lifecycle and Compose generation details open; typed class proxy later. |
 | Execution and DI | Factory/disposal interfaces, explicit local startup method, app/runtime service-container conflicts; retry configuration/backoff/classification, tool flag combinations and additional retry rules; dedupe store/window API, atomicity, changed payloads and message-only interactions. DI/ownership, default retries/deduplication and no automatic side-effect replay are decided. |
-| Later extensions | Streaming, executor/state-store extensions and additional modalities. Durable checkpointed flows/pause/resume/crash recovery are possible later work, not rejected or committed; no current workflow/graph engine, built-in approval workflow or hosting platform API. |
+| Later extensions | Frontend tools/shared state later opt-in only. Revisit durable workflows after multi-agent usage, not designed now; optional separate package if added (candidate `agentframe-workflows`). Pluggable persistent A2A task storage is not workflow crash recovery. No core approval engine/hosting platform. |
 
 Use the [design outline](../initial-outline.md#open-design-decisions) to track
 rationale and delivery milestones. Resolve open details with implementation and

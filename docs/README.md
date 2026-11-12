@@ -31,6 +31,7 @@ reference does not replace them.
 | [Base classes](base-classes.md) | Complete annotation/subclass/composition decision table, interfaces, and small proposed API examples. |
 | [Agent examples](agent-examples.md) | Model-free, model-backed, and mixed multi-skill agents, model selection, local runtime invocation, and A2A boundaries. |
 | [Discovery](discovery.md) | M8+ core registry/directory and remote A2A composition, cross-hop context, local/container deployment direction and acceptance; not a workflow/graph engine. |
+| [Development and packaging](development.md) | M2 `run`, M8+ `dev`, `agentframe.yaml`, local registry/auth/logging and one-container-per-agent packaging. |
 | [Streaming and AG-UI](streaming.md) | Future scoped frontend-protocol adapter, primary-source event/transport research, trust/policy boundaries and open delivery contracts. |
 | [Limits](limits.md) | Per-request output/input limits, invocation budgets, host ceilings, and honest accounting guarantees. |
 | [Tracing](tracing.md) | Optional OpenTelemetry configuration, span boundaries, safe metadata, and correlation. |
@@ -78,8 +79,17 @@ orchestrator skills cooperating over A2A, including with other frameworks'
 A2A agents. Discovery/native calls and identity/budget/trace propagation are
 core to this release, not optional follow-ups. MCP, telemetry integration and
 streaming/AG-UI remain optional follow-ups. Local N-agent development precedes
-container packaging; Foundry/Kubernetes templates are later. Durable workflows
-may be considered later but no workflow/graph engine or hosting platform is committed.
+container packaging; Foundry/Kubernetes templates are later. No workflow/graph
+engine or hosting platform is included.
+The confirmed M8+ surface is `Remote["name"].call` / `ask`, input-required as
+`ClarificationNeededError`, directory `sources` and card-backed `find`, YAML
+file sources and a 300-second cache with automatic stale refresh. Per-target OBO/
+service modes, shared remaining budget/deadline and maximum 5 hops constrain
+native A2A calls. No orchestration helpers initially; use Python TaskGroup.
+The later streaming contract is `AGUIConfig` via `ag_ui=` at `/ag-ui`, tool
+names/status rather than raw arguments, whole-answer buffering when needed,
+disconnect cancellation and no reconnect/resume. Revisit durable workflows only
+after multi-agent usage; persistent A2A task storage is not workflow resumption.
 The [resolved M0 choices](initial-outline.md#resolved-m0-platform-and-api-decisions)
 are support for Python 3.13+ with planned tests through 3.15, A2A 1.0/official `a2a-sdk`, and Foundry
 OpenAI v1 Responses via `openai`, with injected Entra token-provider or API-key

@@ -91,9 +91,9 @@ framework base class.
 | Retry and host defaults | Transient model failures only, two retries/backoff, SDK retries disabled; side-effecting tools never auto-retry. Same caller/A2A message ID dedupes for 10 minutes (memory, pluggable store), not exactly-once. Host defaults 32 runs/1 MiB request/4 MiB response/30 seconds drain; `/health` and `/ready`. | Retry/store configuration, atomicity/payload conflicts, byte measurement, busy binding/probe schema; defaults themselves decided. |
 | A2A request styles | Prefer deterministic structured skill/JSON-argument requests through a card-declared, caller-activated extension. Free-text uses custom or opt-in model routing; ambiguity/missing input asks back via input-required tasks. No automatic routing from agent model injection. | Extension URI/name/schema/selector placement and support-advertisement details, router/extraction/clarification contract, native result mappings. |
 | Human approvals | Application-owned workflows; no built-in approval pause/resume in first release. Required tool/action authorization remains enforced. | Application integration/decision types; protocol tasks are not durable approval workflows. |
-| Multi-agent composition | Next core release (M8+) after the M7 single-agent release: discovery, native remote A2A calls, ordinary orchestrator skills and cross-hop identity/budget/trace propagation. Foundry project agents API is the chosen Foundry registry source. | Source mappings/client and propagation contracts, typed-call options, small helpers, local multi-agent development and container packaging; Foundry A2A-enabled filtering, card mapping, auth/RBAC and pagination remain open. |
-| Durable workflows | Possible later addition, not rejected or committed; no workflow/graph engine in the current core. | Checkpointed multi-step flows, pause/resume and crash recovery require a separate future decision. |
-| Streaming | Later delivery with scoped optional AG-UI agent-to-frontend support; A2A/card-first remains. | Version/binding, event mapping, policy gating, cancellation, buffering, backpressure and reconnection contracts; see [streaming](streaming.md). |
+| Multi-agent composition | M8+: `Remote["name"]` injection, structured `call`, plain `ask`, input-required error; multi-source directory/find, YAML files, 300-second stale-refresh cache, OBO/service identity, deadline/token/depth controls (5 hops), plain Python orchestration, dev CLI/containers. | Detailed extension schema/identity config, source conflicts/card mapping/search pagination, accounting trust and dev config; typed class proxy only later, no initial orchestration helpers. |
+| Durable workflows | Revisit after multi-agent usage; no design now. Long work uses native tasks, in-memory default/persistent store pluggable; approvals application-owned. If added, optional separate package (candidate `agentframe-workflows`). | Future evidence/scope; task persistence is not Python crash recovery or durable approval resume. |
+| Streaming | Later `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`, same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Version/binding, native event mapping, bounds/backpressure and typed final serialization; frontend tools/shared state later opt-in only. |
 
 ## Architectural rules
 
@@ -253,7 +253,8 @@ context is not identity. See [tracing](tracing.md).
 `Runtime.invoke` returns the validated value. `Runtime.run` returns `RunResult`
 with value, invocation ID, token usage (complete/estimated; unknown never zero),
 model/tool calls, duration and finish reason even with tracing off. A2A returns
-only invocation ID response metadata, not internal counters/provider details.
+only invocation ID execution metadata, not internal counters/provider details;
+the negotiated M8+ extension separately reports downstream accounting usage.
 
 ## Delivery milestones
 
@@ -266,7 +267,7 @@ introduced here; the approved platform/API choices are recorded below.
 | --- | --- | --- |
 | 0 | Development setup | Establish a small, human-readable package layout for Python 3.13+, testing 3.13 through 3.15. Configure Ruff formatting/lint (88-character lines), strict mypy on `agentframe`, pytest with async support, and CI/pre-commit format/lint/type/test checks that pass before merge. Apply the readability-first contributor rules; pin compatible tools/SDK/dependencies and create `pyproject.toml` during implementation, not this docs update. |
 | 1 | Model-free authoring and `Runtime.invoke` | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; invalid definitions, missing services and invalid arguments fail explicitly before skill effects. Prove annotated `Inject[T]`, singleton/scoped ownership, isolated context and validated outputs without network access. `invoke` returns the value; `run` exposes local `RunResult` metadata. |
-| 2 | Native A2A hosting with structured requests and custom routing only | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
+| 2 | Native A2A hosting with structured requests and custom routing only | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Add `agentframe run module:Class` with explicit host config. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
 | 3 | Text generation through the shared `Model` contract | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
 | 4 | Typed structured outputs | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
 | 5 | Bounded tool calling | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
@@ -313,15 +314,16 @@ are a possible additional reference source, not a selected registry contract.
 ### Next core release: multi-agent A2A composition (M8+)
 
 This is the next core release after M7, not an optional discovery follow-up.
-Keep M0-M7 unchanged as the single-agent release; the M8+ breakdown and exact
-interfaces remain open.
+Keep M0-M7 as the single-agent release, with single-agent `run` in M2.
+The M8+ authoring contracts below are decided, while unspecified wire/configuration
+details and finer milestone breakdown remain open.
 
 | Capability | Planned direction and acceptance |
 | --- | --- |
-| Discovery and remote invocation | Prove custom/environment/file source reads, managed native card resolution, explicit refresh/stale/removal behavior, ownership, isolation, destination/redirect safety, bounded work and explicit failures. Use `RemoteAgentClient` for native A2A calls; discovery itself does not invoke. |
-| Orchestrator agents | Ordinary AgentFrame skills discover and call specialists. Typed calls to AgentFrame peers and small delegation/fan-out helpers are options, not finalized syntax or a workflow/graph engine. Any typed convenience still uses standard A2A on the wire. |
-| Cross-agent context | Propagate verified caller identity/delegation without authority amplification, permissions, deadlines, remaining token allowance and trace/correlation across hops. Each remote service enforces its own authorization and limits; metadata alone is not a hard remote billing cap. Propagation and trust contracts remain open. |
-| Development and deployment | First run N agents locally together, then provide container packaging. Foundry/Kubernetes deployment templates are later; no hosting/provisioning platform is implied. Commands, packaging and templates are not selected. |
+| Discovery and remote invocation | `AgentDirectory(sources=[...])` with YAML `FileAgentRegistry("agents.yaml")`, Foundry endpoint/credential source, explicit environment source and custom get/list. `AgentApp(directory=...)` validates `Remote["name"]` at startup. Native card-backed `find(skill=... / tags=...)`, 300-second cache/stale refresh, explicit stale opt-in, ownership/isolation/destination safety. `call("skill", ..., output=Type)` uses structured A2A; `ask(text)` works with any compatible peer. Both wait within deadline; input-required raises `ClarificationNeededError`, no automatic dialogue. |
+| Orchestrator agents | Ordinary skills with plain `await`, `asyncio.TaskGroup` and directory search. No orchestration helpers in the first multi-agent release; later only after repeated usage. Optional `Remote[ResearchAgent]` typed proxy later uses the same structured wire request, not proprietary RPC. |
+| Cross-agent context | Per-target Entra `on_behalf_of` default or explicit `service`; API-key/anonymous ingress service only, never raw token forwarding or identity fallback on exchange failure. Propagate remaining deadline (receiver min with own timeout), token ceiling (default caller remaining; receiver only lowers), actual peer usage charged once, max 5 hops and trace/correlation. Shared concurrent reservations; other-peer usage unknown. Same A2A extension, exact schema/config open; each target enforces policy and no hard billing guarantee. |
+| Development and deployment | `agentframe.yaml` lists named module paths/ports. `agentframe dev` starts localhost agents, writes local registry, configures development API keys and combines agent/invocation-tagged logs. One container per agent; Dockerfile template and generated docker-compose example. Config/generation details open; Kubernetes/Foundry templates later, not infrastructure management. |
 
 Release acceptance: deploy two or more AgentFrame agents independently; an
 ordinary orchestrator discovers and calls a specialist over A2A with identity,
@@ -333,7 +335,10 @@ model deployments are not agent endpoints.
 
 No durable workflow engine, built-in approval workflow, federation or deployment
 service is included. Checkpointed multi-step flows, pause/resume and crash
-recovery are possible later work, not commitments or permanent exclusions.
+recovery are revisited only after multi-agent real usage. If added, use an
+optional separate package (candidate `agentframe-workflows`). Long work uses
+A2A tasks with an in-memory default and pluggable persistent store; no built-in
+approval workflow or promise of recovering skill execution from persisted tasks.
 
 ### Optional follow-ups after M7
 
@@ -350,7 +355,11 @@ Streaming/AG-UI is another separate follow-up after M7, with its existing
 errors/truncation, refusal/incomplete results, side-effect safety, isolation and
 no secrets/private reasoning, proven with an independent AG-UI client. Pin the
 feature profile, versions/binding and lifecycle/policy contracts before claiming
-support. Streaming and persistent task stores remain later; AG-UI does not imply
+support. Persistent task storage is pluggable for long-running A2A work, not a
+workflow engine. Streaming uses `ag_ui=AGUIConfig(enabled=True)` on `/ag-ui`,
+same server/auth/limits/permissions, lifecycle/text/tool-name-status/error events
+without raw arguments by default. Whole-answer checks emit complete text at end,
+disconnect cancels, and first version has no reconnect/resume. AG-UI does not imply
 a UI framework, orchestration platform or A2A streaming. Each advertised feature
 needs a behavioral/interoperability test. These optional integrations have no
 imposed order relative to one another or M8+; they do not demote multi-agent
@@ -384,7 +393,7 @@ belongs to that release even though telemetry exporters/integration stay optiona
   for each supported provider.
 - Pinned MCP/telemetry versions, authorization hooks, schema/result mappings,
   and transport-specific correlation metadata.
-- Principal construction and cross-hop identity/delegation trust, custom
+- Principal construction and OBO/service configuration/claims/consent, custom
   authenticator/resource-policy/content-check methods, API-key entry format,
   Entra scope mapping and permission merge rules. `auth`, built-in authenticators,
   `role_permissions` and explicit `AllowAnonymous()` are decided.
@@ -395,17 +404,21 @@ belongs to that release even though telemetry exporters/integration stay optiona
   native A2A extension use are decided, not a standardized base skill field. Built-in
   opt-in model routing, custom routers, multiple skill methods and no mandatory
   `handle()` are decisions, not open questions.
-- Discovery reference/JSON schemas, source consistency and reconciliation,
-  query filtering/enrichment/pagination, resolver auth/destination interfaces,
-  directory result/errors/refresh/ownership, TTL/stale policy and cache
-  isolation, separate remote-client API, and verified Foundry registry mapping.
-- M8+ remote-client message/task/result and optional typed-call mappings over
-  standard A2A; trusted delegation/permission propagation, deadlines, remaining
-  token accounting and trace/correlation across hops; optional delegation/fan-out
-  helpers, local N-agent development and container packaging. Later deployment
-  templates and possible durable workflows are not finalized APIs.
-- Future runtime streaming and AG-UI version/transport/event mapping, identity,
-  policy-gated release, cancellation/disconnect/backpressure/reconnection and
-  structured-result serialization. Application approvals stay separate.
+- YAML name/URL schema details, environment encoding, source conflict/order,
+  card enrichment bounds, find filter combinations/pagination, resolver
+  auth/destination interfaces, source reconciliation, cache isolation/stale-age
+  bounds and ownership details, Foundry mapping/RBAC/pagination. `sources`,
+  `directory=`, `find`, TTL 300/on-stale refresh and named-remote validation decided.
+- Shared extension URI/schema for structured calls, deadline/token/usage/depth;
+  root/hop/clock semantics, atomic reservations and descendant usage trust/
+  reconciliation, per-target identity config and result/argument-reserved-name
+  collisions. `Remote.call` / `ask`, clarification error and max 5 hops decided.
+  CLI config/loading/key lifecycle and Compose generation details remain open;
+  no first-M8+ orchestration helpers. Typed class proxies/templates later.
+- Future runtime streaming API, AG-UI version/transport/native event projection,
+  typed-result serialization, buffer/write/backpressure/shutdown details.
+  `AGUIConfig`, `ag_ui=`, `/ag-ui`, first profile/disconnect cancellation/no
+  reconnect are decided. Frontend tools/state only later opt-in; workflows
+  revisited after multi-agent usage in a separate optional package if added.
 
 Resolve these with small executable examples before declaring a stable API.

@@ -54,6 +54,9 @@ complete skill example, anonymous-access boundaries, and inherited requirements.
 - `Inject[T]` marks trusted service parameters. Register through `Services.add`
   or `add_scoped`; exclude them from caller arguments, cards and MCP schemas.
   Missing services fail startup with `DefinitionError`.
+- M8+ `Remote["name"]` marks managed remote bindings, likewise excluded from
+  caller/card/MCP schemas. Directory names are validated at startup; `call`
+  uses structured A2A and `ask` plain text, never an implicit tool registration.
 - Every skill accepts a typed `ctx: RunContext`, even when it does not use a model.
   Context also carries deadlines, cancellation, caller information, and dependencies.
 - Async skill methods are the primary execution path. Support for synchronous

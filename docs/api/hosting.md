@@ -12,7 +12,8 @@ hosting and optional MCP, rather than require a server subclass. Use one server,
 one shared runtime and an endpoint per caller audience, not per skill: A2A for
 agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 
-**Constructor status:** `services=` is decided; the surrounding composition
+**Constructor status:** `services=`, M8+ `directory=` and later `ag_ui=` are
+decided; the surrounding composition
 shape and unspecified omission details remain illustrative.
 
 ```text
@@ -20,6 +21,7 @@ AgentApp(
     *, agent: Agent, host: HostConfig, runtime: Runtime = ...,
     a2a: A2AConfig = ..., mcp: MCPConfig = ..., router: SkillRouter = ...,
     services: Services = ...,
+    directory: AgentDirectory = ..., ag_ui: AGUIConfig = ...,
 )
 ```
 
@@ -32,6 +34,8 @@ AgentApp(
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
 | `router` | `SkillRouter` implementation | Configured for free-text A2A selection/extraction | Custom router in M2 or built-in opt-in model router in M6. Activated structured selection bypasses it, not runtime controls. No finalized extraction/clarification interface. |
 | `services` | `Services` | Register dependencies used by `Inject[T]` | Startup validates required services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. Shared with runtime; conflicting app/runtime container handling remains open. |
+| `directory` | `AgentDirectory` | M8+ when remote bindings need discovery | Resolve `Remote["name"]`; validate configured names at startup. Sources/cache lifecycle follows ownership, not automatic transfer. |
+| `ag_ui` | `AGUIConfig` | Later explicit opt-in, off unless enabled | `AGUIConfig(enabled=True)` serves `/ag-ui` with the same auth/permissions/limits. |
 
 Supply an instance of [`Echo`](agents.md#agent) for this single-skill
 composition. `auth` is an explicit `Authenticator`;
@@ -67,7 +71,7 @@ Messages, tasks, artifacts, cancellation, and safe failures follow the selected
 official protocol/SDK version. Stream disconnection is not automatically task
 cancellation; in-memory task storage is ephemeral. First release returns
 complete validated results and must not advertise A2A streaming. Protocol tasks
-do not establish built-in human approval pause/resume. A2A callers receive only
+do not establish built-in human approval pause/resume. Ordinary A2A callers receive only
 the invocation ID in response metadata, not internal `RunResult` fields.
 Safe failures map to failed/rejected task states as applicable; protocol failures
 and input-required clarification retain native semantics.
@@ -86,14 +90,63 @@ signature is specified here.
 
 For next-core-release [discovery](discovery.md#agentdirectory), host lifespan may
 manage a library-created or explicitly transferred directory. Merely injecting
-a directory does not transfer ownership. No additional host constructor keyword
-or lifecycle method is finalized; directory refresh/removal is not A2A task
+a directory does not transfer ownership. The decided constructor keyword is
+`directory=`; no new lifecycle method is finalized. Directory refresh/removal is not A2A task
 cancellation or agent deployment.
 Future [AG-UI streaming](streaming.md) is a separate optional frontend adapter;
-no `AgentApp` keyword/path or blanket AG-UI conformance is implied here.
+`ag_ui=AGUIConfig(enabled=True)` and `/ag-ui` are decided, not implemented
+conformance. Disconnect cancels the AG-UI run with no first-version resume;
+this does not redefine A2A stream-disconnect task semantics.
 
 **Related:** [`HostConfig`](#hostconfig), [`SkillRouter`](#skillrouter),
 [combined server example](../mcp-skills.md#proposed-server-composition).
+
+## `agentframe run`
+
+**Purpose / decision:** explicitly start one agent through the native host in
+M2. Approved command: `agentframe run myapp.research:ResearchAgent`.
+The command is not implemented or installed in this repository.
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| Agent target | `module:Class` string | Required | Application module and agent class. Loading/factory details and host/config flags remain open. |
+| Host configuration | Explicit trusted application configuration; carrier open | Required remotely | Auth choice, limits, advertised address and readiness rules still apply. No implicit anonymous startup. |
+
+```shell
+agentframe run myapp.research:ResearchAgent
+```
+
+**Behavior / failures:** startup reports invalid import, agent definition,
+configuration or missing auth. Importing agents never starts serving; shutdown
+uses the host grace period, not abrupt unbounded child work.
+
+**Related:** [single-agent development](../development.md#one-agent-m2),
+[`HostConfig`](#hostconfig).
+
+## `agentframe dev`
+
+**Purpose / decision:** in M8+, start all named agents from `agentframe.yaml`
+on localhost with generated development discovery/auth and one combined log.
+Approved command: `agentframe dev`; not implemented tooling.
+
+| Parameter/concern | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `agentframe.yaml` | YAML named-agent/module-path/port list | Default config file | Detailed keys, loading/bootstrap and overrides open; not the registry file schema. |
+| Local registry | Generated YAML name/URL references | Automatic for named discovery | Path/conflict handling open; never overwrite user configuration silently. |
+| Development auth | Managed API-key service identity | Automatic between dev agents | No fabricated OBO identity; key storage/rotation/cleanup open. Never put keys in registry or logs. |
+| Combined log | Agent and invocation ID tags | Decided output | Preserve redaction/content-capture defaults; not durable workflow state. |
+
+```shell
+agentframe dev
+```
+
+**Behavior / failures:** report invalid config, port conflicts and partial
+startup; bound cleanup of owned processes/resources. Development keys are not
+production defaults. Container packaging is one container per agent; Kubernetes/
+Foundry templates later, not infrastructure deployment management.
+
+**Related:** [configuration and packaging examples](../development.md),
+[`AgentDirectory`](discovery.md#agentdirectory).
 
 ## `HostConfig`
 
@@ -180,6 +233,7 @@ A2AConfig(*, enabled: bool = ..., path: str = ...)
 | Prompt clarification | Native A2A task/status message; exact contract open | Required for ambiguous/missing prompt input | Return `TASK_STATE_INPUT_REQUIRED` with an ask-back, not a guessed invocation or successful final result. |
 | Duplicate requests | Same caller + A2A `messageId`; store/window fields open | 10-minute window, in-memory default; configurable/pluggable | Return original task instead of re-running; multi-instance store support, no exactly-once claim or task-access bypass. |
 | Response correlation/errors | Native response metadata/task states; exact mappings open | Only invocation ID exposed from run internals | Safe failed/rejected states as appropriate; no `RunResult`, raw provider exception, stack trace or secrets. |
+| Long-running tasks | Native A2A task store; constructor setting open | In-memory default, persistent store pluggable | Task persistence is not Python skill checkpointing, human approval resume or exactly-once execution. |
 
 ```python
 from agentframe import A2AConfig
@@ -200,6 +254,11 @@ Typed business-input/output mappings and task lifecycle still need
 version-specific evidence, including typed structured outputs. Re-authorize protected task/resource access.
 Invalid/unsupported configuration and protocol failures must be explicit and
 safe; no copied schemas or custom response envelope.
+For M8+ peers the negotiated AgentFrame extension also carries deadline,
+token ceiling/actual usage and max-5-hop depth accounting. Ordinary callers
+still receive no internal result metadata beyond invocation correlation.
+Remote client input-required raises `ClarificationNeededError`; the remote task
+remains input-required, not automatically failed or conversed with.
 
 **Related:** [`SkillRouter`](#skillrouter),
 [native SDK types](#native-a2a-and-mcp-types),

@@ -164,9 +164,11 @@ def validated_value(result: RunResult) -> object:
     return result.value
 ```
 
-**Behavior / failures:** remote A2A returns only the invocation ID in response
+**Behavior / failures:** ordinary remote A2A returns only the invocation ID in response
 metadata, not `RunResult`, counters, provider internals or stack traces. Exact
 metadata key/placement remains open and must use native extension/metadata rules.
+The negotiated M8+ extension separately reports actual usage for cross-hop
+accounting, not full local execution results or provider payloads.
 Model-free runs have zero model usage/calls, not guessed inference.
 
 **Related:** [`Runtime.run`](#runtimerun), [accounting](../limits.md#accounting-and-enforcement).
@@ -466,6 +468,10 @@ def cancelled(error: AgentFrameCancelledError) -> object:
 do not swallow Python task cancellation or present it as success. Native A2A
 cancellation retains protocol semantics; exact error/state translation is open.
 **Related:** [`AgentFrameError`](#agentframeerror), [cancellation](../limits.md#accounting-and-enforcement).
+
+M8+ also adds [`ClarificationNeededError`](discovery.md#clarificationneedederror),
+an `AgentFrameError` carrying a remote input-required question; no automatic
+back-and-forth. Native task state stays input-required, not a failed remote task.
 
 ## `StateStore` (deferred)
 

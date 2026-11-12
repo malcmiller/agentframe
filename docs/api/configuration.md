@@ -112,6 +112,9 @@ guarantee.
 Future [AG-UI streaming](streaming.md) must preserve these limits during
 buffering/backpressure and distinguish disconnect/cancellation. Safe local
 execution/usage metadata uses `Runtime.run` / `RunResult`, independent of tracing.
+M8+ additionally propagates remaining deadlines and token ceilings with default
+maximum 5 remote hops; exact depth configuration carrier is still open, not a
+new guessed `RunLimits` field. See [cross-agent budgets](../limits.md#cross-agent-budgets-and-depth-m8).
 
 **Related:** [`ModelSettings.max_output_tokens`](models.md#modelsettings),
 [`HostConfig.limits_ceiling`](hosting.md#hostconfig),

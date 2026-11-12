@@ -362,7 +362,7 @@ async def summarize_with_metadata(runtime: Runtime, writer: Agent) -> RunResult:
 `RunResult` contains `value`, `invocation_id`, `usage`, `model_calls`,
 `tool_calls`, `duration` and `finish_reason`, even with tracing off. Usage
 reports input/output/total tokens with completeness/estimate information;
-unknown usage is never assumed zero. Remote A2A gets only invocation ID
+unknown usage is never assumed zero. Ordinary remote A2A gets only invocation ID
 metadata, not this internal result object.
 
 ## Limits, tracing, and optional MCP
@@ -382,15 +382,22 @@ runtime pipeline; the custom REST skill API is deferred.
 The [discovery guide](discovery.md#agent-injection-and-separate-invocation)
 shows trusted `Inject[AgentDirectory]` parameters registered in `Services`.
 Its [lifecycle example](discovery.md#managed-directory-lifecycle) keeps card
-fetch/cache/refresh and owned-resource cleanup in the library rather than each
-skill or registry adapter. Discovery does not invoke remote agents, authorize
-them, or enable orchestration automatically; a separate native A2A client is
-proposed, with invocation syntax still open. Discovery and remote invocation
+fetch/cache/refresh and owned-resource cleanup in the library. Named
+`Remote["research-agent"]` skill parameters resolve via `AgentApp(directory=...)`.
+Use `research.call("find_sources", topic=goal, output=list[Source])` for structured
+A2A, or `research.ask(text)` for any compatible A2A agent. Await task completion
+within caller deadline; input-required raises `ClarificationNeededError`, not an
+automatic conversation. See the [worked delegation, TaskGroup fan-out and search examples](discovery.md#worked-composition-examples).
+No orchestration helper library in the first multi-agent release.
+Discovery and remote invocation
 are core to the next multi-agent release (M8+) after M7; they do not change
 the skill authoring contract. An orchestrator is an ordinary AgentFrame agent
 whose skills call independently deployed specialists over A2A. Cross-hop
 identity/permissions, deadlines, remaining token allowance and trace/correlation
-are planned with open contracts; remote services enforce their own policy/limits.
+use per-target OBO/service identity, remaining deadline/token allowance and
+maximum 5 hops; detailed wire/configuration remains open. Remote services enforce
+their own policy/limits. `directory.find(skill=...)` / `find(tags=...)` returns
+matching cards, not invocation permission. See [local dev/containers](development.md).
 
 ## Future streaming and AG-UI
 
@@ -398,4 +405,7 @@ First-release examples await complete validated results, not token streams.
 Future [AG-UI support](streaming.md) is a scoped optional frontend-protocol
 adapter over managed execution events, not an OTel trace stream, automatic
 frontend tool execution, human approval workflow or durable resume mechanism.
-No streaming method or adapter constructor has been selected.
+The later configuration is `AgentApp(..., ag_ui=AGUIConfig(enabled=True))` at
+`/ag-ui`; no runtime stream method is selected. Stream lifecycle/text deltas,
+tool names/status (not raw arguments by default) and safe errors. Whole-answer
+checks release complete text at end; disconnect cancels, no reconnect/resume.

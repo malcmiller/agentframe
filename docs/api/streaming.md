@@ -11,17 +11,16 @@ every AG-UI feature. A2A/Agent Cards stay first-class; MCP and tracing stay sepa
 native AG-UI event stream for frontend clients, without another agent framework
 or UI framework dependency.
 
-**Signature status:** no AgentFrame public class/constructor, endpoint path,
-method, or field names have been selected. Do not infer `AGUIConfig`,
-`AgentApp(agui=...)`, or an approved streaming API from this direction.
+**Signature status:** `AgentApp(ag_ui=AGUIConfig(enabled=True))` and `/ag-ui`
+are decided for a later release. No `Runtime.stream` or event iterator selected.
 
 | Concern | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
 | Protocol/schema/SDK and transport | Compatible official AG-UI versions; not selected | Future optional adapter, not first release | 1.0 documentation is research evidence, not a pinned compatibility commitment. Evaluate native Python `ag-ui-protocol` types/encoding; no other framework required. |
 | Authentication/caller scope | Shared `Authenticator` / policy; adapter binding open | Explicit auth required remotely | Reuse the decided host auth choice; frontend thread/run IDs are not verified identity; isolate tenant/history/events/state. |
-| Runtime event mapping | Typed managed events; union open | Only supported, tested events | Lifecycle/text and safe backend-tool visibility planned; no automatic frontend tool execution, state persistence, approval interrupts or replay/resume. |
+| Runtime event mapping | Typed managed events; union open | Run start/finish, text deltas, tool names/status and safe errors | No raw arguments by default, frontend execution, shared state or approval/resume. |
 | Output/release policy | Existing authorization/content checks plus adapter gating; syntax open | Required checks precede affected release | Buffer whole validated results or decline streaming when whole-output policy requires it; no unchecked partial JSON. |
-| Buffer/cancel/disconnect/reconnect controls | Exact interfaces/defaults open | Finite bounds and explicit behavior required | Do not imply SSE reconnect resumes work or that disconnect guarantees cancellation/rollback. |
+| Buffer/cancel/disconnect/reconnect controls | Detailed interfaces/bounds open | Disconnect cancels run; no reconnect/resume initially | Propagate cancellation; no rollback/free-inference guarantee. Whole-answer checks emit complete text at end, not deltas. |
 
 This dependency-only example uses the **official Python SDK** input type,
 documented in its [core overview](https://docs.ag-ui.com/sdk/python/core/overview.md),
@@ -52,6 +51,40 @@ need verification before conformance claims.
 **Related:** [AG-UI design, event mapping and primary citations](../streaming.md),
 [`AgentApp`](hosting.md#agentapp), [`ExecutionPolicy`](authorization.md#executionpolicy).
 
+## `AGUIConfig`
+
+**Purpose / decision:** enable the optional frontend protocol adapter on the
+shared host, separate from A2A/MCP and optional tracing.
+
+**Decided call:** `AGUIConfig(enabled=True)` on `AgentApp(ag_ui=...)`.
+Served at `/ag-ui`; other constructor fields/path configurability unspecified.
+
+| Parameter/concern | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `enabled` | `bool` | Explicit opt-in; omitted-object behavior stays off | No implicit streaming from model injection or A2A capability declarations. |
+| Route | `/ag-ui` | Decided served endpoint | Same server/auth/permissions/limits; not per-skill routes or separate grants. |
+
+```python
+from agentframe import AGUIConfig, Agent, AgentApp, HostConfig, Runtime
+
+
+def frontend_app(agent: Agent, host: HostConfig, runtime: Runtime) -> AgentApp:
+    return AgentApp(
+        agent=agent, host=host, runtime=runtime, ag_ui=AGUIConfig(enabled=True),
+    )
+```
+
+`host` contains an explicit authenticator and `runtime` contains applicable
+resource policy. This is future syntax, not a runnable SDK.
+
+**Behavior / failures:** stream safe lifecycle/text/tool-name-status/error events.
+Whole-output checks buffer complete text until approved. Disconnect cancels;
+first version has no reconnect/resume. Frontend tools/shared state are later
+opt-in, never automatic. Protocol version/transport and exact event projection
+remain open; advertise A2A streaming only after independent implementation/tests.
+
+**Related:** [`AgentApp`](hosting.md#agentapp), [policy gating](../streaming.md#policy-gated-output-and-independent-accounting).
+
 ## Runtime streaming boundary
 
 **Purpose / decision:** later supply execution events under the same validation,
@@ -81,9 +114,9 @@ async def complete_echo(runtime: Runtime, echo: Agent) -> str:
 Supply the [`Echo`](agents.md#agent) instance; no streaming method is invented.
 
 **Behavior / failures:** enforce budget/deadlines with buffering/slow consumers;
-never silently weaken required policy to stream. Cancellation/disconnect,
-backpressure, reconnect/idempotency and graceful shutdown remain explicit open
-contracts. Native A2A streaming must be separately implemented/verified before
+never silently weaken required policy to stream. Disconnect cancels the run;
+no reconnect/resume initially. Backpressure, cancellation translation and graceful
+shutdown details remain open. Native A2A streaming must be separately implemented/verified before
 card advertisement; AG-UI support alone does not enable it.
 
 **Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),

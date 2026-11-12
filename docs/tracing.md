@@ -73,7 +73,11 @@ usage. Keep caller/tenant/card variants isolated in caches and telemetry; log sa
 status/freshness categories, not credentials, protected cards, secret-bearing
 URLs or private query/connection metadata. Tracing must remain optional for
 correct refresh, authorization and deadline enforcement. Exact attributes and
-downstream propagation contracts remain open.
+downstream trace field mappings remain open. M8+ remote bindings propagate
+approved trace/correlation independently of exporters, alongside the decided
+deadline/token/depth extension controls. Do not record OBO assertions, exchanged
+tokens, dev API keys or raw remote questions. Charge negotiated downstream usage
+once; extension-unaware peer usage remains unknown, not zero.
 
 | Record by default when permitted | Do not capture by default |
 | --- | --- |
@@ -121,8 +125,11 @@ accounting or required checks.
 Export traces through the configured backend. Do not invent a REST response
 envelope for standard A2A or MCP. Return correlation only through documented
 transport-appropriate metadata or headers, if supported; exact mappings remain
-open. For A2A, only the invocation ID goes in response metadata, never internal
+open. For ordinary A2A, only the invocation ID goes in response metadata, never internal
 `RunResult` counters/provider details; its exact metadata key remains open.
+The negotiated M8+ extension separately reports actual remote usage for budget
+reconciliation, not arbitrary local internals. Dev combined logs are tagged by
+agent and invocation ID while preserving redaction/content-capture defaults.
 A correlation reference does not grant trace-backend access.
 
 Authentication failures should be diagnosable without disclosing skill details.

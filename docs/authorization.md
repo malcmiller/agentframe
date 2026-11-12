@@ -207,6 +207,37 @@ are never sent to callers; operational diagnostics are redacted.
   Returning a deduplicated A2A task also requires current task-access checks:
   the 10-minute caller/message-ID cache cannot cross tenant/caller boundaries.
 
+## Cross-agent identity propagation (M8+)
+
+**Decided per-remote modes:** `on_behalf_of` defaults when the incoming caller
+used Entra. Use the standard Entra
+[On-Behalf-Of flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow)
+to obtain a token scoped to the target, not the original incoming bearer token.
+The target verifies original user and calling-agent identity and applies its
+own permissions; the caller must never grant more than that user possesses.
+This requires supported delegated user-token/consent conditions; an Entra
+app-only token is not automatically an OBO-capable user assertion.
+
+`service` explicitly uses the calling agent's own identity for background/no-user
+work; target permissions apply to that agent. With `APIKeyAuth` or
+`AllowAnonymous` ingress, only service mode is available. Service mode is a
+deliberate application policy, not an automatic fallback for a denied user.
+Anonymous/API-key access does not itself grant authority to spend broader
+service credentials: still authorize the remote action at the caller boundary.
+
+Required exchange failure fails the call, never falls back to a more powerful
+identity. Never forward the incoming token as-is, copy unsigned local principals
+into remote arguments, or accept extension permissions as authentication.
+Target-scoped credentials must match approved destinations, including redirects.
+Entra targets verify issuer/audience/expiry/signature and user/actor context;
+service targets independently authenticate and authorize the calling agent.
+
+Per-remote mode/configuration carrier, consent/scopes/token-provider interface,
+actor claim verification and non-Entra service credential wiring remain open.
+OBO is not a universal mechanism for every A2A peer; incompatible targets fail
+explicitly under the configured mode rather than silently switching identity.
+See [remote calls](discovery.md#planned-remote-calls-and-cross-agent-context).
+
 ## Checks required before release
 
 Next-core-release [agent discovery](discovery.md) must restrict eligible candidates,

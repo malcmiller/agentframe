@@ -114,3 +114,7 @@ authorization. No automatic frontend tool execution, persistence or resumability
 Do not expose hidden prompts, secrets, raw provider payloads or private reasoning
 through native/custom/raw events, input echoes or tool visibility. A protocol
 adapter is not a universal injection defense or an OTel event exporter.
+The later `/ag-ui` adapter emits only approved text and tool names/status, not
+raw arguments by default. Whole-answer checks release complete text at the end
+instead of deltas. Disconnect cancels the run; no initial reconnect/resume or
+automatic replay of previously executed actions.

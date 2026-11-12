@@ -22,7 +22,7 @@ trusted source -> AgentRegistry -> validated AgentReference
                                       |
                  application selection and authorization
                                       |
-                   separate RemoteAgentClient (native A2A)
+                   injected Remote["name"] (native A2A client)
 ```
 
 | Surface | Responsibility | Not its responsibility |
@@ -31,8 +31,9 @@ trusted source -> AgentRegistry -> validated AgentReference
 | `AgentReference` | Validated stable identity, endpoint/discovery location, transport, non-secret connection metadata. | Credentials, authorization grants, assumed skill metadata or guaranteed live endpoint. |
 | `AgentQuery` | Supported ID/skill/tag filters with explicit matching semantics. | Granting access or inventing fields absent from a source. |
 | `AgentCardResolver` | Fetch and validate native official SDK cards under outbound authentication/destination policy. | Trusting arbitrary URLs, delegating work, or owning a registry protocol. |
-| `AgentDirectory` | Library-managed registry/resolver/cache composition, explicit refresh, freshness and resource lifecycle. | Workflow scheduling, remote task lifecycle, or making users write per-backend card-refresh loops. |
-| `RemoteAgentClient` | Separate client for native A2A invocation after discovery and application authorization. | Discovery automatically dispatching work or local skill-ID RPC over A2A. |
+| `AgentDirectory` | Multiple sources, card-backed `find`, cache, stale refresh and resource lifecycle. | Workflow scheduling, remote task lifecycle, or per-backend card-refresh loops in application code. |
+| `Remote["name"]` | Injected remote authoring surface: structured `call`, plain-text `ask`, bounded task waiting. | Automatic clarification conversations, authority grants or per-method RPC. |
+| `RemoteAgentClient` | Underlying/explicit native A2A client; construction remains open. | A competing wire protocol or automatic dispatch from discovery. |
 
 A2A defines agent interaction and native Agent Cards, not a registry protocol.
 This explicit read-source abstraction is unrelated to a process-global plugin
@@ -41,38 +42,22 @@ abstract base here does not add another required agent subclass.
 
 ## Sources and reference format
 
-Propose `EnvironmentAgentRegistry` with an explicitly named environment variable,
-and `FileAgentRegistry` with an explicit structured-text path. Prefer JSON for
-the initial file format and the environment variable's contents so that both
-can share validation rather than invent a custom configuration language.
-Do not silently search the environment, load unrelated files, or accept secrets.
+**Decided:** `FileAgentRegistry("agents.yaml")` reads a YAML list of names and
+URLs; this supersedes the earlier JSON-file proposal. The following illustrates
+the chosen information, not a finalized schema or standard A2A payload:
 
-The following is a **candidate documented JSON format**, not a finalized schema
-or standard A2A payload. Proposed keys are `agent_id` (stable directory identity),
-`discovery_url` (explicit card location), `transport` (selected supported binding
-identifier), and optional `connection_metadata` (non-secret hints). Allowed
-transport values, URL-versus-endpoint alternatives, metadata keys, schema
-versioning, and required fields must be settled before implementation. This
-example's `"a2a"` is a placeholder transport label, not a verified binding name.
-
-```json
-[
-  {
-    "agent_id": "research-agent",
-    "discovery_url": "https://research.example.com/.well-known/agent-card.json",
-    "transport": "a2a",
-    "connection_metadata": {}
-  }
-]
+```yaml
+- name: research-agent
+  url: https://research.example.com/.well-known/agent-card.json
 ```
 
-For the illustrative environment contract, `AGENTFRAME_AGENTS` would contain
-this JSON text itself, not a path, executable expression, or credential. The
-file example stores the same candidate array in `agents.json`. These are
-proposed adapter formats; changes must update both adapter documentation and
-validation together. No configuration file is created by these examples.
-Duplicate/malformed identities, unsupported transports, malformed JSON,
-missing sources, and unavailable reads are explicit failures, not empty lists.
+Final key spelling, URL meaning (endpoint versus card), schema/version, optional
+transport metadata and duplicate-name precedence across sources remain open.
+`EnvironmentAgentRegistry("AGENTFRAME_AGENTS")` selects an explicit variable;
+its payload encoding is still open, not implicitly the file format. No automatic
+environment/file search, executable YAML tags or secrets in source text.
+Bound and safely validate reads; missing/malformed/unavailable sources are
+explicit failures, not empty lists. No actual source file is created here.
 
 `FoundryAgentRegistry` has a **chosen source API**: the Foundry project agents
 API via official `azure-ai-projects` 2.x (2.10.0 observed on 2026-11-11;
@@ -98,8 +83,10 @@ may be an additional source of references; this is an option, not a decided
 adapter behavior. The registry remains read-only M8+ scope and does not enable
 A2A, publish agents or deploy AgentFrame agents to Foundry. A model deployment
 is not an agent endpoint; this is distinct from `FoundryModel`'s OpenAI v1
-Responses path. Public constructor keywords, exact pins and tested compatibility
-remain open; source selection is not an implemented-integration claim.
+Responses path. The constructor fields `project_endpoint` and `credential` are
+now decided; precise credential typing, pins and tested compatibility remain
+open. The adapter returns A2A-enabled agents only; exact filtering/card mapping
+still needs implementation proof.
 
 ## Extending the read base
 
@@ -147,8 +134,13 @@ identity/location/transport cannot answer skill/tag queries.
 Document which layer performs filtering and how unsupported filters fail.
 Do not silently ignore them, call a partial result complete, or add undeclared
 reference properties just to make a query example work. Exact query field names,
-all/any semantics, ordering, pagination, and a directory-level search interface
-remain open. The registry base's `list` is not a finalized directory search API.
+all/any semantics, ordering and pagination remain open.
+**Decided:** `await directory.find(skill="find_sources")` or
+`await directory.find(tags=["research"])` returns matching native Agent Cards.
+The directory resolves/validates cards and matches their advertised skills/tags;
+it does not require file references to contain these fields. Bound enrichment
+reads and preserve source/refresh errors; do not silently return an incomplete
+search as complete. Exact combination semantics and result pagination remain open.
 Restrict eligible discovery candidates using caller policy; matching is never
 authorization.
 
@@ -168,7 +160,7 @@ async def inspect_research_agent(
     outbound_authentication: object, destination_policy: object,
 ) -> None:
     directory = AgentDirectory(
-        registry=FileAgentRegistry(path="agents.json"),
+        sources=[FileAgentRegistry("agents.yaml")],
         resolver=AgentCardResolver(
             authentication=outbound_authentication,
             destination_policy=destination_policy,
@@ -187,10 +179,12 @@ the configured source/freshness policy. The result carries the native card plus
 reference and freshness metadata; only `.card` is illustrated, not a finalized
 result class or timestamp field set. Explicit `refresh` is proposed; exact
 arguments, return shape, source reconciliation and per-card refresh scope remain
-open. Background refresh is opt-in with scheduling/error behavior still open.
+open. Cards cache for **300 seconds** by default and automatically refresh when
+accessed stale. Failed refresh fails the call unless `allow_stale=True` is explicit;
+stale use is never silently current. This on-access refresh does not enable a
+background polling loop; background refresh remains opt-in.
 
-`ttl_seconds=300` and `allow_stale=False` are illustrative settings, not settled
-defaults. Source-reference freshness and card freshness must be distinguished;
+Source-reference freshness and card freshness must be distinguished;
 one timestamp cannot silently certify both. A card cache hit must not bypass
 required source reconciliation or caller policy. Failed refresh must not reset
 freshness or silently return stale content as current. If stale use is explicitly
@@ -201,7 +195,9 @@ The async context manager closes only resources created/owned by the library,
 or explicitly transferred by contract; injected clients/dependencies stay
 caller-owned otherwise. A host may own lifespan for a library-created or
 explicitly transferred directory. Merely injecting a directory does not transfer
-ownership, and no new host lifecycle keyword is settled.
+ownership. `AgentApp(directory=directory)` is decided host wiring; it does not
+silently transfer caller-owned directory/client resources. Application lifespan
+still opens/closes externally supplied singletons; host-created resources are owned.
 
 ## Agent injection and separate invocation
 
@@ -237,9 +233,11 @@ def discovery_services(directory: AgentDirectory) -> Services:
 This demonstrates discovery only, not a useful card serializer or delegation.
 The application must enforce caller eligibility and scope the directory/cache
 correctly before exposing its dependency. A separate injected
-`RemoteAgentClient` can consume discovered references/cards using native A2A
-after selection and current authorization. No remote invocation method or
-payload signature is finalized here. Card skills are descriptive, not automatic
+remote binding can consume discovered references/cards using native A2A
+after selection and current authorization. `Remote["name"]` is the authoring
+annotation; its configured name is validated at startup through the directory.
+Like `Inject[T]`, it is excluded from caller arguments and published schemas.
+Card skills are descriptive, not automatic
 model tools, MCP publication, local skill-ID RPC, or permission grants.
 Pass these services to `Runtime(services=...)` / `AgentApp(services=...)`.
 Injected parameters are excluded from external input and missing registrations
@@ -247,38 +245,136 @@ fail startup. The application opens/closes this shared directory; use
 `add_scoped` only for an intentionally per-run factory, whose AgentFrame-created
 instance is closed after that run. Async factory/cleanup details remain open.
 
+Host composition uses the same service container and managed runtime:
+
+```python
+from agentframe import Agent, AgentApp, AgentDirectory, HostConfig, Runtime, Services
+
+
+def build_planner_app(
+    planner: Agent, directory: AgentDirectory, services: Services,
+    host: HostConfig, runtime: Runtime,
+) -> AgentApp:
+    return AgentApp(
+        agent=planner, services=services, directory=directory,
+        host=host, runtime=runtime,
+    )
+```
+
+The application supplies the directory sources, explicit host authenticator and
+runtime authorization policy. Configured remote names are checked at startup;
+the application still owns the injected directory's lifespan.
+
 An orchestrator is an ordinary AgentFrame agent whose skills explicitly call
-other agents. Small delegation/fan-out helpers are options with open contracts,
-not a planner, workflow scheduler or automatic chaining. Models/routers cannot
+other agents. **No orchestration helpers in the first multi-agent release**:
+use ordinary `await`, `asyncio.TaskGroup` and `directory.find`. Add helpers only
+after repeated real usage demonstrates a need. Models/routers cannot
 grant authority; invoke/action boundaries must authorize again and preserve or
 reduce caller permissions.
 
 ### Planned remote calls and cross-agent context
 
-`RemoteAgentClient` is core M8+ scope, but its constructor, message/task/result
-methods and error contracts remain open. Typed calls to AgentFrame peers are an
-option: `await research.find_sources(topic=...)` is only an illustrative idea,
-not approved syntax or an SDK example. Any such convenience must map to standard
-A2A messages/parts and validated results, not proprietary Python-method RPC or
-an assumption that a card skill is a callable method.
-If provided, typed AgentFrame-to-AgentFrame calls always use the preferred
-structured selection extension: declare/negotiate support from the card, name
-the skill under that extension and carry JSON arguments in a native data part.
-They bypass prompt routing/model-selection cost, not authorization, validation
-or limits. Do not silently downgrade an unsupported typed call to a free-text
-prompt. Extension-unaware peers use the configured prompt routing path, with
-input-required task clarification for ambiguous/missing input.
-See [verified A2A mechanisms and open extension schema](mcp-skills.md#a2a-request-styles-and-extension-boundary);
-no final URI, selector key or method signature is selected here.
+The M8+ authoring surface is `Remote["research-agent"]` with:
 
-Across each hop, plan verified caller/delegation and permission propagation
-without authority amplification, deadlines, remaining token allowance and
-trace/correlation. Exact trust, transport and accounting contracts are open;
-do not invent A2A metadata fields or forward local principals as trusted input.
-Remote services authenticate, authorize and enforce their own limits. A peer's
-claimed usage is not a guaranteed global token/billing cap. Trace/correlation
-is not identity; propagation must remain useful without mandatory telemetry
-exporters. Preserve the existing cancellation, privacy and destination boundaries.
+- `await research.call("find_sources", topic=goal, output=list[Source])`:
+  structured extension selection with JSON arguments and validated returned data.
+- `await research.ask("Summarize recent findings on " + goal)`: native plain-text
+  A2A, interoperable with any compatible A2A agent without the selection extension.
+
+Both wait for task completion within the caller deadline. Remote input-required
+raises `ClarificationNeededError` carrying the question; no automatic back-and-forth.
+Applications decide what to ask the user or invoke next; this is not durable resume.
+Underlying `RemoteAgentClient` construction stays open, but these author methods
+are decided. A later optional `Remote[ResearchAgent]` typed proxy could allow
+`await research.find_sources(topic=goal)` over the same structured request;
+that proxy is not in the first multi-agent release.
+Structured calls require advertised/activated extension support and never
+silently downgrade to prompt selection. They avoid router-model cost, not skill
+inference cost, authorization or validation.
+See [verified A2A mechanisms and open extension schema](mcp-skills.md#a2a-request-styles-and-extension-boundary);
+no final URI, selector key or wire schema is selected here.
+
+Identity mode is configured per remote: `on_behalf_of` defaults when ingress
+used Entra, exchanging for a target-scoped token through standard Entra OBO;
+`service` explicitly uses the calling agent's identity (background/no-user work).
+API-key/anonymous ingress can use only service mode, never inferred user delegation.
+Never forward an incoming token as-is or fall back on exchange failure. Target
+validates original-user/calling-agent identity and its own permissions; no authority
+amplification. Exact per-remote configuration and claim-validation details remain open.
+See [identity propagation](authorization.md#cross-agent-identity-propagation-m8).
+
+Send remaining deadline automatically; an AgentFrame receiver takes the minimum
+of it and its own timeout, while the caller also enforces waiting locally.
+`call(..., max_total_tokens=20_000)` caps the remote call; omitted cap is caller's
+remaining allowance. AgentFrame receivers can only lower that ceiling, report
+actual usage back, and the caller charges it once to its ledger. Unknown usage
+(including non-AgentFrame peers) remains unknown, never zero. Reserve shared
+allowance atomically for TaskGroup fan-out; a per-call default is not a duplicated
+spendable budget. Default maximum depth is **5 remote hops**, with excess failing.
+Deadline, token allowance/usage and depth use the same AgentFrame A2A extension;
+this is not a base-standard A2A field or a promise of enforcement by other peers.
+Non-AgentFrame calls still have local time bounds and unknown usage. Detailed
+wire/accounting trust, clock/depth semantics and configuration remain open.
+
+Ordinary A2A callers still get only safe invocation-ID execution correlation,
+not internal `RunResult`. The negotiated cross-agent extension additionally
+carries bounded usage for accounting, not provider payloads or all local metadata.
+Trace/correlation propagation stays independent of optional exporters.
+
+### Worked composition examples
+
+These are unimplemented approved call forms, with application data models:
+
+```python
+import asyncio
+
+from pydantic import BaseModel
+from agentframe import Agent, AgentDirectory, Remote, RunContext, agent, skill
+
+
+class Source(BaseModel):
+    title: str
+    url: str
+
+
+class Plan(BaseModel):
+    sources: list[Source]
+    notes: str
+
+
+@agent(name="Planner", description="Combines research findings.", version="0.1.0")
+class Planner(Agent):
+    @skill(id="plan", name="Plan", description="Research a goal.", tags=["planning"])
+    async def plan(
+        self, goal: str, research: Remote["research-agent"], ctx: RunContext,
+    ) -> Plan:
+        sources = await research.call(
+            "find_sources", topic=goal, output=list[Source], max_total_tokens=20_000,
+        )
+        notes = await research.ask("Summarize recent findings on " + goal)
+        return Plan(sources=sources, notes=notes)
+
+
+async def compare(
+    goal: str, research: Remote["research-agent"], review: Remote["review-agent"],
+) -> tuple[str, str]:
+    async with asyncio.TaskGroup() as group:
+        findings = group.create_task(research.ask("Research " + goal))
+        critique = group.create_task(review.ask("Review " + goal))
+    return findings.result(), critique.result()
+
+
+async def find_researchers(directory: AgentDirectory) -> int:
+    cards = await directory.find(skill="find_sources")
+    return len(cards)
+```
+
+`compare` is a helper called by an already-managed skill with its injected
+bindings, not an independent injection entry point. TaskGroup does not create
+another budget or authorization scope. Search returns eligible matching cards,
+not authority or callable Python methods; use a configured remote for delegation.
+Use `find(tags=["research"])` for tag selection. Returning a card count here
+avoids inventing a dynamic-card-to-client constructor.
 
 ## Failure, trust, and isolation boundaries
 
@@ -289,7 +385,7 @@ exporters. Preserve the existing cancellation, privacy and destination boundarie
 | Active tasks | Directory removal/refresh does not automatically cancel remote tasks. Task access/cancellation follows the separate authenticated A2A client/host contract. |
 | Caller/card variants | Isolate cache entries and coalesced fetches by source/reference version and effective caller/tenant/authentication/card variant as applicable. Never share protected cards across callers through an ID-only cache. |
 | Freshness | A fresh cached card is not endpoint health, trusted identity, authorization, or evidence that credentials are still valid. No implicit health polling. |
-| Credentials | Keep secrets out of references, cards, JSON/environment source text, errors and telemetry. Application selects trusted sources and auth providers; never derive trust from a card's declarations. |
+| Credentials | Keep secrets out of references, cards, YAML/environment source text, errors and telemetry. Application selects trusted sources and auth providers; never derive trust from a card's declarations. |
 | URL safety | Enforce allowed schemes/destinations, DNS/address policy and redirects before/while connecting, including URLs advertised inside cards. Prevent SSRF and credential forwarding to unapproved origins; do not treat successful schema validation as destination approval. |
 | Bounded work | Bound source/card reads, response sizes, HTTP deadlines, retries and enrichment fan-out; propagate cancellation and apply existing host limits. No silent fallback to another registry/destination. |
 | Observability | Record safe source/fetch/cache/refresh status and correlation, not credentials, protected card bodies, query secrets, or private metadata. Tracing is optional; correctness is not. |
@@ -312,8 +408,11 @@ compatibility before claiming implemented support. No deploy/start/stop/delete, 
 leases, federation, registration writes, or A2A task management belongs in this
 discovery lifecycle. Deployment support starts with running N agents locally
 together, then container packaging; Foundry/Kubernetes templates are later.
-These are development/packaging capabilities, not a hosted deployment service;
-commands and public interfaces remain open.
+These are development/packaging capabilities, not a hosted deployment service.
+The [development/packaging plan](development.md) defines `agentframe run` (M2),
+`agentframe dev` (M8+), `agentframe.yaml`, generated local discovery/development
+API-key wiring, and one container per agent; remaining configuration details
+are open.
 
 Release acceptance is two or more independently deployed AgentFrame agents,
 with an ordinary orchestrator discovering and invoking a specialist over A2A
@@ -322,14 +421,18 @@ Also prove a non-AgentFrame A2A client and server interoperate; do not rely only
 on AgentFrame peers. See the [core release plan](initial-outline.md#next-core-release-multi-agent-a2a-composition-m8).
 Future [AG-UI streaming](streaming.md) is another scoped direction; it does not
 move multi-agent composition into M7 or add frontend tools or built-in approval
-pause/resume here. Durable checkpointed flows, pause/resume and crash recovery
-may be considered later, but no workflow/graph engine is committed now.
+pause/resume here. Revisit durable workflows after this release based on real
+usage, not now. Long work uses native A2A tasks with an in-memory default and
+pluggable persistent task store; task persistence is not crash recovery of Python
+skills. Approvals stay application-owned. If later added, workflows belong in
+an optional separate package (candidate `agentframe-workflows`), not core.
 
-Before stabilization, resolve schemas/versions/transport values, query support
-and enrichment placement, pagination/completeness, resolver/auth/destination
-interfaces, result/error types, source reconciliation/removal races, TTL/stale
-age/refresh contracts, background opt-in, cache isolation keys, ownership
-transfer/host integration, the separate remote-client API, typed-call options,
-cross-hop propagation, optional helpers and local/container development. Prove failures,
+Before stabilization, resolve YAML/environment/reference schemas, transport
+values, source conflicts, search combination/pagination, resolver/auth/destination
+interfaces, result/error details, source reconciliation/removal races, stale-age
+bounds, background opt-in, cache keys, ownership transfer, OBO/service
+configuration and extension deadline/usage/depth wire semantics. Dev/container
+configuration and later typed proxies remain to specify; no first-release
+orchestration helpers. Prove failures,
 bounded reads/cancellation, safe redirects, caller isolation, explicit stale
 status and removals; do not claim these protections are implemented today.

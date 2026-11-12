@@ -100,6 +100,14 @@ release (M8+), but remains a separate concern: finding a remote card never
 publishes its skills through MCP or
 registers them as internal model tools. Discovery itself does not delegate;
 remote invocation uses a separately authorized native A2A client.
+M8+ skills use `Remote["name"].call(...)` or `.ask(text)`; remote annotations
+are excluded from schemas just like `Inject[T]`. `call` activates the same
+structured extension, whose schema also carries remaining deadline/token
+allowance, reported peer usage and default max-5-hop depth. `ask` works with
+extension-unaware peers, with local time bounds and unknown usage, never zero.
+Input-required raises local `ClarificationNeededError`, not automatic dialogue.
+Ordinary A2A correlation still exposes only invocation ID; negotiated usage
+exchange is not internal `RunResult` disclosure. See [remote contracts](api/discovery.md#remotecall).
 
 ## Proposed server composition
 

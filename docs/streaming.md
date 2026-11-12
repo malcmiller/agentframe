@@ -5,7 +5,8 @@ results. Streaming is a later deliverable and should support **AG-UI** through a
 scoped optional agent-to-frontend protocol adapter. A2A/native Agent Cards remain
 first-class; MCP remains a separate tool interface. No UI framework, other agent
 framework, automatic orchestration, or blanket AG-UI conformance is authorized.
-The [surface reference](api/streaming.md) records the still-open API boundaries.
+The [surface reference](api/streaming.md) records decided configuration and
+still-open event/wire details.
 
 ## Protocol scope and sources
 
@@ -32,9 +33,10 @@ frontend integration. Re-check the dependency graph when selecting a version.
 
 ## Initial future adapter scope
 
-Plan a narrow profile: authenticated run admission, lifecycle and policy-approved
-assistant text, plus safe visibility into explicitly registered **backend**
-tool calls/results where permitted. Typed final-result serialization needs a
+**Decided configuration:** `AgentApp(..., ag_ui=AGUIConfig(enabled=True))`
+serves `/ag-ui` on the same server under the same auth, permissions and limits.
+The initial profile streams run start/finish, text deltas, tool names/status
+(not raw arguments by default), and safe errors. Typed final-result serialization needs a
 documented mapping; partial JSON is not a validated structured result.
 This is a future target, not a claim that any adapter already exists.
 
@@ -48,15 +50,15 @@ AG-UI run events do not supply that workflow or its storage.
 ### Candidate runtime-to-event mapping
 
 The names here are native AG-UI events, not proposed AgentFrame methods.
-Exact runtime event types and adapter configuration remain open.
+Exact runtime event types/mappings remain open; the configuration above is decided.
 
 | Managed runtime fact | Candidate AG-UI representation | Release/trust constraints |
 | --- | --- | --- |
 | Admitted invocation begins | `RUN_STARTED` | Authenticate/admit first; native thread/run identifiers are not server authority or invocation IDs. |
 | Invocation completes or fails | `RUN_FINISHED` or `RUN_ERROR`, with selected-version terminal semantics | Complete validation/output checks before reporting a successful final result. Sanitize failures; never infer success from HTTP status alone. |
 | Approved assistant text | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` | Preserve native message IDs and ordering; never expose text ahead of required output-policy approval. |
-| Backend tool proposal/arguments | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END` where permitted | Tool argument completeness is not validation/authorization; emitting a tool event must not instruct the frontend to execute a backend action. Do not expose sensitive arguments. |
-| Backend tool result | `TOOL_CALL_RESULT` where permitted | Validate execution result and policy-filter its representation before release; redact/withhold protected data. Generation can then continue under the original limits. |
+| Backend tool progress | Selected-version tool lifecycle/status mapping | Initial surface is names/status, not raw arguments by default; exact schema-valid projection open. No frontend execution grant. |
+| Backend tool result | Internal continuation; later explicit release mapping if chosen | Initial profile does not automatically publish raw results. Validate and policy-filter any future projection before release. |
 | Safe progress phases | Optional step events if mapped and tested | Operational status only, not private reasoning, hidden prompts or arbitrary logs. |
 | Usage/correlation | Selected-version optional usage and approved correlation mapping | Derive usage from independent accounting, preserving unknowns and avoiding double counts; exact public metadata mapping remains open. |
 
@@ -85,9 +87,11 @@ other transport support is not implied by the introduction's broader examples.
 Cancellation is distinct from disconnect. The
 [lifecycle specification](https://docs.ag-ui.com/spec/1.0/events/lifecycle.md)
 distinguishes producer-reported cancellation from a truncated consumer stream.
-AgentFrame still needs to choose cancellation control, deadline propagation,
-whether disconnect stops work, terminal-event mapping, bounded buffering,
-slow-consumer/backpressure behavior, write timeouts and graceful shutdown.
+**Decided:** client disconnect cancels the run; no reconnect/resume in the first
+streaming version. Cancellation propagates to managed work, without promising
+rollback or zero remote charges; a disconnected client may not receive a terminal
+event. Exact cancellation control, terminal-event mapping, bounded buffering,
+slow-consumer/backpressure behavior and write timeouts remain open.
 The host already has a 30-second shutdown grace by default; exact stream
 drain/terminal behavior within that bound remains to specify.
 Do not invent a cancellation endpoint or guarantee rollback/free cancellation.
@@ -135,10 +139,11 @@ schema-valid events alone cannot prove lifecycle/ordering/conformance.
 
 ## Policy-gated output and independent accounting
 
-The first release releases only complete validated results. For later streaming,
+The first release returns only complete validated results. For later streaming,
 configured output checks must run before affected content/events reach a client.
-Whole-output or structured-output checks require buffering until the complete
-value passes, or declining content streaming for that run; transport events
+Skills whose checks require the whole answer send complete text at the end,
+after validation/policy, rather than text deltas. Structured-output checks
+likewise never release invalid partial JSON; transport events
 may describe safe progress without releasing unchecked partials. A successful
 terminal event cannot certify previously unchecked fragments retroactively.
 
@@ -157,9 +162,10 @@ zero or imply a hard remote billing guarantee.
 
 ## Open contracts and delivery gate
 
-No public adapter class, constructor keyword, endpoint path, stream method,
-runtime event union, structured-result envelope or cancellation method has been
-selected. A future adapter consumes managed execution events, not SDK/provider
+`AGUIConfig(enabled=True)`, `AgentApp(ag_ui=...)`, `/ag-ui`, the initial event
+profile, disconnect cancellation and no reconnect/resume are decided.
+No runtime stream method, event union, structured-result envelope or explicit
+cancellation method has been selected. A future adapter consumes managed execution events, not SDK/provider
 events that bypass validation/policy.
 `Runtime.run` / `RunResult`, `ctx.generate(..., output=Summary)` and
 `ctx.generate(..., tools=[...])` are decided complete-result surfaces; they do
@@ -167,11 +173,12 @@ not choose a streaming API or finalize the combination of output and tools.
 Reuse the safe error hierarchy
 with a future verified event mapping, not provider error payloads.
 
-Before delivery, pin versions/binding; settle the supported feature profile,
+Before delivery, pin versions/binding and implement the decided feature profile;
 native/runtime ID mapping, validated router argument extraction and typed
 result serialization, admission/tenant isolation, byte/concurrency limits,
-policy gating, disconnect/cancel/shutdown semantics, backpressure and
-reconnection/new-run deduplication. Prove ordering/errors/truncation, refusal/
+policy gating, cancellation/shutdown details and backpressure remain to specify.
+Frontend-executed tools and shared state are later, explicit opt-in only.
+Prove disconnect cancellation and no reconnect/resume alongside ordering/errors/truncation, refusal/
 incomplete-result behavior, side-effect safety, isolation and no secrets/private
 reasoning with an independent AG-UI client. Do not advertise absent A2A features.
 

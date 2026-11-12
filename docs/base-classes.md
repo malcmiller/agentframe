@@ -35,7 +35,7 @@ Configuration and composition are intentional alternatives to inheritance.
 | A2A host | Configured composition | `AgentApp` assembles an agent, host configuration, and SDK components. |
 | Discovery sources (next core release) | Small abstract base and supplied adapters | Extend read-only `AgentRegistry`; validated references and supported queries do not require registration writes. |
 | Card discovery lifecycle (next core release) | Library-managed composition | `AgentDirectory` combines registry/resolver/cache/refresh and owned-resource lifecycle; no per-backend user HTTP loops. |
-| Remote invocation (separate) | Injected native A2A client | `RemoteAgentClient` is distinct from discovery; no automatic delegation or orchestration engine. |
+| Remote invocation (M8+) | `Remote["name"]` skill annotation | Structured `call`, plain-text `ask`, bounded task waiting; underlying client distinct from discovery. No initial helper/graph engine. |
 | Streaming (later) | Optional protocol adapter | Planned AG-UI frontend events, separate from A2A/MCP/OTel; no first-release streaming or UI dependency. |
 
 These are design responsibilities, not a requirement to implement every
@@ -54,7 +54,7 @@ layer of agent inheritance.
 | `AuthorizationPolicy` | Injected policy for verified caller grants and resource-specific rules. Adds restrictions to mandatory skill requirements and fails closed on denial or unavailability. |
 | `ExecutionPolicy` | Optional configured input, outbound-model, tool/action, and output checks. Does not replace authorization or guarantee injection prevention. |
 | `Runtime` | `invoke` returns a validated value; `run` returns `RunResult` with local execution metadata, even without tracing. `services=` supports local DI; no inference required. |
-| `RunResult` | Value, invocation ID, token usage (complete/estimated; unknown never zero), model/tool calls, duration and finish reason. Remote A2A receives only invocation ID metadata. |
+| `RunResult` | Value, invocation ID, token usage (complete/estimated; unknown never zero), model/tool calls, duration and finish reason. Ordinary A2A receives ID-only execution metadata; M8+ negotiated extension reports accounting usage, not internal results. |
 | `SkillRouter` | Custom-router interface plus a built-in opt-in model-based implementation for free-text A2A selection/extraction. Structured extension requests bypass it. Public signatures and clarification details remain open; selection never grants permission. |
 | `AgentConfig` | Validated defaults for instructions and execution limits. A default is distinct from a non-overridable host policy ceiling. |
 | `RunLimits` | Defaults: context-derived input cap, 100000 total tokens, 10 model attempts, 20 tool calls, 120 seconds. Host ceilings are separate constraints. |
@@ -138,13 +138,14 @@ skills compose independently deployed agents, without a workflow/graph engine.
 | `AgentRegistry` | Small abstract base with proposed async `get(agent_id) -> AgentReference` and `list(query: AgentQuery) -> list[AgentReference]`; pagination remains open. No required write operations. |
 | `AgentReference` | Validated stable identity, endpoint/discovery location, transport and non-secret connection metadata; exact fields open. |
 | `AgentQuery` | Supported ID/skill/tag matching; skill/tag filtering requires source metadata or explicit card enrichment, not assumed reference fields. |
-| `EnvironmentAgentRegistry` | Explicitly named environment source with documented structured format; JSON reference-array text proposed. |
-| `FileAgentRegistry` | Explicit file source, JSON initially proposed; schema/version not finalized. |
+| `EnvironmentAgentRegistry` | `EnvironmentAgentRegistry("AGENTFRAME_AGENTS")`; payload encoding still open. |
+| `FileAgentRegistry` | `FileAgentRegistry("agents.yaml")`, YAML name+URL list; detailed keys/schema/version open. |
 | `FoundryAgentRegistry` | Chosen Foundry project agents API via `azure-ai-projects` 2.x; A2A-enabled filtering, card mapping, auth/RBAC and pagination remain open. No tested implementation; model deployments are not agent endpoints. |
 | `AgentCardResolver` | Fetches/validates native SDK cards with application-configured outbound authentication and destination/redirect policy. |
-| `CardCacheConfig` | Proposed TTL/stale settings; 300 seconds and `False` are examples, not settled defaults. |
-| `AgentDirectory` | Library-managed facade for source reads, card resolution/cache/explicit refresh and scoped owned-resource cleanup; caller/card variants isolated. |
-| `RemoteAgentClient` | Separate native A2A invocation client with interfaces still open; discovery never implicitly delegates. |
+| `CardCacheConfig` | Default TTL 300 seconds; refresh stale access automatically, fail on refresh error unless explicit `allow_stale=True`. No implicit background polling. |
+| `AgentDirectory` | `sources=[...]`, native card-backed `find(skill=... / tags=...)`, cache/refresh and owned cleanup; `AgentApp(directory=...)` validates named remotes at startup. |
+| `Remote["name"]` | Managed `call(skill, ..., output=Type, max_total_tokens=...)` and `ask(text)`; input-required raises `ClarificationNeededError`, no auto-conversation. |
+| `RemoteAgentClient` | Underlying/explicit native A2A client; construction still open, author calls above decided. |
 
 No import/construction I/O or implicit polling. Directory lifecycle is not
 deploy/start/stop/delete, leases/federation, write registration or A2A task
@@ -153,6 +154,18 @@ lifespan; injection alone does not transfer ownership. Source errors are not
 empty results/deletion; failed refresh cannot silently make stale current.
 Freshness is not health, trust or authorization; invocation/actions authorize
 again. See [failure/isolation boundaries](discovery.md#failure-trust-and-isolation-boundaries).
+Per-remote OBO (Entra default) or explicit service identity never forwards the
+incoming token or elevates on exchange failure. Shared deadlines/token allowance,
+reported AgentFrame usage and maximum 5 hops use the same A2A extension (wire
+schema still open). No first-release orchestration helpers; use Python TaskGroup.
+See [remote budgets](limits.md#cross-agent-budgets-and-depth-m8) and
+[development/packaging](development.md).
+
+Later streaming uses `AGUIConfig(enabled=True)` on `AgentApp(ag_ui=...)` at
+`/ag-ui`. Shared checks, lifecycle/text/tool-name-status/errors, whole-answer
+buffering, disconnect cancellation and no reconnect/resume are decided; exact
+event projection remains open. Durable workflows are revisited after M8+ real
+usage and, if added, belong in an optional separate package.
 
 ## Native A2A types
 
