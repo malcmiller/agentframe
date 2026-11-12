@@ -6,6 +6,7 @@ from agentframe.auth import (
     APIKey,
     APIKeyAuth,
     Authenticator,
+    DeclaresCardSecurity,
     VerifiedCaller,
 )
 from agentframe.authorization import AuthorizationPolicy
@@ -22,6 +23,7 @@ from agentframe.errors import (
     PermissionDeniedError,
     PolicyUnavailableError,
 )
+from agentframe.host import HostConfig
 from agentframe.limits import RunLimits
 from agentframe.principal import Principal
 from agentframe.runtime import FinishReason, RunResult, Runtime, Usage
@@ -38,8 +40,10 @@ __all__ = [
     "AuthenticationError",
     "Authenticator",
     "AuthorizationPolicy",
+    "DeclaresCardSecurity",
     "DefinitionError",
     "FinishReason",
+    "HostConfig",
     "Inject",
     "InputValidationError",
     "LimitExceededError",
