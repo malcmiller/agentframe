@@ -79,8 +79,10 @@ authenticator; no remote host starts without a choice.
 - `POST /a2a` is the A2A 1.0 JSON-RPC endpoint from the official SDK. Every
   request to it, including every task operation, first passes `host.auth`.
   Missing or invalid credentials get HTTP 401 with the body
-  `{"error": "Authentication required."}`: no task is created and nothing about
-  the agent or its skills is revealed. A verified caller becomes the run's
+  `{"error": "Authentication required."}` and a `WWW-Authenticate` header (RFC
+  9110) naming the scheme the Agent Card declares, for example
+  `APIKey location="header", name="X-API-Key"`: no task is created and nothing
+  about the agent or its skills is revealed. A verified caller becomes the run's
   `Principal`, with permissions from `HostConfig.role_permissions`; the SDK
   scopes tasks by the principal's ID.
 - Each message runs as one `Runtime.run`, so validation, permissions, the
@@ -88,12 +90,8 @@ authenticator; no remote host starts without a choice.
 - Interim request format, until the structured extension (#5) and routing (#6):
   the skill ID goes in message metadata under `agentframe.skill`, and the
   arguments in a single JSON data part (omit it for no arguments).
-- Results: a `str` becomes a text artifact part; any other value becomes a data
-  part `{"value": ...}` in Pydantic JSON mode. The completed task's metadata
-  carries the run's `invocation_id`. For now every failure ends the task in
-  `FAILED` with a safe message; the full error mapping (`REJECTED`, protocol
-  errors) arrives with #7. Exceptions raised by a skill are logged and reported
-  only as "The skill failed.".
+- Results and failures map to native A2A as described in
+  [result and failure mapping](#result-and-failure-mapping) (#7).
 - Task operations are the SDK's native A2A 1.0 core methods; they are not
   advertised on the card. `SendMessage` blocks and returns the finished task by
   default. With `configuration.returnImmediately: true` it returns the task at
@@ -113,6 +111,47 @@ authenticator; no remote host starts without a choice.
   `UnsupportedOperationError`, because it would otherwise reveal every
   anonymous caller's tasks, inputs and results. Use an authenticator when
   callers must not see each other's tasks.
+
+### Result and failure mapping
+
+**Implemented behavior (M2 #7):** a completed run's value becomes the single
+part of the task's `result` artifact:
+
+- `str` -> one text part.
+- Everything else (`int`, `bool`, `None`, `list`, `dict`, Pydantic models and
+  nested types) -> one data part `{"value": ...}` in Pydantic JSON mode.
+- A value that cannot be serialized -> `OutputValidationError`, task `FAILED`.
+  Serialization runs inside the run's error handling, so no partial artifact is
+  published.
+
+Every other outcome follows this table:
+
+| Situation | Result |
+| --- | --- |
+| Missing or invalid credentials | HTTP 401 with `WWW-Authenticate`, no task |
+| Malformed A2A request or extension misuse | Standard A2A/JSON-RPC protocol error, no task |
+| Unknown skill, invalid arguments, permission or policy denied | Task `REJECTED`, safe message |
+| Clarification needed | Task `INPUT_REQUIRED` |
+| Timeout, output validation failure, skill or router exception, router timeout, policy unavailable | Task `FAILED`, safe message |
+| Cancelled | Task `CANCELED` |
+
+- A message without an `agentframe.skill` metadata ID, with more than one data
+  part, or whose data part is not a JSON object is refused with JSON-RPC
+  `InvalidParams` (`-32602`) before the SDK creates a task. Malformed JSON-RPC is
+  rejected by the SDK the same way. Extension activation rules arrive with #5.
+- `REJECTED` and `FAILED` tasks carry the error's safe message as the status
+  message: no stack traces, provider payloads, submitted values or secrets.
+  Exceptions raised by a skill (or, with #6, a router) are logged with their
+  details and reported only as "The skill failed.".
+- Every task status carries the run's `invocation_id` in the task metadata,
+  including failures. A failure raised before a run starts (such as a routing
+  failure) gets a new ID, and a skill exception's log entry includes the ID the
+  caller was given.
+- `INPUT_REQUIRED` with the question as the status message is published by
+  free-text routing (#6).
+- `CancelTask` ends a running task in `CANCELED` through AgentFrame's
+  [`CancelledError`](runtime.md#cancellederror) mapping, with the status message
+  "The task was cancelled." and the run's `invocation_id`.
 
 ```python
 import os
