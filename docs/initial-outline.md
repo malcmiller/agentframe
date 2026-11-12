@@ -286,7 +286,8 @@ M1 decisions confirmed on **2026-11-11** and implemented: `@agent` name/descript
 default to the class name/docstring (`version` required); `@skill` requires `id`,
 with name defaulting to the title-cased method name, description to the method
 docstring (a description is required for agents and skills), and empty
-tags/permissions. Definitions validate at class creation without I/O. Subclasses
+permissions. Skill tags originally defaulted to empty; on **2026-11-12** M2 made at
+least one non-blank tag required for A2A 1.0 compliance. Definitions validate at class creation without I/O. Subclasses
 inherit skills; redefining a skill needs `@skill` again, and duplicate ids across
 methods fail. Pydantic lax validation rejects unknown/missing arguments (`ctx`,
 injected names and `principal` count as unknown) with value-free messages.

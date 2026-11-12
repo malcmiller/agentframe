@@ -54,7 +54,9 @@ Cards also need truthful host settings; decoration does not start a server.
 **Purpose / decision:** register one async method under a stable skill ID, with
 descriptive A2A metadata and optional mandatory all-of permission requirements.
 
-**Signature status:** decided and implemented in M1 (2026-11-11).
+**Signature status:** decided and implemented in M1 (2026-11-11). Since M2
+(2026-11-12) `tags` must contain at least one non-blank tag; the `()` default
+remains only so an omitted value raises a clear `DefinitionError`.
 
 ```text
 @skill(
@@ -69,7 +71,7 @@ descriptive A2A metadata and optional mandatory all-of permission requirements.
 | `id` | `str` | Required, non-empty stable ID | Unique among registered skills, including inheritance; not necessarily the Python method name. |
 | `name` | `str` | Optional; defaults to the title-cased method name | Human-readable advertised skill name (`find_sources` -> `"Find Sources"`). |
 | `description` | `str` | Optional; defaults to the method docstring | Describes the ability. No explicit value and no docstring raises `DefinitionError`. |
-| `tags` | Iterable of `str` (lists in examples) | Optional; default empty | Descriptive discovery tags, not execution instructions or permissions. A single string is rejected. |
+| `tags` | Iterable of `str` (lists in examples) | Required: at least one non-blank tag (decided 2026-11-12, replacing M1's empty default) | Descriptive discovery tags, not execution instructions or permissions. A2A 1.0 marks `AgentSkill.tags` REQUIRED and required arrays must contain at least one element (spec §5.7), so omitted, empty or blank tags raise `DefinitionError` naming the agent and skill when `@agent` validates the class. A single string is rejected. |
 | `requires_permissions` | Iterable of `str` (lists in examples) | Optional; default empty | All listed permissions required. Application-defined exact strings; no inferred wildcard/role semantics. A single string is rejected so `"admin"` cannot become characters. |
 | `limits` | `RunLimits` | Optional per-skill overrides | In M1 the skill's `limits` replace the agent class `limits` as a whole. Library -> agent -> skill -> per-run precedence within host ceilings; partial-field merge mechanics remain open. |
 
@@ -108,7 +110,7 @@ context, `Inject[T]` and M8+ `Remote["name"]` parameters are injected, not
 published in caller/card/MCP schemas. Validate configured remote names through
 the app directory at startup. Reject invalid definitions at startup with
 `DefinitionError`, including missing required services,
-unsupported annotations, and duplicate IDs. Undecorated helpers are not skills;
+unsupported annotations, missing or blank tags, and duplicate IDs. Undecorated helpers are not skills;
 no mandatory `handle()` or manual dispatch is needed. Inherited overrides must
 not accidentally discard permission requirements: to change an inherited skill,
 redefine the same method with `@skill` again (the same id is allowed); overriding
