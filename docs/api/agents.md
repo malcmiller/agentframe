@@ -234,7 +234,7 @@ before any error is raised. Unknown usage stays unknown, never zero.
 | A tool is selected (tool loop not implemented yet) | `UnsupportedCapabilityError`; nothing is sent (M5 #60, replaced by #61) |
 | `COMPLETED` with text | The text is returned |
 | `COMPLETED` with empty text | `IncompleteOutputError` |
-| `LENGTH` | `IncompleteOutputError`; no partial text |
+| `LENGTH` | `IncompleteOutputError` with `partial_text` set to the text received (M4 #54); never returned directly |
 | `REFUSED` | `ModelRefusalError` |
 | `CONTENT_FILTER` | `ModelRefusalError` (blocked by a content filter) |
 | Model raises another `ModelError` (such as `ProviderError`) | Re-raised unchanged; the usage it carries, or unknown usage, is recorded |
@@ -255,7 +255,7 @@ still apply; these come first or are added:
 | Schema makes the call too large | The serialized schema counts toward the input estimate, so `TokenLimitExceededError` before sending |
 | `COMPLETED` with JSON matching the schema | A validated instance of `output` |
 | `COMPLETED` with invalid JSON or JSON that does not match | `OutputValidationError` listing field locations and problems, never the model's text (location parts that are not schema property names, such as model-chosen dictionary keys, appear as `<key>`); the call's usage is recorded; no repair or re-ask |
-| `LENGTH` | `IncompleteOutputError`; the text is never parsed, even if it happens to be valid JSON |
+| `LENGTH` | `IncompleteOutputError` with `partial_text` `None`; the text is never parsed, even if it happens to be valid JSON |
 | `REFUSED` / `CONTENT_FILTER` | `ModelRefusalError` |
 
 Transient-provider retries are unchanged and never retry a validation failure.
@@ -281,8 +281,8 @@ models. AgentFrame owns normalized messages, tool calls/results, token usage
 and finish reasons; adapters translate provider types. Unsupported requested
 capability raises `UnsupportedCapabilityError` before sending. Refusal raises
 `ModelRefusalError`, never fabricated text; token-limit truncation raises
-`IncompleteOutputError` unless the skill explicitly opts into partial results.
-That opt-in syntax is open and cannot bypass Pydantic/output validation.
+`IncompleteOutputError`; a skill opts into truncated text by catching it and
+reading `partial_text`, which cannot bypass Pydantic/output validation.
 Invalid structured output raises `OutputValidationError`. Tools use the same
 run limits, authorization and retry rules. See the
 [examples](../guides/agent-examples.md#typed-structured-output-and-bounded-tools).

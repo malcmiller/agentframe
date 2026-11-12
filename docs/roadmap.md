@@ -85,7 +85,7 @@ framework base class.
 
 | Deliverable | Confirmed direction | Still open |
 | --- | --- | --- |
-| First usable release | One `ctx.generate`: text, `output=Summary` for validated Pydantic output, `tools=[...]` for registered bounded continuations; complete validated results, not partial streams. AgentFrame owns normalized model types; unsupported capabilities fail before sending; refusals/truncation raise typed errors. | Normalized field layouts/schema subset and explicit partial-result opt-in syntax; no implicit partial-output success. |
+| First usable release | One `ctx.generate`: text, `output=Summary` for validated Pydantic output, `tools=[...]` for registered bounded continuations; complete validated results, not partial streams. AgentFrame owns normalized model types; unsupported capabilities fail before sending; refusals/truncation raise typed errors. | Normalized field layouts/schema subset; no implicit partial-output success (explicit opt-in: catch `IncompleteOutputError`, read `.partial_text`, M4 #54). |
 | Services and results | `Inject[T]`, `Services.add` / `add_scoped`, `services=` on app/runtime; startup missing-service errors. `invoke` returns a value; `run` returns `RunResult` independent of tracing. | Factory/disposal interfaces, generic typing, duration unit, usage marker fields and failed-run metadata access. |
 | Errors and identity | Named [safe error hierarchy](api/runtime.md#agentframeerror); `Authenticator` with `EntraIDAuth`, `APIKeyAuth`, explicit `AllowAnonymous()`. `HostConfig.auth` is mandatory remotely; `role_permissions` maps verified claims. | Error constructors/startup correlation and exact transport mapping, principal/custom-auth methods, API-key entries and scope/permission merge rules. |
 | Retry and host defaults | Transient model failures only, two retries/backoff, SDK retries disabled; side-effecting tools never auto-retry. Same caller/A2A message ID dedupes for 10 minutes (memory, pluggable store), not exactly-once. Host defaults 32 runs/1 MiB request/4 MiB response/30 seconds drain; `/health` and `/ready`. | Retry/store configuration, atomicity/payload conflicts, byte measurement, busy binding/probe schema; defaults themselves decided. |
@@ -418,7 +418,9 @@ belongs to that release even though telemetry exporters/integration stay optiona
 ## Open design decisions
 
 - Exact AgentFrame-normalized usage layouts (message/tool-call layouts and
-  finish reasons are settled, M5 #59), supported structured-output schemas, provider mappings and partial-result opt-in.
+  finish reasons are settled, M5 #59), supported structured-output schemas and provider mappings.
+  Partial-text opt-in is decided: catch `IncompleteOutputError` and read
+  `.partial_text` (M4 #54).
   Ownership of normalization, `output=` / `tools=` and typed failures are decided.
 - Scoped factory/disposal interfaces, explicit local startup method and app/runtime
   service-container conflict handling; `Inject`, `Services`, ownership and startup

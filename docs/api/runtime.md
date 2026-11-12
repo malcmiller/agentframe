@@ -514,22 +514,41 @@ def refused(error: ModelRefusalError) -> object:
 
 ## `IncompleteOutputError`
 
-**Purpose / decision:** token-limit truncation without explicit permission for partial results.
-**Signature status:** implemented `ModelError` subtype (M3 #33); partial opt-in syntax open.
+**Purpose / decision:** the model's output was cut short or empty. Catching it
+is the explicit opt-in for partial text; there is no flag (M4 #54).
+**Signature status:** implemented `ModelError` subtype (M3 #33);
+`partial_text` implemented (M4 #54).
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
-| Inherited error contract | Invocation ID and safe message | Required | Partial content is not complete validated output. |
+| Inherited error contract | Invocation ID, safe message and optional `usage` | Required | Partial content is not complete validated output. |
+| `partial_text` | `str \| None` | Default `None` | Text received before a **text** generation stopped at its output token limit. `None` for structured output, empty output and other incomplete reasons. |
 
 ```python
-from agentframe import IncompleteOutputError
+from agentframe import Agent, IncompleteOutputError, RunContext, agent, skill
 
 
-def incomplete(error: IncompleteOutputError) -> object:
-    return error.invocation_id
+@agent(version="1.0.0")
+class Drafter(Agent):
+    """Drafts text, accepting an answer cut short at the token limit."""
+
+    @skill("draft", tags=["text"])
+    async def draft(self, topic: str, ctx: RunContext) -> str:
+        """Draft text about a topic."""
+        try:
+            return await ctx.generate(topic)
+        except IncompleteOutputError as error:
+            if error.partial_text is None:
+                raise
+            return error.partial_text + " [truncated]"
 ```
 
-**Behavior / failures:** no partial-result success by default; opt-in cannot waive output validation.
+**Behavior / failures:** `ctx.generate` never returns partial text; an uncaught
+error fails the run (hosted: task `FAILED`). A skill that catches it and
+returns normally completes with `RunResult.finish_reason` `COMPLETED`; its
+return value is still validated, and the truncated call's usage still counts.
+The safe message, hosted failure messages, task metadata and logs never
+contain `partial_text`. Structured output is never returned partially parsed.
 **Related:** [`ModelResponse`](models.md#modelresponse), [`ModelError`](#modelerror).
 
 ## `ProviderError`

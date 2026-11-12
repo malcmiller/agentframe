@@ -839,7 +839,7 @@ response = ModelResponse(
 **Behavior / failures:** provider failures raise `ProviderError`, never
 success-shaped text. Refusal and truncation are reported through
 `finish_reason`; the managed helper raises `ModelRefusalError` and
-`IncompleteOutputError` (partial-result opt-in syntax open) and never returns
+`IncompleteOutputError` (text cut short is kept on its `partial_text`) and never returns
 them as success. Structured replies are JSON in `text`, validated by the
 managed layer (M4 #53). Each tool result links to its call through
 `Message.tool_call_id` (M5 #59). Failed-run usage retrieval remains open; no hard billing guarantee
