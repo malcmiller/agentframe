@@ -24,7 +24,8 @@ serves an agent as an ASGI application with its Agent Card and an authenticated
 A2A 1.0 endpoint, proven end to end with the official A2A client, and
 `agentframe run` serves it with one command (see
 [hosting over A2A](#hosting-over-a2a) and
-[development](docs/development.md#one-agent-m2)). There is no published release or model support (M3+) yet, and
+[development](docs/development.md#one-agent-m2)). Text generation through an injected model (`ctx.generate`, M3) works with the
+`ScriptedModel` test helper; there is no published release or provider adapter yet, and
 the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
 interfaces remain open. Examples beyond the M1 surface are design proposals.
