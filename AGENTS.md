@@ -271,7 +271,8 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
 - Retry transient model rate-limit/timeout/server failures only, default two
   retries/backoff, one layer with provider SDK retries disabled. Every attempt
   consumes existing budgets/deadline. `@tool(side_effects=True)` never auto-retries;
-  `idempotent=True` is not a blanket retry grant; flag-combination details open.
+  `idempotent=True` is not a blanket retry grant; both flags default False and
+  may combine (M5 #58).
 - A2A same verified caller + `messageId` within default 10 minutes returns
   original task; in-memory default, pluggable multi-instance store, not
   exactly-once. Store/window API, atomicity/payload conflicts remain open.

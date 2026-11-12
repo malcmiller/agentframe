@@ -169,6 +169,8 @@ Explicitly registered tools, bounded execution and generation continuations are
 part of the first usable release; individual agents can still omit tools.
 Registration is explicit; decoration alone does not grant model access or
 execution permission. This callable is not automatically an advertised A2A skill.
+`@tool` and `ToolDefinition` are implemented (M5 #58); registration and tool
+execution are not yet.
 
 ```python
 from agentframe import tool
@@ -179,16 +181,24 @@ def to_fahrenheit(celsius: float) -> float:
     return celsius * 9 / 5 + 32
 ```
 
+Decoration validates the function immediately and returns it unchanged, so it
+stays directly callable. Tools are module-level (or static) functions, `async`
+or sync; sync tools run inline on the event loop, so use `async def` for I/O.
+Like skills, tools take `Inject[T]` services and an optional `ctx: RunContext`,
+which never appear in the argument schema the model sees. `description=`
+defaults to the docstring; one is required. `side_effects` and `idempotent`
+both default to `False` and may both be `True`. See [`@tool`](../api/decorators.md#tool).
+
 The proposed construction shape is `Summarizer(model=model, tools=[to_fahrenheit])`.
 The runtime must validate arguments, enforce policy, and bound tool iterations.
 Instruction text is not an authorization mechanism.
 Tool results feed subsequent generation under the same deadline/token/attempt
 budget and outbound checks. Use `ctx.generate(..., tools=[to_fahrenheit])`
 to select registered functions. Defaults are 20 tool calls, 10 model attempts,
-100000 total tokens and 120 seconds. `@tool(side_effects=True)` never auto-retries;
-`idempotent=True` alone does not grant retries. Model retries are transient-only,
-default two with backoff and provider-SDK retries disabled. Exact normalized
-layouts, flag-combination and additional tool-retry rules remain open.
+100000 total tokens and 120 seconds. No tool is ever retried automatically,
+whatever its flags; `idempotent=True` is not a retry grant. Model retries are
+transient-only, default two with backoff and provider-SDK retries disabled.
+Exact normalized layouts remain open.
 Human approval workflows are application-owned, not built-in first-release
 pause/resume.
 
