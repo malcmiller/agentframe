@@ -159,8 +159,12 @@ dispatched inference stops or that charges are prevented. Enforcement must work
 with tracing disabled or sampled out. See [tracing](../design/tracing.md).
 
 First release returns complete validated results by default; token-limit
-truncation raises `IncompleteOutputError` unless a skill explicitly opts into
-partial results (syntax open, validation still mandatory).
+truncation raises `IncompleteOutputError`. A skill that prefers a partial
+answer catches it and uses `error.partial_text`, the text received before the
+limit (text generation only; always `None` for structured output). Whatever the
+skill returns is still validated, the truncated call's usage still counts, and
+the run finishes `COMPLETED`. Hosted failure messages and logs never include
+the partial text (M4 #54).
 `Runtime.invoke` returns the value; `Runtime.run` returns `RunResult` with
 value, invocation ID, usage, model/tool call counts, duration and finish reason,
 even with tracing off. Usage marks completeness/estimation and never turns

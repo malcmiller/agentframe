@@ -80,8 +80,9 @@ failure to construct or run a model-free agent.
 `ctx.generate(text, output=Summary)` returns a validated Pydantic instance;
 `ctx.generate(text, tools=[lookup_order])` runs only registered authorized tools
 with continuations. Unsupported capability fails before sending; refusal and
-truncation raise `ModelRefusalError` and `IncompleteOutputError`. Explicit
-partial-result opt-in syntax remains open and cannot waive validation.
+truncation raise `ModelRefusalError` and `IncompleteOutputError`. A skill opts
+into truncated text by catching `IncompleteOutputError` and reading
+`.partial_text` (text only, M4 #54); its return value is still validated.
 
 `AgentApp` composes one server/shared runtime with audience-specific endpoints,
 not per-skill routes: A2A, optional MCP and later AG-UI. Preferred structured A2A

@@ -91,7 +91,9 @@ class RunContext:
             ModelRefusalError: The model refused, or a content filter blocked
                 its output.
             IncompleteOutputError: The output was cut short at the token
-                limit or was empty. Partial text or objects are never returned.
+                limit or was empty. Partial text or objects are never returned;
+                for text cut short at the limit, the error's ``partial_text``
+                holds what arrived, and a skill may catch it and use it.
             ProviderError: The model provider call failed.
             LimitExceededError: The call does not fit the run's limits, or the
                 run's timeout expired during the call.

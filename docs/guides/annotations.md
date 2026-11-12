@@ -206,8 +206,9 @@ pause/resume.
 Typed structured model output is also first-release scope, not merely a
 Pydantic schema example: `ctx.generate(..., output=Summary)` returns a validated
 instance. Unsupported requested capability fails before sending; refusal raises
-`ModelRefusalError` and truncation `IncompleteOutputError` by default. Explicit
-partial-result opt-in syntax and supported schema subset remain open; see
+`ModelRefusalError` and truncation `IncompleteOutputError` by default. A skill
+that accepts truncated text catches the error and reads `.partial_text` (text
+only); the supported schema subset remains open; see
 [structured generation examples](agent-examples.md#typed-structured-output-and-bounded-tools).
 Return complete validated results first; future [streaming/AG-UI](../design/streaming.md)
 does not authorize partial output or automatic frontend tools.
