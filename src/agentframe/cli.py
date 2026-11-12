@@ -120,7 +120,7 @@ def serve(settings: RunSettings, *, reload: bool = False) -> None:
 
     Raises:
         CommandError: The target cannot be loaded or is not usable, ``--dev``
-            was asked to bind a non-localhost address, or uvicorn is missing.
+            was asked to bind a non-localhost address, or Uvicorn is missing.
         AgentFrameError: The application's configuration is invalid.
     """
     uvicorn = _import_uvicorn()
@@ -163,14 +163,14 @@ def build_app(settings: RunSettings) -> AgentApp:
 
 
 def _app_for_reload() -> AgentApp:
-    """Rebuild the app in uvicorn's reload worker from the parent's settings."""
+    """Rebuild the app in Uvicorn's reload worker from the parent's settings."""
     _configure_logging()
     settings = RunSettings(**json.loads(os.environ[_RELOAD_SETTINGS_VARIABLE]))
     return build_app(settings)
 
 
 def _configure_logging() -> None:
-    # Match uvicorn's own log lines so AgentFrame's warnings read the same way.
+    # Match Uvicorn's own log lines so AgentFrame's warnings read the same way.
     logging.basicConfig(format="%(levelname)s:     %(message)s")
 
 

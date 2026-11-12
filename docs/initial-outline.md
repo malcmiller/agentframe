@@ -7,7 +7,7 @@ decorators describe the agent and its skills, and types define validated data
 contracts. The library connects those definitions to native A2A interactions
 and optionally to a model host.
 
-The goal is a default way to build 1..N independently deployable agents:
+The goal is a default way to build 1 to N independently deployable agents:
 specialists and ordinary orchestrator agents that cooperate over A2A, including
 with other frameworks' A2A agents. Deliver the single-agent library through M7,
 then multi-agent composition as the next core release (M8+), not a hosted platform.
@@ -152,7 +152,7 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
 
 ## Configuration and safe defaults
 
-- Resolve defaults **library -> agent -> skill -> per-run**.
+- Resolve defaults **library → agent → skill → per-run**.
   Use `@skill(limits=RunLimits(...))`; per-run keyword and partial-field
   merge remain open. Host ceilings are constraints, not overridable defaults.
 - Require explicit model/deployment selection. Never silently switch hosts or models.
@@ -224,7 +224,7 @@ External screening is explicit data egress, not an automatic safety fallback.
 
 Validate model output but never treat it as authority. Preserve or reduce
 permissions during delegation; service credentials do not expand caller grants.
-Resource decisions must be enforced at the actual side-effect boundary, not
+Resource decisions must be enforced at the actual boundary where side effects happen, not
 only at skill admission. See [authorization](authorization.md) and
 [prompt safeguarding](prompt-safeguarding.md).
 Human approval workflows belong to the application. No built-in approval
@@ -373,7 +373,7 @@ must prove A2A-enabled filtering, card mapping, authentication/RBAC and paginati
 model deployments are not agent endpoints.
 
 No durable workflow engine, built-in approval workflow, federation or deployment
-service is included. Checkpointed multi-step flows, pause/resume and crash
+service is included. Checkpointed multistep flows, pause/resume and crash
 recovery are revisited only after multi-agent real usage. If added, use an
 optional separate package (candidate `agentframe-workflows`). Long work uses
 A2A tasks with an in-memory default and pluggable persistent store; no built-in
@@ -391,7 +391,7 @@ See the [combined hosting proposal](mcp-skills.md).
 
 Streaming/AG-UI is another separate follow-up after M7, with its existing
 [acceptance criteria](streaming.md#open-contracts-and-delivery-gate) for ordering,
-errors/truncation, refusal/incomplete results, side-effect safety, isolation and
+errors/truncation, refusal/incomplete results, safe side effects, isolation and
 no secrets/private reasoning, proven with an independent AG-UI client. Pin the
 feature profile, versions/binding and lifecycle/policy contracts before claiming
 support. Persistent task storage is pluggable for long-running A2A work, not a

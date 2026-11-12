@@ -151,7 +151,7 @@ stack traces or secrets. Logs are redacted; clarification remains input-required
 even without tracing. Ordinary remote A2A receives only invocation ID execution
 metadata; negotiated M8+ extension usage is an accounting exchange, not `RunResult`.
 Services support app-owned singletons and AgentFrame-created/closed per-run
-instances. Defaults resolve library -> agent -> skill -> per-run within host
+instances. Defaults resolve library → agent → skill → per-run within host
 ceilings: 120 seconds, 100000 total tokens, 10 model attempts, 20 tool calls;
 input cap derives from reported context size, while input plus reserved output
 still fits capacity. Output cap is canonical `ModelSettings.max_output_tokens=4096`.

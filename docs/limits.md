@@ -68,7 +68,7 @@ Do not pass limits through skill business arguments.
 
 ## Defaults versus ceilings
 
-Precedence is **library defaults -> agent -> skill -> per-run**. All layers
+Precedence is **library defaults → agent → skill → per-run**. All layers
 stay within host ceilings. A host-enforced ceiling is an independent constraint, not another
 overridable default. Resolve effective allowance before executing work.
 

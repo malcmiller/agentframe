@@ -5,6 +5,7 @@ import pytest
 
 from agentframe import (
     Agent,
+    AuthorizationPolicy,
     InputValidationError,
     LimitExceededError,
     PermissionDeniedError,
@@ -56,12 +57,13 @@ class SlowReader(Agent):
         return "done"
 
 
-class OwnerOnly:
+class OwnerOnly(AuthorizationPolicy):
     """Allows reading only documents the caller owns."""
 
     def __init__(self) -> None:
         self.seen_arguments: list[Mapping[str, object]] = []
 
+    # noinspection PyShadowingNames
     async def check(
         self,
         principal: Principal | None,
@@ -69,16 +71,19 @@ class OwnerOnly:
         arguments: Mapping[str, object],
     ) -> bool:
         self.seen_arguments.append(arguments)
-        owner = DOCUMENT_OWNERS.get(str(arguments["document_id"]))
-        return principal is not None and owner == principal.id
+        document_id = arguments["document_id"]
+        if principal is None or not isinstance(document_id, str):
+            return False
+        return DOCUMENT_OWNERS.get(document_id) == principal.id
 
 
-class BrokenPolicy:
+class BrokenPolicy(AuthorizationPolicy):
     """Stands in for a policy service that is down."""
 
     def __init__(self, error: Exception) -> None:
         self.error = error
 
+    # noinspection PyShadowingNames
     async def check(
         self,
         principal: Principal | None,
@@ -88,12 +93,13 @@ class BrokenPolicy:
         raise self.error
 
 
-class SlowPolicy:
+class SlowPolicy(AuthorizationPolicy):
     """Waits a fixed time before allowing."""
 
     def __init__(self, seconds: float) -> None:
         self.seconds = seconds
 
+    # noinspection PyShadowingNames
     async def check(
         self,
         principal: Principal | None,
@@ -104,9 +110,10 @@ class SlowPolicy:
         return True
 
 
-class TruthyPolicy:
+class TruthyPolicy(AuthorizationPolicy):
     """Returns a truthy value that is not ``True``."""
 
+    # noinspection PyShadowingNames
     async def check(
         self,
         principal: Principal | None,

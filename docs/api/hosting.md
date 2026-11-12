@@ -79,8 +79,8 @@ authenticator; no remote host starts without a choice.
 - `POST /a2a` is the A2A 1.0 JSON-RPC endpoint from the official SDK. Every
   request to it, including every task operation, first passes `host.auth`.
   Missing or invalid credentials get HTTP 401 with the body
-  `{"error": "Authentication required."}` and a `WWW-Authenticate` header (RFC
-  9110) naming the scheme the Agent Card declares, for example
+  `{"error": "Authentication required."}` and a `WWW-Authenticate` header
+  (RFC 9110) naming the scheme the Agent Card declares, for example
   `APIKey location="header", name="X-API-Key"`: no task is created and nothing
   about the agent or its skills is revealed. A verified caller becomes the run's
   `Principal`, with permissions from `HostConfig.role_permissions`; the SDK
@@ -148,8 +148,8 @@ Every other outcome follows this table:
   message: no stack traces, provider payloads, submitted values (including the
   requested skill ID) or secrets. Exceptions raised by a skill are logged
   with their details and reported only as "The skill failed."; router
-  exceptions likewise as "The skill router failed.". A `DefinitionError` names agent internals, so it is logged and
-  reported only as "The agent is not configured correctly.".
+  exceptions likewise as "The skill router failed." A `DefinitionError` names agent internals, so it is logged and
+  reported only as "The agent is not configured correctly."
 - Every task status carries the run's `invocation_id` in the task metadata,
   including failures. The host allocates the ID before the run, so the caller,
   the skill's `ctx.invocation_id` and the log entry for a skill exception all
@@ -367,9 +367,9 @@ a missing attribute, a target that is not callable, a factory returning
 anything other than an `AgentApp` (an agent class without `--dev` suggests
 `--dev`), an invalid agent or configuration (`DefinitionError` from
 `AgentApp`), `--dev` with a non-localhost host, a non-agent class or one that
-needs constructor arguments, and a missing uvicorn install. Errors raised by
+needs constructor arguments, and a missing Uvicorn installation. Errors raised by
 the application's own code, including imports inside its modules, keep their
-traceback. Importing agents never starts serving. Shutdown follows uvicorn's
+traceback. Importing agents never starts serving. Shutdown follows Uvicorn's
 default graceful shutdown until the host grace period arrives in M7.
 Multi-agent `agentframe.yaml` is M8+ ([`agentframe dev`](#agentframe-dev)).
 
@@ -613,10 +613,10 @@ from collections.abc import Sequence
 from a2a.helpers import get_message_text
 from a2a.types import Message, Role
 
-from agentframe import Clarification, SkillCall, SkillDefinition
+from agentframe import Clarification, SkillCall, SkillDefinition, SkillRouter
 
 
-class GreetingRouter:
+class GreetingRouter(SkillRouter):
     """Routes "greet <name>" to the greet skill; asks for a missing name."""
 
     async def route(
@@ -741,7 +741,7 @@ AgentFrame classes** or separately maintained wire schemas.
 A2A protocol 1.0 and the official `a2a-sdk` are selected (specification
 release v1.0.1). M2 pins `a2a-sdk[http-server]==1.3.0` as a core dependency
 because A2A hosting is the default interface (the optional `agentframe[server]`
-extra only adds uvicorn for `agentframe run`); the `http-server` extra is listed explicitly rather than relied on transitively.
+extra only adds Uvicorn for `agentframe run`); the `http-server` extra is listed explicitly rather than relied on transitively.
 The selected binding is **JSON-RPC over HTTP** for protocol 1.0 only, with the
 SDK's 0.3 compatibility disabled. `tests/test_a2a_binding.py` proves an official
 SDK client exchanging a message over that binding and the rejection of pre-1.0

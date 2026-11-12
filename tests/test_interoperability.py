@@ -54,12 +54,14 @@ from agentframe import (
     AgentApp,
     APIKey,
     APIKeyAuth,
+    AuthorizationPolicy,
     Clarification,
     HostConfig,
     Principal,
     RunContext,
     SkillCall,
     SkillDefinition,
+    SkillRouter,
     agent,
     skill,
 )
@@ -125,7 +127,7 @@ class Receptionist(Agent):
         return "Your taxi is here."
 
 
-class GreetingRouter:
+class GreetingRouter(SkillRouter):
     """Routes "greet <name>" to ``greet`` and asks for the name when it is missing."""
 
     async def route(
@@ -142,11 +144,12 @@ class GreetingRouter:
         return SkillCall("greet", {"name": name[-1]})
 
 
-class BannedVisitors:
+class BannedVisitors(AuthorizationPolicy):
     """Resource policy: nobody greets a banned visitor."""
 
     banned = frozenset({"Mallory"})
 
+    # noinspection PyShadowingNames
     async def check(
         self,
         principal: Principal | None,
@@ -273,7 +276,10 @@ def receptionist() -> Receptionist:
 async def base_url(
     serve: ServeLocally, receptionist: Receptionist
 ) -> AsyncIterator[str]:
-    async with serve(lambda url: receptionist_app(receptionist, url)) as url:
+    def app(public_url: str) -> AgentApp:
+        return receptionist_app(receptionist, public_url)
+
+    async with serve(app) as url:
         yield url
 
 
@@ -292,6 +298,8 @@ async def bob(base_url: str) -> AsyncIterator[Client]:
 # Discovery
 
 
+# The extension parameters are a protobuf Struct, whose values PyCharm cannot narrow.
+# noinspection PyUnresolvedReferences,PyTypeChecker
 async def test_card_declares_the_skill_call_extension_and_argument_schemas(
     base_url: str,
 ) -> None:

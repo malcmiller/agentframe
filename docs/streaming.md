@@ -179,7 +179,7 @@ result serialization, admission/tenant isolation, byte/concurrency limits,
 policy gating, cancellation/shutdown details and backpressure remain to specify.
 Frontend-executed tools and shared state are later, explicit opt-in only.
 Prove disconnect cancellation and no reconnect/resume alongside ordering/errors/truncation, refusal/
-incomplete-result behavior, side-effect safety, isolation and no secrets/private
+incomplete-result behavior, safe side effects, isolation and no secrets/private
 reasoning with an independent AG-UI client. Do not advertise absent A2A features.
 
 See [delivery milestones and post-M7 follow-ups](initial-outline.md#delivery-milestones),

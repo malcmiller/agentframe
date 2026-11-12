@@ -1,6 +1,6 @@
 """Tests for hosting an agent over A2A with ``AgentApp``.
 
-Requests travel over real localhost HTTP to an ``AgentApp`` served by uvicorn.
+Requests travel over real localhost HTTP to an ``AgentApp`` served by Uvicorn.
 """
 
 import asyncio
@@ -27,6 +27,7 @@ from agentframe import (
     AllowAnonymous,
     APIKey,
     APIKeyAuth,
+    Authenticator,
     AuthorizationPolicy,
     DefinitionError,
     HostConfig,
@@ -56,8 +57,10 @@ class Greeting(BaseModel):
 class Clock:
     """An application service injected into skills."""
 
+    time = "noon"
+
     def now(self) -> str:
-        return "noon"
+        return self.time
 
 
 @agent(version="1.0.0")
@@ -311,8 +314,8 @@ async def test_structured_result_is_a_data_artifact(http: httpx.AsyncClient) -> 
             {"parts": [{"data": ["Ada"]}]}, "exactly one part", id="not-an-object"
         ),
         pytest.param(
-            {"metadata": {"agentframe.skill": "greet", "agentframe.skil": "x"}},
-            "agentframe.skil",
+            {"metadata": {"agentframe.skill": "greet", "agentframe.skills": "x"}},
+            "agentframe.skills",
             id="unknown-metadata-field",
         ),
     ],
@@ -444,7 +447,8 @@ async def test_missing_permission_is_rejected(http: httpx.AsyncClient) -> None:
 
 
 async def test_policy_denial_is_rejected(serve: ServeLocally) -> None:
-    class DenyAll:
+    class DenyAll(AuthorizationPolicy):
+        # noinspection PyShadowingNames
         async def check(
             self,
             principal: Principal | None,
@@ -504,7 +508,8 @@ async def test_skill_exception_fails_with_a_safe_message(
 
 
 async def test_policy_outage_fails_the_task(serve: ServeLocally) -> None:
-    class BrokenPolicy:
+    class BrokenPolicy(AuthorizationPolicy):
+        # noinspection PyShadowingNames
         async def check(
             self,
             principal: Principal | None,
@@ -596,7 +601,10 @@ def test_construction_starts_no_server(monkeypatch: pytest.MonkeyPatch) -> None:
     def refuse(*args: object) -> None:
         raise AssertionError("constructing an AgentApp must not open sockets")
 
+    # PyCharm cannot see socket methods implemented in C.
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(socket.socket, "bind", refuse)
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(socket.socket, "connect", refuse)
 
     greeter_app("https://greeter.example.com")
@@ -617,8 +625,14 @@ def test_undecorated_agent_is_refused() -> None:
 
 @pytest.mark.parametrize("conflict", ["services", "authorization"])
 def test_runtime_conflicts_with_app_level_settings(conflict: str) -> None:
-    class AllowAll:
-        async def check(self, *args: object) -> bool:
+    class AllowAll(AuthorizationPolicy):
+        # noinspection PyShadowingNames
+        async def check(
+            self,
+            principal: Principal | None,
+            skill: SkillDefinition,
+            arguments: Mapping[str, Any],
+        ) -> bool:
             return True
 
     settings: dict[str, Any] = {
@@ -635,7 +649,7 @@ def test_runtime_conflicts_with_app_level_settings(conflict: str) -> None:
 
 
 def test_authenticator_without_card_security_is_refused_at_construction() -> None:
-    class HeaderAuth:
+    class HeaderAuth(Authenticator):
         async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
             return VerifiedCaller(id="caller")
 

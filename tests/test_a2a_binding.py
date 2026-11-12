@@ -1,8 +1,8 @@
 """Smoke tests for the pinned A2A SDK and the selected A2A 1.0 binding.
 
 These tests use a bare SDK app, independent of ``AgentApp``, to prove that the
-supported install provides an A2A 1.0 JSON-RPC over HTTP server and client, and that the
-pinned SDK rejects pre-1.0 requests while 0.3 compatibility stays disabled.
+supported installation provides an A2A 1.0 JSON-RPC over HTTP server and client,
+and that the pinned SDK rejects pre-1.0 requests while 0.3 compatibility stays disabled.
 """
 
 from collections.abc import AsyncIterator
@@ -39,8 +39,9 @@ class EchoExecutor(AgentExecutor):
     """Replies to every message with the same text."""
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        assert context.message is not None
-        reply = new_text_message(f"echo: {get_message_text(context.message)}")
+        message = context.message
+        assert message is not None
+        reply = new_text_message(f"echo: {get_message_text(message)}")
         await event_queue.enqueue_event(reply)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:

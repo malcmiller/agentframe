@@ -1,6 +1,6 @@
 """Tests for routing free-text A2A messages with a custom ``SkillRouter``.
 
-Requests travel over real localhost HTTP to an ``AgentApp`` served by uvicorn.
+Requests travel over real localhost HTTP to an ``AgentApp`` served by Uvicorn.
 """
 
 import asyncio
@@ -22,6 +22,7 @@ from agentframe import (
     AgentApp,
     APIKey,
     APIKeyAuth,
+    AuthorizationPolicy,
     Clarification,
     HostConfig,
     Principal,
@@ -29,6 +30,7 @@ from agentframe import (
     RunLimits,
     SkillCall,
     SkillDefinition,
+    SkillRouter,
     agent,
     skill,
 )
@@ -67,7 +69,7 @@ class Greeter(Agent):
         return "rested"
 
 
-class GreetingRouter:
+class GreetingRouter(SkillRouter):
     """Routes "greet <name>" to ``greet`` and asks for the name when it is missing.
 
     Records every conversation it sees, as text, and the skills offered.
@@ -93,7 +95,7 @@ class GreetingRouter:
         return SkillCall("greet", {"name": name[-1]})
 
 
-class FixedRouter:
+class FixedRouter(SkillRouter):
     """Always returns the same decision, or runs ``behave`` instead."""
 
     def __init__(self, decision: object = None, behave: Any = None) -> None:
@@ -333,7 +335,8 @@ async def test_an_answer_can_ask_again(http: httpx.AsyncClient) -> None:
 async def test_answers_are_checked_by_the_authorization_policy(
     serve: ServeLocally, router: GreetingRouter
 ) -> None:
-    class NoMallory:
+    class NoMallory(AuthorizationPolicy):
+        # noinspection PyShadowingNames
         async def check(
             self,
             principal: Principal | None,

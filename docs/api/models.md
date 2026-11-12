@@ -208,7 +208,7 @@ settings = ModelSettings(max_output_tokens=800)
 settings against the actual deployment and effective limits; unsupported
 requested settings fail, not disappear. Typed provider-specific options are
 intended, but no universal temperature/reasoning fields or option registry are
-settled. Precedence is library -> agent -> skill -> per-run within host ceilings.
+settled. Precedence is library → agent → skill → per-run within host ceilings.
 The exact skill/per-run carrier for model settings remains open; skill run
 budgets use `@skill(limits=RunLimits(...))`. Do not duplicate output tokens in
 that limits object.

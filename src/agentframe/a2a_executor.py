@@ -162,18 +162,23 @@ class RuntimeExecutor(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Run the requested or routed skill and publish the task's new state."""
         # The SDK always fills these in before calling the executor.
-        assert context.task_id is not None and context.context_id is not None
-        assert context.message is not None
+        task_id, context_id, message = (
+            context.task_id,
+            context.context_id,
+            context.message,
+        )
+        assert task_id is not None and context_id is not None
+        assert message is not None
         if context.current_task is None:
             await event_queue.enqueue_event(
                 new_task(
-                    context.task_id,
-                    context.context_id,
+                    task_id,
+                    context_id,
                     TaskState.TASK_STATE_SUBMITTED,
-                    history=[context.message],
+                    history=[message],
                 )
             )
-        task = TaskUpdater(event_queue, context.task_id, context.context_id)
+        task = TaskUpdater(event_queue, task_id, context_id)
         principal: Principal | None = context.call_context.state.get(
             PRINCIPAL_STATE_KEY
         )
@@ -183,6 +188,7 @@ class RuntimeExecutor(AgentExecutor):
             TaskState.TASK_STATE_WORKING, metadata=_invocation_metadata(invocation_id)
         )
         started_at = asyncio.get_running_loop().time()
+        # noinspection PyBroadException
         try:
             call = await self._choose_skill(
                 context, principal, started_at, invocation_id
@@ -190,6 +196,8 @@ class RuntimeExecutor(AgentExecutor):
             if isinstance(call, Clarification):
                 await publish_input_required(task, call.question, invocation_id)
                 return
+            # The executor shares the runtime's pipeline under its own invocation ID.
+            # noinspection PyProtectedMember
             result = await self._runtime._run_invocation(
                 invocation_id,
                 self._agent,
@@ -221,13 +229,14 @@ class RuntimeExecutor(AgentExecutor):
         invocation_id: str,
     ) -> SkillCall | Clarification:
         """Read the skill call, or ask the router about the free-text message."""
-        assert context.message is not None
+        message = context.message
+        assert message is not None
         if is_skill_call(context.requested_extensions):
             # The request handler has already refused malformed skill calls.
-            return read_skill_call(context.message)
+            return read_skill_call(message)
         # The request handler refuses free text when there is no router.
         assert self._router is not None
-        conversation = [*_earlier_messages(context.current_task), context.message]
+        conversation = [*_earlier_messages(context.current_task), message]
         definition = type(self._agent).definition()
         # The skill is not known yet, so routing is bounded by the agent's
         # timeout; the selected skill's deadline counts from the same start.
@@ -248,12 +257,14 @@ class RuntimeExecutor(AgentExecutor):
         the run, so per-run services are still cleaned up. The task reports
         the ``invocation_id`` its run started with.
         """
-        assert context.task_id is not None and context.context_id is not None
-        task = TaskUpdater(event_queue, context.task_id, context.context_id)
-        invocation_id = None
-        if context.current_task is not None:
-            metadata = dict(context.current_task.metadata.items())
-            invocation_id = metadata.get("invocation_id")
+        task_id, context_id = context.task_id, context.context_id
+        assert task_id is not None and context_id is not None
+        task = TaskUpdater(event_queue, task_id, context_id)
+        invocation_id: str | None = None
+        current_task = context.current_task
+        if current_task is not None:
+            stored = dict(current_task.metadata.items()).get("invocation_id")
+            invocation_id = stored if isinstance(stored, str) else None
         await publish_failure(
             task, CancelledError(CANCELLED_MESSAGE, invocation_id=invocation_id)
         )

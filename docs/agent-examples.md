@@ -200,7 +200,7 @@ The proposed convenience API returns each validated skill value and raises
 explicit typed errors on failure; exact error classes are not finalized.
 The runtime resolves a stable skill ID, validates arguments, creates context,
 applies policy and limits, executes the method, and validates its output.
-`ctx` cannot be supplied through the arguments dictionary. Undecorated helper
+`ctx` cannot be supplied through the `arguments` mapping. Undecorated helper
 methods and unknown IDs are not invocable skills.
 
 Direct Python calls to decorated methods bypass this managed pipeline; use the

@@ -20,6 +20,7 @@ from agentframe import (
     APIKey,
     APIKeyAuth,
     Authenticator,
+    DeclaresCardSecurity,
     DefinitionError,
     HostConfig,
     Inject,
@@ -176,7 +177,7 @@ def test_card_never_advertises_streaming_or_push_notifications() -> None:
     assert card.capabilities.extensions[0].required is False
 
 
-class BearerTokenAuth:
+class BearerTokenAuth(Authenticator, DeclaresCardSecurity):
     """A custom authenticator that describes its scheme on the card."""
 
     async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
@@ -187,7 +188,7 @@ class BearerTokenAuth:
         return {"bearer": SecurityScheme(http_auth_security_scheme=scheme)}
 
 
-class UndescribedAuth:
+class UndescribedAuth(Authenticator):
     """A custom authenticator that cannot describe its scheme."""
 
     async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
@@ -247,6 +248,8 @@ def test_card_generation_is_deterministic_and_offline(
     def refuse(*args: object, **kwargs: object) -> None:
         raise AssertionError("card generation must not open sockets")
 
+    # PyCharm cannot see socket methods implemented in C.
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(socket.socket, "connect", refuse)
     host = HostConfig(public_url="https://writer.example.com", auth=api_key_auth())
 

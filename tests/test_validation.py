@@ -17,8 +17,10 @@ SECRET = "s3cret-value-never-shown"
 
 
 class Clock:
+    time = "noon"
+
     def now(self) -> str:
-        return "noon"
+        return self.time
 
 
 class Address(BaseModel):

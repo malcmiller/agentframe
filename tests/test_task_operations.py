@@ -1,6 +1,6 @@
 """Tests for A2A task operations: send, get, list and cancel.
 
-Requests travel over real localhost HTTP to an ``AgentApp`` served by uvicorn.
+Requests travel over real localhost HTTP to an ``AgentApp`` served by Uvicorn.
 The server shares the test's event loop, so tests can pause a skill mid-run.
 """
 

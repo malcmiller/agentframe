@@ -27,7 +27,10 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     def refuse(*args: object, **kwargs: object) -> None:
         raise AssertionError("tests must not open sockets")
 
+    # PyCharm cannot see socket methods implemented in C.
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(socket.socket, "connect", refuse)
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(socket.socket, "connect_ex", refuse)
     yield
 

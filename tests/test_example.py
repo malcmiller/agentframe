@@ -18,6 +18,7 @@ from agentframe import (
     AgentApp,
     APIKey,
     APIKeyAuth,
+    AuthorizationPolicy,
     HostConfig,
     Inject,
     Principal,
@@ -33,8 +34,10 @@ from local_server import ServeLocally
 
 
 class Greeter:
+    greeting = "Hello"
+
     def greet(self, name: str) -> str:
-        return f"Hello, {name}!"
+        return f"{self.greeting}, {name}!"
 
 
 @agent(version="0.1.0")
@@ -67,9 +70,10 @@ async def test_readme_example() -> None:
 # Hosting over A2A
 
 
-class DevelopmentPolicy:
+class DevelopmentPolicy(AuthorizationPolicy):
     """Development placeholder: allow any authenticated caller."""
 
+    # noinspection PyShadowingNames
     async def check(
         self,
         principal: Principal | None,

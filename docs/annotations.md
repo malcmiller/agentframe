@@ -204,7 +204,7 @@ does not authorize partial output or automatic frontend tools.
 Publishing a skill as an MCP tool is a separate host allowlist decision, not a
 new decorator and not automatic publication of `@tool` callables. Token budgets
 belong in [execution configuration](limits.md); [tracing](tracing.md) belongs on
-the runtime. Neither requires changing a skill's signature or agent inheritance.
+the runtime. Neither requires changing a skill's signature nor agent inheritance.
 
 ## Card generation boundaries
 

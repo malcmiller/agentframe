@@ -17,6 +17,7 @@ from agentframe.limits import RunLimits
 _SKILL_ATTRIBUTE = "_skill_metadata"
 
 
+# noinspection PyShadowingBuiltins
 def skill[F: Callable[..., Any]](
     id: str,
     *,

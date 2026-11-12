@@ -261,7 +261,7 @@ open.
 from agentframe import Services
 
 
-def register_store(services: Services, store_type: type, my_store: object) -> None:
+def register_store[T](services: Services, store_type: type[T], my_store: T) -> None:
     services.add(store_type, my_store)
 ```
 

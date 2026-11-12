@@ -39,7 +39,7 @@ config = AgentConfig(
 Supply as `config=` when constructing an author-defined [`Agent`](agents.md#agent)
 subclass.
 
-**Behavior / failures:** resolve library -> agent -> skill -> per-run, always
+**Behavior / failures:** resolve library → agent → skill → per-run, always
 within host ceilings. Skills use `@skill(limits=RunLimits(...))`; exact per-run
 options syntax and partial-field composition remain open. Shared instructions combine with
 trusted generation-specific instructions without replacing shared constraints.
@@ -100,7 +100,7 @@ strict-mode names/capabilities remain open. Model-backed routing must be
 budgeted before selection and pass remaining allowance to the skill. Retries,
 continuations, and explicit child work cannot reset or double-spend budgets.
 First-release typed structured generation and bounded registered-tool loops
-use these allowances. Resolve library -> agent -> skill -> per-run; none
+use these allowances. Resolve library → agent → skill → per-run; none
 may exceed host ceilings. `@skill(limits=RunLimits(...))` is decided; exact
 per-run keyword/container and partial-field merge mechanics remain open.
 Host admission/bytes/shutdown defaults live on `HostConfig`, not this type.

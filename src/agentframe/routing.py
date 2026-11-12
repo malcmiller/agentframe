@@ -23,7 +23,7 @@ class SkillCall:
     """A skill to run and its unvalidated business arguments.
 
     Attributes:
-        skill: Id of the skill to run.
+        skill: ID of the skill to run.
         arguments: Business arguments; the runtime validates them like any
             other caller's arguments.
     """

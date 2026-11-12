@@ -253,6 +253,8 @@ class Runtime:
             raise PolicyUnavailableError(
                 f"Authorization policy for skill '{skill.id}' is unavailable"
             ) from error
+        # Fail closed: only an explicit True allows the run, not any truthy value.
+        # noinspection PySimplifyBooleanCheck
         if allowed is not True:
             # Deliberately generic so a denial never reveals whether the
             # requested resource exists.

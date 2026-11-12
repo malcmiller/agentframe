@@ -6,7 +6,7 @@ expand the initial authoring slice into a platform.
 Discovery/registry and remote A2A invocation are **core scope for the next
 multi-agent release (M8+) after the M7 single-agent release**, not optional
 add-ons or prerequisites for M7's complete validated text/structured/tool results.
-AgentFrame enables 1..N independently deployed agents: ordinary orchestrator
+AgentFrame enables 1 to N independently deployed agents: ordinary orchestrator
 skills discover and call specialists over A2A, including non-AgentFrame peers.
 This is A2A composition first, not a workflow/graph engine or hosting platform.
 See the [surface reference](api/discovery.md) for individual API entries.
@@ -428,10 +428,11 @@ skills. Approvals stay application-owned. If later added, workflows belong in
 an optional separate package (candidate `agentframe-workflows`), not core.
 
 Before stabilization, resolve YAML/environment/reference schemas, transport
-values, source conflicts, search combination/pagination, resolver/auth/destination
-interfaces, result/error details, source reconciliation/removal races, stale-age
-bounds, background opt-in, cache keys, ownership transfer, OBO/service
-configuration and extension deadline/usage/depth wire semantics. Dev/container
+values, source conflicts and search combination/pagination. Also resolve
+resolver/auth/destination interfaces, result/error details, source
+reconciliation/removal races, stale-age bounds, background opt-in, cache keys and
+ownership transfer. OBO/service configuration and extension
+deadline/usage/depth wire semantics also remain open. Dev/container
 configuration and later typed proxies remain to specify; no first-release
 orchestration helpers. Prove failures,
 bounded reads/cancellation, safe redirects, caller isolation, explicit stale

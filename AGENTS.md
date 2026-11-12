@@ -5,7 +5,7 @@
 AgentFrame is an independent Python library for annotation-based agent creation:
 classes implement behavior, decorators describe agents and skills, and types
 define validated contracts. A2A and native Agent Cards are first-class.
-The goal is a default way to build 1..N independently deployable specialist and
+The goal is a default way to build 1 to N independently deployable specialist and
 orchestrator agents, interoperable with other frameworks' A2A agents. Deliver
 single-agent M0-M7 first, then A2A multi-agent composition as the next core
 release (M8+), not an optional add-on or a hosting platform.
@@ -207,11 +207,11 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
   tool calls 20, input cap model-reported context size. Input plus reserved
   output must still fit capacity; unknown is not unlimited and overflow fails.
   Model context capacity is not an arbitrary user setting.
-- Resolve library -> agent -> skill -> per-run within host ceilings.
+- Resolve library → agent → skill → per-run within host ceilings.
   Skills use `@skill(limits=RunLimits(...))`; per-run options/partial merges open.
 - Retry transient model rate-limit/timeout/server failures only, default two
-  retries/backoff, one layer with provider SDK retries disabled. Attempts
-  consume existing budgets/deadline. `@tool(side_effects=True)` never auto-retries;
+  retries/backoff, one layer with provider SDK retries disabled. Every attempt
+  consumes existing budgets/deadline. `@tool(side_effects=True)` never auto-retries;
   `idempotent=True` is not a blanket retry grant; flag-combination details open.
 - A2A same verified caller + `messageId` within default 10 minutes returns
   original task; in-memory default, pluggable multi-instance store, not
@@ -363,7 +363,7 @@ specialist with propagated context, and non-AgentFrame A2A client/server interop
 Development support starts with running N agents locally, then container
 packaging; Foundry/Kubernetes templates are later. M2 `agentframe run module:create_app`
 serves the app's own configured `AgentApp` (`--dev module:Class` is localhost-only
-anonymous; uvicorn is the `server` extra). M8+ `agentframe dev` reads agentframe.yaml (names/modules/ports),
+anonymous; Uvicorn is the `server` extra). M8+ `agentframe dev` reads agentframe.yaml (names/modules/ports),
 starts localhost agents, writes local registry, configures dev API keys and
 combines logs tagged by agent/invocation. One container per agent; Dockerfile
 template and generated docker-compose example. Exact schema/generation/key

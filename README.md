@@ -38,7 +38,7 @@ interfaces remain open. Examples beyond the M1 surface are design proposals.
 - Allow model selection to change without rewriting agent behavior.
 - Provide safe, validated defaults with typed configuration and dependency injection.
 - Build on the official A2A Python SDK instead of maintaining another wire format.
-- Build and deploy 1..N agents; compose specialists through ordinary orchestrator
+- Build and deploy 1 to N agents; compose specialists through ordinary orchestrator
   skills using interoperable A2A calls, not a required workflow/graph engine.
 
 ## Authoring experience
@@ -54,8 +54,10 @@ from agentframe import Agent, Inject, RunContext, Runtime, Services, agent, skil
 
 
 class Greeter:
+    greeting = "Hello"
+
     def greet(self, name: str) -> str:
-        return f"Hello, {name}!"
+        return f"{self.greeting}, {name}!"
 
 
 @agent(version="0.1.0")
@@ -99,13 +101,14 @@ from agentframe import (
     AgentApp,
     APIKey,
     APIKeyAuth,
+    AuthorizationPolicy,
     HostConfig,
     Principal,
     SkillDefinition,
 )
 
 
-class DevelopmentPolicy:
+class DevelopmentPolicy(AuthorizationPolicy):
     """Development placeholder: allow any authenticated caller."""
 
     async def check(
@@ -133,7 +136,7 @@ def create_app() -> AgentApp:
     )
 ```
 
-Run it with uvicorn from the `server` extra (`uv sync --extra server` from
+Run it with Uvicorn from the `server` extra (`uv sync --extra server` from
 source):
 
 ```shell

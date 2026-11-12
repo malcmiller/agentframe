@@ -67,7 +67,7 @@ Additional confirmed contracts are the single `ctx.generate` text/`output=`/
 `tools=` surface, AgentFrame-owned normalized model types, annotated service
 injection with singleton/scoped ownership, `Runtime.run` / `RunResult`, typed
 correlated errors, transient-only two-retry policy and 10-minute A2A deduplication
-(not exactly-once). Limits/defaults and library -> agent -> skill -> per-run
+(not exactly-once). Limits/defaults and library → agent → skill → per-run
 precedence are decided within host ceilings. `HostConfig.auth` is mandatory
 remotely, with Entra/API key/explicit anonymous/custom choices and verified
 role mapping. Factory/error wire layouts and other unspecified details remain open.
@@ -77,7 +77,7 @@ development setup and M1 model-free proof; M2 proves A2A with custom routing onl
 and M3 meets the README's Foundry/Llama configuration-switching success criterion.
 M4 structured outputs, M5 bounded tools, M6 built-in opt-in model routing (after
 M3/M4), and M7 hardening complete the first usable single-agent release.
-M8+ then delivers 1..N independently deployable specialists and ordinary
+M8+ then delivers 1 to N independently deployable specialists and ordinary
 orchestrator skills cooperating over A2A, including with other frameworks'
 A2A agents. Discovery/native calls and identity/budget/trace propagation are
 core to this release, not optional follow-ups. MCP, telemetry integration and

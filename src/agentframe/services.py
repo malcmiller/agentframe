@@ -61,7 +61,7 @@ class Services:
             DefinitionError: If ``service_type`` is already registered.
         """
         self._check_not_registered(service_type)
-        self._scoped[service_type] = cast(Callable[[], object], factory)
+        self._scoped[service_type] = factory
 
     def is_registered(self, service_type: object) -> bool:
         """Return whether ``service_type`` has been registered."""
@@ -110,7 +110,7 @@ async def _create_scoped(
     factory: Callable[[], object], stack: AsyncExitStack
 ) -> object:
     if inspect.isasyncgenfunction(factory):
-        generator = cast(AsyncGenerator[object], factory())
+        generator = factory()
         instance = await anext(generator)
         stack.push_async_callback(_finish_generator, generator)
         return instance
@@ -132,4 +132,7 @@ async def _finish_generator(generator: AsyncGenerator[object]) -> None:
 
 
 def _type_name(service_type: object) -> str:
-    return getattr(service_type, "__qualname__", None) or repr(service_type)
+    qualname = getattr(service_type, "__qualname__", None)
+    # Keys without a __qualname__, such as generic aliases, have a useful repr.
+    # noinspection PyStringConversionWithoutDunderMethod
+    return qualname if isinstance(qualname, str) else repr(service_type)

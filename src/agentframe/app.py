@@ -113,7 +113,7 @@ class AgentApp:
         )
 
         @asynccontextmanager
-        async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        async def lifespan(_app: Starlette) -> AsyncIterator[None]:
             yield
             await handler.aclose()
 

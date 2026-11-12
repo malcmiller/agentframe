@@ -138,7 +138,7 @@ successful values.
 
 M1 runs these steps in order: create the invocation ID; resolve the skill
 (unknown -> `InputValidationError`); check service registrations
-(`DefinitionError`); check all-of `requires_permissions` against the principal
+(`DefinitionError`); check all-of `requires_permissions` against the verified caller
 (`PermissionDeniedError`); validate arguments (`InputValidationError`); start
 the run's deadline; ask the configured
 [`AuthorizationPolicy`](authorization.md#authorizationpolicy) within that
@@ -153,7 +153,7 @@ itself is not converted into a limit failure.
 Direct `await echo.echo(...)` is an ordinary Python call and bypasses this
 pipeline. Per-skill limits use `@skill(limits=RunLimits(...))`; the per-run
 options keyword/container remains open and separate from business arguments.
-Precedence is library -> agent -> skill -> per-run; allowances cannot exceed host ceilings,
+Precedence is library → agent → skill → per-run; allowances cannot exceed host ceilings,
 weaken security, or extend a parent deadline.
 
 **Related:** [`Principal`](authorization.md#principal),
@@ -498,7 +498,7 @@ def provider_failure(error: ProviderError) -> object:
 
 **Behavior / failures:** transient rate-limit, timeout and server failures alone
 may retry with backoff, default two retries (three attempts); SDK retries disabled.
-Retry configuration keyword and backoff schedule remain open. Attempts consume
+Retry configuration keyword and backoff schedule remain open. Every attempt consumes
 the same token/model-call allowance and deadline; never replay a tool side effect.
 **Related:** [retry rules](../limits.md#retries-and-duplicate-requests), [`ModelError`](#modelerror).
 

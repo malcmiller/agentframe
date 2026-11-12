@@ -153,7 +153,7 @@ bypass Python methods; AgentFrame is not a sandbox against that application.
 4. Require the declared permissions and evaluate application resource policy
    using verified identity and authoritative data.
 5. Execute with bounded context. Re-check each proposed tool/action and relevant
-   resource state at the actual side-effect boundary.
+   resource state at the actual boundary where the side effect happens.
 6. Validate and apply output policy before returning information.
 
 `documents:publish` is necessary but does not mean "publish all documents."
@@ -215,7 +215,7 @@ used Entra. Use the standard Entra
 to obtain a token scoped to the target, not the original incoming bearer token.
 The target verifies original user and calling-agent identity and applies its
 own permissions; the caller must never grant more than that user possesses.
-This requires supported delegated user-token/consent conditions; an Entra
+This requires that delegated user-token/consent conditions are supported; an Entra
 app-only token is not automatically an OBO-capable user assertion.
 
 `service` explicitly uses the calling agent's own identity for background/no-user

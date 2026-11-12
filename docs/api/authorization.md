@@ -94,10 +94,10 @@ authoritative data:
 ```python
 from collections.abc import Mapping
 
-from agentframe import Principal, Runtime, SkillDefinition
+from agentframe import AuthorizationPolicy, Principal, Runtime, SkillDefinition
 
 
-class OwnerOnly:
+class OwnerOnly(AuthorizationPolicy):
     def __init__(self, ownership: Mapping[str, str]) -> None:
         self.ownership = ownership  # document ID -> owner principal ID
 
@@ -107,10 +107,12 @@ class OwnerOnly:
         skill: SkillDefinition,
         arguments: Mapping[str, object],
     ) -> bool:
-        if principal is None or skill.id != "read":
+        document_id = arguments["document_id"]
+        if principal is None:
             return False
-        owner = self.ownership.get(str(arguments["document_id"]))
-        return owner == principal.id
+        if skill.id != "read" or not isinstance(document_id, str):
+            return False
+        return self.ownership.get(document_id) == principal.id
 
 
 runtime = Runtime(authorization=OwnerOnly({"doc_123": "alice"}))
@@ -254,11 +256,16 @@ from collections.abc import Mapping
 
 from a2a.types import APIKeySecurityScheme, SecurityScheme
 
-from agentframe import AuthenticationError, VerifiedCaller
+from agentframe import (
+    AuthenticationError,
+    Authenticator,
+    DeclaresCardSecurity,
+    VerifiedCaller,
+)
 
 
-class ServiceTokenAuth:
-    """Custom authenticator; no inheritance needed."""
+class ServiceTokenAuth(Authenticator, DeclaresCardSecurity):
+    """Custom authenticator; inheriting the protocols is optional."""
 
     def __init__(self, tokens: Mapping[str, str]) -> None:
         self._tokens = tokens  # token -> caller ID, from secure configuration

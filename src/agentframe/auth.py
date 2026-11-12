@@ -95,7 +95,7 @@ class APIKey:
         object.__setattr__(self, "roles", frozenset(roles))
 
 
-class APIKeyAuth:
+class APIKeyAuth(Authenticator, DeclaresCardSecurity):
     """Authenticate callers by the API key sent in the ``X-API-Key`` header.
 
     Load keys from secure configuration such as environment variables, never
@@ -157,7 +157,7 @@ class APIKeyAuth:
         return found
 
 
-class AllowAnonymous:
+class AllowAnonymous(Authenticator, DeclaresCardSecurity):
     """Explicitly allow anonymous remote callers. Never a default.
 
     Anonymous callers have no principal, so skills that require permissions

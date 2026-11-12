@@ -128,9 +128,9 @@ import time.
 
 ## Discovery interfaces (next core release)
 
-The [discovery design](discovery.md) and [reference](api/discovery.md) add
-read-first building blocks in the next core multi-agent release (M8+) after
-the M7 single-agent release. Native remote A2A calls let ordinary orchestrator
+The next core multi-agent release (M8+), after the M7 single-agent release, adds
+read-first discovery building blocks; see the [discovery design](discovery.md)
+and its [API reference](api/discovery.md). Native remote A2A calls let ordinary orchestrator
 skills compose independently deployed agents, without a workflow/graph engine.
 
 | Type | Definition |
@@ -271,7 +271,7 @@ This illustrates a local ASGI application, not a running server. The ASGI server
 must separately bind to loopback on the matching port. Thirty seconds is an
 example override of the 120-second default. Remote hosting requires explicit
 authentication and HTTPS; a public URL does not configure either automatically.
-Resolve library -> agent -> skill -> per-run within host ceilings; skills
+Resolve library → agent → skill → per-run within host ceilings; skills
 use `@skill(limits=RunLimits(...))`. Omitted `auth` refuses startup; anonymous
 access requires explicit `AllowAnonymous()`.
 

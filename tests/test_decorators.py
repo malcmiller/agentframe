@@ -1,3 +1,9 @@
+"""@agent and @skill definitions.
+
+Rejection tests define agent classes only to trigger definition errors, so the
+classes themselves are never used.
+"""
+
 import pytest
 
 from agentframe import Agent, DefinitionError, RunContext, RunLimits, agent, skill
@@ -64,7 +70,7 @@ def test_skill_without_tags_is_rejected() -> None:
     expected = "Agent 'Untagged': skill 'noop' needs at least one tag"
 
     with pytest.raises(DefinitionError, match=expected):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Untagged(Agent):
             """Has an untagged skill."""
@@ -78,7 +84,7 @@ def test_skill_with_empty_tags_is_rejected() -> None:
     expected = "Agent 'Untagged': skill 'noop' needs at least one tag"
 
     with pytest.raises(DefinitionError, match=expected):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Untagged(Agent):
             """Has an empty tag list."""
@@ -91,7 +97,7 @@ def test_skill_with_empty_tags_is_rejected() -> None:
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_blank_tag_is_rejected(blank: str) -> None:
     with pytest.raises(DefinitionError, match="skill 'noop' has a blank tag"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class BlankTag(Agent):
             """Has a blank tag."""
@@ -109,7 +115,7 @@ def test_tags_must_not_be_a_single_string() -> None:
 def test_missing_description_and_docstring_is_rejected() -> None:
     # Agent's own docstring must not count as an inherited description.
     with pytest.raises(DefinitionError, match="description"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Undescribed(Agent):
             @skill(id="noop", tags=["test"])
@@ -119,7 +125,7 @@ def test_missing_description_and_docstring_is_rejected() -> None:
 
 def test_skill_without_description_or_docstring_is_rejected() -> None:
     with pytest.raises(DefinitionError, match="description"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Quiet(Agent):
             """Has an undocumented skill."""
@@ -136,7 +142,7 @@ def test_missing_version_is_rejected() -> None:
 
 def test_sync_skill_is_rejected() -> None:
     with pytest.raises(DefinitionError, match="'publish' is not async"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class SyncWriter(Agent):
             """Writes synchronously."""
@@ -148,7 +154,7 @@ def test_sync_skill_is_rejected() -> None:
 
 def test_skill_without_ctx_is_rejected() -> None:
     with pytest.raises(DefinitionError, match="ctx"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class NoContext(Agent):
             """Has no ctx."""
@@ -161,7 +167,7 @@ def test_skill_without_ctx_is_rejected() -> None:
 
 def test_ctx_must_be_annotated_run_context() -> None:
     with pytest.raises(DefinitionError, match="RunContext"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class WrongContext(Agent):
             """Has a wrong ctx type."""
@@ -174,7 +180,7 @@ def test_ctx_must_be_annotated_run_context() -> None:
 
 def test_unannotated_parameter_is_rejected() -> None:
     with pytest.raises(DefinitionError, match="'text' needs a type"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Untyped(Agent):
             """Has an untyped parameter."""
@@ -187,7 +193,7 @@ def test_unannotated_parameter_is_rejected() -> None:
 
 def test_missing_return_annotation_is_rejected() -> None:
     with pytest.raises(DefinitionError, match="return annotation"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class NoReturnType(Agent):
             """Has no return type."""
@@ -203,7 +209,7 @@ def test_unsupported_annotation_is_rejected() -> None:
         pass
 
     with pytest.raises(DefinitionError, match="unsupported type annotation"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Strange(Agent):
             """Takes an opaque argument."""
@@ -215,7 +221,7 @@ def test_unsupported_annotation_is_rejected() -> None:
 
 def test_parameter_named_principal_is_rejected() -> None:
     with pytest.raises(DefinitionError, match="reserved"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Impersonator(Agent):
             """Takes a principal argument."""
@@ -228,7 +234,7 @@ def test_parameter_named_principal_is_rejected() -> None:
 
 def test_duplicate_skill_ids_are_rejected() -> None:
     with pytest.raises(DefinitionError, match="'echo' is used by both"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Twice(Agent):
             """Declares one id twice."""
@@ -272,7 +278,7 @@ def test_subclass_can_redeclare_a_skill() -> None:
 
 def test_overriding_a_skill_without_skill_is_rejected() -> None:
     with pytest.raises(DefinitionError, match="without @skill"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.1.0")
         class SneakyWriter(Writer):
             """Overrides a skill silently."""
@@ -299,7 +305,7 @@ def test_undecorated_subclass_does_not_reuse_parent_definition() -> None:
 
 def test_agent_without_skills_is_rejected() -> None:
     with pytest.raises(DefinitionError, match="no skills"):
-
+        # noinspection PyUnusedLocal
         @agent(version="1.0.0")
         class Empty(Agent):
             """Has nothing to offer."""

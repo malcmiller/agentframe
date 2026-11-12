@@ -8,7 +8,6 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
-import uvicorn
 
 from agentframe import AgentApp, DefinitionError
 from agentframe.cli import CommandError, RunSettings, build_app, main
@@ -24,7 +23,7 @@ def uvicorn_runs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     """Record what ``agentframe run`` asks uvicorn to serve instead of serving it."""
     runs: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        uvicorn, "run", lambda app, **options: runs.append({"app": app, **options})
+        "uvicorn.run", lambda app, **options: runs.append({"app": app, **options})
     )
     return runs
 
@@ -57,7 +56,7 @@ def test_run_passes_host_and_port_to_the_server(
 def test_reload_worker_rebuilds_the_same_app(
     uvicorn_runs: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Restore the environment afterwards: the command hands the worker its
+    # Restore the environment afterward: the command hands the worker its
     # settings through an environment variable.
     monkeypatch.setenv("AGENTFRAME_RUN_SETTINGS", "")
     main(["run", "cli_targets:Echo", "--dev", "--reload", "--port", "9001"])
@@ -102,7 +101,8 @@ def test_errors_print_one_line_and_exit_with_1(
     exit_code = main(["run", "cli_targets:create_invalid_app"])
 
     assert exit_code == 1
-    assert capsys.readouterr().err.startswith("agentframe: error: Agent 'Undecorated'")
+    error_output: str = capsys.readouterr().err
+    assert error_output.startswith("agentframe: error: Agent 'Undecorated'")
     assert uvicorn_runs == []
 
 
@@ -112,7 +112,8 @@ def test_missing_uvicorn_names_the_extra_to_install(
     monkeypatch.setitem(sys.modules, "uvicorn", None)
 
     assert main(["run", "cli_targets:create_app"]) == 1
-    assert "pip install 'agentframe[server]'" in capsys.readouterr().err
+    error_output: str = capsys.readouterr().err
+    assert "pip install 'agentframe[server]'" in error_output
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
@@ -151,8 +152,8 @@ def test_dev_rejects_unusable_agent_classes(
 async def test_dev_app_serves_its_card_without_credentials(
     serve: ServeLocally,
 ) -> None:
-    def dev_app(base_url: str) -> AgentApp:
-        port = urlsplit(base_url).port
+    def dev_app(public_url: str) -> AgentApp:
+        port = urlsplit(public_url).port
         assert port is not None
         return build_app(RunSettings("cli_targets:Echo", "127.0.0.1", port, dev=True))
 
