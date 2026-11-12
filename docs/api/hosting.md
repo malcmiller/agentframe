@@ -83,6 +83,24 @@ instances. This is not exactly-once execution. Window/store configuration
 syntax, atomicity details, conflicting-payload handling and message-only result
 interaction remain open; never claim process restarts preserve memory.
 
+**Agent Card (implemented, M2 #2):** the card is built with official SDK types
+by a deterministic, I/O-free function from the `@agent`/`@skill` definition and
+`HostConfig`:
+
+| Card field | Source |
+| --- | --- |
+| `name`, `description`, `version` | `@agent` identity. |
+| `skills` | Each skill's `id`, `name`, `description` and `tags`; nothing else. |
+| `supportedInterfaces` | `HostConfig.public_url` + `/a2a`, `JSONRPC`, protocol `1.0`. |
+| `capabilities` | `streaming` and `pushNotifications` false; one extension, `https://github.com/malcmiller/agentframe/extensions/skill-call/v1` (`required: false`), whose `params.skills` maps each skill ID to the JSON Schema of its business arguments. |
+| `securitySchemes`, `securityRequirements` | `APIKeyAuth`: an `apiKey` scheme in the `X-API-Key` header. `AllowAnonymous` and custom authenticators declare none, since AgentFrame cannot describe a custom scheme. |
+| `defaultInputModes`, `defaultOutputModes` | `text/plain` and `application/json`. |
+
+`ctx`, `Inject[T]` parameters, method names, instructions, credentials and other
+internals never appear on the card. The card is public discovery data: serving
+it never requires credentials. Generation is internal to `AgentApp` (#3), not a
+public method.
+
 The proposed HTTP deployment uses `/.well-known/agent-card.json`, `/a2a`, and
 optional MCP Streamable HTTP at `/mcp`; binding/version choices still need
 verification. No extra public `serve()`, card-generation, or lifecycle method
@@ -154,7 +172,9 @@ Foundry templates later, not infrastructure deployment management.
 agent defaults and adapter-specific settings.
 
 **Constructor status:** `auth`, `role_permissions` and protection fields/defaults
-below are decided. Existing URL/ceiling composition is illustrative where not specified.
+below are decided. `HostConfig(public_url=..., auth=...)` is implemented for card
+generation (M2 #2): `public_url` must be an absolute http(s) URL, otherwise
+`DefinitionError`. The remaining fields arrive with `AgentApp` (#3). Existing URL/ceiling composition is illustrative where not specified.
 
 ```text
 HostConfig(
