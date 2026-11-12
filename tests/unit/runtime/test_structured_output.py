@@ -337,8 +337,11 @@ async def test_invalid_output_still_records_the_call_usage() -> None:
 async def test_incomplete_or_refused_output_is_never_parsed(
     reply: ModelResponse, error_type: type[ModelError]
 ) -> None:
-    with pytest.raises(error_type):
+    with pytest.raises(error_type) as raised:
         await summarize(ScriptedModel([reply], capabilities=STRUCTURED))
+
+    if isinstance(raised.value, IncompleteOutputError):
+        assert raised.value.partial_text is None
 
 
 # Hosted over A2A

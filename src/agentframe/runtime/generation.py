@@ -61,6 +61,8 @@ INITIAL_BACKOFF_SECONDS = 0.5
 MAX_BACKOFF_SECONDS = 8.0
 """Longest wait before any retry when the provider gives no hint."""
 
+TRUNCATED_MESSAGE = "The model's output was cut short at its output token limit"
+
 
 @dataclass
 class RunAccounting:
@@ -185,12 +187,18 @@ class GenerationState:
                 the context window or the run's remaining tokens.
             ModelCallLimitExceededError: The run has made ``max_model_calls``.
             ModelRefusalError: The model refused, or a content filter blocked it.
-            IncompleteOutputError: The output was cut short or empty.
+            IncompleteOutputError: The output was cut short or empty. When it
+                stopped at the output token limit, ``partial_text`` holds the
+                text received so far.
             ProviderError: The provider call failed, and was not transient,
                 used every retry, or would have to wait past the deadline.
             TimeoutLimitExceededError: The run's deadline passed during the call.
         """
         response = await self._generate(text, instructions, None, deadline, tools)
+        if response.finish_reason is FinishReason.LENGTH and response.text:
+            # Only text keeps what arrived before the limit, so a skill can
+            # catch the error and choose to use it. Structured output never does.
+            raise IncompleteOutputError(TRUNCATED_MESSAGE, partial_text=response.text)
         return text_from(response)
 
     async def generate_output[T: BaseModel](
@@ -499,9 +507,7 @@ def text_from(response: ModelResponse) -> str:
     """
     match response.finish_reason:
         case FinishReason.LENGTH:
-            raise IncompleteOutputError(
-                "The model's output was cut short at its output token limit"
-            )
+            raise IncompleteOutputError(TRUNCATED_MESSAGE)
         case FinishReason.REFUSED:
             raise ModelRefusalError("The model refused the request")
         case FinishReason.CONTENT_FILTER:

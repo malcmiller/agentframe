@@ -8,10 +8,11 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 import pytest
+from pydantic import Field
 
 from agentframe import (
     Agent,
@@ -27,6 +28,7 @@ from agentframe import (
     ModelRequest,
     ModelResponse,
     ModelSettings,
+    OutputValidationError,
     ProviderError,
     RunContext,
     RunLimits,
@@ -99,6 +101,26 @@ class Writer(Agent):
             return await ctx.generate(text)
         except ModelError:
             return text
+
+    @skill("draft", tags=["text"])
+    async def draft(self, text: str, ctx: RunContext) -> str:
+        """Rewrite text, accepting an answer cut short at the token limit."""
+        try:
+            return await ctx.generate(text)
+        except IncompleteOutputError as error:
+            if error.partial_text is None:
+                raise
+            return error.partial_text + " [truncated]"
+
+    @skill("short_draft", tags=["text"])
+    async def short_draft(
+        self, text: str, ctx: RunContext
+    ) -> Annotated[str, Field(max_length=10)]:
+        """Rewrite text in at most ten characters, accepting a cut-short answer."""
+        try:
+            return await ctx.generate(text)
+        except IncompleteOutputError as error:
+            return error.partial_text or ""
 
     @skill("quick", limits=RunLimits(timeout_seconds=0.05), tags=["text"])
     async def quick(self, text: str, ctx: RunContext) -> str:
@@ -276,6 +298,43 @@ async def test_incomplete_answers_raise_and_return_no_partial_text(
 
     assert "Partial" not in raised.value.message
     assert raised.value.invocation_id
+
+
+@pytest.mark.parametrize(
+    ("reply", "partial_text"),
+    [
+        pytest.param(response("Partial", FinishReason.LENGTH), "Partial", id="length"),
+        pytest.param(response("", FinishReason.LENGTH), None, id="empty-length"),
+        pytest.param(response(""), None, id="empty-completion"),
+    ],
+)
+async def test_truncated_text_is_kept_on_the_error_only(
+    reply: ModelResponse, partial_text: str | None
+) -> None:
+    with pytest.raises(IncompleteOutputError) as raised:
+        await run_writer(ScriptedModel([reply]), "rewrite", "Text.")
+
+    assert raised.value.partial_text == partial_text
+
+
+async def test_skill_that_catches_truncation_completes_with_its_partial_text() -> None:
+    model = ScriptedModel([response("Partial", FinishReason.LENGTH, usage(4, 256))])
+
+    result = await Runtime().run(
+        Writer(model=model), skill="draft", arguments={"text": "Text."}
+    )
+
+    assert result.value == "Partial [truncated]"
+    assert result.finish_reason is FinishReason.COMPLETED
+    assert result.usage == usage(4, 256)
+    assert result.model_calls == 1
+
+
+async def test_partial_text_a_skill_returns_is_still_validated() -> None:
+    model = ScriptedModel([response("Far too long to fit", FinishReason.LENGTH)])
+
+    with pytest.raises(OutputValidationError):
+        await run_writer(model, "short_draft", "Text.")
 
 
 async def test_provider_error_is_re_raised_with_the_invocation_id() -> None:
@@ -526,6 +585,19 @@ async def test_hosted_model_errors_fail_the_task_with_a_safe_message(
     assert status_text(task) == message
     assert "artifacts" not in task
     assert task["metadata"]["invocation_id"]
+
+
+async def test_hosted_truncation_never_reveals_the_partial_text(
+    serve: ServeLocally, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    model = ScriptedModel([response("SECRET-PARTIAL", FinishReason.LENGTH)])
+
+    task = await run_hosted(serve, Writer(model=model), "rewrite", {"text": "a"})
+
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert "SECRET-PARTIAL" not in json.dumps(task)
+    assert "SECRET-PARTIAL" not in caplog.text
 
 
 # Usage reported in hosted task metadata

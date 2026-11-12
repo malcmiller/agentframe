@@ -79,7 +79,30 @@ class ModelRefusalError(ModelError):
 
 
 class IncompleteOutputError(ModelError):
-    """The model's output was cut short, for example at its output token limit."""
+    """The model's output was cut short, for example at its output token limit.
+
+    A skill that prefers a partial answer to a failure can catch this error
+    and use ``partial_text``. The message never contains the partial text.
+
+    Args:
+        message: Safe, human-readable description of the failure.
+        partial_text: The text received before a text generation stopped at
+            its output token limit. ``None`` for structured output, empty
+            output and every other reason output was incomplete.
+        usage: Tokens the failed call consumed, when known.
+        invocation_id: Identifier of the run that failed, when known.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        partial_text: str | None = None,
+        usage: Usage | None = None,
+        invocation_id: str | None = None,
+    ) -> None:
+        super().__init__(message, usage=usage, invocation_id=invocation_id)
+        self.partial_text = partial_text
 
 
 class ProviderError(ModelError):
