@@ -19,9 +19,11 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 Early development; M1 model-free authoring is available from source. You can
 define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
-permission checks and a timeout. M2 A2A hosting is in progress: `AgentApp`
+permission checks and a timeout. M2 native A2A hosting is complete: `AgentApp`
 serves an agent as an ASGI application with its Agent Card and an authenticated
-A2A endpoint, and `agentframe run` serves it with one command (see
+A2A 1.0 endpoint, proven end to end with the official A2A client, and
+`agentframe run` serves it with one command (see
+[hosting over A2A](#hosting-over-a2a) and
 [development](docs/development.md#one-agent-m2)). There is no published release or model support (M3+) yet, and
 the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
@@ -80,6 +82,70 @@ result = await runtime.run(Echo(), skill="greet", arguments={"name": "Ada"})
 ```
 
 Names default to the class/method name and descriptions to docstrings.
+
+### Hosting over A2A
+
+Serve the same agent to any A2A 1.0 client with a `create_app()` function (also
+kept working in `tests/test_example.py`). The
+API key and policy below are **development placeholders**: production hosts
+need your real identity provider and resource checks. Remote hosts always
+require an explicit `auth=` choice.
+
+```python
+import os
+from collections.abc import Mapping
+
+from agentframe import (
+    AgentApp,
+    APIKey,
+    APIKeyAuth,
+    HostConfig,
+    Principal,
+    SkillDefinition,
+)
+
+
+class DevelopmentPolicy:
+    """Development placeholder: allow any authenticated caller."""
+
+    async def check(
+        self,
+        principal: Principal | None,
+        skill: SkillDefinition,
+        arguments: Mapping[str, object],
+    ) -> bool:
+        return principal is not None
+
+
+def create_app() -> AgentApp:
+    services = Services()
+    services.add(Greeter, Greeter())
+    # Development placeholder: one API key from the environment.
+    keys = {os.environ["ECHO_API_KEY"]: APIKey("developer")}
+    return AgentApp(
+        agent=Echo(),
+        host=HostConfig(
+            public_url=os.environ.get("ECHO_PUBLIC_URL", "http://127.0.0.1:8000"),
+            auth=APIKeyAuth(keys=keys),
+        ),
+        services=services,
+        authorization=DevelopmentPolicy(),
+    )
+```
+
+Run it with uvicorn from the `server` extra (`uv sync --extra server` from
+source):
+
+```shell
+ECHO_API_KEY=dev-only-key agentframe run myapp:create_app
+```
+
+The Agent Card is served at `/.well-known/agent-card.json` and the JSON-RPC
+endpoint at `/a2a`; callers send the key in the `X-API-Key` header. Callers can
+name a skill with JSON arguments through the
+[skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format),
+or send free text to a custom [`SkillRouter`](docs/api/hosting.md#skillrouter).
+`tests/test_interoperability.py` drives every case with the official A2A client.
 
 The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
 need no provider configuration. See [agents with and without models](docs/agent-examples.md)
