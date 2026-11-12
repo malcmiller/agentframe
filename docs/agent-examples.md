@@ -251,10 +251,10 @@ arguments asks back through `TASK_STATE_INPUT_REQUIRED`, not a guessed skill.
 Clarification messages/follow-up handling remain open and are not an approval
 workflow or a successful completed result.
 
-Local `skill="word-count"` is not a base A2A wire field. The extension URI,
-schema/selector placement and support-advertisement details are still open;
-see [A2A request styles and native mechanisms](mcp-skills.md#a2a-request-styles-and-extension-boundary).
-No complete structured wire example is claimed before that contract is settled.
+Local `skill="word-count"` is not a base A2A wire field. Over A2A the caller
+uses the AgentFrame skill-call extension; see its
+[wire format](api/hosting.md#structured-skill-call-wire-format) and
+[A2A request styles and native mechanisms](mcp-skills.md#a2a-request-styles-and-extension-boundary).
 Optional MCP uses native named tools and an empty-by-default skill allowlist.
 Quick typed/single-shot tool-like skills may also use MCP; judgment, multi-turn,
 clarification or long-running skills usually stay A2A-only, as guidance rather

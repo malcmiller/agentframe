@@ -11,7 +11,11 @@ from typing import Any, ClassVar
 
 import httpx
 import pytest
-from a2a.client import ClientConfig, ClientFactory
+from a2a.client import ClientCallContext, ClientConfig, ClientFactory
+from a2a.client.service_parameters import (
+    ServiceParametersFactory,
+    with_a2a_extensions,
+)
 from a2a.helpers import get_artifact_text, new_data_part
 from a2a.types import Message, Role, SendMessageRequest, TaskState
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH, TransportProtocol
@@ -37,7 +41,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.card import build_agent_card
+from agentframe.card import SKILL_CALL_EXTENSION_URI, build_agent_card
 from local_server import ServeLocally
 
 # Test-only values; real applications load keys from the environment.
@@ -141,23 +145,27 @@ def rpc(method: str, params: Mapping[str, Any]) -> dict[str, Any]:
 def send_skill(
     skill_id: str, arguments: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
-    # A message needs at least one part; a skill without arguments gets text.
-    part = {"text": "run"} if arguments is None else {"data": dict(arguments)}
+    """Build a skill-call extension request: skill id in metadata, one data part."""
     message = {
         "messageId": "m-1",
         "role": "ROLE_USER",
-        "parts": [part],
+        "parts": [{"data": dict(arguments or {})}],
         "metadata": {"agentframe.skill": skill_id},
     }
     return rpc("SendMessage", {"message": message})
 
 
 async def post(
-    http: httpx.AsyncClient, body: Mapping[str, Any], key: str | None = READER_KEY
+    http: httpx.AsyncClient,
+    body: Mapping[str, Any],
+    key: str | None = READER_KEY,
+    activate_extension: bool = True,
 ) -> httpx.Response:
     headers = {"A2A-Version": "1.0"}
     if key is not None:
         headers["X-API-Key"] = key
+    if activate_extension:
+        headers["A2A-Extensions"] = SKILL_CALL_EXTENSION_URI
     return await http.post("/a2a", json=body, headers=headers)
 
 
@@ -233,10 +241,17 @@ async def test_official_client_runs_a_skill_over_http(
         parts=[new_data_part({"name": "Ada"})],
         metadata={"agentframe.skill": "greet"},
     )
+    activate = ClientCallContext(
+        service_parameters=ServiceParametersFactory.create(
+            [with_a2a_extensions([SKILL_CALL_EXTENSION_URI])]
+        )
+    )
 
     [response] = [
         response
-        async for response in client.send_message(SendMessageRequest(message=message))
+        async for response in client.send_message(
+            SendMessageRequest(message=message), context=activate
+        )
     ]
 
     assert response.task.status.state == TaskState.TASK_STATE_COMPLETED
@@ -273,12 +288,32 @@ async def test_structured_result_is_a_data_artifact(http: httpx.AsyncClient) -> 
     [
         pytest.param({"metadata": {}}, "agentframe.skill", id="no-skill-id"),
         pytest.param(
+            {"metadata": {"agentframe.skill": ""}},
+            "agentframe.skill",
+            id="empty-skill-id",
+        ),
+        pytest.param(
             {"parts": [{"data": {"name": "Ada"}}, {"data": {"name": "Bo"}}]},
-            "single JSON object",
+            "exactly one part",
             id="two-data-parts",
         ),
         pytest.param(
-            {"parts": [{"data": ["Ada"]}]}, "single JSON object", id="not-an-object"
+            {"parts": [{"data": {"name": "Ada"}}, {"text": "hello"}]},
+            "exactly one part",
+            id="extra-text-part",
+        ),
+        pytest.param(
+            {"parts": [{"text": "greet Ada"}]},
+            "exactly one part",
+            id="text-instead-of-data",
+        ),
+        pytest.param(
+            {"parts": [{"data": ["Ada"]}]}, "exactly one part", id="not-an-object"
+        ),
+        pytest.param(
+            {"metadata": {"agentframe.skill": "greet", "agentframe.skil": "x"}},
+            "agentframe.skil",
+            id="unknown-metadata-field",
         ),
     ],
 )
@@ -294,6 +329,75 @@ async def test_malformed_skill_call_is_a_protocol_error_without_a_task(
     assert error["code"] == -32602
     assert problem in error["message"]
     assert await list_tasks(http) == []
+
+
+OTHER_EXTENSION_URI = "https://example.com/ext/other/v1"
+
+
+async def test_response_acknowledges_the_activated_extension(
+    http: httpx.AsyncClient,
+) -> None:
+    response = await post(http, send_skill("greet", {"name": "Ada"}))
+
+    assert response.headers["A2A-Extensions"] == SKILL_CALL_EXTENSION_URI
+
+
+async def test_extension_is_activated_alongside_unsupported_ones(
+    http: httpx.AsyncClient,
+) -> None:
+    response = await http.post(
+        "/a2a",
+        json=send_skill("greet", {"name": "Ada"}),
+        headers={
+            "A2A-Version": "1.0",
+            "X-API-Key": READER_KEY,
+            "A2A-Extensions": f"{OTHER_EXTENSION_URI}, {SKILL_CALL_EXTENSION_URI}",
+        },
+    )
+
+    task = response.json()["result"]["task"]
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert response.headers["A2A-Extensions"] == SKILL_CALL_EXTENSION_URI
+
+
+async def test_other_extensions_metadata_is_ignored(http: httpx.AsyncClient) -> None:
+    body = send_skill("greet", {"name": "Ada"})
+    body["params"]["message"]["metadata"][f"{OTHER_EXTENSION_URI}/key"] = "value"
+
+    task = (await post(http, body)).json()["result"]["task"]
+
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
+async def test_without_the_extension_a_message_is_free_text_not_a_skill_call(
+    http: httpx.AsyncClient,
+) -> None:
+    # The skill id in metadata is ignored: only activation makes a skill call.
+    # Free-text routing arrives with #6; until then free text is refused.
+    response = await post(
+        http, send_skill("greet", {"name": "Ada"}), activate_extension=False
+    )
+
+    assert response.json()["error"]["code"] == -32004  # unsupported operation
+    assert "A2A-Extensions" not in response.headers
+    assert await list_tasks(http) == []
+
+
+async def test_arguments_follow_the_schema_published_on_the_card(
+    http: httpx.AsyncClient,
+) -> None:
+    card = (await http.get(AGENT_CARD_WELL_KNOWN_PATH)).json()
+    [extension] = card["capabilities"]["extensions"]
+    schema = extension["params"]["skills"]["greet"]
+    assert schema["required"] == ["name"]
+    assert schema["additionalProperties"] is False
+
+    matching = await run_task(http, "greet", {"name": "Ada"})
+    undeclared = await run_task(http, "greet", {"name": "Ada", "title": "Dr"})
+
+    assert matching["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert undeclared["status"]["state"] == "TASK_STATE_REJECTED"
+    assert "title" in status_text(undeclared)
 
 
 async def test_malformed_json_rpc_is_a_protocol_error_without_a_task(

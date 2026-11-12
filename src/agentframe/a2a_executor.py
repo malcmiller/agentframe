@@ -6,8 +6,13 @@ skill to run, run it through the ``Runtime`` and publish the outcome on the task
 
 Outcomes map to native A2A results as follows:
 
-- A malformed skill call is a JSON-RPC ``InvalidParams`` error and creates no
-  task (the app's request handler checks it before the SDK creates one).
+- Callers name a skill through the AgentFrame skill-call extension: they
+  activate it with the ``A2A-Extensions`` HTTP header, put the skill id in
+  message metadata under ``agentframe.skill`` and the arguments in exactly one
+  JSON data part. A malformed skill call is a JSON-RPC ``InvalidParams`` error
+  and creates no task (the app's request handler checks it before the SDK
+  creates one). A message without the extension is free text, refused until
+  routing arrives.
 - A result becomes the artifact of a ``COMPLETED`` task: a ``str`` is one text
   part, anything else one data part ``{"value": ...}`` in Pydantic JSON mode.
 - Unknown skills, invalid arguments and denied permissions end the task in
@@ -17,9 +22,8 @@ Outcomes map to native A2A results as follows:
 
 Every task status carries the run's ``invocation_id`` in its metadata.
 
-Later M2 stories extend the marked seams: ``read_skill_call`` gains extension
-activation (#5) and free-text routing (#6), which publishes its questions with
-``publish_input_required``.
+Free-text routing (#6) replaces the refusal in ``read_skill_call`` and publishes
+its questions with ``publish_input_required``.
 """
 
 import logging
@@ -32,10 +36,11 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import Message, Part, TaskState
-from a2a.utils.errors import InvalidParamsError
+from a2a.utils.errors import InvalidParamsError, UnsupportedOperationError
 from pydantic_core import to_jsonable_python
 
 from agentframe.agent import Agent
+from agentframe.card import SKILL_CALL_EXTENSION_URI
 from agentframe.errors import (
     AgentFrameError,
     CancelledError,
@@ -46,6 +51,9 @@ from agentframe.errors import (
 )
 from agentframe.principal import Principal
 from agentframe.runtime import Runtime
+
+SKILL_METADATA_NAMESPACE = "agentframe."
+"""Prefix of the message metadata keys the skill-call extension owns."""
 
 SKILL_METADATA_KEY = "agentframe.skill"
 """Message metadata key that names the skill to run."""
@@ -73,33 +81,57 @@ class SkillCall:
     arguments: dict[str, Any]
 
 
-def read_skill_call(message: Message) -> SkillCall:
-    """Read the skill id and JSON arguments from an A2A message.
+def read_skill_call(message: Message, requested_extensions: set[str]) -> SkillCall:
+    """Read the skill id and JSON arguments of a skill-call extension message.
 
+    Only a request that activates the skill-call extension is a skill call.
     The skill id comes from the ``agentframe.skill`` metadata key and the
-    arguments from the message's single data part (none means no arguments).
+    arguments from the message's only part, a data part holding a JSON object.
+    Other metadata keys starting with ``agentframe.`` are unknown fields; keys
+    outside that namespace belong to other extensions and are ignored.
 
     Args:
         message: The caller's message.
+        requested_extensions: Extension URIs the caller activated with the
+            ``A2A-Extensions`` header.
 
     Returns:
-        The requested skill call; the runtime validates it.
+        The requested skill call; the runtime validates the skill id and
+        arguments.
 
     Raises:
-        InvalidParamsError: The message names no skill, or its arguments are
-            not one JSON object. This is a protocol error, not a task failure.
+        UnsupportedOperationError: The caller did not activate the extension,
+            so the message is free text. Free-text routing arrives with #6.
+        InvalidParamsError: The message names no skill, carries unknown
+            ``agentframe.`` metadata, or does not have exactly one part that is
+            a JSON object data part. This is a protocol error, not a task
+            failure, and the message is never reinterpreted as free text.
     """
-    skill_id = dict(message.metadata.items()).get(SKILL_METADATA_KEY)
+    if SKILL_CALL_EXTENSION_URI not in requested_extensions:
+        raise UnsupportedOperationError(
+            "Free-text requests are not supported yet. Activate the "
+            f"'{SKILL_CALL_EXTENSION_URI}' extension and name a skill."
+        )
+    metadata = dict(message.metadata.items())
+    unknown = sorted(
+        key
+        for key in metadata
+        if key.startswith(SKILL_METADATA_NAMESPACE) and key != SKILL_METADATA_KEY
+    )
+    if unknown:
+        raise InvalidParamsError(
+            f"Unknown skill-call metadata fields: {', '.join(unknown)}."
+        )
+    skill_id = metadata.get(SKILL_METADATA_KEY)
     if not isinstance(skill_id, str) or not skill_id:
         raise InvalidParamsError(
-            f"The message must name a skill in metadata '{SKILL_METADATA_KEY}'."
+            f"A skill call must name a skill in metadata '{SKILL_METADATA_KEY}'."
         )
     data = get_data_parts(message.parts)
-    if not data:
-        return SkillCall(skill_id, {})
-    if len(data) > 1 or not isinstance(data[0], dict):
+    if len(message.parts) != 1 or len(data) != 1 or not isinstance(data[0], dict):
         raise InvalidParamsError(
-            "Skill arguments must be a single JSON object data part."
+            "A skill call must have exactly one part: a data part holding a "
+            "JSON object of arguments."
         )
     return SkillCall(skill_id, data[0])
 
@@ -134,7 +166,8 @@ class RuntimeExecutor(AgentExecutor):
         principal: Principal | None = context.call_context.state.get(
             PRINCIPAL_STATE_KEY
         )
-        call = read_skill_call(context.message)
+        # The request handler has already refused malformed requests.
+        call = read_skill_call(context.message, context.requested_extensions)
         invocation_id = _new_invocation_id()
         # Stored on the task now so a later cancel can report the same ID.
         await task.update_status(

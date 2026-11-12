@@ -164,8 +164,10 @@ Prefer structured A2A requests naming a skill with JSON arguments in a native
 data part under an Agent Card-declared, caller-activated A2A 1.0 extension.
 They bypass routing/model-selection cost, not runtime checks or selected-skill
 inference cost. Unknown skills/invalid arguments fail explicitly; no silent
-downgrade to prompts. Extension URI/name/schema/selector placement and detailed
-support advertisement remain open; do not invent a standard A2A `skill` field.
+downgrade to prompts. Implemented wire format (M2 #5): activate the card's
+skill-call URI via `A2A-Extensions` (echoed in the response), skill ID in message
+metadata `agentframe.skill`, exactly one JSON-object data part; malformed ->
+JSON-RPC InvalidParams, no task. Not a standard A2A `skill` field.
 Free-text/extension-unaware callers use custom or opt-in model routing plus
 validated extraction. Ambiguity/missing arguments asks back through
 `TASK_STATE_INPUT_REQUIRED`, never guesses; question/follow-up contract is open.

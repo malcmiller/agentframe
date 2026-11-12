@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from a2a.auth.user import UnauthenticatedUser, User
+from a2a.extensions.common import HTTP_EXTENSION_HEADER, get_requested_extensions
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
@@ -35,7 +36,7 @@ from agentframe.a2a_executor import (
 from agentframe.agent import Agent
 from agentframe.auth import authenticate_request, www_authenticate
 from agentframe.authorization import AuthorizationPolicy
-from agentframe.card import A2A_PATH, build_agent_card
+from agentframe.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
 from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.host import HostConfig
 from agentframe.principal import Principal
@@ -110,7 +111,11 @@ class AgentApp:
                 *create_agent_card_routes(card),
                 Route(
                     A2A_PATH,
-                    _require_authentication(a2a_route.endpoint, host, card),
+                    _require_authentication(
+                        _acknowledge_skill_call_extension(a2a_route.endpoint),
+                        host,
+                        card,
+                    ),
                     methods=["POST"],
                 ),
             ],
@@ -150,10 +155,32 @@ def _require_authentication(
     return authenticated_endpoint
 
 
+def _acknowledge_skill_call_extension(endpoint: Endpoint) -> Endpoint:
+    """Wrap ``endpoint`` to confirm activation of the skill-call extension.
+
+    A2A clients activate an extension by listing its URI in the
+    ``A2A-Extensions`` request header; the response names the extensions the
+    agent activated in the same header. The skill-call extension is the only
+    one this agent supports, so other requested URIs are ignored.
+    """
+
+    async def acknowledging_endpoint(request: Request) -> Response:
+        response = await endpoint(request)
+        requested = get_requested_extensions(
+            request.headers.getlist(HTTP_EXTENSION_HEADER)
+        )
+        if SKILL_CALL_EXTENSION_URI in requested:
+            response.headers[HTTP_EXTENSION_HEADER] = SKILL_CALL_EXTENSION_URI
+        return response
+
+    return acknowledging_endpoint
+
+
 class _RequestHandler(DefaultRequestHandler):
     """The SDK's request handler with AgentFrame's two up-front refusals.
 
-    - A malformed skill call gets a protocol error. The SDK creates a task
+    - A malformed skill call, or free text before routing exists, gets a
+      protocol error. The SDK creates a task
       before it calls the executor, so the check must happen here for the
       caller to get no task.
     - Anonymous callers cannot list tasks. They share one task namespace:
@@ -165,7 +192,7 @@ class _RequestHandler(DefaultRequestHandler):
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext
     ) -> Message | Task:
-        read_skill_call(params.message)
+        read_skill_call(params.message, context.requested_extensions)
         response: Message | Task = await super().on_message_send(params, context)
         return response
 

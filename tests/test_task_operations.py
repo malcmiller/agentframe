@@ -25,6 +25,7 @@ from agentframe import (
     agent,
     skill,
 )
+from agentframe.card import SKILL_CALL_EXTENSION_URI
 from local_server import ServeLocally
 
 # Test-only values; real applications load keys from the environment.
@@ -108,7 +109,7 @@ async def call(
     key: str | None = ALICE_KEY,
 ) -> dict[str, Any]:
     """Make one JSON-RPC call and return its decoded response body."""
-    headers = {"A2A-Version": "1.0"}
+    headers = {"A2A-Version": "1.0", "A2A-Extensions": SKILL_CALL_EXTENSION_URI}
     if key is not None:
         headers["X-API-Key"] = key
     body = {"jsonrpc": "2.0", "id": "1", "method": method, "params": params}
@@ -122,7 +123,7 @@ def wait_message(**message_fields: str) -> dict[str, Any]:
     return {
         "messageId": str(uuid.uuid4()),
         "role": "ROLE_USER",
-        "parts": [{"text": "run"}],
+        "parts": [{"data": {}}],
         "metadata": {"agentframe.skill": "wait"},
         **message_fields,
     }
