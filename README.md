@@ -227,6 +227,9 @@ AGENTFRAME_MODEL_PROVIDER=foundry \
 ```
 
 `AGENTFRAME_OLLAMA_ENDPOINT` optionally overrides `http://localhost:11434`.
+Each provider is imported only when selected, so an install with one provider
+extra is enough. A2A clients apply their own request timeout (5 seconds by
+default in the official `a2a-sdk` client), which a model call can exceed.
 The example accepts anonymous callers as a **development placeholder** for a
 localhost server; production hosts need real authentication and authorization
 (see [hosting over A2A](#hosting-over-a2a)). Any A2A 1.0 client can fetch the

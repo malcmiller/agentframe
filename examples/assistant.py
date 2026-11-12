@@ -12,27 +12,28 @@ from environment variables, so switching hosts is configuration only::
         AGENTFRAME_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com/openai/v1/ \\
         AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> \\
         agentframe run examples.assistant:create_app
+
+Each provider is imported only when selected, so an install with just the
+``ollama`` (or just the ``foundry``) extra can run the example. A2A clients
+apply their own request timeout (5 seconds by default in the official
+``a2a-sdk`` client); model calls, and the first Entra token fetch, can take
+longer, so callers may need to raise it.
 """
 
 import os
-
-from azure.identity.aio import AzureCliCredential
 
 from agentframe import (
     Agent,
     AgentApp,
     AllowAnonymous,
-    FoundryModel,
     HostConfig,
     Model,
     ModelSettings,
-    OllamaModel,
     RunContext,
     RunLimits,
     agent,
     skill,
 )
-from agentframe.ollama_model import DEFAULT_ENDPOINT
 
 
 @agent(version="1.0.0")
@@ -64,12 +65,22 @@ def create_model() -> Model:
     """
     provider = os.environ["AGENTFRAME_MODEL_PROVIDER"]
     if provider == "ollama":
+        from agentframe.ollama_model import DEFAULT_ENDPOINT, OllamaModel
+
         return OllamaModel(
             model=os.environ["AGENTFRAME_OLLAMA_MODEL"],
             endpoint=os.environ.get("AGENTFRAME_OLLAMA_ENDPOINT", DEFAULT_ENDPOINT),
             context_window=8192,
         )
     if provider == "foundry":
+        from azure.identity.aio import AzureCliCredential
+
+        from agentframe.foundry_model import FoundryModel
+
+        # Local development signs in with `az login`; production can use
+        # DefaultAzureCredential or managed identity. Like the model, the
+        # credential lives as long as the server process; an application that
+        # stops serving earlier closes both.
         return FoundryModel(
             endpoint=os.environ["AGENTFRAME_FOUNDRY_ENDPOINT"],
             deployment=os.environ["AGENTFRAME_FOUNDRY_DEPLOYMENT"],
