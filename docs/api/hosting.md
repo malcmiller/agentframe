@@ -739,9 +739,9 @@ Reuse native MCP tool results and SDK protocol handling. These are **not new
 AgentFrame classes** or separately maintained wire schemas.
 
 A2A protocol 1.0 and the official `a2a-sdk` are selected (specification
-release v1.0.1). M2 pins `a2a-sdk[http-server]==1.3.0` as a core dependency,
-not an `agentframe[server]` extra, because A2A hosting is the default interface;
-the `http-server` extra is listed explicitly rather than relied on transitively.
+release v1.0.1). M2 pins `a2a-sdk[http-server]==1.3.0` as a core dependency
+because A2A hosting is the default interface (the optional `agentframe[server]`
+extra only adds uvicorn for `agentframe run`); the `http-server` extra is listed explicitly rather than relied on transitively.
 The selected binding is **JSON-RPC over HTTP** for protocol 1.0 only, with the
 SDK's 0.3 compatibility disabled. `tests/test_a2a_binding.py` proves an official
 SDK client exchanging a message over that binding and the rejection of pre-1.0
