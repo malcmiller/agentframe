@@ -20,8 +20,8 @@ from collections.abc import Iterable
 from types import TracebackType
 from typing import Self
 
-from agentframe.models import ModelCapabilities, ModelRequest, ModelResponse
-from agentframe.usage import FinishReason, Usage
+from agentframe.models.base import ModelCapabilities, ModelRequest, ModelResponse
+from agentframe.runtime.usage import FinishReason, Usage
 
 type ScriptedReply = str | ModelResponse | Exception
 """One scripted model call: text, a full response, or an error to raise."""

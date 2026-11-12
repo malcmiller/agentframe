@@ -338,7 +338,7 @@ conformance. Disconnect cancels the AG-UI run with no first-version resume;
 this does not redefine A2A stream-disconnect task semantics.
 
 **Related:** [`HostConfig`](#hostconfig), [`SkillRouter`](#skillrouter),
-[combined server example](../mcp-skills.md#proposed-server-composition).
+[combined server example](../design/mcp-skills.md#proposed-server-composition).
 
 ## `agentframe run`
 
@@ -400,7 +400,7 @@ traceback. Importing agents never starts serving. Shutdown follows Uvicorn's
 default graceful shutdown until the host grace period arrives in M7.
 Multi-agent `agentframe.yaml` is M8+ ([`agentframe dev`](#agentframe-dev)).
 
-**Related:** [single-agent development](../development.md#one-agent-m2),
+**Related:** [single-agent development](../guides/development.md#one-agent-m2),
 [`HostConfig`](#hostconfig), [authentication](authorization.md).
 
 ## `agentframe dev`
@@ -425,7 +425,7 @@ startup; bound cleanup of owned processes/resources. Development keys are not
 production defaults. Container packaging is one container per agent; Kubernetes/
 Foundry templates later, not infrastructure deployment management.
 
-**Related:** [configuration and packaging examples](../development.md),
+**Related:** [configuration and packaging examples](../guides/development.md),
 [`AgentDirectory`](discovery.md#agentdirectory).
 
 ## `HostConfig`
@@ -500,7 +500,7 @@ Probe status/body schema and byte-accounting/error details remain open.
 
 **Related:** [`Principal`](authorization.md#principal),
 [`AgentConfig`](configuration.md#agentconfig),
-[host ceilings](../limits.md#defaults-versus-ceilings).
+[host ceilings](../guides/limits.md#defaults-versus-ceilings).
 
 ## `A2AConfig`
 
@@ -539,7 +539,7 @@ model call/cost; the selected skill can still run inference. Unknown skill IDs
 or invalid arguments fail explicitly, without falling back to prompt routing.
 Extension-unaware callers use free text; ambiguous/missing prompt input asks
 back using the native input-required task state, never the first registered
-skill or a guess. Native [extension/part/task mechanisms](../mcp-skills.md#a2a-request-styles-and-extension-boundary)
+skill or a guess. Native [extension/part/task mechanisms](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary)
 are verified against A2A 1.0, and the [skill-call wire format](#structured-skill-call-wire-format)
 is implemented; the clarification/follow-up API remains open.
 Typed business-input/output mappings and task lifecycle still need
@@ -554,7 +554,7 @@ remains input-required, not automatically failed or conversed with.
 
 **Related:** [`SkillRouter`](#skillrouter),
 [native SDK types](#native-a2a-and-mcp-types),
-[A2A routing guide](../agent-examples.md#a2a-hosting-and-selection).
+[A2A routing guide](../guides/agent-examples.md#a2a-hosting-and-selection).
 
 ## `MCPConfig`
 
@@ -583,7 +583,7 @@ mcp = MCPConfig(
 ```
 
 Use with an agent registering those IDs, such as the guide's
-[`WritingAssistant`](../agent-examples.md#with-a-model).
+[`WritingAssistant`](../guides/agent-examples.md#with-a-model).
 
 **Behavior / failures:** initial mapping uses stable skill IDs as native MCP
 tool names and excludes context, `Inject[T]` services, credentials and execution internals from
@@ -603,8 +603,8 @@ judgment, multi-turn, clarification or long-running skills usually stay A2A-only
 This is guidance, not an enforced restriction on model-backed MCP tools.
 
 **Related:** [`@tool`](decorators.md#tool),
-[schema mapping](../mcp-skills.md#schema-and-call-mapping),
-[shared security](../mcp-skills.md#shared-execution-and-security).
+[schema mapping](../design/mcp-skills.md#schema-and-call-mapping),
+[shared security](../design/mcp-skills.md#shared-execution-and-security).
 
 ## `SkillRouter`
 
@@ -696,7 +696,7 @@ Pass it as `AgentApp(agent=..., host=..., router=GreetingRouter())`.
 
 **Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
 [result and failure mapping](#result-and-failure-mapping),
-[routing design](../annotations.md#skill-registration-versus-request-routing).
+[routing design](../guides/annotations.md#skill-registration-versus-request-routing).
 
 ## Built-in model-based router (planned implementation)
 
@@ -755,8 +755,8 @@ Input-required clarification is not completed output, human approval workflow
 or durable execution resumption.
 
 **Related:** [`SkillRouter`](#skillrouter),
-[routing and extraction](../annotations.md#skill-registration-versus-request-routing),
-[remaining execution contracts](../base-classes.md#decided-execution-contracts-and-remaining-details).
+[routing and extraction](../guides/annotations.md#skill-registration-versus-request-routing),
+[remaining execution contracts](../design/base-classes.md#decided-execution-contracts-and-remaining-details).
 
 ## Native A2A and MCP types
 
@@ -770,16 +770,16 @@ release v1.0.1). M2 pins `a2a-sdk[http-server]==1.3.0` as a core dependency
 because A2A hosting is the default interface (the optional `agentframe[server]`
 extra only adds Uvicorn for `agentframe run`); the `http-server` extra is listed explicitly rather than relied on transitively.
 The selected binding is **JSON-RPC over HTTP** for protocol 1.0 only, with the
-SDK's 0.3 compatibility disabled. `tests/test_a2a_binding.py` proves an official
+SDK's 0.3 compatibility disabled. `tests/unit/hosting/test_a2a_binding.py` proves an official
 SDK client exchanging a message over that binding and the rejection of pre-1.0
-requests; CI imports the server binding from a clean wheel install. `tests/test_interoperability.py`
+requests; CI imports the server binding from a clean wheel install. `tests/integration/test_interoperability.py`
 proves native type mappings and independent official-client interoperability
 with AgentFrame hosting end to end over localhost HTTP (M2 #10). MCP version selection is separate. Constructor signatures/imports
 are deliberately not copied as stable AgentFrame APIs. See
-[resolved platform/API choices](../initial-outline.md#resolved-m0-platform-and-api-decisions).
+[resolved platform/API choices](../roadmap.md#resolved-m0-platform-and-api-decisions).
 No fabricated
 MCP/A2A payload fields, REST envelopes, or unverified capabilities are part of
 this reference.
 
-**Related:** [native type boundary](../base-classes.md#native-a2a-types),
-[delivery milestones](../initial-outline.md#delivery-milestones).
+**Related:** [native type boundary](../design/base-classes.md#native-a2a-types),
+[delivery milestones](../roadmap.md#delivery-milestones).

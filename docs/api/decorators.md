@@ -47,7 +47,7 @@ documentation/provider identity metadata has no finalized parameter contract.
 Cards also need truthful host settings; decoration does not start a server.
 
 **Related:** [`Agent`](agents.md#agent), [`AgentApp`](hosting.md#agentapp),
-[metadata design](../annotations.md#proposed-decorators).
+[metadata design](../guides/annotations.md#proposed-decorators).
 
 ## `@skill`
 
@@ -131,7 +131,7 @@ MCP exposure and internal model-tool registration.
 
 **Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
 [`AuthorizationPolicy`](authorization.md#authorizationpolicy),
-[registration versus routing](../annotations.md#skill-registration-versus-request-routing).
+[registration versus routing](../guides/annotations.md#skill-registration-versus-request-routing).
 
 ## `@tool`
 
@@ -179,7 +179,7 @@ approval workflows are separate; no built-in human pause/resume in first
 release. Future AG-UI tool visibility grants no frontend execution authority.
 
 **Related:** [`Agent`](agents.md#agent), [`ExecutionPolicy`](authorization.md#executionpolicy),
-[`MCPConfig`](hosting.md#mcpconfig), [tool design](../annotations.md#optional-tool-example).
+[`MCPConfig`](hosting.md#mcpconfig), [tool design](../guides/annotations.md#optional-tool-example).
 
 ## Python and Pydantic data contracts
 
@@ -215,5 +215,5 @@ skill return validation. Use `ctx.generate(..., output=Summary)` for a validated
 Pydantic result; supported schema subset remains open. A skill return annotation
 alone does not configure the provider.
 
-**Related:** [data-contract rationale](../annotations.md#small-data-contract-example),
+**Related:** [data-contract rationale](../guides/annotations.md#small-data-contract-example),
 [`Runtime.invoke`](runtime.md#runtimeinvoke), [hosting](hosting.md).

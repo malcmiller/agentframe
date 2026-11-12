@@ -41,7 +41,7 @@ deliberately shows typed dependency use instead of inventing one.
 | [Built-in model routing](hosting.md#built-in-model-based-router-planned-implementation) | Opt-in library implementation alongside custom routers; public implementation name/constructor still open. |
 | [Future streaming](streaming.md) | [`AGUIConfig`](streaming.md#aguiconfig), optional [AG-UI adapter](streaming.md#optional-ag-ui-adapter) and [runtime event boundary](streaming.md#runtime-streaming-boundary); runtime stream method open. |
 | [Remote authoring](discovery.md#remotename) | [`Remote["name"]`](discovery.md#remotename), [`call`](discovery.md#remotecall), [`ask`](discovery.md#remoteask), [`ClarificationNeededError`](discovery.md#clarificationneedederror), [`AgentDirectory.find`](discovery.md#agentdirectoryfind). |
-| [Development and packaging](../development.md) | M2 `agentframe run module:create_app` (implemented, with localhost-only `--dev`); M8+ `agentframe dev`, `agentframe.yaml`, registry/API-key/log wiring and container templates; not installed tooling. |
+| [Development and packaging](../guides/development.md) | M2 `agentframe run module:create_app` (implemented, with localhost-only `--dev`); M8+ `agentframe dev`, `agentframe.yaml`, registry/API-key/log wiring and container templates; not installed tooling. |
 | [Multi-agent release discovery and calls](discovery.md) | [`AgentRegistry`](discovery.md#agentregistry), [`get`](discovery.md#agentregistryget), [`list`](discovery.md#agentregistrylist), [`AgentReference`](discovery.md#agentreference), [`AgentQuery`](discovery.md#agentquery), [`EnvironmentAgentRegistry`](discovery.md#environmentagentregistry), [`FileAgentRegistry`](discovery.md#fileagentregistry), [`FoundryAgentRegistry`](discovery.md#foundryagentregistry), [`AgentCardResolver`](discovery.md#agentcardresolver), [`CardCacheConfig`](discovery.md#cardcacheconfig), [`AgentDirectory`](discovery.md#agentdirectory), [`get`](discovery.md#agentdirectoryget), [`refresh`](discovery.md#agentdirectoryrefresh), [`__aenter__`](discovery.md#agentdirectory__aenter__), [`__aexit__`](discovery.md#agentdirectory__aexit__), [`RemoteAgentClient`](discovery.md#remoteagentclient). |
 
 AgentFrame owns its authoring and execution abstractions, not wrappers around a
@@ -91,7 +91,7 @@ agent model injection alone never switches routing on.
 Structured selection bypasses routing/model-selection cost, not execution
 controls or the selected skill's inference cost. Unknown skills/invalid
 arguments fail explicitly. Free-text ambiguity/missing input asks back via an
-A2A `TASK_STATE_INPUT_REQUIRED` task. See the [request-style decision and sources](../mcp-skills.md#a2a-request-styles-and-extension-boundary);
+A2A `TASK_STATE_INPUT_REQUIRED` task. See the [request-style decision and sources](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary);
 extension URI/schema/name, detailed advertisement, router API and clarification
 contracts remain open. M8+ `Remote.call` uses that structured extension;
 `ask` uses plain text with any compatible peer. Both wait within deadline;
@@ -101,7 +101,7 @@ MCP exposure stays opt-in per skill, empty by default; quick typed/single-shot
 tool-like skills are candidates, while judgment/multi-turn/clarification skills
 usually stay A2A-only. That is guidance, not an enforced classifier.
 
-The [delivery milestones](../initial-outline.md#delivery-milestones) separate M0
+The [delivery milestones](../roadmap.md#delivery-milestones) separate M0
 development setup, M1 model-free `Runtime.invoke`, M2 native A2A with custom
 routing only, M3 shared-model text generation, M4 typed structured outputs,
 M5 bounded tools, M6 built-in opt-in model routing (dependent on M3/M4), and M7
@@ -113,7 +113,7 @@ Applications own human approval workflows; no built-in first-release approval
 pause/resume. Tool authorization/action checks still apply. Future streaming
 supports a scoped optional AG-UI frontend adapter, not all AG-UI features, an
 OTel trace stream, automatic frontend tools, persistence or resumability.
-See [AG-UI design and primary sources](../streaming.md).
+See [AG-UI design and primary sources](../design/streaming.md).
 
 Discovery/registry and remote A2A invocation are **next-core-release M8+ scope
 after the single-agent M7 release**: source adapters return
@@ -121,7 +121,7 @@ references, while the managed directory/resolver owns native card fetching,
 validation, caching and explicit refresh. It enables application-built
 orchestrator skills calling specialists, not a workflow/graph engine. Discovery does not invoke
 remote agents or grant permissions, and A2A itself is not a registry protocol.
-See the [discovery guide](../discovery.md) for subclassing and owned-resource
+See the [discovery guide](../design/discovery.md) for subclassing and owned-resource
 lifecycle examples; the Foundry project agents API is chosen, while enabled-agent
 filtering, card mapping, auth/RBAC, pagination and compatibility remain to prove.
 Cross-hop identity/delegation, permissions, deadlines, remaining token allowance
@@ -134,7 +134,7 @@ No initial orchestration helpers; use Python `await` / TaskGroup / find.
 M2 single-agent `run`, M8+ `dev`/local registry/auth/logging and one-container
 packaging are decided; Foundry/Kubernetes templates are later, not a hosting
 platform. Acceptance includes independent deployment and non-AgentFrame A2A
-client/server interoperability; see the [M8+ plan](../initial-outline.md#next-core-release-multi-agent-a2a-composition-m8).
+client/server interoperability; see the [M8+ plan](../roadmap.md#next-core-release-multi-agent-a2a-composition-m8).
 
 ## Cross-cutting behavior and failures
 
@@ -170,7 +170,7 @@ multi-instance storage, explicitly not exactly-once.
 
 ## Decisions still needed
 
-The [2026-11-11 platform/API decisions](../initial-outline.md#resolved-m0-platform-and-api-decisions)
+The [2026-11-11 platform/API decisions](../roadmap.md#resolved-m0-platform-and-api-decisions)
 resolve Python (3.13+, test through 3.15), A2A (protocol 1.0 via official
 `a2a-sdk`, observed 1.3.0/specification v1.0.1), Foundry models (OpenAI v1
 Responses through optional `openai`, Entra token-provider/API-key auth), and
@@ -196,13 +196,13 @@ binding, protocol 1.0 only, and the M3 provider extras (`ollama==0.6.3`;
 | Execution and DI | Factory/disposal interfaces, explicit local startup method, app/runtime service-container conflicts; tool flag combinations and additional retry rules; dedupe store/window API, atomicity, changed payloads and message-only interactions. DI/ownership, default retries/deduplication and no automatic side-effect replay are decided; model retries (`RunLimits.max_model_retries`, backoff) are implemented (M3 #37). |
 | Later extensions | Frontend tools/shared state later opt-in only. Revisit durable workflows after multi-agent usage, not designed now; optional separate package if added (candidate `agentframe-workflows`). Pluggable persistent A2A task storage is not workflow crash recovery. No core approval engine/hosting platform. |
 
-Use the [design outline](../initial-outline.md#open-design-decisions) to track
+Use the [roadmap](../roadmap.md#open-design-decisions) to track
 rationale and delivery milestones. Resolve open details with implementation and
 interoperability evidence before advertising support.
 
 ## Guides and design rationale
 
-Start with [agent examples](../agent-examples.md) for a walkthrough. The
+Start with [agent examples](../guides/agent-examples.md) for a walkthrough. The
 [documentation index](../README.md) links the existing design discussions on
 annotations, base classes, limits, tracing, protocols, authorization, and prompt
 safeguarding. They remain in place; this reference is a lookup companion, not a

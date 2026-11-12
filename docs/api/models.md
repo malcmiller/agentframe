@@ -7,7 +7,7 @@ Provider dependencies are optional and stay out of skill business logic.
 usage and finish reasons; adapters translate to/from provider types. M3 #33
 implements the text-generation layouts below (`Message`, `ModelSettings`,
 `ModelRequest`, `ModelResponse`, `ModelCapabilities`, the `Model` protocol)
-in `agentframe.models`, with no provider SDK imported. Tool-call, structured
+in `agentframe.models.base`, with no provider SDK imported. Tool-call, structured
 output and other layouts not specified here remain open, not provider leaks.
 
 ## `Model`
@@ -83,7 +83,7 @@ optional [AG-UI](streaming.md) mapping from managed execution, not raw
 provider events.
 
 **Related:** [`ModelRequest`](#modelrequest), [`ModelResponse`](#modelresponse),
-[model interface rationale](../base-classes.md#model-interfaces).
+[model interface rationale](../design/base-classes.md#model-interfaces).
 
 ## `Model.generate`
 
@@ -117,10 +117,10 @@ skill invocation and does not by itself establish authorization, invocation
 budgets, or context; skills should use [`ctx.generate`](agents.md#runcontextgenerate).
 The runtime retries only transient provider failures, default two retries
 (`RunLimits.max_model_retries`) with backoff and provider-SDK retries disabled;
-see [retries](../limits.md#retries-and-duplicate-requests).
+see [retries](../guides/limits.md#retries-and-duplicate-requests).
 
 **Related:** [`Model`](#model), [`RunLimits`](configuration.md#runlimits),
-[provider boundaries](../initial-outline.md#initial-adapters).
+[provider boundaries](../roadmap.md#initial-adapters).
 
 ## `FoundryModel`
 
@@ -209,15 +209,15 @@ non-streaming Responses call.
   configured `context_window` (or `None`); structured output and tools are
   unsupported. Without `context_window=`, an agent using this model needs an
   explicit `RunLimits(max_input_tokens=...)`; otherwise `AgentApp` startup
-  fails with `DefinitionError` ([limits accounting](../limits.md#implemented-token-accounting-m3), M3 #36).
-- Opt-in real tests (`tests/test_providers.py`, marker `foundry`, M3 #41):
+  fails with `DefinitionError` ([limits accounting](../guides/limits.md#implemented-token-accounting-m3), M3 #36).
+- Opt-in real tests (`tests/integration/test_providers.py`, marker `foundry`, M3 #41):
   set `AGENTFRAME_TEST_FOUNDRY=1`, `AGENTFRAME_FOUNDRY_ENDPOINT` and
   `AGENTFRAME_FOUNDRY_DEPLOYMENT`; they sign in with the Azure CLI credential.
   Default test runs and CI never call Foundry. See `AGENTS.md`.
 
 **Related:** [`ModelSettings`](#modelsettings),
-[Foundry guide](../agent-examples.md#switch-to-foundry),
-[resolved platform/API choices](../initial-outline.md#resolved-m0-platform-and-api-decisions),
+[Foundry guide](../guides/agent-examples.md#switch-to-foundry),
+[resolved platform/API choices](../roadmap.md#resolved-m0-platform-and-api-decisions),
 [migration guide](https://learn.microsoft.com/en-us/azure/foundry/how-to/model-inference-to-openai-migration).
 
 ## `OllamaModel`
@@ -288,13 +288,13 @@ server, silently switches models, or enables cloud execution.
   non-transient one. Messages are safe and do not repeat the server's error
   text. The 0.6 client has no retry loop of its own; AgentFrame retries are
   separate.
-- Opt-in real tests (`tests/test_providers.py`, marker `ollama`, M3 #41): set
+- Opt-in real tests (`tests/integration/test_providers.py`, marker `ollama`, M3 #41): set
   `AGENTFRAME_TEST_OLLAMA=1` and `AGENTFRAME_OLLAMA_MODEL` (optionally
   `AGENTFRAME_OLLAMA_ENDPOINT`). Default test runs and CI never call Ollama.
   See `AGENTS.md`.
 
 **Related:** [`ModelCapabilities`](#modelcapabilities),
-[local model guide](../agent-examples.md#choose-local-llama-through-ollama).
+[local model guide](../guides/agent-examples.md#choose-local-llama-through-ollama).
 
 ## `ScriptedModel`
 
@@ -422,7 +422,7 @@ resolved settings, with every field set. Do not duplicate output tokens in
 `RunLimits`.
 
 **Related:** [`AgentConfig`](configuration.md#agentconfig),
-[`RunLimits`](configuration.md#runlimits), [limit scopes](../limits.md#separate-the-scopes).
+[`RunLimits`](configuration.md#runlimits), [limit scopes](../guides/limits.md#separate-the-scopes).
 
 ## `ModelCapabilities`
 
@@ -453,7 +453,7 @@ requested capabilities fail before sending with `UnsupportedCapabilityError`.
 Streaming and additional modalities remain later; fields arrive only when a
 milestone needs them.
 
-**Related:** [`Model`](#model), [context capacity](../limits.md#separate-the-scopes).
+**Related:** [`Model`](#model), [context capacity](../guides/limits.md#separate-the-scopes).
 
 ## `Model.capabilities`
 
@@ -535,7 +535,7 @@ messages = (
 message. Tool-call/result messages and other content types remain open (M5).
 
 **Related:** [`ModelRequest`](#modelrequest),
-[prompt safeguarding](../prompt-safeguarding.md).
+[prompt safeguarding](../design/prompt-safeguarding.md).
 
 ## `ModelRequest`
 
@@ -570,7 +570,7 @@ must stop dispatch. Tool definitions and output contracts for
 decided author forms whose request fields remain open (M4, M5).
 
 **Related:** [`ExecutionPolicy`](authorization.md#executionpolicy),
-[outbound checks](../prompt-safeguarding.md#check-at-the-boundary-not-just-once).
+[outbound checks](../design/prompt-safeguarding.md#check-at-the-boundary-not-just-once).
 
 ## `ModelResponse`
 
@@ -609,4 +609,4 @@ them as success. Tool-call linkage and typed structured content remain open
 is implied.
 
 **Related:** [`Model.generate`](#modelgenerate),
-[accounting and enforcement](../limits.md#accounting-and-enforcement).
+[accounting and enforcement](../guides/limits.md#accounting-and-enforcement).

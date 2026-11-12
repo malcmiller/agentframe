@@ -24,7 +24,7 @@ serves an agent as an ASGI application with its Agent Card and an authenticated
 A2A 1.0 endpoint, proven end to end with the official A2A client, and
 `agentframe run` serves it with one command (see
 [hosting over A2A](#hosting-over-a2a) and
-[development](docs/development.md#one-agent-m2)). M3 text generation is
+[development](docs/guides/development.md#one-agent-m2)). M3 text generation is
 complete: an injected `OllamaModel` (local Llama) or
 `FoundryModel` (Foundry GPT deployment) serves the same agent, switched by
 configuration only (see the [first success criterion](#first-success-criterion)).
@@ -49,7 +49,7 @@ interfaces remain open. Examples beyond the M1 surface are design proposals.
 Decorators describe the agent; an `Agent` subclass implements behavior. Models
 and infrastructure are injected. Each ability is a separate `@skill` method; no
 abstract `handle()` or manual dispatch method is required. This M1 example works
-from source today (it is kept in `tests/test_example.py`); run the `await` lines
+from source today (it is kept in `tests/integration/test_example.py`); run the `await` lines
 inside an async function or `asyncio.run`:
 
 ```python
@@ -91,7 +91,7 @@ Names default to the class/method name and descriptions to docstrings.
 ### Hosting over A2A
 
 Serve the same agent to any A2A 1.0 client with a `create_app()` function (also
-kept working in `tests/test_example.py`). The
+kept working in `tests/integration/test_example.py`). The
 API key and policy below are **development placeholders**: production hosts
 need your real identity provider and resource checks. Remote hosts always
 require an explicit `auth=` choice.
@@ -151,12 +151,12 @@ endpoint at `/a2a`; callers send the key in the `X-API-Key` header. Callers can
 name a skill with JSON arguments through the
 [skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format),
 or send free text to a custom [`SkillRouter`](docs/api/hosting.md#skillrouter).
-`tests/test_interoperability.py` drives every case with the official A2A client.
+`tests/integration/test_interoperability.py` drives every case with the official A2A client.
 
 The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
-need no provider configuration. See [agents with and without models](docs/agent-examples.md)
+need no provider configuration. See [agents with and without models](docs/guides/agent-examples.md)
 for multi-skill, mixed, and local invocation examples, and the
-[API design examples](docs/base-classes.md#proposed-api-examples) for host
+[API design examples](docs/design/base-classes.md#proposed-api-examples) for host
 composition and advanced extension points.
 
 Llama is a model family; Ollama is the initial local model host. Foundry model
@@ -236,7 +236,7 @@ localhost server; production hosts need real authentication and authorization
 card and call `answer` or `count_words` through the
 [skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format);
 the completed task's metadata reports the run's token usage.
-`tests/test_success_criterion.py` proves this offline in CI: the official A2A
+`tests/integration/test_success_criterion.py` proves this offline in CI: the official A2A
 client calls the same agent served with two different scripted models, with no
 code change, and `count_words` runs without inference. The opt-in
 [real-provider tests](AGENTS.md#real-provider-tests-opt-in-local-only) run the
@@ -258,9 +258,9 @@ routes: A2A for agents, optional MCP for LLM apps/tools and AG-UI later for
 frontends. Prefer structured A2A skill/JSON-argument requests through a declared,
 activated extension; free text uses routing and input-required clarification.
 Structured selection bypasses routing, not authorization or execution controls.
-See the [request-style design and open extension contract](docs/mcp-skills.md#a2a-request-styles-and-extension-boundary).
+See the [request-style design and open extension contract](docs/design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
 
-The [delivery plan](docs/initial-outline.md#delivery-milestones) splits this work
+The [delivery plan](docs/roadmap.md#delivery-milestones) splits this work
 into independently releasable/testable milestones: M0 development setup, M1
 model-free execution, M2 A2A/custom routing, M3 interchangeable text models,
 M4 structured outputs, M5 bounded tools, M6 built-in opt-in model routing
@@ -290,7 +290,7 @@ The [runtime contracts](docs/api/runtime.md) distinguish `invoke` (validated
 value) from `run` (`RunResult` with local metadata even without tracing).
 Use [annotated `Inject[T]` and `Services`](docs/api/agents.md#injectt) for service
 dependencies, validated at startup and excluded from caller schemas.
-[Decided defaults](docs/limits.md) apply within independent host ceilings;
+[Decided defaults](docs/guides/limits.md) apply within independent host ceilings;
 remote hosts require an explicit [authenticator](docs/api/authorization.md#authenticator),
 never an implicit anonymous mode. Safe typed errors carry invocation correlation;
 transient model retries and A2A deduplication never promise exactly-once actions.
@@ -316,12 +316,12 @@ local anonymous development); M8+ adds `agentframe dev` reading
 `agentframe.yaml`, local registry/development API-key wiring and tagged combined
 logs. Package one container per agent, with a Dockerfile template and generated
 Compose example; Foundry/Kubernetes templates are later. See the
-[development plan](docs/development.md). AgentFrame does not become a
+[development plan](docs/guides/development.md). AgentFrame does not become a
 hosting platform. Discovery itself does not deploy agents, grant authority or
 invoke them automatically. Foundry registry discovery uses the chosen projects
 agents API (`azure-ai-projects` 2.x); A2A-enabled filtering, card mapping,
 auth/RBAC and pagination still need implementation proof. See
-[discovery design](docs/discovery.md) and the [reference](docs/api/discovery.md).
+[discovery design](docs/design/discovery.md) and the [reference](docs/api/discovery.md).
 
 Streaming is a separate follow-up after M7, planned to support **AG-UI** as an
 optional agent-to-frontend
@@ -331,7 +331,7 @@ A2A/cards stay first-class; no UI or major agent-framework dependency is implied
 auth/limits/permissions: lifecycle, text deltas, tool names/status and safe errors.
 Whole-answer checks send complete text at end; disconnect cancels, with no
 first-version reconnect/resume. Frontend tools/shared state are later opt-in.
-The [streaming proposal](docs/streaming.md) scopes event mapping, trust and
+The [streaming proposal](docs/design/streaming.md) scopes event mapping, trust and
 output-policy boundaries without claiming implemented AG-UI conformance or
 automatically advertising A2A streaming.
 
@@ -344,18 +344,18 @@ platform or durable workflow engine is not a prerequisite for either.
 - [Proposed API reference: public surfaces, parameters, and open contracts](docs/api/README.md)
 - [Decided local results and safe error contracts](docs/api/runtime.md)
 - [Service injection and lifecycle](docs/api/agents.md#injectt)
-- [Initial outline and delivery milestones](docs/initial-outline.md)
-- [Decorators and type annotations](docs/annotations.md)
-- [Base classes and interfaces](docs/base-classes.md)
-- [Agent examples: model-free, model-backed, and mixed](docs/agent-examples.md)
-- [Read-first registries and managed agent discovery](docs/discovery.md)
-- [Local CLI development and container packaging plan](docs/development.md)
-- [Future streaming and the optional AG-UI adapter](docs/streaming.md)
-- [Execution limits and token accounting](docs/limits.md)
-- [Tracing and correlation](docs/tracing.md)
-- [A2A hosting and optional MCP skill configuration](docs/mcp-skills.md)
-- [Skill authorization and caller identity](docs/authorization.md)
-- [Prompt safeguarding and shared responsibilities](docs/prompt-safeguarding.md)
+- [Roadmap and delivery milestones](docs/roadmap.md)
+- [Decorators and type annotations](docs/guides/annotations.md)
+- [Base classes and interfaces](docs/design/base-classes.md)
+- [Agent examples: model-free, model-backed, and mixed](docs/guides/agent-examples.md)
+- [Read-first registries and managed agent discovery](docs/design/discovery.md)
+- [Local CLI development and container packaging plan](docs/guides/development.md)
+- [Future streaming and the optional AG-UI adapter](docs/design/streaming.md)
+- [Execution limits and token accounting](docs/guides/limits.md)
+- [Tracing and correlation](docs/design/tracing.md)
+- [A2A hosting and optional MCP skill configuration](docs/design/mcp-skills.md)
+- [Skill authorization and caller identity](docs/guides/authorization.md)
+- [Prompt safeguarding and shared responsibilities](docs/design/prompt-safeguarding.md)
 - [Contributor and coding-agent context](AGENTS.md)
 
 ## Development and contributions
@@ -391,7 +391,7 @@ All four checks must pass before committing: `uv run ruff format --check`,
 and mypy; tests run in CI, not on every commit. See
 [code quality and readability](AGENTS.md#code-quality-and-readability) for the
 contributor rules, local matrix commands and PyCharm setup.
-The [approved platform/API decisions](docs/initial-outline.md#resolved-m0-platform-and-api-decisions)
+The [approved platform/API decisions](docs/roadmap.md#resolved-m0-platform-and-api-decisions)
 (2026-11-11) are Python **3.13+**, testing through **3.15** (Python has no LTS);
 A2A protocol **1.0** through official `a2a-sdk` (1.3.0 observed, specification
 release v1.0.1); and Foundry **OpenAI v1 Responses API** through optional

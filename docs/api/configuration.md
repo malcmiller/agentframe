@@ -49,7 +49,7 @@ Reject invalid settings or explicit requests exceeding policy; never silently
 clamp them or allow overrides to weaken security/host ceilings.
 
 **Related:** [`ModelSettings`](models.md#modelsettings), [`HostConfig`](hosting.md#hostconfig),
-[defaults versus ceilings](../limits.md#defaults-versus-ceilings).
+[defaults versus ceilings](../guides/limits.md#defaults-versus-ceilings).
 
 ## `RunLimits`
 
@@ -72,7 +72,7 @@ RunLimits(
 | `max_input_tokens` | `int \| None` (implemented M3 #36) | Unset (`None`) means the model-reported context window; unknown window plus unset limit is a `DefinitionError` | Bounds assembled input, including instructions/history/user content/tool schemas/results; actual input plus reserved output must also fit context. Unknown capacity is not unlimited; explicit overflow fails, never truncates. |
 | `max_total_tokens` | `int \| None` (implemented M3 #36) | `100000`, configurable | Aggregate input/output across a run, retries and continuations, without double-counting overlapping usage. |
 | `max_model_calls` | `int \| None` (implemented M3 #36) | `10`, configurable | Dispatched inference attempts including retries, not just successful completions. |
-| `max_model_retries` | `int \| None` (implemented M3 #37) | `2`, configurable; `0` disables retries; negative is a `DefinitionError` | Retries of one model call after a transient `ProviderError`. Each retry counts toward `max_model_calls` and the token budget; see [retries](../limits.md#retries-and-duplicate-requests). |
+| `max_model_retries` | `int \| None` (implemented M3 #37) | `2`, configurable; `0` disables retries; negative is a `DefinitionError` | Retries of one model call after a transient `ProviderError`. Each retry counts toward `max_model_calls` and the token budget; see [retries](../guides/limits.md#retries-and-duplicate-requests). |
 | `max_tool_calls` | `int` | `20`, configurable | Bounds managed tool executions/continuations; detailed attempted/denied call counting remains open. |
 | `timeout_seconds` | Numeric seconds; accepted numeric type open | `120`, configurable | Wall-clock invocation deadline including model/tool work; retries never reset it. |
 
@@ -115,7 +115,7 @@ reservation is replaced by actual usage; a failed call whose usage is unknown
 keeps its reservation. When the model reports no context window and no level
 sets `max_input_tokens`, `AgentApp` fails startup (`Runtime.validate_model`) and
 a local run fails with `DefinitionError` before its first model call. See
-[limits](../limits.md#implemented-token-accounting-m3) for the estimate.
+[limits](../guides/limits.md#implemented-token-accounting-m3) for the estimate.
 
 Unknown usage is not zero. Strict accounting must reject work without a sufficiently reliable bound;
 strict-mode names/capabilities remain open. Model-backed routing must be
@@ -140,11 +140,11 @@ buffering/backpressure and distinguish disconnect/cancellation. Safe local
 execution/usage metadata uses `Runtime.run` / `RunResult`, independent of tracing.
 M8+ additionally propagates remaining deadlines and token ceilings with default
 maximum 5 remote hops; exact depth configuration carrier is still open, not a
-new guessed `RunLimits` field. See [cross-agent budgets](../limits.md#cross-agent-budgets-and-depth-m8).
+new guessed `RunLimits` field. See [cross-agent budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8).
 
 **Related:** [`ModelSettings.max_output_tokens`](models.md#modelsettings),
 [`HostConfig.limits_ceiling`](hosting.md#hostconfig),
-[accounting rationale](../limits.md#accounting-and-enforcement).
+[accounting rationale](../guides/limits.md#accounting-and-enforcement).
 
 ## Precedence
 
@@ -190,7 +190,7 @@ independent constraint; they are not implemented yet.
 
 **Related:** [`RunOptions`](#runoptions), [`RunLimits`](#runlimits),
 [`ModelSettings`](models.md#modelsettings),
-[defaults versus ceilings](../limits.md#defaults-versus-ceilings).
+[defaults versus ceilings](../guides/limits.md#defaults-versus-ceilings).
 
 ## `RunOptions`
 
@@ -278,5 +278,5 @@ disable enforcement. Exact span attributes, correlation transport mappings,
 and integration versions remain open.
 
 **Related:** [`Runtime`](runtime.md#runtime),
-[span boundaries](../tracing.md#span-boundaries),
-[safe metadata](../tracing.md#safe-metadata).
+[span boundaries](../design/tracing.md#span-boundaries),
+[safe metadata](../design/tracing.md#safe-metadata).

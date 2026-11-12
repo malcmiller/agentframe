@@ -48,7 +48,7 @@ payloads in events. Map the decided safe error taxonomy to the selected binding;
 in-stream mapping, input downgrade handling and capability declarations still
 need verification before conformance claims.
 
-**Related:** [AG-UI design, event mapping and primary citations](../streaming.md),
+**Related:** [AG-UI design, event mapping and primary citations](../design/streaming.md),
 [`AgentApp`](hosting.md#agentapp), [`ExecutionPolicy`](authorization.md#executionpolicy).
 
 ## `AGUIConfig`
@@ -83,7 +83,7 @@ first version has no reconnect/resume. Frontend tools/shared state are later
 opt-in, never automatic. Protocol version/transport and exact event projection
 remain open; advertise A2A streaming only after independent implementation/tests.
 
-**Related:** [`AgentApp`](hosting.md#agentapp), [policy gating](../streaming.md#policy-gated-output-and-independent-accounting).
+**Related:** [`AgentApp`](hosting.md#agentapp), [policy gating](../design/streaming.md#policy-gated-output-and-independent-accounting).
 
 ## Runtime streaming boundary
 
@@ -121,4 +121,4 @@ card advertisement; AG-UI support alone does not enable it.
 
 **Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
 [`RunContext.generate`](agents.md#runcontextgenerate),
-[streaming delivery gate](../streaming.md#open-contracts-and-delivery-gate).
+[streaming delivery gate](../design/streaming.md#open-contracts-and-delivery-gate).

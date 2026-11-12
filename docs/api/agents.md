@@ -67,7 +67,7 @@ and scoped ownership follows the explicit rules below.
 
 **Related:** [`@agent`](decorators.md#agent), [`@skill`](decorators.md#skill),
 [`AgentConfig`](configuration.md#agentconfig),
-[mixed-skill guide](../agent-examples.md#mixing-both-kinds-of-skill).
+[mixed-skill guide](../guides/agent-examples.md#mixing-both-kinds-of-skill).
 
 ## `RunContext`
 
@@ -116,11 +116,11 @@ through an `Inject[AgentDirectory]` parameter backed by `Services`.
 `AgentApp(directory=...)`, with configured names validated at startup and excluded
 from caller/card/MCP schemas. No new `Agent` base class is implied. A singleton directory's
 lifespan is application-owned, not invocation cleanup. See
-[discovery injection](../discovery.md#agent-injection-and-separate-invocation).
+[discovery injection](../design/discovery.md#agent-injection-and-separate-invocation).
 
 **Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
 [`Principal`](authorization.md#principal),
-[context responsibilities](../base-classes.md#agent-authoring-and-execution).
+[context responsibilities](../design/base-classes.md#agent-authoring-and-execution).
 
 ## `RunContext.generate`
 
@@ -207,9 +207,9 @@ before any error is raised. Unknown usage stays unknown, never zero.
 Hosted runs map these errors to task `FAILED` with their safe message and the
 run's `invocation_id` (see [result and failure mapping](hosting.md#result-and-failure-mapping)). Token limits and
 reservations work as described in
-[implemented token accounting](../limits.md#implemented-token-accounting-m3);
+[implemented token accounting](../guides/limits.md#implemented-token-accounting-m3);
 transient provider failures are
-[retried](../limits.md#retries-and-duplicate-requests) up to
+[retried](../guides/limits.md#retries-and-duplicate-requests) up to
 `RunLimits.max_model_retries` times. Every call uses
 the run's effective `model_settings`, merged field by field (see
 [precedence](configuration.md#precedence)).
@@ -227,7 +227,7 @@ capability raises `UnsupportedCapabilityError` before sending. Refusal raises
 That opt-in syntax is open and cannot bypass Pydantic/output validation.
 Invalid structured output raises `OutputValidationError`. Tools use the same
 run limits, authorization and retry rules. See the
-[examples](../agent-examples.md#typed-structured-output-and-bounded-tools).
+[examples](../guides/agent-examples.md#typed-structured-output-and-bounded-tools).
 Streaming is later with [optional AG-UI](streaming.md), not an implicit provider
 or A2A capability. Instructions do not authorize actions or guarantee injection
 resistance. Cancellation does not guarantee no provider charges.
@@ -235,7 +235,7 @@ resistance. Cancellation does not guarantee no provider charges.
 **Related:** [`Model.generate`](models.md#modelgenerate),
 [`RunLimits`](configuration.md#runlimits),
 [`ExecutionPolicy`](authorization.md#executionpolicy),
-[instruction design](../annotations.md#proposed-authoring-shape).
+[instruction design](../guides/annotations.md#proposed-authoring-shape).
 
 ## `Inject[T]`
 
@@ -277,7 +277,7 @@ in M1 it checks every `Inject[T]` registration before running the skill and rais
 `DefinitionError` naming the parameter if one is missing.
 
 **Related:** [`Services`](#services), [`Runtime`](runtime.md#runtime),
-[ownership rationale](../base-classes.md#authoring-and-extension-decisions).
+[ownership rationale](../design/base-classes.md#authoring-and-extension-decisions).
 
 ## `Services`
 

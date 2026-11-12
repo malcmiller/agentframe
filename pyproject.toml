@@ -60,7 +60,7 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-src = ["src", "tests", "."]
+src = ["src", "tests", "tests/support", "."]
 include = ["*.py", "*.pyi"]
 
 [tool.ruff.lint]
@@ -80,8 +80,9 @@ warn_unreachable = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# The repository root, so tests can import the runnable examples.
-pythonpath = ["."]
+# The repository root, so tests can import the runnable examples, and the
+# shared test helpers in tests/support (imported as top-level modules).
+pythonpath = [".", "tests/support"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["--strict-markers", "--strict-config", "-ra"]

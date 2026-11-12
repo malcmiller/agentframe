@@ -1,6 +1,6 @@
 """Errors raised by AgentFrame."""
 
-from agentframe.usage import Usage
+from agentframe.runtime.usage import Usage
 
 
 class AgentFrameError(Exception):

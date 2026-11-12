@@ -22,11 +22,11 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from types import ModuleType
 
-from agentframe.agent import Agent
-from agentframe.app import AgentApp
-from agentframe.auth import AllowAnonymous
+from agentframe.authoring.agent import Agent
 from agentframe.errors import AgentFrameError
-from agentframe.host import HostConfig
+from agentframe.hosting.app import AgentApp
+from agentframe.hosting.host import HostConfig
+from agentframe.security.authentication import AllowAnonymous
 
 logger = logging.getLogger("agentframe")
 
