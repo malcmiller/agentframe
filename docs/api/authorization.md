@@ -1,8 +1,9 @@
 # Authorization and content policy
 
-[Reference index and status conventions](README.md). These are unimplemented
-design contracts, with decided authenticator names/fields below and still-open
-custom interfaces, not implemented security mechanisms. Authentication, authorization,
+[Reference index and status conventions](README.md). These are mostly
+unimplemented design contracts. M1 implements `Principal` and permission checks;
+M2 story #4 implements `Authenticator`, `APIKeyAuth` and `AllowAnonymous` as
+standalone units, which the HTTP host (#3) wires in. Authentication, authorization,
 and prompt/content checks are separate responsibilities.
 
 ## `Principal`
@@ -165,19 +166,49 @@ state/tool declarations are untrusted, not `Principal` or trusted dependencies.
 **Purpose / decision:** common interface for verified remote identity, with
 built-in Entra ID, API-key and explicit anonymous implementations.
 
-**Signature status:** interface name decided; custom method/decision types open.
+**Signature status:** implemented as a structural protocol (M2 story #4). The
+HTTP host wiring arrives with `AgentApp` (#3); `EntraIDAuth` is M7.
 
-| Concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Verified request identity | `Principal`; detailed method contract open | Required remote auth choice | Validate the selected mechanism; never accept request-supplied grants as verified. |
+```text
+class Authenticator(Protocol):
+    async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller | None
+```
+
+| Name | Type | Meaning and constraints |
+| --- | --- | --- |
+| `headers` | `Mapping[str, str]` | The request's HTTP headers. Header names should be matched case-insensitively. |
+| Return | `VerifiedCaller \| None` | The verified caller, or `None` only for explicitly allowed anonymous callers. |
+| `VerifiedCaller.id` | `str` | Stable caller identifier; becomes `Principal.id`. |
+| `VerifiedCaller.roles` | `frozenset[str]` | Verified roles, mapped to permissions by `HostConfig(role_permissions=...)`. |
+
+Missing or invalid credentials raise `AuthenticationError`, which the host maps
+to HTTP 401 before creating any task or revealing skill details. The host builds
+the `Principal` from the verified caller: its permissions are the union of
+`role_permissions` for the caller's roles, and unknown roles grant nothing.
+Every task operation requires authentication; the public Agent Card does not.
 
 ```python
-from agentframe import Authenticator, HostConfig
+from collections.abc import Mapping
+
+from agentframe import AuthenticationError, VerifiedCaller
 
 
-def protected_host(auth: Authenticator) -> HostConfig:
-    return HostConfig(public_url="https://agent.example.com", auth=auth)
+class ServiceTokenAuth:
+    """Custom authenticator; no inheritance needed."""
+
+    def __init__(self, tokens: Mapping[str, str]) -> None:
+        self._tokens = tokens  # token -> caller ID, from secure configuration
+
+    async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
+        caller_id = self._tokens.get(headers.get("x-service-token", ""))
+        if caller_id is None:
+            raise AuthenticationError("Invalid credentials.")
+        return VerifiedCaller(id=caller_id, roles=frozenset({"Reader"}))
 ```
+
+For brevity this sketch assumes lower-case header names and uses a plain
+dictionary lookup; production authenticators should match header names
+case-insensitively and compare secrets in constant time, as `APIKeyAuth` does.
 
 **Behavior / failures:** a remote host with no auth choice refuses startup
 (`DefinitionError`). Invalid credentials cause `AuthenticationError`; verified
@@ -230,29 +261,42 @@ details remain open; see [OBO boundaries](../authorization.md#cross-agent-identi
 **Purpose / decision:** explicit API-key authentication for development or
 simple service-to-service callers, not credentials embedded in source/cards.
 
-**Decided field:** `APIKeyAuth(keys={...})`; inner key/identity/grant mapping
-schema and request credential location remain open.
+**Signature status:** implemented (M2 story #4).
+
+```text
+APIKey(caller_id: str, roles: Iterable[str] = ())
+APIKeyAuth(*, keys: Mapping[str, APIKey])
+```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `keys` | Mapping; entry schema open | Required trusted configuration | Load keys securely; do not infer a key-to-permission schema from the name. |
+| `keys` | `Mapping[str, APIKey]` | Required, non-empty | Maps each accepted key to its identity. Load keys from the environment or a secret store, never source code. |
+| `APIKey.caller_id` | `str` | Required, non-empty | Becomes `Principal.id`; the key itself never does. Several keys may share one `caller_id`, for example during rotation. |
+| `APIKey.roles` | `Iterable[str]`, stored as `frozenset[str]` | `()` | Role names mapped to permissions by `HostConfig(role_permissions=...)`. A single string is rejected. |
+
+Clients send the key in the `X-API-Key` header.
 
 ```python
-from collections.abc import Mapping
-from agentframe import APIKeyAuth
+import os
 
+from agentframe import APIKey, APIKeyAuth
 
-def development_auth(keys: Mapping[str, object]) -> APIKeyAuth:
-    return APIKeyAuth(keys=keys)
+auth = APIKeyAuth(
+    keys={
+        os.environ["BILLING_KEY"]: APIKey(caller_id="billing-svc", roles=["Reader"]),
+    }
+)
+# With HostConfig (story #3, not yet implemented):
+# HostConfig(public_url=..., auth=auth, role_permissions={"Reader": ["documents:read"]})
 ```
 
-`keys` is supplied by secure application configuration, not literal example
-secrets. This generic placeholder does not finalize accepted entry types.
-
-**Behavior / failures:** unknown/invalid credentials fail; never log raw keys.
-HTTPS, rotation and grant/resource policy remain application responsibilities.
-This built-in does not claim conforming MCP OAuth or Foundry incoming-A2A
-authentication, which have their own protocol requirements.
+**Behavior / failures:** invalid configuration raises `DefinitionError`. A
+missing header raises `AuthenticationError("Authentication required.")`; an
+unknown key raises `AuthenticationError("Invalid credentials.")`. Keys are
+compared in constant time and never logged, included in errors or shown by
+`repr`. HTTPS, rotation and grant/resource policy remain application
+responsibilities. This built-in does not claim conforming MCP OAuth or Foundry
+incoming-A2A authentication, which have their own protocol requirements.
 
 **Related:** [`Authenticator`](#authenticator), [`HostConfig`](hosting.md#hostconfig).
 
@@ -260,7 +304,8 @@ authentication, which have their own protocol requirements.
 
 **Purpose / decision:** explicit opt-in to anonymous remote ingress, never default.
 
-**Decided construction:** `AllowAnonymous()`; no parameters selected.
+**Signature status:** implemented as `AllowAnonymous()` with no parameters
+(M2 story #4). Its `authenticate` returns `None`, ignoring any credentials sent.
 
 | Concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |

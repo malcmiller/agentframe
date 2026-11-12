@@ -31,6 +31,10 @@ class OutputValidationError(AgentFrameError):
     """A skill returned a value that does not match its return annotation."""
 
 
+class AuthenticationError(AgentFrameError):
+    """A remote caller's credentials are missing or invalid."""
+
+
 class PermissionDeniedError(AgentFrameError):
     """The caller lacks a permission that the skill requires."""
 

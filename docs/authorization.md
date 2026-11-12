@@ -13,7 +13,7 @@ names. Roles are one application-controlled way to grant permissions.
 
 | Concept | Proposed responsibility |
 | --- | --- |
-| `Authenticator` | Trusted host interface, with `EntraIDAuth`, `APIKeyAuth` and explicit `AllowAnonymous()` built-ins. Custom interface methods remain open. |
+| `Authenticator` | Trusted host interface, with `EntraIDAuth`, `APIKeyAuth` and explicit `AllowAnonymous()` built-ins. `async authenticate(headers) -> VerifiedCaller \| None` is implemented with `APIKeyAuth`/`AllowAnonymous`; `EntraIDAuth` is M7. |
 | `Principal` | Immutable invocation identity with trusted subject, issuer, tenant where applicable, and verified claims/permission grants. Exact fields remain open. |
 | `@skill(requires_permissions=[...])` | Declare stable permission requirements. All listed permissions are required; metadata does not enforce itself. |
 | `AuthorizationPolicy` | Injected policy interface evaluating principal, skill requirements, and validated resource arguments against authoritative application data. |
