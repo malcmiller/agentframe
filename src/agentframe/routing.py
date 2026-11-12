@@ -9,7 +9,11 @@ from typing import Any, Protocol
 from a2a.types import Message
 
 from agentframe.definitions import AgentDefinition, SkillDefinition
-from agentframe.errors import AgentFrameError, InputValidationError, LimitExceededError
+from agentframe.errors import (
+    AgentFrameError,
+    InputValidationError,
+    TimeoutLimitExceededError,
+)
 from agentframe.principal import Principal
 
 ROUTER_FAILED_MESSAGE = "The skill router failed."
@@ -115,7 +119,7 @@ async def route(
         question.
 
     Raises:
-        LimitExceededError: The router did not answer before the deadline.
+        TimeoutLimitExceededError: The router did not answer before the deadline.
         AgentFrameError: The router raised an exception. The caller gets a
             generic message; the details are only logged.
         InputValidationError: The router returned something other than a call
@@ -127,7 +131,7 @@ async def route(
     except TimeoutError:
         if not timeout.expired():
             raise _router_failed(invocation_id) from None
-        raise LimitExceededError(
+        raise TimeoutLimitExceededError(
             "Routing the request exceeded the run's timeout",
             invocation_id=invocation_id,
         ) from None

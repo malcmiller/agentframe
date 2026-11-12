@@ -296,7 +296,9 @@ async def test_run_result_reports_usage_and_calls() -> None:
     assert model.requests[1].messages[-1] == Message("user", "Once.")
 
 
-async def test_unknown_usage_stays_unknown_not_zero() -> None:
+async def test_counts_the_provider_did_not_report_are_estimated() -> None:
+    # Scripted text replies report no usage, so both counts are estimated
+    # at four characters per token: 50 + 5 input characters, 5 output.
     result = await Runtime().run(
         Writer(model=ScriptedModel(["Done."])),
         skill="rewrite",
@@ -304,7 +306,9 @@ async def test_unknown_usage_stays_unknown_not_zero() -> None:
     )
 
     assert result.model_calls == 1
-    assert result.usage == UNKNOWN
+    assert result.usage == Usage(
+        input_tokens=13 + 2, output_tokens=2, total_tokens=17, estimated=True
+    )
 
 
 @pytest.mark.parametrize(

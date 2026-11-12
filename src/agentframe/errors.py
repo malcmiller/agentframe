@@ -46,7 +46,24 @@ class PolicyUnavailableError(AgentFrameError):
 
 
 class ModelError(AgentFrameError):
-    """Base class for model failures: capability, refusal, truncation, provider."""
+    """Base class for model failures: capability, refusal, truncation, provider.
+
+    Args:
+        message: Safe, human-readable description of the failure.
+        usage: Tokens the failed call consumed, when known. Model adapters set
+            it so the run's accounting counts what the call actually used.
+        invocation_id: Identifier of the run that failed, when known.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: Usage | None = None,
+        invocation_id: str | None = None,
+    ) -> None:
+        super().__init__(message, invocation_id=invocation_id)
+        self.usage = usage
 
 
 class UnsupportedCapabilityError(ModelError):
@@ -83,14 +100,31 @@ class ProviderError(ModelError):
         usage: Usage | None = None,
         invocation_id: str | None = None,
     ) -> None:
-        super().__init__(message, invocation_id=invocation_id)
+        super().__init__(message, usage=usage, invocation_id=invocation_id)
         self.transient = transient
         self.retry_after = retry_after
-        self.usage = usage
 
 
 class LimitExceededError(AgentFrameError):
-    """A run exceeded one of its execution limits."""
+    """A run exceeded one of its execution limits; subclasses name which one."""
+
+
+class TokenLimitExceededError(LimitExceededError):
+    """A model call's input or token reservation does not fit the run's limits.
+
+    Raised before the call is sent: when the input is larger than
+    ``max_input_tokens``, input plus output does not fit the model's context
+    window, or the call's reservation does not fit what is left of
+    ``max_total_tokens``.
+    """
+
+
+class ModelCallLimitExceededError(LimitExceededError):
+    """A model call would exceed the run's ``max_model_calls``; it is not sent."""
+
+
+class TimeoutLimitExceededError(LimitExceededError):
+    """The run's ``timeout_seconds`` expired."""
 
 
 class CancelledError(AgentFrameError):

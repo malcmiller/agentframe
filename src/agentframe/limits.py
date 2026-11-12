@@ -11,23 +11,46 @@ class RunLimits:
 
     Every field defaults to ``None``, meaning "unset": the value is inherited
     from the next lower level (library defaults -> agent -> skill -> per-run).
-    The runtime fills every unset field from ``DEFAULT_LIMITS``.
+    The runtime fills unset fields from ``DEFAULT_LIMITS``.
 
     Attributes:
         timeout_seconds: Wall-clock time a run may take, including scoped
-            service setup. Must be greater than zero when set. Library
-            default: 120 seconds.
+            service setup. Library default: 120 seconds.
+        max_total_tokens: Input plus output tokens all of a run's model calls
+            may use together. Library default: 100000.
+        max_model_calls: Model calls a run may make, counting failed ones.
+            Library default: 10.
+        max_input_tokens: Input tokens one model call may send. Unset at
+            every level means the model's reported context window; when the
+            model does not report one, the run fails with ``DefinitionError``
+            instead of guessing.
 
     Raises:
-        DefinitionError: If ``timeout_seconds`` is set but not greater than zero.
+        DefinitionError: If a set field is not greater than zero.
     """
 
     timeout_seconds: float | None = None
+    max_total_tokens: int | None = None
+    max_model_calls: int | None = None
+    max_input_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        if self.timeout_seconds is not None and not self.timeout_seconds > 0:
-            raise DefinitionError("RunLimits.timeout_seconds must be greater than 0")
+        for name in (
+            "timeout_seconds",
+            "max_total_tokens",
+            "max_model_calls",
+            "max_input_tokens",
+        ):
+            value = getattr(self, name)
+            if value is not None and not value > 0:
+                raise DefinitionError(f"RunLimits.{name} must be greater than 0")
 
 
-DEFAULT_LIMITS = RunLimits(timeout_seconds=120.0)
-"""The library defaults: the lowest precedence level, with every field set."""
+DEFAULT_LIMITS = RunLimits(
+    timeout_seconds=120.0, max_total_tokens=100_000, max_model_calls=10
+)
+"""The library defaults: the lowest precedence level.
+
+``max_input_tokens`` is left unset because its default is the model's own
+context window, known only at run time.
+"""

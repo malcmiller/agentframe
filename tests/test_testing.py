@@ -13,7 +13,7 @@ from agentframe import (
     ProviderError,
     Usage,
 )
-from agentframe.testing import ScriptedModel
+from agentframe.testing import SCRIPTED_CONTEXT_WINDOW, ScriptedModel
 
 
 def make_request(text: str, max_output_tokens: int = 100) -> ModelRequest:
@@ -80,11 +80,13 @@ async def test_calling_more_times_than_scripted_fails_clearly() -> None:
         await model.generate(make_request("2"))
 
 
-async def test_capabilities_are_scripted_and_default_to_unsupported() -> None:
+async def test_capabilities_are_scripted_and_default_to_a_known_context() -> None:
     scripted = ScriptedModel(capabilities=ModelCapabilities(context_window=8192))
 
     assert (await scripted.capabilities()).context_window == 8192
-    assert await ScriptedModel().capabilities() == ModelCapabilities()
+    assert await ScriptedModel().capabilities() == ModelCapabilities(
+        context_window=SCRIPTED_CONTEXT_WINDOW
+    )
 
 
 async def test_records_close_including_through_async_with() -> None:

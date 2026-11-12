@@ -20,12 +20,12 @@ from agentframe.errors import (
     AgentFrameError,
     DefinitionError,
     InputValidationError,
-    LimitExceededError,
     OutputValidationError,
     PermissionDeniedError,
     PolicyUnavailableError,
+    TimeoutLimitExceededError,
 )
-from agentframe.generation import GenerationState
+from agentframe.generation import GenerationState, RunAccounting, input_token_limit
 from agentframe.limits import DEFAULT_LIMITS, RunLimits
 from agentframe.models import DEFAULT_MODEL_SETTINGS, ModelSettings
 from agentframe.options import RunOptions, merge_settings
@@ -80,6 +80,39 @@ class Runtime:
         for skill in type(agent).definition().skills.values():
             self._check_services(skill)
 
+    async def validate_model(self, agent: Agent) -> None:
+        """Check that every skill knows its input token limit before any runs.
+
+        A skill's input limit is its effective ``RunLimits.max_input_tokens``,
+        else the model's reported context window. ``AgentApp`` calls this at
+        startup; local runs that skip it fail the same way at their first
+        model call. Agents without a model pass.
+
+        Reading the model's capabilities may do I/O (for example, an
+        ``OllamaModel`` without ``context_window=`` asks its server), so it is
+        bounded by the agent's timeout.
+
+        Args:
+            agent: Instance of an ``@agent``-decorated class.
+
+        Raises:
+            DefinitionError: The model reports no context window and a skill
+                has no ``max_input_tokens``. A context size is never guessed.
+            ProviderError: The model's capabilities could not be read.
+            TimeoutError: Reading them took longer than the agent's timeout.
+        """
+        if agent.model is None:
+            return
+        agent_limits = merge_settings(DEFAULT_LIMITS, agent.limits)
+        async with asyncio.timeout(agent_limits.timeout_seconds):
+            capabilities = await agent.model.capabilities()
+        for skill in type(agent).definition().skills.values():
+            limits, _ = _effective_settings(agent, skill, RunOptions())
+            try:
+                input_token_limit(limits, capabilities)
+            except DefinitionError as error:
+                raise DefinitionError(f"Skill '{skill.id}': {error.message}") from None
+
     async def invoke(
         self,
         agent: Agent,
@@ -131,7 +164,9 @@ class Runtime:
                 or the authorization policy denied the run.
             PolicyUnavailableError: The authorization policy raised an error
                 or did not answer before the run's deadline.
-            LimitExceededError: The run exceeded its timeout.
+            LimitExceededError: The run exceeded a limit. The subclass names
+                which one: ``TimeoutLimitExceededError``,
+                ``TokenLimitExceededError`` or ``ModelCallLimitExceededError``.
             OutputValidationError: The skill returned an invalid value.
 
             Every ``AgentFrameError`` carries this run's ``invocation_id``.
@@ -155,18 +190,28 @@ class Runtime:
         principal: Principal | None,
         options: RunOptions,
         started_at: float | None = None,
+        accounting: RunAccounting | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
         Package-internal: the A2A host allocates the ID itself so it can report
         the run's ID for skill exceptions, which propagate without one. It
         passes ``started_at``, the event-loop time its run began, so time spent
-        routing the request counts against the skill's timeout.
+        routing the request counts against the skill's timeout, and its own
+        ``accounting`` so it can report usage when the run fails or is cancelled.
         """
         started = time.perf_counter()
+        accounting = accounting or RunAccounting()
         try:
-            value, generation = await self._run(
-                invocation_id, agent, skill, arguments, principal, options, started_at
+            value = await self._run(
+                invocation_id,
+                agent,
+                skill,
+                arguments,
+                principal,
+                options,
+                started_at,
+                accounting,
             )
         except AgentFrameError as error:
             error.invocation_id = invocation_id
@@ -174,8 +219,8 @@ class Runtime:
         return RunResult(
             value=value,
             invocation_id=invocation_id,
-            usage=generation.usage,
-            model_calls=generation.model_calls,
+            usage=accounting.usage,
+            model_calls=accounting.model_calls,
             tool_calls=0,
             duration=timedelta(seconds=time.perf_counter() - started),
             finish_reason=FinishReason.COMPLETED,
@@ -190,8 +235,9 @@ class Runtime:
         principal: Principal | None,
         options: RunOptions,
         started_at: float | None,
-    ) -> tuple[Any, GenerationState]:
-        """Run the skill; return its validated value and the run's model state."""
+        accounting: RunAccounting,
+    ) -> Any:
+        """Run the skill and return its validated value."""
         definition = type(agent).definition()
         skill = definition.skills.get(skill_id)
         if skill is None:
@@ -216,6 +262,7 @@ class Runtime:
             instructions=agent.instructions,
             settings=model_settings,
             limits=limits,
+            accounting=accounting,
         )
         ctx = RunContext(invocation_id, principal, deadline, generation)
         try:
@@ -228,10 +275,10 @@ class Runtime:
         except TimeoutError:
             if not timeout.expired():
                 raise
-            raise LimitExceededError(
+            raise TimeoutLimitExceededError(
                 f"Skill '{skill.id}' exceeded its timeout of {timeout_seconds} seconds"
             ) from None
-        return _validate_output(skill, result), generation
+        return _validate_output(skill, result)
 
     async def _check_policy(
         self,

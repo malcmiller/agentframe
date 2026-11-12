@@ -4,7 +4,7 @@ Calls the OpenAI v1 Responses API through the official ``openai`` package.
 Needs the optional extra: ``pip install agentframe[foundry]``.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from types import TracebackType
 from typing import Self
@@ -205,7 +205,7 @@ def _model_response(response: Response) -> ModelResponse:
         return ModelResponse(text="", usage=usage, finish_reason=FinishReason.REFUSED)
     finish_reason = FinishReason.COMPLETED
     if response.status == "incomplete":
-        finish_reason = _incomplete_finish_reason(response)
+        finish_reason = _incomplete_finish_reason(response, usage)
     return ModelResponse(
         text=response.output_text, usage=usage, finish_reason=finish_reason
     )
@@ -240,14 +240,15 @@ def _has_refusal(response: Response) -> bool:
     )
 
 
-def _incomplete_finish_reason(response: Response) -> FinishReason:
+def _incomplete_finish_reason(response: Response, usage: Usage) -> FinishReason:
     reason = response.incomplete_details.reason if response.incomplete_details else None
     if reason == "max_output_tokens":
         return FinishReason.LENGTH
     if reason == "content_filter":
         return FinishReason.CONTENT_FILTER
     raise IncompleteOutputError(
-        f"Foundry stopped the response early (reason {reason or 'unknown'})"
+        f"Foundry stopped the response early (reason {reason or 'unknown'})",
+        usage=usage,
     )
 
 
@@ -299,15 +300,26 @@ def _status_error(error: openai.APIStatusError, deployment: str) -> ProviderErro
         return ProviderError(
             f"Foundry could not handle the call now (HTTP {status_code})",
             transient=True,
-            retry_after=_retry_after(error.response.headers.get("retry-after")),
+            retry_after=_retry_after(error.response.headers),
         )
     return ProviderError(
         f"Foundry rejected the request (HTTP {status_code})", transient=False
     )
 
 
-def _retry_after(header: str | None) -> float | None:
-    """Read a ``Retry-After`` header given in seconds; dates are ignored."""
+def _retry_after(headers: Mapping[str, str]) -> float | None:
+    """Read the retry hint in seconds, preferring ``retry-after-ms``.
+
+    Azure OpenAI sends ``retry-after-ms`` in milliseconds alongside the
+    standard ``Retry-After`` in seconds. HTTP dates are ignored.
+    """
+    milliseconds = _number(headers.get("retry-after-ms"))
+    if milliseconds is not None:
+        return milliseconds / 1000
+    return _number(headers.get("retry-after"))
+
+
+def _number(header: str | None) -> float | None:
     try:
         return float(header) if header is not None else None
     except ValueError:

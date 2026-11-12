@@ -61,8 +61,9 @@ class AgentApp:
     anonymous callers share one namespace and cannot list tasks. Messages that
     do not activate the skill-call extension are free text, routed by
     ``router``. Constructing
-    the app validates everything and starts nothing; serve it with any ASGI
-    server.
+    the app validates everything that needs no I/O and starts nothing; serve
+    it with any ASGI server. Server startup then checks the model's input
+    token limits with ``Runtime.validate_model`` and fails if one is unknown.
 
     Args:
         agent: Instance of an ``@agent``-decorated class.
@@ -114,6 +115,9 @@ class AgentApp:
 
         @asynccontextmanager
         async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+            # Fails startup, before any request is served, when a skill has
+            # no input token limit.
+            await runtime.validate_model(agent)
             yield
             await handler.aclose()
 

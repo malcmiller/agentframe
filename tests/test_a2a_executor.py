@@ -37,6 +37,7 @@ from agentframe.a2a_executor import (
     publish_input_required,
     result_part,
 )
+from agentframe.generation import RunAccounting
 
 
 class RecordingQueue(EventQueue):
@@ -136,7 +137,7 @@ async def test_model_errors_fail_the_task_with_their_safe_message(
 ) -> None:
     task, queue = recording_task()
 
-    await publish_failure(task, error)
+    await publish_failure(task, error, RunAccounting())
 
     status = only_status(queue).status
     assert status.state == TaskState.TASK_STATE_FAILED
@@ -146,7 +147,9 @@ async def test_model_errors_fail_the_task_with_their_safe_message(
 async def test_cancelled_run_ends_the_task_canceled() -> None:
     task, queue = recording_task()
 
-    await publish_failure(task, CancelledError("Cancelled.", invocation_id="run-1"))
+    await publish_failure(
+        task, CancelledError("Cancelled.", invocation_id="run-1"), RunAccounting()
+    )
 
     event = only_status(queue)
     assert event.status.state == TaskState.TASK_STATE_CANCELED
@@ -156,7 +159,7 @@ async def test_cancelled_run_ends_the_task_canceled() -> None:
 async def test_failure_published_before_any_run_still_has_an_invocation_id() -> None:
     task, queue = recording_task()
 
-    await publish_failure(task, AgentFrameError("The router failed."))
+    await publish_failure(task, AgentFrameError("The router failed."), RunAccounting())
 
     event = only_status(queue)
     assert event.status.state == TaskState.TASK_STATE_FAILED
@@ -168,7 +171,7 @@ async def test_definition_error_reaches_callers_only_as_a_generic_message() -> N
     task, queue = recording_task()
     error = DefinitionError("no service registered for parameter 'db'")
 
-    await publish_failure(task, error)
+    await publish_failure(task, error, RunAccounting())
 
     event = only_status(queue)
     assert event.status.state == TaskState.TASK_STATE_FAILED
@@ -181,7 +184,9 @@ async def test_definition_error_reaches_callers_only_as_a_generic_message() -> N
 async def test_question_leaves_the_task_input_required() -> None:
     task, queue = recording_task()
 
-    await publish_input_required(task, "Which city did you mean?", "run-1")
+    await publish_input_required(
+        task, "Which city did you mean?", "run-1", RunAccounting()
+    )
 
     event = only_status(queue)
     assert event.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
