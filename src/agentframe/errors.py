@@ -1,5 +1,9 @@
 """Errors raised by AgentFrame."""
 
+from collections.abc import Collection
+
+from pydantic import ValidationError
+
 from agentframe.runtime.usage import Usage
 
 
@@ -133,3 +137,31 @@ class CancelledError(AgentFrameError):
     Distinct from ``asyncio.CancelledError``: this reports a cancelled run to
     callers and does not cancel anything itself.
     """
+
+
+def describe_validation_error(
+    error: ValidationError, field_names: Collection[str] | None = None
+) -> str:
+    """List field locations and problems without the submitted values.
+
+    Used for safe error messages: the invalid input itself, which may be
+    caller or model text, is never included.
+
+    Args:
+        error: The Pydantic validation error.
+        field_names: When given, location parts that are not one of these
+            names (such as dictionary keys chosen by a model) are shown as
+            ``<key>``, so the input cannot leak through its keys.
+    """
+    problems = []
+    for item in error.errors(include_input=False, include_url=False):
+        parts = [_location_part(part, field_names) for part in item["loc"]]
+        location = ".".join(parts) or "value"
+        problems.append(f"{location}: {item['msg']}")
+    return "; ".join(problems)
+
+
+def _location_part(part: str | int, field_names: Collection[str] | None) -> str:
+    if field_names is None or isinstance(part, int) or part in field_names:
+        return str(part)
+    return "<key>"

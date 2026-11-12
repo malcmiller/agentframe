@@ -1,6 +1,9 @@
 """Per-run context passed to skills."""
 
 from dataclasses import dataclass, field
+from typing import overload
+
+from pydantic import BaseModel
 
 from agentframe.runtime.generation import GenerationState
 from agentframe.security.principal import Principal
@@ -23,8 +26,22 @@ class RunContext:
     # must change as the run makes model calls.
     _generation: GenerationState = field(repr=False, compare=False)
 
-    async def generate(self, text: str, *, instructions: str | None = None) -> str:
-        """Generate text with the agent's model.
+    @overload
+    async def generate(self, text: str, *, instructions: str | None = None) -> str: ...
+
+    @overload
+    async def generate[T: BaseModel](
+        self, text: str, *, instructions: str | None = None, output: type[T]
+    ) -> T: ...
+
+    async def generate(
+        self,
+        text: str,
+        *,
+        instructions: str | None = None,
+        output: type[BaseModel] | None = None,
+    ) -> str | BaseModel:
+        """Generate text, or a validated ``output`` instance, with the agent's model.
 
         The agent's ``instructions`` and then ``instructions`` are sent as
         trusted ``system`` messages; ``text`` is sent as a separate ``user``
@@ -35,18 +52,35 @@ class RunContext:
             text: Untrusted content for the model, such as caller input.
             instructions: Trusted instructions for this call only. Never put
                 untrusted content here.
+            output: A Pydantic ``BaseModel`` subclass. When given, the model
+                is asked for JSON matching its schema and the reply is
+                validated into an instance. Invalid output is never repaired
+                or re-requested.
 
         Returns:
-            The model's complete answer.
+            The model's complete answer, or an ``output`` instance when
+            ``output`` is given.
 
         Raises:
+            DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
+                a ``RootModel``.
             UnsupportedCapabilityError: The agent has no model configured, or
-                the model lacks something the request needs.
+                the model lacks something the request needs, such as
+                structured output. Raised before anything is sent.
+            OutputValidationError: The structured reply is not valid JSON or
+                does not match ``output``.
             ModelRefusalError: The model refused, or a content filter blocked
                 its output.
             IncompleteOutputError: The output was cut short at the token
-                limit or was empty. Partial text is never returned.
+                limit or was empty. Partial text or objects are never returned.
             ProviderError: The model provider call failed.
-            LimitExceededError: The run's timeout expired during the call.
+            LimitExceededError: The call does not fit the run's limits, or the
+                run's timeout expired during the call.
         """
-        return await self._generation.generate_text(text, instructions, self.deadline)
+        if output is None:
+            return await self._generation.generate_text(
+                text, instructions, self.deadline
+            )
+        return await self._generation.generate_output(
+            text, instructions, output, self.deadline
+        )

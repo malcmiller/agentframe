@@ -36,6 +36,7 @@ from agentframe.models.base import (
     ModelRequest,
     ModelResponse,
     ModelSettings,
+    OutputSchema,
     Role,
 )
 from agentframe.runtime.limits import RunLimits
@@ -88,6 +89,7 @@ __all__ = [
     "ModelRequest",
     "ModelResponse",
     "ModelSettings",
+    "OutputSchema",
     "OutputValidationError",
     "PermissionDeniedError",
     "PolicyUnavailableError",

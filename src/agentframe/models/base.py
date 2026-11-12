@@ -6,7 +6,7 @@ provider's types, so skills never see provider SDKs.
 
 from dataclasses import dataclass, fields
 from types import TracebackType
-from typing import Literal, Protocol, Self
+from typing import Any, Literal, Protocol, Self
 
 from agentframe.errors import DefinitionError
 from agentframe.runtime.usage import FinishReason, Usage
@@ -61,6 +61,21 @@ DEFAULT_MODEL_SETTINGS = ModelSettings(max_output_tokens=4096)
 
 
 @dataclass(frozen=True)
+class OutputSchema:
+    """The JSON shape a model must return for a structured-output call.
+
+    Attributes:
+        name: The output type's name, for example ``"Summary"``.
+        json_schema: The output type's JSON schema, as produced by Pydantic's
+            ``model_json_schema()``. Adapters translate it to their
+            provider's format; they never validate the reply themselves.
+    """
+
+    name: str
+    json_schema: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class ModelRequest:
     """Everything a model needs for one call.
 
@@ -68,6 +83,8 @@ class ModelRequest:
         messages: The conversation, in order.
         settings: The fully resolved settings for this call. Every field
             must be set, so adapters never have to guess a default.
+        output: The JSON shape the reply must have, or ``None`` for plain text.
+            When set, the adapter returns the JSON as ``ModelResponse.text``.
 
     Raises:
         DefinitionError: If any field of ``settings`` is unset (``None``).
@@ -75,6 +92,7 @@ class ModelRequest:
 
     messages: tuple[Message, ...]
     settings: ModelSettings
+    output: OutputSchema | None = None
 
     def __post_init__(self) -> None:
         unset = [
@@ -97,7 +115,7 @@ class ModelResponse:
     ``LENGTH`` or ``REFUSED`` finish is an error is the caller's job.
 
     Attributes:
-        text: The generated text.
+        text: The generated text; the JSON text for a structured-output call.
         usage: Tokens the call consumed. Unknown counts are ``None``, not zero.
         finish_reason: Why the model stopped.
     """

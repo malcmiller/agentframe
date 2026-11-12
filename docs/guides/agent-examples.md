@@ -309,15 +309,18 @@ skills require explicit composition, not automatic orchestration.
 ## Typed structured output and bounded tools
 
 Both capabilities belong in the first usable release, while each agent may
-still be model-free or omit tools. All examples remain proposals and return
-complete validated results; streaming is later.
+still be model-free or omit tools. Structured output is implemented (M4 #53);
+the tool example remains a proposal (M5). Both return complete validated
+results; streaming is later.
 
 The decided author API uses one `ctx.generate` method: omit `output` for text,
-or pass a Pydantic class for a validated instance. Unsupported capability fails
-before sending, refusal raises `ModelRefusalError`, invalid structured output
-raises `OutputValidationError`, and token-limit truncation raises
-`IncompleteOutputError` unless the skill explicitly permits partial results
-(opt-in syntax still open). No provider calls belong in skill business logic.
+or pass a Pydantic `BaseModel` subclass for a validated instance (type checkers
+infer the class). A model without structured-output support fails with
+`UnsupportedCapabilityError` before sending, refusal raises `ModelRefusalError`,
+invalid JSON or JSON that does not match raises `OutputValidationError` (field
+locations only, no repair or re-ask), and token-limit truncation raises
+`IncompleteOutputError`, never a partially parsed object. No provider calls
+belong in skill business logic.
 
 ```python
 from pydantic import BaseModel, Field
@@ -340,11 +343,12 @@ class StructuredWriter(Agent):
 ```
 
 Declaring a Pydantic skill return type alone does not configure model structured
-generation. AgentFrame owns normalized messages, tool calls/results, token
-usage and finish reasons; adapters translate provider types. Exact layouts
-and supported Pydantic schema subset remain open, not the `output=` syntax
-or fail-before-send capability rule.
-The A2A representation of typed results also needs a tested native part mapping.
+generation; pass `output=`. Only `BaseModel` subclasses are accepted (not
+`RootModel`); wrap a list in a model field. AgentFrame sends the class's JSON
+schema as `ModelRequest.output` and validates the reply; adapters translate the
+schema to their provider. Provider schema subsets are documented with each
+adapter as it gains support. Hosted, the returned instance becomes one A2A data
+part `{"value": {...}}`.
 
 This tool example uses the existing proposed registration shape. The supplied
 `model` must support the requested tool capability; instructions do not grant it.
