@@ -27,7 +27,10 @@ Outcomes map to native A2A results as follows:
 - Router exceptions and timeouts end the task in ``FAILED``; invalid router
   decisions in ``REJECTED``.
 
-Every task status carries the run's ``invocation_id`` in its metadata.
+Every task status carries the run's ``invocation_id`` and a ``usage``
+snapshot in its metadata: ``input_tokens``, ``output_tokens``,
+``total_tokens`` (``null`` when unknown), ``estimated`` and ``model_calls``.
+A cancelled task reports the usage its run had reached when it was cancelled.
 """
 
 import asyncio
@@ -53,6 +56,7 @@ from agentframe.errors import (
     OutputValidationError,
     PermissionDeniedError,
 )
+from agentframe.generation import RunAccounting
 from agentframe.limits import DEFAULT_LIMITS
 from agentframe.options import RunOptions, merge_settings
 from agentframe.principal import Principal
@@ -160,6 +164,8 @@ class RuntimeExecutor(AgentExecutor):
         self._agent = agent
         self._runtime = runtime
         self._router = router
+        # Accounting of each running task, so a cancel can report its usage.
+        self._running: dict[str, RunAccounting] = {}
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Run the requested or routed skill and publish the task's new state."""
@@ -181,13 +187,29 @@ class RuntimeExecutor(AgentExecutor):
                 )
             )
         task = TaskUpdater(event_queue, task_id, context_id)
-        principal: Principal | None = context.call_context.state.get(
-            PRINCIPAL_STATE_KEY
-        )
         invocation_id = _new_invocation_id()
+        accounting = RunAccounting()
         # Stored on the task now so a later cancel can report the same ID.
         await task.update_status(
-            TaskState.TASK_STATE_WORKING, metadata=_invocation_metadata(invocation_id)
+            TaskState.TASK_STATE_WORKING,
+            metadata=run_metadata(invocation_id, accounting),
+        )
+        self._running[task_id] = accounting
+        try:
+            await self._execute(context, task, invocation_id, accounting)
+        finally:
+            self._running.pop(task_id, None)
+
+    async def _execute(
+        self,
+        context: RequestContext,
+        task: TaskUpdater,
+        invocation_id: str,
+        accounting: RunAccounting,
+    ) -> None:
+        """Run the skill and publish its result, question or failure."""
+        principal: Principal | None = context.call_context.state.get(
+            PRINCIPAL_STATE_KEY
         )
         started_at = asyncio.get_running_loop().time()
         # noinspection PyBroadException
@@ -196,7 +218,9 @@ class RuntimeExecutor(AgentExecutor):
                 context, principal, started_at, invocation_id
             )
             if isinstance(call, Clarification):
-                await publish_input_required(task, call.question, invocation_id)
+                await publish_input_required(
+                    task, call.question, invocation_id, accounting
+                )
                 return
             # The executor shares the runtime's pipeline under its own invocation ID.
             # noinspection PyProtectedMember
@@ -209,11 +233,12 @@ class RuntimeExecutor(AgentExecutor):
                 # Hosted callers cannot send per-run options in M3.
                 RunOptions(),
                 started_at,
+                accounting,
             )
             part = result_part(result.value, invocation_id)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
-            await publish_failure(task, error)
+            await publish_failure(task, error, accounting)
             return
         except Exception:
             # Skill exceptions may carry submitted values or secrets, so the
@@ -221,9 +246,9 @@ class RuntimeExecutor(AgentExecutor):
             # under the run's ID that the caller can quote.
             failure = AgentFrameError(SKILL_FAILED_MESSAGE, invocation_id=invocation_id)
             logger.exception("Skill failed (invocation_id=%s)", invocation_id)
-            await publish_failure(task, failure)
+            await publish_failure(task, failure, accounting)
             return
-        await publish_result(task, part, invocation_id)
+        await publish_result(task, part, invocation_id, accounting)
 
     async def _choose_skill(
         self,
@@ -261,7 +286,7 @@ class RuntimeExecutor(AgentExecutor):
         The SDK calls this only for the caller's own unfinished task, then
         cancels the ``execute`` call. That ``asyncio`` cancellation unwinds
         the run, so per-run services are still cleaned up. The task reports
-        the ``invocation_id`` its run started with.
+        the ``invocation_id`` its run started with and the usage it reached.
         """
         task_id, context_id = context.task_id, context.context_id
         assert task_id is not None and context_id is not None
@@ -271,8 +296,12 @@ class RuntimeExecutor(AgentExecutor):
         if current_task is not None:
             stored = dict(current_task.metadata.items()).get("invocation_id")
             invocation_id = stored if isinstance(stored, str) else None
+        # A task waiting for input has no running run, so it used nothing more.
+        accounting = self._running.get(task_id, RunAccounting())
         await publish_failure(
-            task, CancelledError(CANCELLED_MESSAGE, invocation_id=invocation_id)
+            task,
+            CancelledError(CANCELLED_MESSAGE, invocation_id=invocation_id),
+            accounting,
         )
 
 
@@ -319,15 +348,20 @@ def failure_state(error: AgentFrameError) -> TaskState:
     return TaskState.TASK_STATE_FAILED
 
 
-async def publish_result(task: TaskUpdater, part: Part, invocation_id: str) -> None:
+async def publish_result(
+    task: TaskUpdater, part: Part, invocation_id: str, accounting: RunAccounting
+) -> None:
     """Publish a run's result as the task's artifact and complete the task."""
     await task.add_artifact([part], name="result")
     await task.update_status(
-        TaskState.TASK_STATE_COMPLETED, metadata=_invocation_metadata(invocation_id)
+        TaskState.TASK_STATE_COMPLETED,
+        metadata=run_metadata(invocation_id, accounting),
     )
 
 
-async def publish_failure(task: TaskUpdater, error: AgentFrameError) -> None:
+async def publish_failure(
+    task: TaskUpdater, error: AgentFrameError, accounting: RunAccounting
+) -> None:
     """End the task in the state for ``error`` with its safe message.
 
     A ``DefinitionError`` names agent internals, so it is logged and callers
@@ -339,12 +373,12 @@ async def publish_failure(task: TaskUpdater, error: AgentFrameError) -> None:
     await task.update_status(
         failure_state(error),
         message=message,
-        metadata=_invocation_metadata(error.invocation_id or _new_invocation_id()),
+        metadata=run_metadata(error.invocation_id or _new_invocation_id(), accounting),
     )
 
 
 async def publish_input_required(
-    task: TaskUpdater, question: str, invocation_id: str
+    task: TaskUpdater, question: str, invocation_id: str, accounting: RunAccounting
 ) -> None:
     """Ask the caller a question, leaving the task in ``INPUT_REQUIRED``.
 
@@ -352,13 +386,34 @@ async def publish_input_required(
         task: The task to update.
         question: Safe text telling the caller what is missing or ambiguous.
         invocation_id: The run that needs the answer.
+        accounting: The run's usage so far.
     """
     message = task.new_agent_message([new_text_part(question)])
     await task.update_status(
         TaskState.TASK_STATE_INPUT_REQUIRED,
         message=message,
-        metadata=_invocation_metadata(invocation_id),
+        metadata=run_metadata(invocation_id, accounting),
     )
+
+
+def run_metadata(invocation_id: str, accounting: RunAccounting) -> dict[str, Any]:
+    """Return the task metadata that identifies a run and reports its usage.
+
+    Only safe values are included: the run's ID, token counts (``None`` when
+    unknown, including while a model call is still running, as when a task is
+    cancelled), whether any count is estimated, and the number of model calls.
+    """
+    usage = accounting.current_usage()
+    return {
+        "invocation_id": invocation_id,
+        "usage": {
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "total_tokens": usage.total_tokens,
+            "estimated": usage.estimated,
+            "model_calls": accounting.model_calls,
+        },
+    }
 
 
 def _earlier_messages(task: Task | None) -> list[Message]:
@@ -388,7 +443,3 @@ def _safe_message(error: AgentFrameError) -> str:
 
 def _new_invocation_id() -> str:
     return str(uuid.uuid4())
-
-
-def _invocation_metadata(invocation_id: str) -> dict[str, Any]:
-    return {"invocation_id": invocation_id}

@@ -6,8 +6,11 @@ contracts. As of M1, `Runtime(services=...)`, `invoke`, `run`, `RunResult`,
 `InputValidationError`, `OutputValidationError`, `PermissionDeniedError` and
 `LimitExceededError` classes are implemented from source. M2 adds
 `Runtime(authorization=...)`, `PolicyUnavailableError` and `CancelledError`. M3 #33
-adds the `FinishReason` model values and the `ModelError` family; the remaining
-parameters and errors arrive in later milestones. Managed local invocation is
+adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
+`Runtime.validate_model`, token/model-call accounting in `RunResult` and the
+`TokenLimitExceededError`, `ModelCallLimitExceededError` and
+`TimeoutLimitExceededError` subtypes. The remaining parameters and errors
+arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
 
 ## `Runtime`
@@ -86,6 +89,38 @@ decorated with `@agent` or any skill's `Inject[T]` parameter has no registered
 service. It runs no skill code and creates no scoped services.
 
 **Related:** [`Runtime`](#runtime), [`Services`](agents.md#services).
+
+## `Runtime.validate_model`
+
+**Purpose / decision:** check, before serving any work, that every skill of a
+model-backed agent knows its input token limit, so an unknown context size is
+never guessed. [`AgentApp`](hosting.md#agentapp) calls it at server startup.
+
+**Signature status:** implemented in M3 (#36) as
+`async Runtime.validate_model(agent: Agent) -> None`.
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `agent` | `Agent` instance | Required | Instance of an `@agent`-decorated class. |
+
+```python
+from agentframe import Agent, Runtime
+
+
+async def check_model(agent: Agent) -> None:
+    await Runtime().validate_model(agent)
+```
+
+**Behavior / failures:** agents without a model pass. Otherwise it reads
+`agent.model.capabilities()` (which may do I/O, so it is bounded by the agent's
+timeout) and, for each skill, resolves the effective `RunLimits` (library →
+agent → skill). A skill whose `max_input_tokens` is unset while the model
+reports no context window raises `DefinitionError` naming the skill. Local runs
+that skip this check fail the same way before their first model call.
+`ProviderError` and `TimeoutError` propagate when capabilities cannot be read.
+
+**Related:** [`RunLimits`](configuration.md#runlimits),
+[`ModelCapabilities`](models.md#modelcapabilities).
 
 ## `Runtime.invoke`
 
@@ -219,7 +254,12 @@ frozen generic dataclass `RunResult[T]`.
 `Usage(input_tokens, output_tokens, total_tokens, estimated)` is a frozen
 dataclass. Each count is `int | None`, where `None` means unknown, never zero;
 `estimated: bool` marks estimates. Model-free runs report
-`Usage(0, 0, 0, estimated=False)`. The same `Usage` and `FinishReason` describe
+`Usage(0, 0, 0, estimated=False)`. Since M3 #36 `usage` and `model_calls` add
+up every model call of the run, including failed ones. Counts the provider did
+not report for a returned response are filled with a character-based estimate
+(four characters per token) and `estimated=True`; a failed or cancelled call
+with no reported usage makes the counts unknown (`None`). A successful run's
+`finish_reason` is `COMPLETED`: other finish reasons fail the run. The same `Usage` and `FinishReason` describe
 a single model call in [`ModelResponse`](models.md#modelresponse). Provider completeness details and no hard
 billing guarantee remain as described in [accounting](../limits.md#accounting-and-enforcement).
 
@@ -231,9 +271,10 @@ def validated_value(result: RunResult) -> object:
     return result.value
 ```
 
-**Behavior / failures:** ordinary remote A2A returns only the invocation ID in response
-metadata, not `RunResult`, counters, provider internals or stack traces. Exact
-metadata key/placement remains open and must use native extension/metadata rules.
+**Behavior / failures:** ordinary remote A2A does not return `RunResult`,
+provider internals or stack traces. Task metadata carries the invocation ID and,
+since M3 #36, a safe usage snapshot (token counts, `estimated` and
+`model_calls`); see [result and failure mapping](hosting.md#result-and-failure-mapping).
 The negotiated M8+ extension separately reports actual usage for cross-hop
 accounting, not full local execution results or provider payloads.
 Model-free runs have zero model usage/calls, not guessed inference.
@@ -410,13 +451,14 @@ policy's own error; the original exception is chained for server-side diagnostic
 
 **Purpose / decision:** base for model capability, refusal, incomplete-output and provider errors.
 **Signature status:** implemented (M3 #33) `AgentFrameError` subtype with the
-inherited `(message, *, invocation_id=None)` constructor, as are its subtypes
-except `ProviderError`. Adapters raise them without an invocation ID; the
-runtime attaches the run's ID.
+constructor `(message, *, usage=None, invocation_id=None)`, shared by its
+subtypes except `ProviderError`. Adapters raise them without an invocation ID;
+the runtime attaches the run's ID.
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
 | Inherited error contract | Invocation ID and safe message | Required | No provider exception passthrough. |
+| `usage` | `Usage \| None` | `None` | Tokens the failed call consumed, when the adapter knows them (M3 #36). The run's accounting settles to it instead of dropping it. |
 
 ```python
 from agentframe import ModelError
@@ -523,7 +565,9 @@ the same token/model-call allowance and deadline; never replay a tool side effec
 ## `LimitExceededError`
 
 **Purpose / decision:** base for token, model-call, tool-call and timeout limit failures.
-**Signature status:** base name decided; those subtype names remain open.
+**Signature status:** implemented base; the token, model-call and timeout
+subtypes below are implemented (M3 #36), the tool-call subtype name remains open.
+`except LimitExceededError` catches all of them.
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
@@ -538,9 +582,66 @@ def exhausted(error: LimitExceededError) -> object:
 ```
 
 **Behavior / failures:** do not silently clamp/truncate or reset budgets.
-M1 raises the base class when a run exceeds `RunLimits.timeout_seconds`;
-scoped-service cleanup still runs.
 **Related:** [`RunLimits`](configuration.md#runlimits), [`AgentFrameError`](#agentframeerror).
+
+## `TokenLimitExceededError`
+
+**Purpose / decision:** a model call does not fit the run's token limits.
+**Signature status:** implemented (M3 #36) `LimitExceededError` subtype with the
+inherited constructor.
+
+```python
+from agentframe import TokenLimitExceededError
+
+
+def too_large(error: TokenLimitExceededError) -> str:
+    return error.message
+```
+
+**Behavior / failures:** raised before the call is sent when the estimated
+input exceeds the input limit, input plus `max_output_tokens` exceeds the
+model's context window, or the call's reservation (input estimate +
+`max_output_tokens`) does not fit what is left of `max_total_tokens`. Input is
+never truncated and the output cap is never lowered to fit.
+**Related:** [accounting](../limits.md#implemented-token-accounting-m3).
+
+## `ModelCallLimitExceededError`
+
+**Purpose / decision:** a model call would exceed `RunLimits.max_model_calls`.
+**Signature status:** implemented (M3 #36) `LimitExceededError` subtype with the
+inherited constructor.
+
+```python
+from agentframe import ModelCallLimitExceededError
+
+
+def too_many(error: ModelCallLimitExceededError) -> str:
+    return error.message
+```
+
+**Behavior / failures:** raised before the call is sent. Failed calls count
+toward the limit; a call refused with `UnsupportedCapabilityError` before it
+was sent does not.
+**Related:** [`RunLimits`](configuration.md#runlimits).
+
+## `TimeoutLimitExceededError`
+
+**Purpose / decision:** the run's `RunLimits.timeout_seconds` expired.
+**Signature status:** implemented (M3 #36) `LimitExceededError` subtype with the
+inherited constructor; the timeouts M1–M3 raised as the base class now raise
+this subtype.
+
+```python
+from agentframe import TimeoutLimitExceededError
+
+
+def too_slow(error: TimeoutLimitExceededError) -> str:
+    return error.message
+```
+
+**Behavior / failures:** raised when the skill, a model call or free-text
+routing runs past the run's deadline; scoped-service cleanup still runs.
+**Related:** [`RunLimits`](configuration.md#runlimits).
 
 ## `CancelledError`
 

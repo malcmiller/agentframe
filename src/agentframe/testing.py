@@ -30,6 +30,9 @@ _UNKNOWN_USAGE = Usage(
     input_tokens=None, output_tokens=None, total_tokens=None, estimated=False
 )
 
+SCRIPTED_CONTEXT_WINDOW = 128_000
+"""The context window ``ScriptedModel`` reports unless given ``capabilities``."""
+
 
 class ScriptedModel:
     """A deterministic ``Model`` that replays scripted replies in order.
@@ -40,8 +43,10 @@ class ScriptedModel:
 
     Args:
         replies: The replies for successive ``generate`` calls.
-        capabilities: What ``capabilities()`` returns. Defaults to
-            ``ModelCapabilities()``, which supports nothing optional.
+        capabilities: What ``capabilities()`` returns. Defaults to a
+            ``SCRIPTED_CONTEXT_WINDOW`` context window and no structured
+            output or tools. Pass ``ModelCapabilities()`` for a model that
+            reports no context window.
 
     Attributes:
         requests: Every request received by ``generate``, in order.
@@ -55,7 +60,9 @@ class ScriptedModel:
         capabilities: ModelCapabilities | None = None,
     ) -> None:
         self._replies = deque(replies)
-        self._capabilities = capabilities or ModelCapabilities()
+        self._capabilities = capabilities or ModelCapabilities(
+            context_window=SCRIPTED_CONTEXT_WINDOW
+        )
         self.requests: list[ModelRequest] = []
         self.closed = False
 

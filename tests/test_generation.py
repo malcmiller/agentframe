@@ -5,7 +5,7 @@ localhost HTTP to an ``AgentApp`` served by Uvicorn.
 """
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
@@ -123,14 +123,17 @@ class Plain(Agent):
 
 
 class BlockingModel(ScriptedModel):
-    """A model whose calls never finish, recording when they are cancelled."""
+    """Answers its scripted replies, then blocks, recording when it is cancelled."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, replies: list[ModelResponse] | None = None) -> None:
+        super().__init__(replies or [])
+        self.answers = len(replies or [])
         self.started = asyncio.Event()
         self.cancelled = False
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        if len(self.requests) < self.answers:
+            return await super().generate(request)
         self.requests.append(request)
         self.started.set()
         try:
@@ -296,7 +299,9 @@ async def test_run_result_reports_usage_and_calls() -> None:
     assert model.requests[1].messages[-1] == Message("user", "Once.")
 
 
-async def test_unknown_usage_stays_unknown_not_zero() -> None:
+async def test_counts_the_provider_did_not_report_are_estimated() -> None:
+    # Scripted text replies report no usage, so both counts are estimated
+    # at four characters per token: 50 + 5 input characters, 5 output.
     result = await Runtime().run(
         Writer(model=ScriptedModel(["Done."])),
         skill="rewrite",
@@ -304,7 +309,9 @@ async def test_unknown_usage_stays_unknown_not_zero() -> None:
     )
 
     assert result.model_calls == 1
-    assert result.usage == UNKNOWN
+    assert result.usage == Usage(
+        input_tokens=13 + 2, output_tokens=2, total_tokens=17, estimated=True
+    )
 
 
 @pytest.mark.parametrize(
@@ -328,10 +335,15 @@ async def test_unknown_usage_stays_unknown_not_zero() -> None:
             UNKNOWN,
             id="provider-error-without-usage",
         ),
+        pytest.param(
+            IncompleteOutputError("Stopped early", usage=usage(4, 3)),
+            usage(4, 3),
+            id="adapter-error-with-usage",
+        ),
     ],
 )
 async def test_failed_calls_are_counted_before_the_error_is_raised(
-    reply: ModelResponse | ProviderError, expected_usage: Usage
+    reply: ModelResponse | ModelError, expected_usage: Usage
 ) -> None:
     result = await Runtime().run(
         Writer(model=ScriptedModel([reply])),
@@ -403,28 +415,43 @@ async def test_cancelling_the_run_cancels_the_model_call() -> None:
 # Hosted over A2A
 
 
-async def run_hosted(
-    serve: ServeLocally, writer: Writer, skill_id: str, arguments: Mapping[str, Any]
-) -> dict[str, Any]:
+HEADERS = {"A2A-Version": "1.0", "A2A-Extensions": SKILL_CALL_EXTENSION_URI}
+
+
+def writer_app(writer: Writer) -> Callable[[str], AgentApp]:
     def make_app(public_url: str) -> AgentApp:
         host = HostConfig(public_url=public_url, auth=AllowAnonymous())
         return AgentApp(agent=writer, host=host)
 
+    return make_app
+
+
+def json_rpc(method: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": "1", "method": method, "params": params}
+
+
+def send_params(
+    skill_id: str, arguments: Mapping[str, Any], return_immediately: bool = False
+) -> dict[str, Any]:
     message = {
         "messageId": "m-1",
         "role": "ROLE_USER",
         "parts": [{"data": dict(arguments)}],
         "metadata": {"agentframe.skill": skill_id},
     }
-    body = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "method": "SendMessage",
-        "params": {"message": message},
-    }
-    headers = {"A2A-Version": "1.0", "A2A-Extensions": SKILL_CALL_EXTENSION_URI}
-    async with serve(make_app) as base_url, httpx.AsyncClient(base_url=base_url) as h:
-        reply = await h.post("/a2a", json=body, headers=headers)
+    configuration = {"returnImmediately": return_immediately}
+    return {"message": message, "configuration": configuration}
+
+
+async def run_hosted(
+    serve: ServeLocally, writer: Writer, skill_id: str, arguments: Mapping[str, Any]
+) -> dict[str, Any]:
+    body = json_rpc("SendMessage", send_params(skill_id, arguments))
+    async with (
+        serve(writer_app(writer)) as base_url,
+        httpx.AsyncClient(base_url=base_url) as http,
+    ):
+        reply = await http.post("/a2a", json=body, headers=HEADERS)
     task: dict[str, Any] = reply.json()["result"]["task"]
     return task
 
@@ -492,3 +519,66 @@ async def test_hosted_model_errors_fail_the_task_with_a_safe_message(
     assert status_text(task) == message
     assert "artifacts" not in task
     assert task["metadata"]["invocation_id"]
+
+
+# Usage reported in hosted task metadata
+
+
+def usage_snapshot(tokens: Usage, model_calls: int) -> dict[str, Any]:
+    return {
+        "input_tokens": tokens.input_tokens,
+        "output_tokens": tokens.output_tokens,
+        "total_tokens": tokens.total_tokens,
+        "estimated": tokens.estimated,
+        "model_calls": model_calls,
+    }
+
+
+async def test_completed_task_reports_its_usage(serve: ServeLocally) -> None:
+    model = ScriptedModel([response("Once."), response("Twice.", tokens=usage(7, 3))])
+
+    task = await run_hosted(serve, Writer(model=model), "rewrite_twice", {"text": "a"})
+
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert task["metadata"]["invocation_id"]
+    assert task["metadata"]["usage"] == usage_snapshot(usage(17, 8), model_calls=2)
+
+
+async def test_failed_task_reports_the_usage_of_its_failed_call(
+    serve: ServeLocally,
+) -> None:
+    model = ScriptedModel([response("Part", FinishReason.LENGTH, usage(4, 256))])
+
+    task = await run_hosted(serve, Writer(model=model), "rewrite", {"text": "a"})
+
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert task["metadata"]["usage"] == usage_snapshot(usage(4, 256), model_calls=1)
+
+
+async def test_model_free_task_reports_no_usage(serve: ServeLocally) -> None:
+    task = await run_hosted(serve, Writer(), "count", {"text": "a b"})
+
+    assert task["metadata"]["usage"] == usage_snapshot(usage(0, 0), model_calls=0)
+
+
+async def test_cancelled_task_reports_unknown_usage_for_its_running_call(
+    serve: ServeLocally,
+) -> None:
+    model = BlockingModel([response("Once.", tokens=usage(10, 5))])
+    send = json_rpc("SendMessage", send_params("rewrite_twice", {"text": "a"}, True))
+    async with (
+        serve(writer_app(Writer(model=model))) as base_url,
+        httpx.AsyncClient(base_url=base_url) as http,
+    ):
+        sent = await http.post("/a2a", json=send, headers=HEADERS)
+        task_id = sent.json()["result"]["task"]["id"]
+        await asyncio.wait_for(model.started.wait(), timeout=5)
+        cancel = json_rpc("CancelTask", {"id": task_id})
+        cancelled = (await http.post("/a2a", json=cancel, headers=HEADERS)).json()
+
+    task = cancelled["result"]
+    assert task["status"]["state"] == "TASK_STATE_CANCELED"
+    assert task["metadata"]["invocation_id"]
+    # The first call's 15 tokens are known; the cancelled call's are not, so
+    # the totals are unknown rather than understated.
+    assert task["metadata"]["usage"] == usage_snapshot(UNKNOWN, model_calls=2)

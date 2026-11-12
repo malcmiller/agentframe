@@ -1,7 +1,9 @@
 # Execution limits and token accounting
 
-This document records approved defaults and design contracts, not implemented
-enforcement. Limits are typed configuration; `@skill(limits=RunLimits(...))`
+This document records approved defaults and design contracts. Timeouts (M1)
+and token/model-call limits (M3 #36, see
+[implemented token accounting](#implemented-token-accounting-m3)) are
+enforced; the rest is not implemented yet. Limits are typed configuration; `@skill(limits=RunLimits(...))`
 sets skill-specific overrides. Every entry point uses the same accounting
 and execution policy, whether called locally, through A2A, or through MCP.
 
@@ -146,7 +148,9 @@ structured validation to fit a limit. Failures must distinguish input too large,
 budget exhaustion, unavailable strict accounting, deadline expiration,
 cancellation and provider errors. Use the
 [decided error hierarchy](api/runtime.md#agentframeerror): `LimitExceededError`
-has token/model-call/tool-call/timeout subtypes whose names remain open;
+has the `TokenLimitExceededError`, `ModelCallLimitExceededError` and
+`TimeoutLimitExceededError` subtypes (M3 #36); the tool-call subtype name
+remains open;
 AgentFrame `CancelledError` is distinct from `asyncio.CancelledError`.
 
 Cancellation propagates where supported; it cannot guarantee that already
@@ -166,6 +170,44 @@ AG-UI disconnect cancels the run; its first version has no reconnect/resume.
 This does not redefine A2A task-disconnect semantics or retry completed actions.
 Protocol usage events do not replace
 the accounting ledger or establish remote billing guarantees.
+
+## Implemented token accounting (M3)
+
+M3 #36 implements the steps above for `ctx.generate`, per run:
+
+1. **Resolve.** `max_total_tokens` (default 100000), `max_model_calls`
+   (default 10) and `max_input_tokens` merge field by field like every other
+   limit. `max_input_tokens` unset at every level means the model's reported
+   context window. When the model reports none (for example `FoundryModel`
+   without `context_window=`), `AgentApp` fails startup and a local run fails
+   before its first model call, both with `DefinitionError`.
+2. **Estimate.** The input estimate is the text length of all messages divided
+   by **four characters per token**, rounded up. It is best effort, not a
+   guaranteed bound: code and many languages use more tokens per character.
+3. **Check.** The estimated input must not exceed the input limit, and input
+   plus the full `max_output_tokens` must fit the context window when known.
+   Otherwise `TokenLimitExceededError`; nothing is truncated.
+4. **Reserve.** Input estimate + `max_output_tokens` is reserved against what
+   is left of `max_total_tokens`, and the call is counted against
+   `max_model_calls`, in one step with no `await`, so concurrent calls in one
+   run (for example in an `asyncio.TaskGroup`) cannot both take the same
+   tokens. A reservation that does not fit raises `TokenLimitExceededError`;
+   the output cap is never lowered to make it fit. Too many calls raise
+   `ModelCallLimitExceededError`. Either way the call is not sent.
+5. **Settle.** After the call, its reservation is replaced by its actual total.
+   Counts the provider did not report for a returned response are estimated
+   (the output from its text) and marked `estimated=True`. A failed call
+   settles to the usage its error carries (`ModelError.usage`, set by
+   adapters); when that is unknown, its reservation stays counted against the
+   budget and the run's reported counts become unknown (`None`), never zero.
+   A call refused with `UnsupportedCapabilityError` was never sent, so its
+   reservation and call count are released.
+
+Actual usage can exceed a reservation when the estimate was low; the next
+call then has less budget, so the total is a best-effort bound. `RunResult`
+reports the run's `usage` and `model_calls`; hosted tasks report the same
+values in a safe [usage snapshot](api/hosting.md#result-and-failure-mapping).
+Retries (#37) build on these reservations and are not implemented yet.
 
 ## Cross-agent budgets and depth (M8+)
 

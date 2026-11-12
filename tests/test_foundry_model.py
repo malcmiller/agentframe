@@ -314,8 +314,13 @@ async def test_other_incomplete_responses_raise_incomplete_output(
     use_server(FakeFoundry(incomplete(reason)))
 
     async with foundry() as model:
-        with pytest.raises(IncompleteOutputError, match="stopped the response early"):
+        with pytest.raises(
+            IncompleteOutputError, match="stopped the response early"
+        ) as caught:
             await model.generate(ask())
+
+    assert caught.value.usage is not None
+    assert caught.value.usage.output_tokens == 3
 
 
 @pytest.mark.parametrize(
@@ -406,6 +411,19 @@ async def test_rate_limit_passes_on_the_retry_after_hint(
             await model.generate(ask())
 
     assert caught.value.retry_after == 7.0
+
+
+async def test_retry_after_ms_is_preferred_over_retry_after(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    headers = {"retry-after-ms": "1500", "retry-after": "2"}
+    use_server(FakeFoundry(status(429, headers=headers)))
+
+    async with foundry() as model:
+        with pytest.raises(ProviderError) as caught:
+            await model.generate(ask())
+
+    assert caught.value.retry_after == 1.5
 
 
 @pytest.mark.parametrize(
