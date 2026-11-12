@@ -24,6 +24,12 @@ dependencies = [
     "pydantic>=2.14,<3",
 ]
 
+[project.optional-dependencies]
+server = ["uvicorn==0.54.0"]
+
+[project.scripts]
+agentframe = "agentframe.cli:main"
+
 [project.urls]
 Repository = "https://github.com/malcmiller/agentframe"
 
