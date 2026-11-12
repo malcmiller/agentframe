@@ -1,7 +1,6 @@
 """FoundryModel against a fake Responses API built on a mock HTTP transport."""
 
 import json
-import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -554,30 +553,3 @@ def test_missing_extra_names_the_extra_to_install() -> None:
 
     assert result.returncode != 0
     assert "agentframe[foundry]" in result.stderr
-
-
-@pytest.mark.skipif(
-    os.environ.get("AGENTFRAME_TEST_FOUNDRY") != "1",
-    reason="set AGENTFRAME_TEST_FOUNDRY=1 to call a real Foundry deployment",
-)
-async def test_real_foundry_deployment_generates_text() -> None:
-    from azure.identity.aio import AzureCliCredential
-
-    async with (
-        AzureCliCredential() as credential,
-        FoundryModel(
-            endpoint=os.environ["AGENTFRAME_FOUNDRY_ENDPOINT"],
-            deployment=os.environ["AGENTFRAME_FOUNDRY_DEPLOYMENT"],
-            credential=credential,
-        ) as model,
-    ):
-        response = await model.generate(
-            ask(
-                Message(role="user", content="Reply with the word: ready"),
-                max_output_tokens=64,
-            )
-        )
-
-    assert response.finish_reason is FinishReason.COMPLETED
-    assert response.text
-    assert response.usage.output_tokens

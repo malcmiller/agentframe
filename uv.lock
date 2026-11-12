@@ -56,7 +56,9 @@ server = [
 [package.dev-dependencies]
 dev = [
     { name = "agentframe", extra = ["foundry", "ollama"] },
+    { name = "azure-core" },
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -80,7 +82,9 @@ provides-extras = ["server", "ollama", "foundry"]
 [package.metadata.requires-dev]
 dev = [
     { name = "agentframe", extras = ["ollama", "foundry"] },
+    { name = "azure-core", specifier = "==1.41.0" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "httpx2", specifier = "==2.16.0" },
     { name = "mypy", specifier = "==2.4.1" },
     { name = "pre-commit", specifier = "==4.7.0" },
     { name = "pytest", specifier = "==9.2.0" },
