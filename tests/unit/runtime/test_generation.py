@@ -5,6 +5,8 @@ localhost HTTP to an ``AgentApp`` served by Uvicorn.
 """
 
 import asyncio
+import json
+import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -29,12 +31,17 @@ from agentframe import (
     RunContext,
     RunLimits,
     Runtime,
+    ToolCall,
+    ToolSpec,
     UnsupportedCapabilityError,
     Usage,
     agent,
     skill,
 )
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
+from agentframe.models.base import DEFAULT_MODEL_SETTINGS
+from agentframe.runtime.generation import GenerationState, estimate_input_tokens
+from agentframe.runtime.limits import DEFAULT_LIMITS
 from agentframe.testing import ScriptedModel
 from local_server import ServeLocally
 
@@ -582,3 +589,104 @@ async def test_cancelled_task_reports_unknown_usage_for_its_running_call(
     # The first call's 15 tokens are known; the cancelled call's are not, so
     # the totals are unknown rather than understated.
     assert task["metadata"]["usage"] == usage_snapshot(UNKNOWN, model_calls=2)
+
+
+# Tool-call messages: capability check, token estimate and provider replay data
+
+LOOKUP_SPEC = ToolSpec(
+    name="lookup_order",
+    description="Look up an order by its ID.",
+    parameters={"type": "object", "properties": {"order_id": {"type": "string"}}},
+)
+LOOKUP_CALL = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}')
+SECRET_REASONING = {"type": "reasoning", "encrypted_content": "SECRET-REASONING"}
+
+
+def ask(*messages: Message, tools: tuple[ToolSpec, ...] = ()) -> ModelRequest:
+    return ModelRequest(
+        messages=messages or (Message("user", "Where is order A1?"),),
+        settings=DEFAULT_MODEL_SETTINGS,
+        tools=tools,
+    )
+
+
+async def test_tools_on_a_model_without_tool_support_fail_before_reserving() -> None:
+    # ctx.generate does not send tools until the tool loop (#61), so this
+    # drives the per-call check directly.
+    model = ScriptedModel(["Unused."])  # Default capabilities: no tools.
+    state = GenerationState(
+        model=model,
+        instructions=None,
+        settings=DEFAULT_MODEL_SETTINGS,
+        limits=DEFAULT_LIMITS,
+    )
+    deadline = asyncio.get_running_loop().time() + 5
+
+    with pytest.raises(UnsupportedCapabilityError, match="tool calling"):
+        # noinspection PyProtectedMember
+        await state._call_with_retries(model, ask(tools=(LOOKUP_SPEC,)), deadline)
+
+    assert model.requests == []
+    assert state.accounting.model_calls == 0
+    assert state.accounting.reserved_tokens == 0
+
+
+def test_token_estimate_counts_tool_specs() -> None:
+    assert estimate_input_tokens(ask(tools=(LOOKUP_SPEC,))) > estimate_input_tokens(
+        ask()
+    )
+
+
+def test_token_estimate_counts_tool_calls_and_results() -> None:
+    question = Message("user", "Where is order A1?")
+    asked = Message("assistant", "", tool_calls=(LOOKUP_CALL,))
+    answered = Message(
+        "tool", '{"status": "shipped"}', tool_call_id="call_1", tool_name="lookup_order"
+    )
+
+    without_tools = estimate_input_tokens(ask(question))
+    with_call = estimate_input_tokens(ask(question, asked))
+    with_result = estimate_input_tokens(ask(question, asked, answered))
+
+    assert without_tools < with_call < with_result
+
+
+def secret_reply(finish_reason: FinishReason = FinishReason.COMPLETED) -> ModelResponse:
+    return ModelResponse(
+        text="Rewritten.",
+        usage=usage(10, 5),
+        finish_reason=finish_reason,
+        provider_items=(SECRET_REASONING,),
+    )
+
+
+async def test_provider_items_stay_out_of_run_results_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+
+    result = await Runtime().run(
+        Writer(model=ScriptedModel([secret_reply()])),
+        skill="rewrite",
+        arguments={"text": "Text."},
+    )
+    with pytest.raises(IncompleteOutputError) as raised:
+        await run_writer(
+            ScriptedModel([secret_reply(FinishReason.LENGTH)]), "rewrite", "Text."
+        )
+
+    assert result.value == "Rewritten."
+    assert "SECRET-REASONING" not in repr(result)
+    assert "SECRET-REASONING" not in repr(raised.value)
+    assert "SECRET-REASONING" not in caplog.text
+
+
+async def test_provider_items_stay_out_of_hosted_task_metadata(
+    serve: ServeLocally,
+) -> None:
+    task = await run_hosted(
+        serve, Writer(model=ScriptedModel([secret_reply()])), "rewrite", {"text": "a"}
+    )
+
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert "SECRET-REASONING" not in json.dumps(task)

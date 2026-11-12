@@ -3,7 +3,7 @@
 import subprocess
 import sys
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 
 import pytest
 
@@ -17,7 +17,13 @@ from agentframe import (
     ModelResponse,
     ModelSettings,
     ProviderError,
+    ToolCall,
+    ToolSpec,
     Usage,
+)
+
+UNKNOWN_USAGE = Usage(
+    input_tokens=None, output_tokens=None, total_tokens=None, estimated=False
 )
 
 
@@ -120,3 +126,123 @@ def test_importing_agentframe_loads_no_provider_sdk() -> None:
         "assert not loaded, loaded"
     )
     subprocess.run([sys.executable, "-c", check], check=True)
+
+
+# Tool-call messages, requests and responses
+
+LOOKUP = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}')
+
+
+def test_tool_call_conversation_shapes_are_valid() -> None:
+    asked = Message(role="assistant", content="", tool_calls=(LOOKUP,))
+    answered = Message(
+        role="tool",
+        content='{"status": "shipped"}',
+        tool_call_id="call_1",
+        tool_name="lookup_order",
+    )
+
+    assert asked.tool_calls == (LOOKUP,)
+    assert answered.tool_call_id == asked.tool_calls[0].id
+
+
+@pytest.mark.parametrize(
+    ("fields", "error"),
+    [
+        pytest.param(
+            {"role": "user", "tool_calls": (LOOKUP,)},
+            "Only assistant messages can have tool_calls",
+            id="tool-calls-on-user",
+        ),
+        pytest.param(
+            {"role": "tool", "tool_name": "lookup_order"},
+            "needs the tool_call_id",
+            id="tool-without-call-id",
+        ),
+        pytest.param(
+            {"role": "assistant", "tool_call_id": "call_1"},
+            "Only tool messages can have tool_call_id",
+            id="call-id-on-assistant",
+        ),
+        pytest.param(
+            {"role": "user", "tool_name": "lookup_order"},
+            "Only tool messages can have tool_call_id or tool_name",
+            id="tool-name-on-user",
+        ),
+    ],
+)
+def test_inconsistent_message_shapes_are_rejected(
+    fields: dict[str, Any], error: str
+) -> None:
+    with pytest.raises(DefinitionError, match=error):
+        Message(content="", **fields)
+
+
+def test_text_requests_and_responses_have_no_tools_by_default() -> None:
+    request = ModelRequest(
+        messages=(Message(role="user", content="Hi"),),
+        settings=ModelSettings(max_output_tokens=100),
+    )
+    response = ModelResponse(
+        text="Hello", usage=UNKNOWN_USAGE, finish_reason=FinishReason.COMPLETED
+    )
+
+    assert request.tools == ()
+    assert not request.uses_tools()
+    assert response.tool_calls == ()
+    assert response.provider_items == ()
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        pytest.param(
+            ModelRequest(
+                messages=(Message(role="user", content="Where is A1?"),),
+                settings=ModelSettings(max_output_tokens=100),
+                tools=(ToolSpec("lookup_order", "Look up an order.", {}),),
+            ),
+            id="offers-tools",
+        ),
+        pytest.param(
+            ModelRequest(
+                messages=(Message(role="assistant", content="", tool_calls=(LOOKUP,)),),
+                settings=ModelSettings(max_output_tokens=100),
+            ),
+            id="replays-a-tool-call",
+        ),
+        pytest.param(
+            ModelRequest(
+                messages=(Message(role="tool", content="{}", tool_call_id="call_1"),),
+                settings=ModelSettings(max_output_tokens=100),
+            ),
+            id="sends-a-tool-result",
+        ),
+    ],
+)
+def test_requests_with_tool_content_use_tools(request_: ModelRequest) -> None:
+    assert request_.uses_tools()
+
+
+def test_provider_items_are_hidden_from_repr_and_equality() -> None:
+    secret = {"type": "reasoning", "encrypted_content": "SECRET-REASONING"}
+    message = Message(
+        role="assistant", content="", tool_calls=(LOOKUP,), provider_items=(secret,)
+    )
+    response = ModelResponse(
+        text="",
+        usage=UNKNOWN_USAGE,
+        finish_reason=FinishReason.TOOL_CALLS,
+        tool_calls=(LOOKUP,),
+        provider_items=(secret,),
+    )
+
+    assert "SECRET-REASONING" not in repr(message)
+    assert "SECRET-REASONING" not in repr(response)
+    assert message == Message(role="assistant", content="", tool_calls=(LOOKUP,))
+    assert response == ModelResponse(
+        text="",
+        usage=UNKNOWN_USAGE,
+        finish_reason=FinishReason.TOOL_CALLS,
+        tool_calls=(LOOKUP,),
+    )

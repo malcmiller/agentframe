@@ -30,6 +30,7 @@ from agentframe import (
     ProviderError,
     RunContext,
     Runtime,
+    ToolSpec,
     UnsupportedCapabilityError,
     agent,
     skill,
@@ -761,3 +762,27 @@ async def test_unfinished_structured_replies_raise_typed_errors_with_usage(
     assert result.value == error
     assert result.model_calls == 1
     assert result.usage.total_tokens == 15
+
+
+# Tools (not supported until #64)
+
+TOOL_REQUEST = ModelRequest(
+    messages=(Message(role="user", content="Where is order A1?"),),
+    settings=ModelSettings(max_output_tokens=100),
+    tools=(
+        ToolSpec(name="lookup_order", description="Look up an order.", parameters={}),
+    ),
+)
+
+
+async def test_tools_are_not_supported_yet_and_nothing_is_sent(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+
+    async with foundry() as model:
+        with pytest.raises(UnsupportedCapabilityError, match="tools"):
+            await model.generate(TOOL_REQUEST)
+
+    assert server.requests == []

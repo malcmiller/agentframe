@@ -20,6 +20,8 @@ from agentframe import (
     ModelSettings,
     OllamaModel,
     ProviderError,
+    ToolSpec,
+    UnsupportedCapabilityError,
 )
 
 type Handler = Callable[[httpx.Request], httpx.Response]
@@ -302,3 +304,25 @@ def test_missing_extra_names_the_extra_to_install() -> None:
 
     assert result.returncode != 0
     assert "agentframe[ollama]" in result.stderr
+
+
+TOOL_REQUEST = ModelRequest(
+    messages=(Message(role="user", content="Where is order A1?"),),
+    settings=ModelSettings(max_output_tokens=100),
+    tools=(
+        ToolSpec(name="lookup_order", description="Look up an order.", parameters={}),
+    ),
+)
+
+
+async def test_tools_are_not_supported_yet_and_nothing_is_sent(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    server = FakeOllama()
+    use_server(server)
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        with pytest.raises(UnsupportedCapabilityError, match="tools"):
+            await model.generate(TOOL_REQUEST)
+
+    assert server.paths() == []
