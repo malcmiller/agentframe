@@ -10,6 +10,7 @@ and nothing leaves localhost.
 import asyncio
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Annotated
 
 import httpx
 import pytest
@@ -46,7 +47,7 @@ from a2a.types import (
     TaskState,
 )
 from a2a.utils.errors import TaskNotFoundError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agentframe import (
     Agent,
@@ -78,6 +79,11 @@ class Badge(BaseModel):
     access: str
 
 
+class Visit(BaseModel):
+    name: str
+    guests: Annotated[int, Field(ge=1, le=10)]
+
+
 @agent(version="1.0.0")
 class Receptionist(Agent):
     """Welcomes visitors."""
@@ -95,6 +101,11 @@ class Receptionist(Agent):
     async def badge(self, name: str, ctx: RunContext) -> Badge:
         """Print a visitor badge."""
         return Badge(name=name, access="lobby")
+
+    @skill("register", tags=["visitors"])
+    async def register(self, visit: Visit, ctx: RunContext) -> Badge:
+        """Register a visit and print a group badge."""
+        return Badge(name=visit.name, access=f"lobby, party of {visit.guests}")
 
     @skill("guest_list", requires_permissions=["guests:read"], tags=["visitors"])
     async def guest_list(self, ctx: RunContext) -> list[str]:
@@ -316,6 +327,27 @@ async def test_structured_call_returns_a_model_result_as_a_value_data_part(
     assert get_data_parts(task.artifacts[0].parts) == [
         {"value": {"name": "Ada", "access": "lobby"}}
     ]
+
+
+async def test_structured_call_validates_a_model_argument(alice: Client) -> None:
+    task = await call_skill(alice, "register", {"visit": {"name": "Ada", "guests": 3}})
+
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    assert get_data_parts(task.artifacts[0].parts) == [
+        {"value": {"name": "Ada", "access": "lobby, party of 3"}}
+    ]
+
+
+async def test_a_constraint_violation_is_rejected_without_echoing_the_value(
+    alice: Client,
+) -> None:
+    task = await call_skill(
+        alice, "register", {"visit": {"name": "Ada", "guests": 4242}}
+    )
+
+    assert task.status.state == TaskState.TASK_STATE_REJECTED
+    assert "4242" not in status_text(task)
+    assert not task.artifacts
 
 
 # Free text and clarification
