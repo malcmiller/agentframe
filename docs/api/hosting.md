@@ -12,10 +12,10 @@ hosting and optional MCP, rather than require a server subclass. Use one server,
 one shared runtime and an endpoint per caller audience, not per skill: A2A for
 agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 
-**Constructor status:** implemented in M2 (#3) as
-`AgentApp(*, agent, host, runtime=None, services=None, authorization=None)`;
-the other parameters below arrive with their stories (`router=` #6, `a2a=`/`mcp=`
-later, M8+ `directory=`, later `ag_ui=`). `services=`, `directory=` and `ag_ui=`
+**Constructor status:** implemented in M2 (#3, #6) as
+`AgentApp(*, agent, host, runtime=None, services=None, authorization=None,
+router=None)`; the other parameters below arrive with their stories
+(`a2a=`/`mcp=` later, M8+ `directory=`, later `ag_ui=`). `services=`, `directory=` and `ag_ui=`
 are decided; unspecified omission details remain illustrative.
 
 ```text
@@ -34,7 +34,7 @@ AgentApp(
 | `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization)` | The single authoritative runtime and service container for every request. Passing it together with `services=` or `authorization=` raises `DefinitionError`. |
 | `a2a` | `A2AConfig` | A2A enabled by default; exact object default open | Selected native binding and implemented features only. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
-| `router` | `SkillRouter` implementation | Configured for free-text A2A selection/extraction | Custom router in M2 or built-in opt-in model router in M6. Activated structured selection bypasses it, not runtime controls. No finalized extraction/clarification interface. |
+| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in model router in M6. Activated structured selection bypasses it, not runtime controls. |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
 | `authorization` | `AuthorizationPolicy` | Optional; only without `runtime=` | Resource policy applied to every run, as on [`Runtime`](runtime.md#runtime). |
 | `directory` | `AgentDirectory` | M8+ when remote bindings need discovery | Resolve `Remote["name"]`; validate configured names at startup. Sources/cache lifecycle follows ownership, not automatic transfer. |
@@ -89,9 +89,13 @@ authenticator; no remote host starts without a choice.
   authorization policy, timeouts and per-run services all apply.
 - Messages are skill calls through the AgentFrame
   [skill-call extension](#structured-skill-call-wire-format) (M2 #5). A message
-  sent without activating the extension is free text; free-text routing
-  arrives with #6, so until then it is refused with the JSON-RPC
-  `UnsupportedOperationError` (`-32004`) and creates no task.
+  sent without activating the extension is free text, routed by the
+  configured [`SkillRouter`](#skillrouter) (M2 #6). Without a router, free
+  text is refused with the JSON-RPC `UnsupportedOperationError` (`-32004`)
+  and creates no task.
+- A message naming a `taskId` continues that task only while it is
+  `INPUT_REQUIRED`; a working or finished task refuses it with
+  `UnsupportedOperationError` (`-32004`). See [`SkillRouter`](#skillrouter).
 - Results and failures map to native A2A as described in
   [result and failure mapping](#result-and-failure-mapping) (#7).
 - Task operations are the SDK's native A2A 1.0 core methods; they are not
@@ -142,16 +146,16 @@ Every other outcome follows this table:
   JSON-RPC is rejected by the SDK the same way.
 - `REJECTED` and `FAILED` tasks carry the error's safe message as the status
   message: no stack traces, provider payloads, submitted values (including the
-  requested skill ID) or secrets. Exceptions raised by a skill (or, with #6, a
-  router) are logged with their details and reported only as "The skill
-  failed.". A `DefinitionError` names agent internals, so it is logged and
+  requested skill ID) or secrets. Exceptions raised by a skill are logged
+  with their details and reported only as "The skill failed."; router
+  exceptions likewise as "The skill router failed.". A `DefinitionError` names agent internals, so it is logged and
   reported only as "The agent is not configured correctly.".
 - Every task status carries the run's `invocation_id` in the task metadata,
   including failures. The host allocates the ID before the run, so the caller,
   the skill's `ctx.invocation_id` and the log entry for a skill exception all
   share it. A failure raised before a run starts gets a new ID.
-- `INPUT_REQUIRED` with the question as the status message is published by
-  free-text routing (#6).
+- `INPUT_REQUIRED` with the question as the status message is published when
+  a [`SkillRouter`](#skillrouter) asks for clarification (#6).
 - `CancelTask` ends a running task in `CANCELED` through AgentFrame's
   [`CancelledError`](runtime.md#cancellederror) mapping, with the status message
   "The task was cancelled." and the run's `invocation_id`.
@@ -197,7 +201,7 @@ X-API-Key: <development key>
 | Extension activated, valid skill ID and arguments | The skill runs through `Runtime.run`; the task completes with its result. |
 | Extension activated, but no skill ID, not exactly one part, a part that is not a JSON-object data part, or an unknown `agentframe.` metadata field | JSON-RPC `InvalidParamsError` (`-32602`); no task is created. Never reinterpreted as free text. |
 | Extension activated, unknown skill ID or invalid arguments | Task `REJECTED` with a safe message. |
-| Extension not activated | Free text, even if `agentframe.skill` is present; refused until routing (#6). |
+| Extension not activated | Free text, even if `agentframe.skill` is present: routed by the [`SkillRouter`](#skillrouter), or refused with `-32004` when none is configured. |
 
 With the official Python client, activate the extension per call:
 
@@ -577,43 +581,90 @@ This is guidance, not an enforced restriction on model-backed MCP tools.
 
 ## `SkillRouter`
 
-**Purpose / decision:** select an eligible skill and extract arguments for
-free-text A2A requests; no author-written mandatory handler.
-Support custom routers and a built-in opt-in model-based router.
-Activated structured requests select deterministically and do not call the router.
+**Purpose / decision:** select an eligible skill and extract its arguments for
+free-text A2A requests, or ask the caller a question; no author-written
+mandatory handler. Custom routers are implemented in M2 (#6); the built-in
+opt-in model-based router follows in M6. Activated structured requests select
+deterministically and never call the router.
 
-**Signature status:** injected interface intended; constructor, method names,
-request/decision types, and clarification contract remain open.
-
-| Input/concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Free-text request | Native A2A message/content; exact interface open | Needed for prompt selection and validated argument extraction | Descriptive skills alone are not dispatch. Unknown/invalid decisions fail; ambiguity/missing input asks back via `TASK_STATE_INPUT_REQUIRED`. Clarification schema/follow-up handling remain open. |
-| Eligible candidates and request budget | Exact interface open | Required constraints for applicable selection | Restrict candidates by caller policy; budget model routing before invocation and propagate remaining allowance. |
+**Signature status:** implemented in M2 (#6) as a structural `Protocol` with
+one async method; any class with a matching `route` works without inheritance.
+Router budget propagation and the M6 model router's construction remain open.
 
 ```python
-from agentframe import SkillRouter
-
-
-def describe_router(router: SkillRouter) -> str:
-    return type(router).__name__
+class SkillRouter(Protocol):
+    async def route(
+        self, conversation: Sequence[Message], skills: Sequence[SkillDefinition]
+    ) -> SkillCall | Clarification: ...
 ```
 
-Supply a custom or explicitly configured built-in model implementation as
-`AgentApp(router=...)`. Built-in model routing is a capability decision; its
-public class/factory and any `route()` signature remain open.
+| Parameter / return | Type | Meaning and constraints |
+| --- | --- | --- |
+| `conversation` | `Sequence[a2a.types.Message]` | The task's native A2A messages so far, oldest first: the caller's messages and the agent's earlier questions. The last message is the one being routed. |
+| `skills` | `Sequence[SkillDefinition]` | The agent's skills whose `requires_permissions` the caller holds, recomputed for every message. |
+| Returns | `SkillCall(skill, arguments)` | Run skill `skill` with the business `arguments` dict. The skill must be one of `skills`; the arguments are validated like any caller's. |
+| Returns | `Clarification(question)` | A non-empty question for the caller when the request is ambiguous or misses input. Never guess or pick the first skill. |
 
-**Behavior / failures:** deterministic or explicitly model-backed; injecting
-a model into an agent does not enable model routing, tools, or multi-skill
-orchestration. Ambiguous/missing prompt input produces an input-required task
-and question, never a guess. Unknown skills/invalid extracted arguments remain
-explicit failures unless a supported missing-input clarification applies.
-Authorize admission before sensitive routing, apply outbound model checks,
-then re-check selected skill/resource authorization. A router cannot grant
-permissions. Preferred structured skill selection uses the separately declared
-and activated A2A extension; local `skill=` is not a standard A2A wire field.
-Structured failure must not silently downgrade into routing or re-inference.
+`SkillCall`, `Clarification` and `SkillRouter` are exported from `agentframe`.
+
+```python
+from collections.abc import Sequence
+
+from a2a.helpers import get_message_text
+from a2a.types import Message, Role
+
+from agentframe import Clarification, SkillCall, SkillDefinition
+
+
+class GreetingRouter:
+    """Routes "greet <name>" to the greet skill; asks for a missing name."""
+
+    async def route(
+        self, conversation: Sequence[Message], skills: Sequence[SkillDefinition]
+    ) -> SkillCall | Clarification:
+        words = " ".join(
+            get_message_text(m) for m in conversation if m.role == Role.ROLE_USER
+        ).split()
+        if "greet" not in words:
+            return Clarification("What would you like me to do?")
+        name = words[words.index("greet") + 1 :]
+        if not name:
+            return Clarification("Whom should I greet?")
+        return SkillCall("greet", {"name": name[-1]})
+```
+
+Pass it as `AgentApp(agent=..., host=..., router=GreetingRouter())`.
+
+**Implemented behavior (M2 #6):**
+
+| Situation | Result |
+| --- | --- |
+| No router configured, free text | JSON-RPC `UnsupportedOperationError` (`-32004`), no task. |
+| `SkillCall` to an offered skill | The skill runs through the runtime: argument validation, permissions and the authorization policy all apply. |
+| `SkillCall` to a skill not offered (unknown, or the caller lacks its permissions), invalid arguments, an empty question or any other return value | Task `REJECTED` with a safe message that does not echo the skill ID. |
+| `Clarification` | Task `INPUT_REQUIRED` with the question as the status message. |
+| Router raises | Task `FAILED` with "The skill router failed."; details are logged with the `invocation_id`. |
+| Router does not answer in time | Task `FAILED` with a timeout message. |
+
+- **Continuation:** the caller answers with a new message naming the task's
+  `taskId` (its `contextId` may be omitted). The router runs again with the
+  whole conversation, including its earlier question. Each message is a new run
+  with its own `invocation_id`, and eligible skills, permissions and the
+  [authorization policy](authorization.md#authorizationpolicy) are checked
+  again. An answer may also be a structured skill call, which skips the router.
+- Only the task's owner can answer: another caller gets `TaskNotFoundError`
+  (`-32001`), as for any task operation. All `AllowAnonymous()` callers share
+  one owner, so treat task IDs as bearer secrets there.
+- A message for a task that is working or finished is refused with
+  `UnsupportedOperationError` (`-32004`) and changes nothing.
+- **Bounded routing:** routing must finish within the agent's
+  `limits.timeout_seconds`, and the time it takes counts against the selected
+  skill's timeout: the skill's deadline is measured from when routing started.
+- A router cannot grant permissions; selection is not authorization.
+  Clarification is not human approval or durable workflow resumption.
 
 **Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
+[result and failure mapping](#result-and-failure-mapping),
 [routing design](../annotations.md#skill-registration-versus-request-routing).
 
 ## Built-in model-based router (planned implementation)

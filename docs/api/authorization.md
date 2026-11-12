@@ -66,7 +66,7 @@ permissions.
 class with a matching `check` works without inheritance. A richer decision type
 than `bool` remains open. Hosted wiring through
 [`AgentApp(..., authorization=policy)`](hosting.md#agentapp) is implemented
-(#3); re-checks on A2A continuation calls arrive with #6. Over A2A a denial
+(#3) and re-checks every A2A continuation message (#6). Over A2A a denial
 ends the task in `REJECTED` and a policy outage in `FAILED`
 ([mapping](hosting.md#result-and-failure-mapping), #7).
 
