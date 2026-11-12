@@ -153,8 +153,8 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
 ## Configuration and safe defaults
 
 - Resolve defaults **library → agent → skill → per-run**.
-  Use `@skill(limits=RunLimits(...))`; per-run keyword and partial-field
-  merge remain open. Host ceilings are constraints, not overridable defaults.
+  Use `@skill(limits=..., model_settings=...)` and per-run
+  `options=RunOptions(...)`, merged field by field (M3 #42). Host ceilings are constraints, not overridable defaults.
 - Require explicit model/deployment selection. Never silently switch hosts or models.
 - Use loopback for local serving. All remote hosts require an explicit `auth`
   choice, even on loopback; omission refuses startup. Choose Entra/API key,
@@ -429,7 +429,7 @@ belongs to that release even though telemetry exporters/integration stay optiona
 - Foundry deployment capability discovery beyond a configured context window;
   credential wrapping, injected-client lifecycle and response mapping are
   implemented in M3 #39 (`openai==3.49.0`, `azure-identity==1.27.0`).
-- Partial-field composition/per-run options syntax, host output-ceiling carrier,
+- Host output-ceiling carrier,
   error constructors/startup ID allocation/transport mapping and named limit
   subtypes. Approved defaults and error class names are no longer open.
 - Token counting/strict-enforcement capabilities and incomplete-usage semantics

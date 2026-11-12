@@ -8,7 +8,7 @@ Example::
     model = ScriptedModel(["Hello!"])
     request = ModelRequest(
         messages=(Message(role="user", content="Hi"),),
-        settings=ModelSettings(),
+        settings=ModelSettings(max_output_tokens=100),
     )
     response = await model.generate(request)
     assert response.text == "Hello!"

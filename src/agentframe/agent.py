@@ -18,11 +18,13 @@ class Agent:
             The application owns the model and closes it.
 
     Attributes:
-        limits: Default execution limits for this agent's skills. A skill's own
-            ``limits`` take precedence.
+        limits: Default execution limits for this agent's skills. Fields it
+            sets override the library defaults; fields a skill or run sets
+            override it in turn.
         instructions: Trusted instructions sent as the first ``system`` message
             of every ``ctx.generate`` call. Never put untrusted content here.
-        model_settings: Settings for every model call this agent makes.
+        model_settings: Default settings for this agent's model calls, merged
+            field by field like ``limits``.
         model: The model passed to the constructor, or ``None``.
     """
 

@@ -98,6 +98,11 @@ class Writer(Agent):
         """Rewrite text within a short timeout."""
         return await ctx.generate(text)
 
+    @skill("brief", model_settings=ModelSettings(max_output_tokens=64), tags=["text"])
+    async def brief(self, text: str, ctx: RunContext) -> str:
+        """Rewrite text with a smaller output limit."""
+        return await ctx.generate(text)
+
     @skill("count", tags=["text"])
     async def count(self, text: str, ctx: RunContext) -> int:
         """Count words without a model."""
@@ -197,7 +202,7 @@ async def test_agent_without_instructions_sends_only_the_user_message() -> None:
 
     assert result == "Done!"
     assert model.requests[0].messages == (Message("user", "Hi"),)
-    assert model.requests[0].settings == ModelSettings()
+    assert model.requests[0].settings == ModelSettings(max_output_tokens=4096)
 
 
 # Agents without a model
@@ -442,6 +447,17 @@ async def test_hosted_generate_uses_the_same_agent_and_messages(
         Message("system", "Use three sentences."),
         Message("user", "Long."),
     )
+
+
+async def test_hosted_runs_use_the_merged_agent_and_skill_settings(
+    serve: ServeLocally,
+) -> None:
+    model = ScriptedModel(["Short."])
+
+    task = await run_hosted(serve, Writer(model=model), "brief", {"text": "Long."})
+
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert model.requests[0].settings == ModelSettings(max_output_tokens=64)
 
 
 @pytest.mark.parametrize(

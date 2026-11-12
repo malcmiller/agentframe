@@ -208,7 +208,8 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
   output must still fit capacity; unknown is not unlimited and overflow fails.
   Model context capacity is not an arbitrary user setting.
 - Resolve library → agent → skill → per-run within host ceilings.
-  Skills use `@skill(limits=RunLimits(...))`; per-run options/partial merges open.
+  Merge field by field: only explicitly set fields override (M3 #42). Skills use
+  `@skill(limits=..., model_settings=...)`; local runs `options=RunOptions(...)`.
 - Retry transient model rate-limit/timeout/server failures only, default two
   retries/backoff, one layer with provider SDK retries disabled. Every attempt
   consumes existing budgets/deadline. `@tool(side_effects=True)` never auto-retries;
@@ -383,7 +384,7 @@ Applications own human approval workflows; no built-in approval pause/resume
 in first release. Required action/authorization checks remain enforced;
 protocol task support is not workflow persistence or human resumption.
 DI, `RunResult`, host defaults, retries and tool flags are user-approved above.
-Factory/disposal interfaces, usage markers, per-run options, A2A typed-part
+Factory/disposal interfaces, usage markers, A2A typed-part
 mappings, detailed byte/error mappings and dedupe atomicity remain unresolved.
 Errors derive from `AgentFrameError`: `DefinitionError`, `InputValidationError`,
 `OutputValidationError`, `AuthenticationError`, `PermissionDeniedError`,

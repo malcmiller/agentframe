@@ -4,7 +4,7 @@ Model adapters translate these AgentFrame-owned types to and from their
 provider's types, so skills never see provider SDKs.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from types import TracebackType
 from typing import Literal, Protocol, Self
 
@@ -29,25 +29,35 @@ class Message:
     content: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ModelSettings:
-    """Generation settings for one model call.
+    """Generation settings for model calls.
+
+    Every field defaults to ``None``, meaning "unset": the value is inherited
+    from the next lower level (library defaults -> agent -> skill -> per-run).
+    The runtime fills every unset field from ``DEFAULT_MODEL_SETTINGS``, so a
+    ``ModelRequest`` built by the runtime always has every field set.
 
     Attributes:
         max_output_tokens: Most tokens the model may generate in one call.
-            Must be greater than zero.
+            Must be greater than zero when set. Library default: 4096.
 
     Raises:
-        DefinitionError: If ``max_output_tokens`` is not greater than zero.
+        DefinitionError: If ``max_output_tokens`` is set but not greater
+            than zero.
     """
 
-    max_output_tokens: int = 4096
+    max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        if not self.max_output_tokens > 0:
+        if self.max_output_tokens is not None and not self.max_output_tokens > 0:
             raise DefinitionError(
                 "ModelSettings.max_output_tokens must be greater than 0"
             )
+
+
+DEFAULT_MODEL_SETTINGS = ModelSettings(max_output_tokens=4096)
+"""The library defaults: the lowest precedence level, with every field set."""
 
 
 @dataclass(frozen=True)
@@ -56,11 +66,27 @@ class ModelRequest:
 
     Attributes:
         messages: The conversation, in order.
-        settings: The effective settings for this call.
+        settings: The fully resolved settings for this call. Every field
+            must be set, so adapters never have to guess a default.
+
+    Raises:
+        DefinitionError: If any field of ``settings`` is unset (``None``).
     """
 
     messages: tuple[Message, ...]
     settings: ModelSettings
+
+    def __post_init__(self) -> None:
+        unset = [
+            field.name
+            for field in fields(self.settings)
+            if getattr(self.settings, field.name) is None
+        ]
+        if unset:
+            raise DefinitionError(
+                "ModelRequest.settings must be fully resolved; unset: "
+                + ", ".join(unset)
+            )
 
 
 @dataclass(frozen=True)

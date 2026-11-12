@@ -98,6 +98,7 @@ return its validated value through the managed execution pipeline.
 async def invoke(
     self, agent: Agent, *, skill: str,
     arguments: Mapping[str, Any] | None = None, principal: Principal | None = None,
+    options: RunOptions | None = None,
 ) -> Any: ...
 ```
 
@@ -113,6 +114,7 @@ containing execution metadata; both paths use the same pipeline.
 | `skill` | `str` | Required | Stable registered skill ID, not arbitrary method lookup or implicit model routing. |
 | `arguments` | String-keyed mapping of business values | Optional; `None` (default) means no arguments | Validated against selected skill. No `self`, `ctx`, `Inject[T]` parameters, principal, credentials or execution-policy overrides: those names count as unknown arguments. |
 | `principal` | Trusted `Principal \| None` | Default `None`; required for skills with `requires_permissions` | Supplied by trusted application code, never deserialized from untrusted arguments. `None` means no identity. |
+| `options` | [`RunOptions \| None`](configuration.md#runoptions) | Default `None` (no per-run overrides; M3 #42) | Limits and model settings for this run only, kept apart from business arguments. Each field set overrides the skill's, agent's and library's value ([precedence](configuration.md#precedence)). Hosted callers cannot supply them. |
 
 Supply the [`Echo`](agents.md#agent) instance defined in the agent reference.
 `Echo` is an author-defined class, not an AgentFrame export.
@@ -146,16 +148,17 @@ the run's deadline; ask the configured
 deadline (deny -> `PermissionDeniedError`, policy exception or deadline expiry
 -> `PolicyUnavailableError`); resolve scoped services and call the skill
 within the remaining time (`LimitExceededError`);
-validate the output (`OutputValidationError`). Effective M1 limits are the
-skill's `limits` if set, otherwise the agent class `limits`. Exceptions raised
+validate the output (`OutputValidationError`). Effective limits and model
+settings are merged field by field from library defaults, agent, skill and
+`options` ([precedence](configuration.md#precedence)). Exceptions raised
 by the skill itself propagate unchanged; a `TimeoutError` the skill raises
 itself is not converted into a limit failure.
 
 Direct `await echo.echo(...)` is an ordinary Python call and bypasses this
-pipeline. Per-skill limits use `@skill(limits=RunLimits(...))`; the per-run
-options keyword/container remains open and separate from business arguments.
-Precedence is library → agent → skill → per-run; allowances cannot exceed host ceilings,
-weaken security, or extend a parent deadline.
+pipeline. Per-skill settings use `@skill(limits=..., model_settings=...)`;
+per-run settings use `options=RunOptions(...)`, separate from business
+arguments. Precedence is library → agent → skill → per-run; allowances must not
+exceed host ceilings (M7), weaken security, or extend a parent deadline.
 
 **Related:** [`Principal`](authorization.md#principal),
 [`RunContext`](agents.md#runcontext), [`RunLimits`](configuration.md#runlimits),
@@ -170,13 +173,16 @@ the validated value plus local execution metadata.
 result typing remains open):
 
 ```text
-await runtime.run(agent, skill=..., arguments=..., principal=...) -> RunResult
+await runtime.run(
+    agent, skill=..., arguments=..., principal=..., options=...
+) -> RunResult
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `agent`, `skill`, `arguments` | Same as `invoke` | Required as above | Same validation, injection, authorization and limits; no implicit routing. |
 | `principal` | Trusted `Principal` | Needed for protected local work | Never supplied as business data. |
+| `options` | `RunOptions \| None` | Default `None` | Same as [`invoke`](#runtimeinvoke): per-run limits and model settings, merged field by field. |
 
 ```python
 from agentframe import Agent, RunResult, Runtime

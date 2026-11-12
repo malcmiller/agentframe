@@ -28,9 +28,9 @@ arguments arrive with their milestones. Implemented members:
 | --- | --- | --- | --- |
 | `Agent(*, model=None)` | keyword-only constructor (M3 #35) | `model=None` | Stores the injected model as `self.model`. Subclasses with their own `__init__` keep working without calling it; they simply have no model. |
 | `model` | `Model \| None` | `None` | The model `ctx.generate` calls. Application-owned: AgentFrame never closes it. |
-| `limits` | `ClassVar[RunLimits]` | `RunLimits()` | Agent-wide execution limits; a skill's own `limits` replace them for that skill. |
+| `limits` | `ClassVar[RunLimits]` | `RunLimits()` (all unset) | Agent-wide execution limits. Fields it sets override the library defaults; a skill or [per-run options](configuration.md#runoptions) override only the fields they set ([precedence](configuration.md#precedence)). |
 | `instructions` | `ClassVar[str \| None]` (M3 #35) | `None` | Trusted shared instructions, sent as the first `system` message of every `ctx.generate` call. `None` or empty sends none. |
-| `model_settings` | `ClassVar[ModelSettings]` (M3 #35) | `ModelSettings()` | Settings for every model call this agent makes. Field-by-field skill/run precedence arrives with #42. |
+| `model_settings` | `ClassVar[ModelSettings]` (M3 #35) | `ModelSettings()` (all unset) | Default settings for this agent's model calls, merged field by field with the library defaults, skill and per-run settings ([precedence](configuration.md#precedence)). |
 | `definition()` | class method returning the validated agent definition | — | Returns metadata built by `@agent`; raises `DefinitionError` if this exact class was not decorated. |
 
 | Parameter/configuration | Type | Required/default status | Meaning, constraints, precedence |
@@ -203,8 +203,9 @@ before any error is raised. Unknown usage stays unknown, never zero.
 
 Hosted runs map these errors to task `FAILED` with their safe message and the
 run's `invocation_id` (see [result and failure mapping](hosting.md#result-and-failure-mapping)). Token limits and
-reservations (#36), retries (#37) and skill/run settings precedence (#42) are
-not implemented yet; every call uses the agent's `model_settings`.
+reservations (#36) and retries (#37) are not implemented yet. Every call uses
+the run's effective `model_settings`, merged field by field (see
+[precedence](configuration.md#precedence)).
 
 **Behavior / failures:** apply outbound checks to every model request, including
 continuations; reserve/reconcile token budgets and count dispatched attempts

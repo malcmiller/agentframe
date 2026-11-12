@@ -62,7 +62,7 @@ remains only so an omitted value raises a clear `DefinitionError`.
 @skill(
     id: str, *, name: str | None = None, description: str | None = None,
     tags: Iterable[str] = (), requires_permissions: Iterable[str] = (),
-    limits: RunLimits | None = None,
+    limits: RunLimits | None = None, model_settings: ModelSettings | None = None,
 )
 ```
 
@@ -73,7 +73,8 @@ remains only so an omitted value raises a clear `DefinitionError`.
 | `description` | `str` | Optional; defaults to the method docstring | Describes the ability. No explicit value and no docstring raises `DefinitionError`. |
 | `tags` | Iterable of `str` (lists in examples) | Required: at least one non-blank tag (decided 2026-11-12, replacing M1's empty default) | Descriptive discovery tags, not execution instructions or permissions. A2A 1.0 marks `AgentSkill.tags` REQUIRED and required arrays must contain at least one element (spec §5.7), so omitted, empty or blank tags raise `DefinitionError` naming the agent and skill when `@agent` validates the class. A single string is rejected. |
 | `requires_permissions` | Iterable of `str` (lists in examples) | Optional; default empty | All listed permissions required. Application-defined exact strings; no inferred wildcard/role semantics. A single string is rejected so `"admin"` cannot become characters. |
-| `limits` | `RunLimits` | Optional per-skill overrides | In M1 the skill's `limits` replace the agent class `limits` as a whole. Library -> agent -> skill -> per-run precedence within host ceilings; partial-field merge mechanics remain open. |
+| `limits` | `RunLimits` | Optional per-skill overrides | Each field it sets overrides the agent's value; unset fields are inherited (M3 #42, [precedence](configuration.md#precedence)). Per-run options override it in turn. |
+| `model_settings` | `ModelSettings` | Optional per-skill overrides (M3 #42) | Merged field by field like `limits`: overrides the agent's `model_settings` only for the fields it sets. |
 
 ```python
 from typing import Protocol
