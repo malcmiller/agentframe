@@ -1,6 +1,7 @@
 # Skill authorization and caller identity
 
-This is a proposed design, not an implemented security mechanism. Authentication
+These are approved authentication/authorization design contracts, not an
+implemented security mechanism. Authentication
 establishes who is calling; authorization decides what that caller may do.
 AgentFrame provides shared enforcement, while the application supplies trusted
 identity integration and domain policy.
@@ -12,7 +13,7 @@ names. Roles are one application-controlled way to grant permissions.
 
 | Concept | Proposed responsibility |
 | --- | --- |
-| Authentication integration | Verify a human, service, or calling agent through a trusted host adapter. Validate credentials according to the selected mechanism, including issuer/audience/expiry where applicable. |
+| `Authenticator` | Trusted host interface, with `EntraIDAuth`, `APIKeyAuth` and explicit `AllowAnonymous()` built-ins. Custom interface methods remain open. |
 | `Principal` | Immutable invocation identity with trusted subject, issuer, tenant where applicable, and verified claims/permission grants. Exact fields remain open. |
 | `@skill(requires_permissions=[...])` | Declare stable permission requirements. All listed permissions are required; metadata does not enforce itself. |
 | `AuthorizationPolicy` | Injected policy interface evaluating principal, skill requirements, and validated resource arguments against authoritative application data. |
@@ -21,7 +22,10 @@ names. Roles are one application-controlled way to grant permissions.
 AgentFrame does not own a user database, role directory, token issuer, or
 organization's permission assignments. Do not invent a built-in `admin` bypass.
 
-An illustrative application mapping:
+Configure application mappings through `HostConfig(role_permissions=...)`,
+using only verified roles/scopes, never roles supplied as skill arguments.
+Entra validates issuer/tenant, audience, expiry and signature; exact scope mapping
+and permission merging remain open. An illustrative application mapping:
 
 | Role | Permissions |
 | --- | --- |
@@ -36,7 +40,12 @@ grants, role hierarchies, or trusted claims from arbitrary request fields.
 ## Proposed skill declaration
 
 ```python
-from agentframe import Agent, RunContext, agent, skill
+from typing import Protocol
+from agentframe import Agent, Inject, RunContext, agent, skill
+
+
+class Publisher(Protocol):
+    async def publish(self, document_id: str) -> str: ...
 
 
 @agent(
@@ -52,16 +61,19 @@ class PublishingAgent(Agent):
         tags=["publishing"],
         requires_permissions=["documents:publish"],
     )
-    async def publish(self, document_id: str, ctx: RunContext) -> str:
-        return await ctx.dependencies.publisher.publish(document_id)
+    async def publish(
+        self, document_id: str, publisher: Inject[Publisher], ctx: RunContext,
+    ) -> str:
+        return await publisher.publish(document_id)
 ```
 
-`ctx.dependencies.publisher` is an injected application dependency, not a built-in
+`Publisher` is an application-defined protocol injected via `Services`, not a built-in
 publishing service. The runtime checks skill authorization before entering the
 method. The authoritative publishing operation must also enforce current resource
 policy at the action boundary; the permission declaration alone does not ensure
 that a document belongs to the caller's tenant or is approved for publication.
-Dependency typing and construction remain to be specified.
+`Inject` parameters never appear in Agent Cards, MCP schemas or caller arguments.
+Missing required registrations fail startup with `DefinitionError`.
 
 Requirements are mandatory constraints, not just advice to a policy plugin.
 A custom policy may impose additional restrictions but cannot silently waive a
@@ -72,23 +84,33 @@ An empty permission list is not a declaration of public remote access.
 ## Proposed server composition
 
 ```python
-from agentframe import AgentApp, HostConfig, Runtime
+from agentframe import AgentApp, EntraIDAuth, HostConfig, Runtime, Services
+
+services = Services()
+services.add(Publisher, publisher_service)
 
 runtime = Runtime(
     authorization=authorization_policy,
+    services=services,
 )
 
 app = AgentApp(
     agent=PublishingAgent(),
     runtime=runtime,
+    services=services,
     host=HostConfig(
         public_url="https://publisher.example.com",
-        authentication=authentication,
+        auth=EntraIDAuth(tenant_id=tenant_id, audience=audience),
+        role_permissions={"Publisher": ["documents:publish"]},
     ),
 )
 ```
 
-`authentication` and `authorization_policy` are application-supplied dependencies.
+`tenant_id`, `audience`, `publisher_service` and `authorization_policy` are trusted
+application-supplied configuration/services, not request data or production defaults.
+The application owns/closes singleton services. `Services.add_scoped(Type, factory)`
+creates a fresh per-run instance that AgentFrame closes; exact factory/cleanup
+interfaces remain open. The same `services` container is used here on app/runtime.
 Host authentication creates the trusted principal and makes it available as
 `ctx.principal`; callers do not set it through skill arguments. Missing required
 authorization integration must prevent protected execution, not permit it.
@@ -139,18 +161,31 @@ Policy must consider the actual resource, tenant, ownership, approval state,
 and any required human approval. Perform security-sensitive state checks and
 updates atomically where the application supports it to avoid stale decisions.
 
+The application owns approval workflows and their persistence. First release
+has no built-in human approval pause/resume; required approval/authorization
+must be established before the action or the action must not run. Native A2A
+tasks do not imply resumable human workflows. First-release registered tool
+loops must re-check each action and never retry side effects implicitly.
+
 Missing identity, insufficient permissions, explicit denial, policy timeout,
 or policy unavailability must fail protected operations. Errors must be safe and
 protocol-native; distinguish invalid authentication, denied authorization, and
-policy-service failure without leaking private resource existence. Exact error
-classes and adapter mappings remain open.
+policy-service failure without leaking private resource existence. The decided
+errors are `AuthenticationError`, `PermissionDeniedError` and
+`PolicyUnavailableError`, carrying `invocation_id` and a safe message. A2A maps
+failures to standard failed/rejected states where appropriate; exact per-error
+protocol mappings remain open. Raw provider exceptions/stack traces/secrets
+are never sent to callers; operational diagnostics are redacted.
 
 ## Exposure, anonymous access, and delegation
 
 - Remote execution requires an explicit authentication/access configuration.
   Loopback binding does not itself authenticate a caller. Anonymous access must
   be deliberately enabled for specific behavior and cannot satisfy protected
-  permission requirements by default; exact opt-in syntax remains open.
+  permission requirements by default. Choose `HostConfig(auth=AllowAnonymous())`
+  deliberately; a remote host without an `auth` choice refuses startup even on
+  loopback. `APIKeyAuth(keys=...)` is available for development/simple services;
+  key-entry schema is still open and keys must come from secure configuration.
 - Unprotected model-free local examples need no identity provider. Missing
   identity is never elevated into a trusted service identity for protected work.
 - MCP allowlists control publication, not access. Authorize `tools/call` even if
@@ -169,8 +204,25 @@ classes and adapter mappings remain open.
 - Re-authorize protected task reads, cancellation, resubscription, conversation
   access, and output retrieval; an authorized initial call is not a permanent
   grant to everyone who knows its task ID.
+  Returning a deduplicated A2A task also requires current task-access checks:
+  the 10-minute caller/message-ID cache cannot cross tenant/caller boundaries.
 
 ## Checks required before release
+
+Next-core-release [agent discovery](discovery.md) must restrict eligible candidates,
+isolate caller/tenant/authenticated-card variants, and enforce trusted outbound
+authentication and destination/redirect policy. A matched reference, fresh card
+or card security declaration is not permission or endpoint trust. Authorize
+again at remote invocation/actions; models and routers cannot grant authority.
+Successful source reconciliation removes entries from new eligibility but does
+not automatically cancel tasks or promise immediate revocation before TTL/source
+refresh. Source failures are not proof of removal.
+
+Future [AG-UI streaming](streaming.md) uses the same explicit ingress access,
+caller/tenant isolation and action boundaries. Frontend thread/run IDs,
+messages/state/tools or returned tool results never establish a principal or
+authority. Protocol tool visibility does not grant frontend execution or
+approval; emitted events must pass release policy and expose no secrets.
 
 Verify missing/insufficient grants, all-of requirements, tenant/resource
 boundaries, anonymous behavior, policy outages/timeouts, discovery versus direct

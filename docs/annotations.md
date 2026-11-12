@@ -1,6 +1,7 @@
 # Decorators and type annotations
 
-All interfaces below are proposals. AgentFrame uses ordinary Python decorators
+These are design contracts, not implemented APIs; explicitly decided syntax
+and defaults are recorded in the reference. AgentFrame uses ordinary Python decorators
 for metadata and registration, and Python type annotations for data contracts.
 
 Decorators are AgentFrame-owned, not re-exports from another agent framework.
@@ -13,8 +14,8 @@ Do not add provider-specific decorators such as `@foundry` or `@llama`.
 | Decorator | Applies to | Definition |
 | --- | --- | --- |
 | `@agent(...)` | An `Agent` subclass | Declares name, description, version, and optional documentation/provider identity. Collects explicitly declared skills without performing I/O. |
-| `@skill(...)` | An individual async agent method | Registers implementation and A2A metadata, plus optional `requires_permissions` for runtime enforcement. Declared permissions are not invented standard Agent Card fields or per-method RPC endpoints. |
-| `@tool(...)` | An explicitly registered callable | Makes a typed callable eligible for the agent's model toolbox. Does not publish the callable as an A2A skill or authorize its execution. This is a later optional authoring feature. |
+| `@skill(...)` | An individual async agent method | Registers A2A metadata, optional `requires_permissions` and per-skill `limits=RunLimits(...)`. Not a per-method RPC endpoint. |
+| `@tool(...)` | An explicitly registered callable | Makes a typed callable eligible for first-release bounded model tool execution and generation continuations. Optional for an individual agent; not an A2A skill, MCP publication or authorization grant. |
 
 Require a non-empty agent description, an explicit agent version, and stable,
 unique skill IDs. Docstrings may supply descriptions when unambiguous. Reject
@@ -50,6 +51,9 @@ complete skill example, anonymous-access boundaries, and inherited requirements.
 - `Annotated[T, Field(...)]` supplies descriptions and constraints without a
   separate AgentFrame validation language.
 - `RunContext` is runtime-injected context, never a user-supplied model/tool argument.
+- `Inject[T]` marks trusted service parameters. Register through `Services.add`
+  or `add_scoped`; exclude them from caller arguments, cards and MCP schemas.
+  Missing services fail startup with `DefinitionError`.
 - Every skill accepts a typed `ctx: RunContext`, even when it does not use a model.
   Context also carries deadlines, cancellation, caller information, and dependencies.
 - Async skill methods are the primary execution path. Support for synchronous
@@ -115,19 +119,31 @@ ID explicitly; Python method names need not equal skill IDs. Direct calls such
 as `await instance.summarize(...)` are ordinary Python calls and bypass runtime
 validation, policy, context creation, and execution limits.
 
-A2A skill metadata does not define remote function dispatch. A single-skill
-agent can select that skill when the content matches its contract. Multi-skill
-remote agents need an explicitly configured router, using deterministic logic
-or an optional model-backed selector. Unknown or ambiguous selection must fail
-clearly or request clarification, not select the first registered skill.
+A2A skill metadata alone does not define remote dispatch. Prefer a structured
+request naming a registered skill with JSON arguments in a native data part,
+under an A2A 1.0 extension declared on the Agent Card and activated by the caller.
+That selection is deterministic and bypasses the router/model-selection cost,
+not typed validation, authorization, limits, accounting or tracing. Unknown IDs
+and invalid arguments fail explicitly; do not silently reroute them as prompts.
 
 Model-backed routing is distinct from model-backed skill execution. Neither
 an injected model nor a decorated skill implicitly enables model selection,
-tool access, or multi-skill orchestration. Any explicit A2A skill-ID selection
-format requires a documented application contract or negotiated extension.
-The optional [MCP adapter](mcp-skills.md) instead uses standard tool-name
-selection for explicitly published skills. No A2A router signature or custom
-selection wire format has been finalized.
+tool access, or multi-skill orchestration. Free-text callers, including clients
+not using the extension, use a configured custom router (M2) or opt-in built-in
+model router (M6). It selects an eligible skill and extracts validated business
+arguments; ambiguity or missing input asks back via an A2A
+`TASK_STATE_INPUT_REQUIRED` task, never guesses. A matching single skill still
+needs valid arguments.
+
+The extension URI/name/schema, selector placement, exact support advertisement,
+router decision and clarification/follow-up contract remain open. Local
+`skill=` is not a standard A2A wire field, and this extension is not claimed as
+an official standard skill-dispatch API. See the [verified A2A 1.0 extension,
+data-part and task-state mechanisms](mcp-skills.md#a2a-request-styles-and-extension-boundary).
+The optional [MCP adapter](mcp-skills.md) instead uses native named tools for
+allowlisted skills, empty by default. Tool-like deterministic/typed/quick skills
+may also use MCP; agent-like multi-turn/judgment/clarification skills usually
+stay A2A-only. This is guidance, not an enforced classifier.
 
 ## Small data-contract example
 
@@ -146,7 +162,8 @@ class SummaryInput(BaseModel):
 
 ## Optional tool example
 
-Tools are a later, optional feature, not required for initial text agents.
+Explicitly registered tools, bounded execution and generation continuations are
+part of the first usable release; individual agents can still omit tools.
 Registration is explicit; decoration alone does not grant model access or
 execution permission. This callable is not automatically an advertised A2A skill.
 
@@ -154,7 +171,7 @@ execution permission. This callable is not automatically an advertised A2A skill
 from agentframe import tool
 
 
-@tool(description="Convert Celsius to Fahrenheit.")
+@tool(description="Convert Celsius to Fahrenheit.", idempotent=True)
 def to_fahrenheit(celsius: float) -> float:
     return celsius * 9 / 5 + 32
 ```
@@ -162,6 +179,24 @@ def to_fahrenheit(celsius: float) -> float:
 The proposed construction shape is `Summarizer(model=model, tools=[to_fahrenheit])`.
 The runtime must validate arguments, enforce policy, and bound tool iterations.
 Instruction text is not an authorization mechanism.
+Tool results feed subsequent generation under the same deadline/token/attempt
+budget and outbound checks. Use `ctx.generate(..., tools=[to_fahrenheit])`
+to select registered functions. Defaults are 20 tool calls, 10 model attempts,
+100000 total tokens and 120 seconds. `@tool(side_effects=True)` never auto-retries;
+`idempotent=True` alone does not grant retries. Model retries are transient-only,
+default two with backoff and provider-SDK retries disabled. Exact normalized
+layouts, flag-combination and additional tool-retry rules remain open.
+Human approval workflows are application-owned, not built-in first-release
+pause/resume.
+
+Typed structured model output is also first-release scope, not merely a
+Pydantic schema example: `ctx.generate(..., output=Summary)` returns a validated
+instance. Unsupported requested capability fails before sending; refusal raises
+`ModelRefusalError` and truncation `IncompleteOutputError` by default. Explicit
+partial-result opt-in syntax and supported schema subset remain open; see
+[structured generation examples](agent-examples.md#typed-structured-output-and-bounded-tools).
+Return complete validated results first; future [streaming/AG-UI](streaming.md)
+does not authorize partial output or automatic frontend tools.
 
 Publishing a skill as an MCP tool is a separate host allowlist decision, not a
 new decorator and not automatic publication of `@tool` callables. Token budgets

@@ -1,6 +1,7 @@
 # Base classes and interfaces
 
-These are proposed responsibilities, not stable class signatures. Start with
+These are design contracts, not implemented or stable class signatures. Names
+and defaults explicitly marked decided in the reference are approved. Start with
 the smallest working surface; add supporting types when implementation needs
 them, rather than scaffolding an entire platform in advance.
 
@@ -21,9 +22,9 @@ Configuration and composition are intentional alternatives to inheritance.
 | Input/output contracts | Type annotations and optional data-model subclasses | Built-in types or Pydantic `BaseModel` subclasses validate data. |
 | Instructions | Configuration or typed callable | Static instructions by default; trusted dynamic construction when needed. No required subclass. |
 | Model dependency | Injected interface implementation | Supplied adapters or a custom `Model` protocol implementation. |
-| Tools | Annotation-based with explicit registration | `@tool(...)` defines typed callables; registration and authorization remain separate. |
-| Execution loop | Library default with a replaceable interface | AgentFrame owns bounded execution; advanced executors are a later extension point. |
-| Run context | Library-managed class | A fresh `RunContext` supplies per-invocation dependencies and control signals. Do not subclass it to store application state. |
+| Tools | Annotation-based with explicit registration | `@tool(...)` defines typed callables for first-release bounded execution/continuations; registration and action authorization remain separate. |
+| Execution loop | Library default with a replaceable interface | First release owns bounded tool execution/results and generation continuations; advanced executors remain later. |
+| Run context and services | Library-managed context, annotated injection | `RunContext` supplies generation/control signals; `Inject[T]` resolves registered `Services`. Do not subclass context to store application state. |
 | Conversation state | Injected interface implementation | A future `StateStore` protocol isolates conversation state. It is not the A2A task store. |
 | Knowledge / retrieval | Injected interface or annotated tool | Application-directed retrieval uses a dependency; model-directed retrieval uses an explicitly registered tool. |
 | Execution policy | Typed configuration and policy interface | Limits and runtime checks enforce policy; metadata may declare requirements but cannot enforce them. |
@@ -32,6 +33,10 @@ Configuration and composition are intentional alternatives to inheritance.
 | Observability | Configuration and injected hooks | Correlated operational logs and optional tracing without changing agent inheritance. |
 | Agent Card | Generated from annotations and host configuration | Native SDK type with validated customization, not a required custom subclass. |
 | A2A host | Configured composition | `AgentApp` assembles an agent, host configuration, and SDK components. |
+| Discovery sources (next core release) | Small abstract base and supplied adapters | Extend read-only `AgentRegistry`; validated references and supported queries do not require registration writes. |
+| Card discovery lifecycle (next core release) | Library-managed composition | `AgentDirectory` combines registry/resolver/cache/refresh and owned-resource lifecycle; no per-backend user HTTP loops. |
+| Remote invocation (separate) | Injected native A2A client | `RemoteAgentClient` is distinct from discovery; no automatic delegation or orchestration engine. |
+| Streaming (later) | Optional protocol adapter | Planned AG-UI frontend events, separate from A2A/MCP/OTel; no first-release streaming or UI dependency. |
 
 These are design responsibilities, not a requirement to implement every
 extension in the first release. One `Agent` subclass is enough for the normal
@@ -43,19 +48,21 @@ layer of agent inheritance.
 | Type | Definition |
 | --- | --- |
 | `Agent` | Base class for immutable authoring configuration and one or more valid decorated skill methods, including inherited skills. Supports model-free, model-backed, and mixed skills with no required abstract `handle()`. |
-| `RunContext` | Per-invocation model access, `principal`, application dependencies, deadline, cancellation, and correlation. Provides helpers such as `generate`; never reused as mutable global state. |
+| `RunContext` | Per-invocation model access, `principal`, deadline, cancellation and correlation. `generate` supports text, `output=Model` and registered `tools=[...]`. |
+| `Inject[T]` / `Services` | Annotated skill dependencies, excluded from caller/card/MCP schema. `add` registers app-owned singletons; `add_scoped` creates/closes per-run instances. Missing registrations fail startup. |
 | `Principal` | Immutable trusted caller identity and verified grants/claims, supplied by authentication or trusted local application context, not skill arguments. Exact fields remain open. |
 | `AuthorizationPolicy` | Injected policy for verified caller grants and resource-specific rules. Adds restrictions to mandatory skill requirements and fails closed on denial or unavailability. |
 | `ExecutionPolicy` | Optional configured input, outbound-model, tool/action, and output checks. Does not replace authorization or guarantee injection prevention. |
-| `Runtime` | Registers skill IDs and runs explicitly selected local skills through validation, policy, context creation, deadlines, and output validation. Does not require inference. |
-| `SkillRouter` | Proposed injected interface for selecting a skill from a remote request. Deterministic or explicitly model-backed; exact signature remains open. Selection is subject to authorization and never grants execution permission by itself. |
+| `Runtime` | `invoke` returns a validated value; `run` returns `RunResult` with local execution metadata, even without tracing. `services=` supports local DI; no inference required. |
+| `RunResult` | Value, invocation ID, token usage (complete/estimated; unknown never zero), model/tool calls, duration and finish reason. Remote A2A receives only invocation ID metadata. |
+| `SkillRouter` | Custom-router interface plus a built-in opt-in model-based implementation for free-text A2A selection/extraction. Structured extension requests bypass it. Public signatures and clarification details remain open; selection never grants permission. |
 | `AgentConfig` | Validated defaults for instructions and execution limits. A default is distinct from a non-overridable host policy ceiling. |
-| `RunLimits` | Validated invocation budgets, per-model-request input bound, inference-attempt count, and deadline. Also used to express host ceilings separately from defaults. |
+| `RunLimits` | Defaults: context-derived input cap, 100000 total tokens, 10 model attempts, 20 tool calls, 120 seconds. Host ceilings are separate constraints. |
 | `TracingConfig` | Optional runtime tracing with an application-owned OpenTelemetry provider and content capture off by default. Never owns token enforcement. |
 | `AgentApp` | ASGI composition for native A2A and optional MCP adapters over the common runtime. Publishes the native card and coordinates task lifecycle and owned resources through protocol SDKs. |
-| `HostConfig` | Advertised endpoint, authentication integration, and non-overridable execution ceilings. Separate from agent defaults and adapter-specific settings. |
+| `HostConfig` | Explicit `auth` choice, verified `role_permissions`, advertised endpoint and host ceilings; defaults 32 concurrent runs, 1 MiB request, 4 MiB response, 30-second shutdown grace. |
 | `A2AConfig` | A2A path, selected binding, task-store integration, and actual supported endpoint features. A2A remains the default interface. |
-| `MCPConfig` | Optional MCP endpoint and an explicit `exposed_skills` allowlist. Does not publish internal model tools or grant caller authorization. |
+| `MCPConfig` | Optional MCP endpoint and an explicit `exposed_skills` allowlist, empty by default. Does not publish internal model tools or grant caller authorization. |
 
 `Runtime(authorization=..., policy=...)` separates required permission/resource
 decisions from supplementary content/action checks. Missing integration cannot
@@ -70,37 +77,82 @@ is valid. It belongs to the invocation, not exclusively to model inference.
 instructions, and trusted call-specific instructions, with user text kept separate.
 Missing model configuration produces an explicit error on generation, not a
 failure to construct or run a model-free agent.
+`ctx.generate(text, output=Summary)` returns a validated Pydantic instance;
+`ctx.generate(text, tools=[lookup_order])` runs only registered authorized tools
+with continuations. Unsupported capability fails before sending; refusal and
+truncation raise `ModelRefusalError` and `IncompleteOutputError`. Explicit
+partial-result opt-in syntax remains open and cannot waive validation.
 
-`AgentApp` owns the A2A entry point and uses an explicit routing strategy for
-multiple skills, then invokes the selected skill through the common runtime.
-One matching skill can be selected directly; ambiguous requests need clarification
-or an explicit error. An internal Python skill method name must not become an
-undocumented remote RPC method. Local skill-ID invocation is not a standard A2A
-operation. See [routing boundaries](annotations.md#skill-registration-versus-request-routing).
+`AgentApp` composes one server/shared runtime with audience-specific endpoints,
+not per-skill routes: A2A, optional MCP and later AG-UI. Preferred structured A2A
+requests name a skill through a card-declared, caller-activated extension and
+carry JSON arguments in a native data part. This bypasses routing/model-selection
+cost, not the common runtime's validation, authorization, limits, accounting or
+tracing. The extension URI/schema/advertisement details remain open; local
+skill-ID invocation is not a base A2A wire operation.
+Free-text requests use an explicitly configured custom or opt-in model router
+for selection/extraction. Ambiguous/missing input asks back via an
+input-required task; invalid/unknown structured selection fails explicitly,
+never silently reroutes. See [routing boundaries](annotations.md#skill-registration-versus-request-routing).
 Task state transitions and cancellation must follow the selected A2A version.
-Disconnecting a stream is not automatically equivalent to canceling a task.
+First release returns complete validated results; streaming is later.
+Native task support does not imply application approval pause/resume.
 
 ## Model interfaces
 
 | Type | Definition |
 | --- | --- |
 | `Model` | A Python `Protocol` for asynchronous generation through normalized requests and responses. Does not require inheritance from a vendor-specific class. |
-| `FoundryModel` | Adapter for a configured Foundry model deployment and an explicitly supported inference API. Accepts injected credentials or a configured SDK client. |
+| `FoundryModel` | Adapter for a configured Foundry GPT deployment through OpenAI v1 Responses and official `openai`. Credential/client injection and lifecycle remain proposed; provider packages stay optional. |
 | `OllamaModel` | Adapter for an explicit Ollama endpoint and model tag, initially targeting locally executed Llama models. Never downloads or switches models implicitly. |
-| `ModelSettings` | Validated shared generation settings such as per-request `max_output_tokens`, with typed provider-specific options. Unsupported requested settings fail explicitly. |
+| `ModelSettings` | Canonical per-request `max_output_tokens=4096`, with typed provider options; not duplicated on `RunLimits`. |
 | `ModelCapabilities` | Supported features of the actual model/deployment, including streaming, tools, structured output, and accepted modalities. Unknown support is not assumed to be available. |
 | `ModelRequest` | Provider-neutral messages, optional tool definitions, output contract, and permitted generation settings. Keeps instructions distinct from user content. |
 | `ModelResponse` | Normalized generated content, optional tool calls, available usage data, and completion status. Missing usage remains unknown, not zero. |
 
-The minimal contract needs non-streaming text generation first. Streaming events
-and richer content should be introduced only with corresponding adapter tests.
-There is no claim that every model host supports the same features or produces
-identical results.
+The first proof (M1) is model-free/text-only; M3 meets the README's
+Foundry/Llama configuration-switching success criterion. The M7 first usable release includes
+text, typed structured outputs and bounded explicitly registered tool calls,
+validated results and generation continuations. All final results are complete
+and validated. Unsupported model features fail explicitly; normalized messages,
+tool calls/results, structured-output capability checks, usage, refusal and
+incomplete-generation representations still need concrete contracts.
+There is no claim that every deployment supports every feature or produces
+identical results. Streaming is a later delivery with scoped optional
+[AG-UI frontend support](streaming.md), not automatic A2A streaming.
 
 Resource ownership must be explicit: library-created clients are closed by the
 library; injected clients remain caller-owned unless ownership is explicitly
 transferred. Clients and credential providers must not be constructed at module
 import time.
+
+## Discovery interfaces (next core release)
+
+The [discovery design](discovery.md) and [reference](api/discovery.md) add
+read-first building blocks in the next core multi-agent release (M8+) after
+the M7 single-agent release. Native remote A2A calls let ordinary orchestrator
+skills compose independently deployed agents, without a workflow/graph engine.
+
+| Type | Definition |
+| --- | --- |
+| `AgentRegistry` | Small abstract base with proposed async `get(agent_id) -> AgentReference` and `list(query: AgentQuery) -> list[AgentReference]`; pagination remains open. No required write operations. |
+| `AgentReference` | Validated stable identity, endpoint/discovery location, transport and non-secret connection metadata; exact fields open. |
+| `AgentQuery` | Supported ID/skill/tag matching; skill/tag filtering requires source metadata or explicit card enrichment, not assumed reference fields. |
+| `EnvironmentAgentRegistry` | Explicitly named environment source with documented structured format; JSON reference-array text proposed. |
+| `FileAgentRegistry` | Explicit file source, JSON initially proposed; schema/version not finalized. |
+| `FoundryAgentRegistry` | Chosen Foundry project agents API via `azure-ai-projects` 2.x; A2A-enabled filtering, card mapping, auth/RBAC and pagination remain open. No tested implementation; model deployments are not agent endpoints. |
+| `AgentCardResolver` | Fetches/validates native SDK cards with application-configured outbound authentication and destination/redirect policy. |
+| `CardCacheConfig` | Proposed TTL/stale settings; 300 seconds and `False` are examples, not settled defaults. |
+| `AgentDirectory` | Library-managed facade for source reads, card resolution/cache/explicit refresh and scoped owned-resource cleanup; caller/card variants isolated. |
+| `RemoteAgentClient` | Separate native A2A invocation client with interfaces still open; discovery never implicitly delegates. |
+
+No import/construction I/O or implicit polling. Directory lifecycle is not
+deploy/start/stop/delete, leases/federation, write registration or A2A task
+management. Hosts may own a library-created/explicitly transferred directory's
+lifespan; injection alone does not transfer ownership. Source errors are not
+empty results/deletion; failed refresh cannot silently make stale current.
+Freshness is not health, trust or authorization; invocation/actions authorize
+again. See [failure/isolation boundaries](discovery.md#failure-trust-and-isolation-boundaries).
 
 ## Native A2A types
 
@@ -115,8 +167,10 @@ copy SDK schemas into a separately maintained contract.
 
 Distinguish definition/configuration errors, input/output validation failures,
 authentication/authorization failures, unsupported model features, provider
-failures, deadline expiration, and cancellation. Exact exception names remain
-an implementation decision.
+failures, deadline expiration and cancellation using the
+[decided error hierarchy](api/runtime.md#agentframeerror). Base/subclass names
+are approved; constructors, named limit subtypes and exact protocol mappings
+remain open.
 
 Keep detailed diagnostics in redacted, correlated application logs. Return safe
 protocol errors to remote callers, not stack traces, credentials, or raw provider
@@ -125,6 +179,8 @@ responses.
 Allow explicit injection of model implementations, provider clients, credential
 providers, supported task stores, and authentication integration. Avoid a
 global plugin registry or custom configuration language in the first release.
+The later [read-only discovery registry](discovery.md) is a separate explicit
+source dependency, not that global plugin mechanism.
 
 ## Proposed API examples
 
@@ -169,13 +225,17 @@ def build_cloud_agent(
 
 The application supplies a supported endpoint, deployment, and credential. This
 proposal uses an async Azure token credential from the optional provider
-dependencies; the final accepted credential types depend on the selected client.
+dependencies; mapping to the selected `openai` client is not settled.
+The [chosen API path](initial-outline.md#resolved-m0-platform-and-api-decisions)
+is OpenAI v1 Responses, with Entra token-provider or API-key authentication;
+this is not the retired Azure AI Inference SDK. Final accepted AgentFrame
+credential types and async wrapping remain open.
 No secrets belong in the definition or generated card.
 
 ### Configure defaults and compose the host
 
 ```python
-from agentframe import AgentApp, AgentConfig, HostConfig, RunLimits
+from agentframe import APIKeyAuth, AgentApp, AgentConfig, HostConfig, RunLimits, Runtime
 
 configured_agent = Summarizer(
     model=local_model,
@@ -183,16 +243,24 @@ configured_agent = Summarizer(
 )
 app = AgentApp(
     agent=configured_agent,
-    host=HostConfig(public_url="http://127.0.0.1:8000"),
+    runtime=Runtime(authorization=development_authorization_policy),
+    host=HostConfig(
+        public_url="http://127.0.0.1:8000",
+        auth=APIKeyAuth(keys=development_keys),
+    ),
 )
 ```
 
+`development_keys` comes from secure application configuration (entry schema
+open); `development_authorization_policy` is application resource policy.
+`APIKeyAuth` is a decided development option, not a production security default.
 This illustrates a local ASGI application, not a running server. The ASGI server
 must separately bind to loopback on the matching port. Thirty seconds is an
-example override, not a settled library default. Non-local hosting needs explicit
+example override of the 120-second default. Remote hosting requires explicit
 authentication and HTTPS; a public URL does not configure either automatically.
-Instance configuration overrides class defaults, and permitted run overrides
-remain subject to host-enforced ceilings.
+Resolve library -> agent -> skill -> per-run within host ceilings; skills
+use `@skill(limits=RunLimits(...))`. Omitted `auth` refuses startup; anonymous
+access requires explicit `AllowAnonymous()`.
 
 See [limits](limits.md), [tracing](tracing.md), and
 [MCP skill configuration](mcp-skills.md) for invocation budgets, optional
@@ -217,3 +285,28 @@ AgentFrame's request/response types. A real vendor adapter must explicitly trans
 messages, output, errors, and feature support. Final client typing, capability
 reporting, and lifecycle requirements must be specified before implementation.
 No inheritance from `Agent`, or from another agent framework, is needed.
+
+## Decided execution contracts and remaining details
+
+Use `Inject[T]` parameters with `Services.add(T, singleton)` or
+`Services.add_scoped(T, factory)`, supplied via `AgentApp(services=...)` or
+`Runtime(services=...)`. Applications close singletons; AgentFrame closes only
+scoped instances it created. Missing services fail startup; factory/disposal
+method signatures remain open.
+
+`Runtime.invoke` returns the value; `Runtime.run` returns `RunResult`.
+The [safe error hierarchy](api/runtime.md#agentframeerror) is decided, including
+validation/auth/policy/model/limit/cancellation failures and correlation.
+Startup ID allocation, usage marker representation, duration units and precise
+transport mappings remain open.
+
+Model retries cover transient rate-limit/timeout/server failures only, default
+two retries with backoff; disable SDK retries. Side-effecting tools declare
+`@tool(side_effects=True)` and never auto-retry; `idempotent=True` is not a
+blanket replay grant. A2A deduplicates same caller/message ID for 10 minutes
+in memory by default, with a pluggable multi-instance store, not exactly-once.
+Retry/store configuration syntax, atomicity details, normalized field layouts,
+A2A typed-part mappings and router extraction/clarification remain open.
+Applications own human
+approval workflows; required authorization/action checks still fail closed.
+No built-in first-release approval suspension/resumption or implicit replay.

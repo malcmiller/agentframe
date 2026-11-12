@@ -4,18 +4,79 @@ This is a proposed design, not an implemented server or MCP compatibility claim.
 A2A remains first-class. MCP is an optional adapter for explicit skill invocation,
 not another agent framework underneath AgentFrame.
 
+## One server, audience-specific endpoints
+
+Use one server and one shared runtime, with an endpoint per caller audience,
+not per skill: A2A is the main agent-facing interface; optional MCP serves LLM
+apps/tools through an explicit skill allowlist; future AG-UI serves frontends.
+All entry points use the same authorization, validation, limits, accounting and
+tracing pipeline. Protocol-specific authentication and responses remain native.
+This composition does not move MCP or AG-UI into the M7 release or select an
+AG-UI route/constructor. Agent Cards are discovery documents, not per-skill routes.
+
 ## Different interaction models
 
 | Interface | Discovery | Invocation |
 | --- | --- | --- |
-| A2A | Native Agent Card with descriptive skills and truthful endpoint capabilities | Standard messages, tasks, and artifacts; an explicit router selects among multiple skills when needed. |
+| A2A | Native Agent Card with descriptive skills, supported extension declaration and truthful endpoint capabilities | Preferred structured skill/arguments request through an activated extension, or free-text request through a custom/opt-in model router; both use native messages/tasks/artifacts. |
 | MCP | `tools/list` with tool descriptions and input schemas | `tools/call` explicitly selects a published tool. |
 | Local runtime | Registered skill metadata | `Runtime.invoke(agent, skill=..., arguments=...)`. |
+
+Future [AG-UI streaming](streaming.md) is a distinct optional frontend event
+adapter, not an MCP replacement or publication of internal/frontend tools.
+First release returns complete validated results, including typed structured
+generation and bounded registered-tool continuations; protocol tool/schema
+mapping is still separate from those internal execution features.
 
 A custom REST skill API is deferred unless a concrete client needs it. Do not
 implement `/v1/skills/{id}:invoke` as a default third protocol. MCP is not a
 REST route per skill, and its payloads must not be replaced with a custom JSON
 success envelope.
+
+## A2A request styles and extension boundary
+
+**Structured requests are preferred:** the caller names a registered skill and
+sends JSON business arguments in a native A2A data part. Selection is
+deterministic and bypasses the router, with no selection-model call or inference
+cost for routing. The selected skill can still use a model and incur execution
+cost. Validate arguments against the skill's typed signature and apply the same
+authorization, policies, limits, accounting and tracing. Unknown skills and
+invalid arguments fail explicitly; do not reinterpret a failed structured
+request as a prompt or silently run another skill.
+
+This uses A2A 1.0's extension mechanism, not a new endpoint, RPC method or
+standard built-in `skill` field. Source-checked on 2026-11-11:
+
+| Mechanism | Native A2A 1.0 contract | AgentFrame decision / still open |
+| --- | --- | --- |
+| Declaration | [`AgentCapabilities.extensions`](https://a2a-protocol.org/latest/specification/#443-agentcapabilities) contains `AgentExtension` declarations; [extension declaration](https://a2a-protocol.org/latest/topics/extensions/#extension-declaration) describes `uri`, `description`, `required` and `params`. | Declare structured selection on the Agent Card. Extension URI/name/version, schema, per-skill contract advertisement and configuration surface remain open. No official standard extension or finalized URI is claimed. |
+| Activation | The [extension activation guide](https://a2a-protocol.org/latest/topics/extensions/#extension-activation) says extensions are inactive by default. An HTTP client requests activation using comma-separated URIs in `A2A-Extensions`; the response SHOULD identify activated extensions with that header. Other bindings use their specified mechanisms. | The structured client must establish compatible support/activation. Do not mark the extension globally required for prompt-capable clients or silently downgrade a typed call if unsupported. Exact client failure/negotiation contract remains open. |
+| Arguments and selection metadata | [`Part.data`](https://a2a-protocol.org/latest/specification/#416-part) carries a JSON value, with exactly one content member per part. [`Message.extensions` and `Message.metadata`](https://a2a-protocol.org/latest/specification/#414-message) identify contributing extensions and carry extension context; [extension points](https://a2a-protocol.org/latest/specification/#462-extensions-points) allow message metadata. | Business arguments go in a data part; the extension defines skill selection and how it relates to that part. Exact selector placement/keys, argument schema/versioning and metadata layout are open. Do not add custom top-level protocol fields or use metadata as trusted identity. |
+| Clarification | [`TASK_STATE_INPUT_REQUIRED`](https://a2a-protocol.org/latest/specification/#413-taskstate) is the A2A 1.0 interrupted state for additional input; [`TaskStatus.message`](https://a2a-protocol.org/latest/specification/#412-taskstatus) can convey the agent's question. | For free-text ambiguity or missing arguments, ask back through an input-required task rather than guess. Exact question/missing-field schema, follow-up mapping and router decision API remain open. This is not a successful skill result or built-in approval/durable workflow. |
+
+Only the business arguments might look like this for `summarize`; this is **not**
+a complete A2A request or the extension schema:
+
+```json
+{
+  "text": "The document to summarize."
+}
+```
+
+**Free-text requests** go through a configured custom router (M2) or explicitly
+opted-in built-in model router (M6). The router selects an authorized candidate
+and extracts business arguments; the runtime validates them before invocation.
+Ask back through the input-required state for ambiguity or missing arguments,
+never guess. Invalid decisions, refusal, authorization failure and exhaustion
+remain explicit failures rather than clarification-shaped success.
+Callers that do not use the extension, including non-AgentFrame agents, use
+this prompt path; configuring an agent model does not enable a model router.
+
+If typed AgentFrame-to-AgentFrame calls are added in M8+, they always use the
+structured extension path. The idea `research.find_sources(topic=...)` is still
+unapproved syntax, not a proprietary RPC contract. An external caller can also
+use structured requests if it implements the advertised extension. A2A stays
+interoperable, but base A2A alone does not standardize AgentFrame skill selection.
 
 ## Three separate exposure decisions
 
@@ -28,19 +89,36 @@ None of these automatically enables the others. A skill published through MCP
 may execute model inference; MCP tools are not limited to deterministic functions.
 It must still enforce the same authorization and execution limits.
 
+As a guideline, tool-like skills (deterministic, typed, quick and single-shot)
+may also be published through MCP; agent-like skills involving judgment,
+multiple turns, clarification or long-running work usually stay A2A-only.
+This is not an enforced classifier or a ban on model-backed MCP tools.
+MCP remains opt-in per skill through `exposed_skills`, empty by default.
+
+[Registry/directory discovery](discovery.md) is core to the next multi-agent
+release (M8+), but remains a separate concern: finding a remote card never
+publishes its skills through MCP or
+registers them as internal model tools. Discovery itself does not delegate;
+remote invocation uses a separately authorized native A2A client.
+
 ## Proposed server composition
 
 This example uses `WritingAssistant` from [agent examples](agent-examples.md).
-`model`, `tracer_provider`, `authentication`, `authorization_policy`,
+`model`, `tracer_provider`, `tenant_id`, `audience`, `authorization_policy`,
 `execution_policy`, and `application_router` are
 application-supplied dependencies. Constructor fields and transport choices
 are proposals, not stable signatures.
+The custom router placeholder can be replaced by an explicitly configured
+built-in model router once its construction API is settled; merely injecting a
+model into the agent never enables routing. Router argument extraction and
+clarification remain open.
 
 ```python
 from agentframe import (
     A2AConfig,
     AgentApp,
     AgentConfig,
+    EntraIDAuth,
     HostConfig,
     MCPConfig,
     ModelSettings,
@@ -77,7 +155,7 @@ app = AgentApp(
     runtime=runtime,
     host=HostConfig(
         public_url="https://writer.example.com",
-        authentication=authentication,
+        auth=EntraIDAuth(tenant_id=tenant_id, audience=audience),
         limits_ceiling=RunLimits(
             max_input_tokens=8_000,
             max_total_tokens=16_000,
@@ -99,11 +177,17 @@ The ASGI server/ingress separately configures binding and TLS. Both remote
 interfaces must integrate authentication appropriate to their selected protocol
 versions and transport; sharing a host does not make an arbitrary bearer-token
 middleware a conforming MCP authorization implementation.
+A remote host refuses startup without `auth`; explicit `AllowAnonymous()` is
+the only anonymous built-in choice, never the default. Shared runtime protections
+also include `Inject[T]` service validation, host admission/bytes/shutdown and
+typed safe errors. A2A message deduplication is not MCP replay semantics.
 
 The proposed HTTP deployment publishes the native Agent Card at
 `/.well-known/agent-card.json`, advertises the chosen A2A binding at `/a2a`, and
 serves MCP through Streamable HTTP at `/mcp`. A2A and MCP initialization,
 version negotiation, sessions, and response semantics stay protocol-native.
+MCP's transport name does not enable partial skill/model output: first-release
+invocations still return complete validated results.
 MCP stdio, if added, is a separate transport, not an ASGI route.
 
 A2A is enabled by default for `AgentApp`; MCP is disabled by default.
@@ -120,7 +204,8 @@ For the example `summarize(self, text: str, ctx: RunContext) -> str`:
   against the selected MCP version's naming rules; reject collisions rather
   than silently rename tools.
 - Build the input schema from the skill's typed business parameters. Exclude
-  `self`, injected `ctx`, credentials, instructions, and execution internals.
+  `self`, injected `ctx`, every `Inject[T]` service parameter, credentials,
+  instructions and execution internals. Missing registered services fail startup.
 - Reject unknown arguments and attempts to inject context or policy options.
 - Validate the result against the Python return contract. A proposed structured
   output wrapper is `{"value": ...}` so scalar results can map to an object
@@ -155,12 +240,13 @@ contract; A2A task support does not imply MCP task support.
 ```text
 authenticated transport request
   -> validate protocol envelope and permitted exposure
-  -> select skill: A2A router or explicit MCP tool name
+  -> select skill: activated structured A2A extension, prompt router, or MCP name
   -> authorize the selected skill and validate arguments
   -> common runtime: context, limits, execution, output validation
   -> protocol-native response
 ```
 
+Structured A2A bypasses routing, not security or execution controls.
 Authorize admission before model-backed routing, restrict the selector to
 eligible skills, and re-check the selected skill at invocation. MCP allowlisting
 is publication policy, not caller authorization. Filter discovery as required
@@ -194,9 +280,13 @@ Use the official MCP Python SDK as an optional protocol dependency; do not pull
 in another agent framework to obtain MCP support. Preserve model-free, A2A-only
 use without MCP or telemetry packages.
 
-MCP follows the minimal A2A authoring slice rather than blocking it. Before
+MCP is a separate follow-up after M7 rather than blocking the first usable release. Before
 claiming support, pin an SDK/protocol version and test initialization, discovery,
 allowlisted invocation, authorization, schema mapping, failure handling,
 cancellation behavior, isolation, limits, and tracing with an independent client.
 Final authentication hooks, tool-result mappings, and router signatures remain
 open until implemented and verified.
+Internal model tools/structured outputs are first-release requirements, unlike
+optional adapter delivery. A2A task support does not add built-in human approval
+pause/resume; application workflows own approval state. AG-UI or provider
+streaming cannot justify advertising unimplemented A2A streaming.

@@ -63,16 +63,28 @@ content to its model. Later model requests containing tool results, retrieved
 documents, and conversation history must also pass checks; the first prompt
 alone is not sufficient coverage.
 
-For streamed responses, configured output checks must run before affected
-content is released. Buffer or decline streaming when the policy requires
+First release returns complete validated results. For later streamed responses,
+including the proposed [AG-UI adapter](streaming.md), configured output checks
+must run before affected content is released. Buffer or decline streaming when the policy requires
 whole-output inspection; a later rejection cannot retract already sent data.
 Output rejection also cannot undo actions already performed, so action checks
 and approvals must occur before side effects.
+This includes frontend-visible tool arguments/results and error/progress events,
+not only assistant text. Partial structured output is not a validated result.
+Human approval workflows belong to the application; there is no built-in
+first-release approval pause/resume. Required action checks still fail closed.
 
 Checks must honor invocation deadlines, have bounded resource use, and surface
 explicit failures. Denial or unavailability of a required check stops the
 affected operation. Do not silently drop a check, fall back to another provider,
 or turn rejection into a successful-looking answer.
+Use safe `AgentFrameError` failures with invocation correlation, including
+`PermissionDeniedError` for authorization denial and `PolicyUnavailableError`
+for a required unavailable policy. Exact content-screening denial subtype
+and transport mapping remain open. Provider refusals raise `ModelRefusalError`,
+unsupported capabilities fail before sending, and truncated output raises
+`IncompleteOutputError` unless explicitly permitted (syntax open, validation
+still required). None may be disguised as valid generated text.
 
 Applications must explicitly approve any external screening destination and its
 data handling. Screening is itself data egress: do not send sensitive content
@@ -86,3 +98,19 @@ raw prompts, private reasoning, or full policy-service responses.
 See [authorization](authorization.md), [limits](limits.md), and
 [tracing](tracing.md). AgentFrame does not supply an identity directory, universal
 content policy, or guaranteed prompt-injection detector.
+
+Next-core-release [discovery](discovery.md) treats registry metadata and fetched cards
+as data, not privileged instructions, trusted destinations or permission grants.
+Selecting trusted sources does not eliminate the need for destination/DNS/
+redirect checks, bounded fetches, variant isolation and current authorization.
+Do not automatically expose discovered skills as model tools or forward
+credentials to card-advertised origins. Sending card content to a selector model
+is explicit egress subject to the same outbound checks and budgets; discovery
+alone never delegates work.
+
+AG-UI frontend messages, roles, context, state, tools and forwarded properties
+are untrusted input, never application-owned instructions/dependencies or
+authorization. No automatic frontend tool execution, persistence or resumability.
+Do not expose hidden prompts, secrets, raw provider payloads or private reasoning
+through native/custom/raw events, input echoes or tool visibility. A protocol
+adapter is not a universal injection defense or an OTel event exporter.

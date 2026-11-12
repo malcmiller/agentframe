@@ -4,6 +4,8 @@ These are proposed runtime APIs, not implemented telemetry. Tracing is optional
 infrastructure, not an agent decorator or subclass requirement. Use an optional
 OpenTelemetry integration; the application owns sampling, processors, exporters,
 and collector credentials.
+Tracing integration is a separate follow-up after M7; invocation metadata,
+accounting and enforcement remain independent of it in the first usable release.
 
 ## Proposed configuration
 
@@ -45,11 +47,15 @@ server request: A2A or MCP
 ```
 
 Selection precedes invocation, rather than being a child of a skill that has
-not yet been selected. An MCP tool call already names a skill and needs no model
-router. Local invocations have no synthetic HTTP parent. Model-free skills
+not yet been selected. An activated structured A2A request or MCP tool call
+already names a skill and needs no routing-model span or inferred usage.
+Validation, authorization, accounting and invocation correlation still apply.
+Local invocations have no synthetic HTTP parent. Model-free skills
 still have invocation spans but no model spans.
 
-One logical model operation may have multiple attempts. Represent retries
+One logical model operation may have multiple attempts: default two retries
+with backoff for transient provider rate-limit/timeout/server failures only,
+one retry layer with provider SDK retries disabled. Represent retries
 explicitly and report their cost without double-counting a logical parent
 and its child attempts. Use relevant OpenTelemetry semantic conventions when
 implemented, with pinned versions rather than an invented competing standard.
@@ -59,6 +65,15 @@ links/parentage after the initial HTTP request ends. Do not keep an unrelated
 request span open indefinitely or assume task completion equals HTTP completion.
 
 ## Safe metadata
+
+Next-core-release [registry/directory discovery](discovery.md) can record bounded
+source-read, card-fetch, cache and refresh operations with invocation correlation.
+Do not fabricate model spans for model-free discovery or double-count downstream
+usage. Keep caller/tenant/card variants isolated in caches and telemetry; log safe
+status/freshness categories, not credentials, protected cards, secret-bearing
+URLs or private query/connection metadata. Tracing must remain optional for
+correct refresh, authorization and deadline enforcement. Exact attributes and
+downstream propagation contracts remain open.
 
 | Record by default when permitted | Do not capture by default |
 | --- | --- |
@@ -78,6 +93,19 @@ Do not treat opt-in content capture as a security bypass.
 
 ## Propagation and transport boundaries
 
+Future [AG-UI streaming](streaming.md) is a frontend protocol event stream, not
+an OTel trace stream. Do not pipe spans, raw provider/tool payloads or private
+reasoning to clients. Keep native thread/run/message/tool IDs distinct from
+server-generated invocation IDs and optional trace IDs; none is caller identity.
+`Runtime.invoke` returns the validated value; `Runtime.run` returns `RunResult`
+with value, invocation ID, token usage (complete/estimated; unknown never zero),
+model/tool call counts, duration and finish reason even when tracing is off.
+Errors carry the invocation ID and a safe message. Exact usage marker fields,
+duration unit and failed-run usage access remain open.
+First-release complete validated results do not depend on a
+connected frontend, and future stream buffering/disconnect cannot disable
+accounting or required checks.
+
 - For HTTP A2A and MCP, accept valid W3C `traceparent`/`tracestate` according to
   application trust policy. A public ingress may start a fresh trace or link
   incoming context rather than trusting remote sampling decisions.
@@ -93,7 +121,9 @@ Do not treat opt-in content capture as a security bypass.
 Export traces through the configured backend. Do not invent a REST response
 envelope for standard A2A or MCP. Return correlation only through documented
 transport-appropriate metadata or headers, if supported; exact mappings remain
-open. A correlation reference does not grant trace-backend access.
+open. For A2A, only the invocation ID goes in response metadata, never internal
+`RunResult` counters/provider details; its exact metadata key remains open.
+A correlation reference does not grant trace-backend access.
 
 Authentication failures should be diagnosable without disclosing skill details.
 Telemetry export failure must not become an agent success/failure substitute:
