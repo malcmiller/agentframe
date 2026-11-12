@@ -74,6 +74,37 @@ Before committing, all four checks must pass: `uv run ruff format --check`,
 with `uv run --python 3.13 pytest` (repeat for 3.14 and 3.15).
 In PyCharm, select `.venv/bin/python`, mark `src` as Sources Root and `tests`
 as Test Sources Root, and use pytest as the test runner.
+
+### Real-provider tests (opt-in, local only)
+
+`tests/test_providers.py` runs one agent against a real Ollama server and a real
+Foundry deployment: text generation with usage, a tiny `max_output_tokens`
+raising `IncompleteOutputError`, a clear error for an unknown model/deployment,
+and a hosted structured call through the official A2A client. They are marked
+`ollama` / `foundry` and skipped unless enabled, so default `uv run pytest` and
+CI never call a provider (no secrets in CI for M3; revisit a manual Foundry
+workflow at M7). Endpoints and model names come only from environment variables:
+
+| Variable | Needed | Meaning |
+| --- | --- | --- |
+| `AGENTFRAME_TEST_OLLAMA=1` | Ollama | Enables the `ollama` tests. |
+| `AGENTFRAME_OLLAMA_MODEL` | Ollama | Installed model tag, for example `llama3.2:3b` (never pulled). |
+| `AGENTFRAME_OLLAMA_ENDPOINT` | Optional | Server URL; defaults to `OllamaModel`'s `http://localhost:11434`. |
+| `AGENTFRAME_TEST_FOUNDRY=1` | Foundry | Enables the `foundry` tests. |
+| `AGENTFRAME_FOUNDRY_ENDPOINT` | Foundry | OpenAI v1 base URL, `https://<resource>.openai.azure.com/openai/v1/`. |
+| `AGENTFRAME_FOUNDRY_DEPLOYMENT` | Foundry | Deployment name. |
+
+Foundry signs in with the Azure CLI credential (run `az login`; no API key).
+Foundry calls cost money, so prompts and caps are tiny; run them sparingly.
+
+```bash
+AGENTFRAME_TEST_OLLAMA=1 AGENTFRAME_OLLAMA_MODEL=llama3.2:3b uv run pytest -m ollama
+AGENTFRAME_TEST_FOUNDRY=1 AGENTFRAME_FOUNDRY_ENDPOINT=<base-url> \
+  AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> uv run pytest -m foundry
+```
+
+An enabled provider with a missing required variable fails rather than skips.
+
 Do not implement M1+ features or add runtime dependencies just to execute design
 snippets.
 

@@ -206,9 +206,10 @@ non-streaming Responses call.
   unsupported. Without `context_window=`, an agent using this model needs an
   explicit `RunLimits(max_input_tokens=...)`; otherwise `AgentApp` startup
   fails with `DefinitionError` ([limits accounting](../limits.md#implemented-token-accounting-m3), M3 #36).
-- Opt-in real test: set `AGENTFRAME_TEST_FOUNDRY=1`,
-  `AGENTFRAME_FOUNDRY_ENDPOINT` and `AGENTFRAME_FOUNDRY_DEPLOYMENT`; it signs in
-  with the Azure CLI credential. Default test runs never call Foundry.
+- Opt-in real tests (`tests/test_providers.py`, marker `foundry`, M3 #41):
+  set `AGENTFRAME_TEST_FOUNDRY=1`, `AGENTFRAME_FOUNDRY_ENDPOINT` and
+  `AGENTFRAME_FOUNDRY_DEPLOYMENT`; they sign in with the Azure CLI credential.
+  Default test runs and CI never call Foundry. See `AGENTS.md`.
 
 **Related:** [`ModelSettings`](#modelsettings),
 [Foundry guide](../agent-examples.md#switch-to-foundry),
@@ -263,6 +264,10 @@ server, silently switches models, or enables cloud execution.
   on first use and cached; [`capabilities`](#modelcapabilities-1) reports the
   same value, so input checks use what is sent. Metadata without a context
   length raises a non-transient `ProviderError` asking for `context_window=`.
+  Because `AgentApp` reads every model's capabilities at startup, an
+  `OllamaModel` without `context_window=` contacts its server during startup
+  (bounded by the agent's timeout), and startup fails if the server or model
+  is unavailable. With an explicit `context_window`, startup does no I/O.
 - **Memory cost of the default:** the metadata size is usually the model's
   maximum context. Ollama allocates memory for the whole window, so
   `llama3.2:3b` with its 131072-token maximum loads at about 18 GB instead of
@@ -279,6 +284,10 @@ server, silently switches models, or enables cloud execution.
   non-transient one. Messages are safe and do not repeat the server's error
   text. The 0.6 client has no retry loop of its own; AgentFrame retries are
   separate.
+- Opt-in real tests (`tests/test_providers.py`, marker `ollama`, M3 #41): set
+  `AGENTFRAME_TEST_OLLAMA=1` and `AGENTFRAME_OLLAMA_MODEL` (optionally
+  `AGENTFRAME_OLLAMA_ENDPOINT`). Default test runs and CI never call Ollama.
+  See `AGENTS.md`.
 
 **Related:** [`ModelCapabilities`](#modelcapabilities),
 [local model guide](../agent-examples.md#choose-local-llama-through-ollama).
@@ -321,6 +330,50 @@ async def test_retry_after_rate_limit() -> None:
 
     assert response.text == "Hello!"
     assert len(model.requests) == 2
+```
+
+To mirror a production model that reports no context window, such as a
+`FoundryModel` created without `context_window=`, pass `ModelCapabilities()`.
+The agent then needs `RunLimits(max_input_tokens=...)`, exactly as in
+production; without it, `validate_model` (and `AgentApp` startup) raise
+`DefinitionError`:
+
+```python
+from agentframe import (
+    Agent,
+    ModelCapabilities,
+    RunContext,
+    RunLimits,
+    Runtime,
+    agent,
+    skill,
+)
+from agentframe.testing import ScriptedModel
+
+
+@agent(version="1.0.0")
+class Writer(Agent):
+    """Rewrites text."""
+
+    # Needed when the model reports no context window, as in production.
+    limits = RunLimits(max_input_tokens=2000)
+
+    @skill("rewrite", tags=["text"])
+    async def rewrite(self, text: str, ctx: RunContext) -> str:
+        """Rewrite text."""
+        return await ctx.generate(text)
+
+
+async def test_runs_with_a_model_that_reports_no_context_window() -> None:
+    # Mirrors, for example, a FoundryModel created without context_window=.
+    model = ScriptedModel(["Shorter."], capabilities=ModelCapabilities())
+
+    await Runtime().validate_model(Writer(model=model))
+    result = await Runtime().invoke(
+        Writer(model=model), skill="rewrite", arguments={"text": "Long."}
+    )
+
+    assert result == "Shorter."
 ```
 
 **Behavior / failures:** calling `generate` more times than scripted raises

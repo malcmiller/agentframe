@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -303,17 +302,3 @@ def test_missing_extra_names_the_extra_to_install() -> None:
 
     assert result.returncode != 0
     assert "agentframe[ollama]" in result.stderr
-
-
-@pytest.mark.skipif(
-    os.environ.get("AGENTFRAME_TEST_OLLAMA") != "1",
-    reason="set AGENTFRAME_TEST_OLLAMA=1 to call a local Ollama server",
-)
-async def test_local_ollama_server_generates_text() -> None:
-    model_tag = os.environ.get("AGENTFRAME_OLLAMA_MODEL", "llama3.2:3b")
-
-    async with OllamaModel(model=model_tag, context_window=8192) as model:
-        response = await model.generate(ask("Reply with the word: ready", 20))
-
-    assert response.text
-    assert response.usage.output_tokens

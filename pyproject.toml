@@ -50,6 +50,9 @@ dev = [
     "pre-commit==4.7.0",
     "uvicorn==0.54.0",
     "httpx==0.28.1",
+    # Imported directly by the tests, so pinned rather than left transitive.
+    "httpx2==2.16.0",
+    "azure-core==1.41.0",
     "agentframe[ollama,foundry]",
 ]
 
@@ -79,3 +82,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["--strict-markers", "--strict-config", "-ra"]
+markers = [
+    "ollama: calls a real Ollama server; runs only with AGENTFRAME_TEST_OLLAMA=1",
+    "foundry: calls a real Foundry deployment; runs only with AGENTFRAME_TEST_FOUNDRY=1",
+]
