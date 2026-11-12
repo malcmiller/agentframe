@@ -35,9 +35,11 @@ jobs:
         with:
           version: "0.13.1"
       - run: uv build
-      - name: Import the installed wheel outside the source tree
+      - name: Import the installed wheel and its A2A server binding
         working-directory: ${{ runner.temp }}
         run: >-
           uv run --isolated --no-project --python 3.13
           --with "${GITHUB_WORKSPACE}"/dist/*.whl
-          python -c "import agentframe; print(agentframe.__version__)"
+          python -c "import agentframe, starlette, sse_starlette;
+          from a2a.server.routes import create_jsonrpc_routes;
+          print(agentframe.__version__)"

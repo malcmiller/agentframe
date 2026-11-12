@@ -20,6 +20,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "a2a-sdk[http-server]==1.3.0",
     "pydantic>=2.14,<3",
 ]
 

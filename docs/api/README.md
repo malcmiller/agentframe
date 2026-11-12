@@ -171,7 +171,9 @@ resolve Python (3.13+, test through 3.15), A2A (protocol 1.0 via official
 `a2a-sdk`, observed 1.3.0/specification v1.0.1), Foundry models (OpenAI v1
 Responses through optional `openai`, Entra token-provider/API-key auth), and
 the M8+ Foundry registry source (project agents API via `azure-ai-projects` 2.x,
-observed 2.10.0). Versions observed are not pins or tested compatibility.
+observed 2.10.0). Versions observed are not pins or tested compatibility,
+except the M2 A2A pin: `a2a-sdk[http-server]==1.3.0` with the JSON-RPC over HTTP
+binding, protocol 1.0 only.
 
 | Area | Open contract |
 | --- | --- |

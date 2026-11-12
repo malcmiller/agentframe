@@ -48,8 +48,8 @@ authoring walkthrough. Changes to proposed interfaces should keep the reference,
 guides, and design documents consistent. The reference's
 [open-contract list](api/README.md#decisions-still-needed) is a navigation aid,
 not a set of settled signatures. A2A protocol 1.0 and the official `a2a-sdk` are
-selected; implementation must pin a compatible SDK and prove its chosen transport
-binding. References to the latest specification are not a
+selected; M2 pins `a2a-sdk[http-server]==1.3.0` and uses the JSON-RPC over HTTP
+binding for protocol 1.0 only. References to the latest specification are not a
 promise of automatic compatibility with future releases.
 
 The [reviewed release decisions](initial-outline.md#reviewed-release-decisions)
