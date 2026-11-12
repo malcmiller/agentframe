@@ -36,7 +36,7 @@ def test_explicit_values_override_defaults() -> None:
     class Writer2(Agent):
         """Ignored docstring."""
 
-        @skill(id="edit", name="Edit Text", description="Edits text.")
+        @skill(id="edit", name="Edit Text", description="Edits text.", tags=["test"])
         async def edit(self, text: str, ctx: RunContext) -> str:
             """Ignored docstring."""
             return text
@@ -47,18 +47,63 @@ def test_explicit_values_override_defaults() -> None:
     assert (edit.name, edit.description) == ("Edit Text", "Edits text.")
 
 
-def test_skill_tags_and_permissions_default_to_empty() -> None:
+def test_skill_permissions_default_to_empty() -> None:
     @agent(version="1.0.0")
     class Plain(Agent):
         """Plain agent."""
 
-        @skill(id="noop")
+        @skill(id="noop", tags=["utility"])
         async def noop(self, ctx: RunContext) -> None:
             """Do nothing."""
 
     noop = Plain.definition().skills["noop"]
-    assert noop.tags == ()
     assert noop.requires_permissions == frozenset()
+
+
+def test_skill_without_tags_is_rejected() -> None:
+    expected = "Agent 'Untagged': skill 'noop' needs at least one tag"
+
+    with pytest.raises(DefinitionError, match=expected):
+
+        @agent(version="1.0.0")
+        class Untagged(Agent):
+            """Has an untagged skill."""
+
+            @skill(id="noop")
+            async def noop(self, ctx: RunContext) -> None:
+                """Do nothing."""
+
+
+def test_skill_with_empty_tags_is_rejected() -> None:
+    expected = "Agent 'Untagged': skill 'noop' needs at least one tag"
+
+    with pytest.raises(DefinitionError, match=expected):
+
+        @agent(version="1.0.0")
+        class Untagged(Agent):
+            """Has an empty tag list."""
+
+            @skill(id="noop", tags=[])
+            async def noop(self, ctx: RunContext) -> None:
+                """Do nothing."""
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_tag_is_rejected(blank: str) -> None:
+    with pytest.raises(DefinitionError, match="skill 'noop' has a blank tag"):
+
+        @agent(version="1.0.0")
+        class BlankTag(Agent):
+            """Has a blank tag."""
+
+            @skill(id="noop", tags=["utility", blank])
+            async def noop(self, ctx: RunContext) -> None:
+                """Do nothing."""
+
+
+def test_tags_must_not_be_a_single_string() -> None:
+    with pytest.raises(DefinitionError, match="lists of strings"):
+        skill(id="echo", tags="text")
 
 
 def test_missing_description_and_docstring_is_rejected() -> None:
@@ -67,7 +112,7 @@ def test_missing_description_and_docstring_is_rejected() -> None:
 
         @agent(version="1.0.0")
         class Undescribed(Agent):
-            @skill(id="noop")
+            @skill(id="noop", tags=["test"])
             async def noop(self, ctx: RunContext) -> None:
                 """Do nothing."""
 
@@ -79,7 +124,7 @@ def test_skill_without_description_or_docstring_is_rejected() -> None:
         class Quiet(Agent):
             """Has an undocumented skill."""
 
-            @skill(id="noop")
+            @skill(id="noop", tags=["test"])
             async def noop(self, ctx: RunContext) -> None:
                 pass
 
@@ -96,7 +141,7 @@ def test_sync_skill_is_rejected() -> None:
         class SyncWriter(Agent):
             """Writes synchronously."""
 
-            @skill(id="publish")
+            @skill(id="publish", tags=["test"])
             def publish(self, ctx: RunContext) -> None:
                 """Publish."""
 
@@ -108,7 +153,7 @@ def test_skill_without_ctx_is_rejected() -> None:
         class NoContext(Agent):
             """Has no ctx."""
 
-            @skill(id="echo")
+            @skill(id="echo", tags=["test"])
             async def echo(self, text: str) -> str:
                 """Echo."""
                 return text
@@ -121,7 +166,7 @@ def test_ctx_must_be_annotated_run_context() -> None:
         class WrongContext(Agent):
             """Has a wrong ctx type."""
 
-            @skill(id="echo")
+            @skill(id="echo", tags=["test"])
             async def echo(self, text: str, ctx: str) -> str:
                 """Echo."""
                 return text
@@ -134,7 +179,7 @@ def test_unannotated_parameter_is_rejected() -> None:
         class Untyped(Agent):
             """Has an untyped parameter."""
 
-            @skill(id="echo")
+            @skill(id="echo", tags=["test"])
             async def echo(self, text, ctx: RunContext) -> str:  # type: ignore[no-untyped-def]
                 """Echo."""
                 return str(text)
@@ -147,7 +192,7 @@ def test_missing_return_annotation_is_rejected() -> None:
         class NoReturnType(Agent):
             """Has no return type."""
 
-            @skill(id="echo")
+            @skill(id="echo", tags=["test"])
             async def echo(self, text: str, ctx: RunContext):  # type: ignore[no-untyped-def]
                 """Echo."""
                 return text
@@ -163,7 +208,7 @@ def test_unsupported_annotation_is_rejected() -> None:
         class Strange(Agent):
             """Takes an opaque argument."""
 
-            @skill(id="take")
+            @skill(id="take", tags=["test"])
             async def take(self, thing: Opaque, ctx: RunContext) -> None:
                 """Take a thing."""
 
@@ -175,7 +220,7 @@ def test_parameter_named_principal_is_rejected() -> None:
         class Impersonator(Agent):
             """Takes a principal argument."""
 
-            @skill(id="act")
+            @skill(id="act", tags=["test"])
             async def act(self, principal: str, ctx: RunContext) -> str:
                 """Act as someone."""
                 return principal
@@ -188,11 +233,11 @@ def test_duplicate_skill_ids_are_rejected() -> None:
         class Twice(Agent):
             """Declares one id twice."""
 
-            @skill(id="echo")
+            @skill(id="echo", tags=["test"])
             async def first(self, ctx: RunContext) -> None:
                 """First."""
 
-            @skill(id="echo")
+            @skill(id="echo", tags=["test"])
             async def second(self, ctx: RunContext) -> None:
                 """Second."""
 
@@ -202,7 +247,7 @@ def test_subclass_inherits_skills() -> None:
     class SeniorWriter(Writer):
         """Writes and reviews."""
 
-        @skill(id="review")
+        @skill(id="review", tags=["test"])
         async def review(self, text: str, ctx: RunContext) -> str:
             """Review a text."""
             return text
@@ -215,7 +260,7 @@ def test_subclass_can_redeclare_a_skill() -> None:
     class CarefulWriter(Writer):
         """Writes carefully."""
 
-        @skill(id="draft", limits=RunLimits(timeout_seconds=5))
+        @skill(id="draft", limits=RunLimits(timeout_seconds=5), tags=["test"])
         async def draft_outline(self, topic: str, ctx: RunContext) -> str:
             """Draft a careful outline."""
             return topic

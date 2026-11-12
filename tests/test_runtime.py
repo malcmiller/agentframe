@@ -38,27 +38,29 @@ class Vault(Agent):
 
     limits = RunLimits(timeout_seconds=5)
 
-    @skill(id="echo")
+    @skill(id="echo", tags=["test"])
     async def echo(self, text: str, ctx: RunContext) -> str:
         """Return the text."""
         return text
 
-    @skill(id="context")
+    @skill(id="context", tags=["test"])
     async def context(self, ctx: RunContext) -> RunContext:
         """Return the run context."""
         return ctx
 
-    @skill(id="reveal", requires_permissions=["vault.read", "vault.audit"])
+    @skill(
+        id="reveal", requires_permissions=["vault.read", "vault.audit"], tags=["test"]
+    )
     async def reveal(self, ctx: RunContext) -> str:
         """Reveal the secret."""
         return "secret"
 
-    @skill(id="slow", limits=RunLimits(timeout_seconds=0.01))
+    @skill(id="slow", limits=RunLimits(timeout_seconds=0.01), tags=["test"])
     async def slow(self, ctx: RunContext) -> None:
         """Take too long."""
         await asyncio.sleep(10)
 
-    @skill(id="own_timeout")
+    @skill(id="own_timeout", tags=["test"])
     async def own_timeout(self, ctx: RunContext) -> None:
         """Raise a TimeoutError that is not the run timeout."""
         raise TimeoutError
