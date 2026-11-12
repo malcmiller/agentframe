@@ -59,7 +59,7 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-src = ["src", "tests"]
+src = ["src", "tests", "."]
 include = ["*.py", "*.pyi"]
 
 [tool.ruff.lint]
@@ -74,11 +74,13 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "examples"]
 warn_unreachable = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The repository root, so tests can import the runnable examples.
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["--strict-markers", "--strict-config", "-ra"]
