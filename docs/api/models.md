@@ -256,7 +256,8 @@ text={"format": {"type": "json_schema", "name": <name>,
   construct and field path, never a value: a root that is not an object;
   `allOf`, `not`, `if`/`then`/`else`, `dependentRequired`, `dependentSchemas`,
   `oneOf` (Pydantic discriminated unions; use a plain union) and
-  `patternProperties`; free-form objects (`dict[str, X]`, `extra="allow"`);
+  `patternProperties`; `prefixItems` (Pydantic `tuple[...]` fields; use a
+  list or a model); free-form objects (`dict[str, X]`, `extra="allow"`);
   and values of any type (`Any`). No non-strict fallback is attempted.
 - Validation stays in the generation layer: the adapter returns the JSON text
   and never validates it. Refusal, `max_output_tokens` and content-filter

@@ -193,6 +193,10 @@ class Anything(BaseModel):
     value: Any
 
 
+class Pair(BaseModel):
+    pair: tuple[int, str]
+
+
 class PetOrPlant(BaseModel):
     item: Pet | Plant = Field(discriminator="kind")
 
@@ -204,6 +208,7 @@ class PetOrPlant(BaseModel):
         (Loose, r"a free-form object \(such as a dict\) \(at the root\)"),
         (Anything, r"a value of any type \(at value\)"),
         (PetOrPlant, r"'oneOf' \(at item\)"),
+        (Pair, r"'prefixItems' \(at pair\)"),
     ],
 )
 def test_unsupported_model_constructs_are_named_with_their_location(
@@ -224,6 +229,7 @@ def test_unsupported_model_constructs_are_named_with_their_location(
         "dependentRequired",
         "dependentSchemas",
         "patternProperties",
+        "prefixItems",
     ],
 )
 def test_unsupported_keywords_are_rejected(keyword: str) -> None:

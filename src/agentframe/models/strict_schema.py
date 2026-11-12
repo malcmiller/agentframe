@@ -32,6 +32,7 @@ UNSUPPORTED_KEYWORDS = (
     "dependentSchemas",
     "oneOf",
     "patternProperties",
+    "prefixItems",
 )
 """Keywords strict mode does not support; a schema using any is rejected."""
 
@@ -60,7 +61,7 @@ def strict_schema(json_schema: dict[str, Any]) -> dict[str, Any]:
     Raises:
         UnsupportedCapabilityError: The schema uses a construct strict mode
             cannot express: a non-object root, a free-form object such as
-            ``dict[str, int]``, a value of any type, or one of
+            ``dict[str, int]``, a tuple, a value of any type, or one of
             ``UNSUPPORTED_KEYWORDS``. The message names the construct and
             where it is, never a value.
     """
