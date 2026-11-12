@@ -400,9 +400,10 @@ def run_metadata(invocation_id: str, accounting: RunAccounting) -> dict[str, Any
     """Return the task metadata that identifies a run and reports its usage.
 
     Only safe values are included: the run's ID, token counts (``None`` when
-    unknown), whether any count is estimated, and the number of model calls.
+    unknown, including while a model call is still running, as when a task is
+    cancelled), whether any count is estimated, and the number of model calls.
     """
-    usage = accounting.usage
+    usage = accounting.current_usage()
     return {
         "invocation_id": invocation_id,
         "usage": {

@@ -62,6 +62,15 @@ class RunAccounting:
     committed_tokens: int = 0
     reserved_tokens: int = 0
 
+    def current_usage(self) -> Usage:
+        """Return the usage so far; counts are unknown while a call is running.
+
+        Every reservation is positive, so held tokens mean a call is running.
+        """
+        if self.reserved_tokens:
+            return add_usage(self.usage, UNKNOWN_USAGE)
+        return self.usage
+
     def reserve(self, tokens: int, limits: RunLimits) -> None:
         """Count one more model call and hold ``tokens`` of the token budget.
 
