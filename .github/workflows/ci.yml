@@ -21,7 +21,8 @@ jobs:
         with:
           version: "0.13.1"
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --locked
+      # Provider extras are installed so model adapter unit tests always run.
+      - run: uv sync --locked --all-extras
       - run: uv run ruff format --check
       - run: uv run ruff check
       - run: uv run mypy
@@ -43,6 +44,14 @@ jobs:
           python -c "import agentframe, starlette, sse_starlette;
           from a2a.server.routes import create_jsonrpc_routes;
           print(agentframe.__version__)"
+      - name: Import the base install without provider extras
+        working-directory: ${{ runner.temp }}
+        run: >-
+          uv run --isolated --no-project --python 3.13
+          --with "${GITHUB_WORKSPACE}"/dist/*.whl
+          python -c "import importlib.util, agentframe;
+          assert importlib.util.find_spec('ollama') is None, 'ollama installed';
+          print('base install imports without provider extras')"
       - name: Run the agentframe command from the wheel's server extra
         working-directory: ${{ runner.temp }}
         run: >-

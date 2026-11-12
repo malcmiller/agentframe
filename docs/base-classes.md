@@ -211,6 +211,7 @@ from agentframe import OllamaModel
 local_model = OllamaModel(
     model="llama3.2:3b",
     endpoint="http://localhost:11434",
+    context_window=8192,
 )
 local_agent = Summarizer(model=local_model)
 ```

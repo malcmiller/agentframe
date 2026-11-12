@@ -184,29 +184,65 @@ still need implementation evidence.
 **Purpose / decision:** call an explicit Ollama endpoint and installed model tag,
 initially for locally executed Llama. Llama is a model family, not a host.
 
-**Proposed constructor shape:**
+**Signature status:** implemented (M3 #38); decisions confirmed 2026-11-12.
+Requires the optional extra `agentframe[ollama]`, which pins the official
+[`ollama`](https://github.com/ollama/ollama-python) client (`0.6.3`).
+`import agentframe` works without it; using `OllamaModel` without it raises
+`ImportError` naming the extra.
 
 ```text
-OllamaModel(*, model: str, endpoint: str)
+OllamaModel(
+    *, model: str, endpoint: str = "http://localhost:11434",
+    context_window: int | None = None,
+)
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `model` | `str` | Explicit selection required | Already-installed model tag; illustrative tags are not a version/support guarantee. |
-| `endpoint` | `str` | Explicit in current examples; default open | Application-selected Ollama server. Localhost alone does not prove a tag executes locally. |
+| `model` | `str` | Required | Already-installed model tag; illustrative tags are not a version/support guarantee. |
+| `endpoint` | `str` | `"http://localhost:11434"` | Application-selected Ollama server. Localhost alone does not prove a tag executes locally. |
+| `context_window` | `int \| None` | `None` | Tokens of input plus output requested from the server. `None` uses the context length in the model's metadata, which is often the model's maximum and can need far more memory; passing an explicit size such as `8192` is recommended. Must be greater than zero. |
 
 ```python
 from agentframe import OllamaModel
 
 
-model = OllamaModel(model="llama3.2:3b", endpoint="http://localhost:11434")
+model = OllamaModel(
+    model="llama3.2:3b",
+    endpoint="http://localhost:11434",
+    context_window=8192,
+)
 ```
 
-**Behavior / failures:** implements [`Model.generate`](#modelgenerate).
-Never download a model, start a server, silently switch models, or enable cloud
-execution. Unavailable endpoint/model, unsupported features/settings, and
-provider errors fail explicitly. Local deployment verification, supported
-client versions, and lifecycle details remain open.
+**Behavior / failures:** implements [`Model.generate`](#modelgenerate) with
+one non-streaming call to Ollama's chat API. Never downloads a model, starts a
+server, silently switches models, or enables cloud execution.
+
+- Construction does no I/O. The adapter creates and owns its client;
+  [`close`](#modelclose) closes it. A closed model cannot be reused; later
+  calls fail with `RuntimeError`.
+- Every request sends the context window explicitly (Ollama's `num_ctx`), so
+  the server cannot silently truncate input to a smaller default. Without
+  `context_window`, the size is read once from the model's metadata (show API)
+  on first use and cached; [`capabilities`](#modelcapabilities-1) reports the
+  same value, so input checks use what is sent. Metadata without a context
+  length raises a non-transient `ProviderError` asking for `context_window=`.
+- **Memory cost of the default:** the metadata size is usually the model's
+  maximum context. Ollama allocates memory for the whole window, so
+  `llama3.2:3b` with its 131072-token maximum loads at about 18 GB instead of
+  about 2 GB at 8192. Ollama also reloads the model (about 9 seconds) whenever
+  `num_ctx` changes, so models sharing a server should agree on one size. Pass
+  an explicit `context_window` (examples use `8192`) sized for your inputs.
+- `ModelSettings.max_output_tokens` is sent as `num_predict`.
+- `prompt_eval_count` / `eval_count` become input/output usage (missing counts
+  stay `None`); `done_reason` `length` becomes `FinishReason.LENGTH`, anything
+  else `COMPLETED`.
+- `structured_output` and `tools` are reported as unsupported in M3.
+- Connection failures, timeouts, HTTP 408, 429 and 5xx raise a transient
+  `ProviderError`; an unknown model (404) or other rejected request raises a
+  non-transient one. Messages are safe and do not repeat the server's error
+  text. The 0.6 client has no retry loop of its own; AgentFrame retries are
+  separate.
 
 **Related:** [`ModelCapabilities`](#modelcapabilities),
 [local model guide](../agent-examples.md#choose-local-llama-through-ollama).
