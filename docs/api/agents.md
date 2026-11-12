@@ -3,8 +3,9 @@
 [Reference index and status conventions](README.md). The decisions below are
 approved contracts. `Agent`, `RunContext`, `Inject[T]` and `Services` are
 implemented from source as of M1; M3 #35 adds model injection, agent
-`instructions` / `model_settings` and the text form of `ctx.generate`.
-`AgentConfig`, structured output and tool features are not implemented yet.
+`instructions` / `model_settings` and the text form of `ctx.generate`; M4 #53
+adds the structured `output=` form. `AgentConfig` and tool features are not
+implemented yet.
 Unspecified details remain open.
 Models are dependencies, not a second kind of agent base class.
 
@@ -128,19 +129,23 @@ lifespan is application-owned, not invocation cleanup. See
 instruction/data boundaries and invocation-wide policy/accounting.
 
 **Decided call forms:** one method handles text, Pydantic output and explicitly
-registered tools. Exact overload spelling and accepted collection types remain
-open; the names `output` and `tools` and their behavior are decided.
+registered tools. The accepted `tools` collection type remains open; the names
+`output` and `tools` and their behavior are decided.
 
 ```text
 await ctx.generate(text, instructions=...) -> str       # implemented (M3 #35)
-await ctx.generate(text, output=Summary) -> Summary     # M4, not implemented
+await ctx.generate(text, output=Summary) -> Summary     # implemented (M4 #53)
 await ctx.generate(text, tools=[lookup_order]) -> str   # M5, not implemented
 ```
 
-**Implemented signature (M3 #35):**
+**Implemented signature (M3 #35, M4 #53):** two `typing.overload`s, so type
+checkers infer `str` without `output` and the requested class with it.
 
 ```text
 async def generate(self, text: str, *, instructions: str | None = None) -> str
+async def generate[T: BaseModel](
+    self, text: str, *, instructions: str | None = None, output: type[T]
+) -> T
 ```
 
 Messages are assembled in this order: the agent's `instructions` as a `system`
@@ -152,7 +157,7 @@ message. This separation does not guarantee resistance to prompt injection.
 | --- | --- | --- | --- |
 | `text` | `str` | Required in current text proposal | Untrusted user content, never promoted to privileged instructions. |
 | `instructions` | `str \| None` | Optional; default `None` sends no call instructions | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
-| `output` | Pydantic model class | Optional; omitted returns text | Return a validated instance of the requested class; unsupported structured capability fails before sending. Schema subset and combinations with tools remain open. |
+| `output` | `type[T]`, `T` a Pydantic `BaseModel` subclass (implemented, M4 #53) | Optional; `None` returns text | Sends the class's JSON schema as [`OutputSchema`](models.md#outputschema) and returns the reply validated with `model_validate_json` in Pydantic's default (lax) mode; a model's own `ConfigDict(strict=True)` is respected. `RootModel`, `list[...]` and other types raise `DefinitionError` before sending: wrap lists in a model field. Provider schema subsets and combination with tools remain open. |
 | `tools` | Explicit collection of registered `@tool` functions | Optional; no implicit tools | Select authorized registered functions for bounded calls/results and continuations. Decoration or a model suggestion alone does not grant execution. |
 
 ```python
@@ -166,6 +171,27 @@ class Writer(Agent):
     @skill(id="summarize", name="Summarize", description="Summarize text.", tags=["text"])
     async def summarize(self, text: str, ctx: RunContext) -> str:
         return await ctx.generate(text, instructions="Use three sentences.")
+```
+
+With `output=`, the same skill returns typed data without parsing model text
+or importing a provider SDK:
+
+```python
+from pydantic import BaseModel, Field
+
+from agentframe import Agent, RunContext, agent, skill
+
+
+class Summary(BaseModel):
+    text: str = Field(min_length=1)
+    key_points: list[str]
+
+
+@agent(name="Summarizer", description="Summarizes text.", version="0.1.0")
+class Summarizer(Agent):
+    @skill(id="summarize", name="Summarize", description="Summarize text.", tags=["text"])
+    async def summarize(self, text: str, ctx: RunContext) -> Summary:
+        return await ctx.generate(text, output=Summary)
 ```
 
 Construct `Writer(model=...)` with a configured [`FoundryModel`](models.md#foundrymodel),
@@ -203,6 +229,23 @@ before any error is raised. Unknown usage stays unknown, never zero.
 | `max_model_calls` reached | `ModelCallLimitExceededError`; nothing is sent (M3 #36) |
 | Run timeout expires during the call | The call is cancelled; `TimeoutLimitExceededError` |
 | Run cancelled during the call | The call is cancelled |
+
+**Implemented structured outcomes (M4 #53).** With `output=`, the rows above
+still apply; these come first or are added:
+
+| Situation | Result |
+| --- | --- |
+| `output` is not a `BaseModel` subclass, or is a `RootModel` | `DefinitionError`; nothing is sent or reserved |
+| Model's `capabilities().structured_output` is `False` | `UnsupportedCapabilityError` ("The model does not support structured output"); nothing is sent or reserved, `model_calls` unchanged |
+| Schema makes the call too large | The serialized schema counts toward the input estimate, so `TokenLimitExceededError` before sending |
+| `COMPLETED` with JSON matching the schema | A validated instance of `output` |
+| `COMPLETED` with invalid JSON or JSON that does not match | `OutputValidationError` listing field locations and problems, never the model's text; the call's usage is recorded; no repair or re-ask |
+| `LENGTH` | `IncompleteOutputError`; the text is never parsed, even if it happens to be valid JSON |
+| `REFUSED` / `CONTENT_FILTER` | `ModelRefusalError` |
+
+Transient-provider retries are unchanged and never retry a validation failure.
+Hosted, a returned instance becomes one A2A data part `{"value": {...}}`, and
+`OutputValidationError` fails the task with its safe message.
 
 Hosted runs map these errors to task `FAILED` with their safe message and the
 run's `invocation_id` (see [result and failure mapping](hosting.md#result-and-failure-mapping)). Token limits and

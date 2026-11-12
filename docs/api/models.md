@@ -7,8 +7,9 @@ Provider dependencies are optional and stay out of skill business logic.
 usage and finish reasons; adapters translate to/from provider types. M3 #33
 implements the text-generation layouts below (`Message`, `ModelSettings`,
 `ModelRequest`, `ModelResponse`, `ModelCapabilities`, the `Model` protocol)
-in `agentframe.models.base`, with no provider SDK imported. Tool-call, structured
-output and other layouts not specified here remain open, not provider leaks.
+in `agentframe.models.base`, with no provider SDK imported. M4 #53 adds the
+structured-output contract ([`OutputSchema`](#outputschema) on `ModelRequest`).
+Tool-call and other layouts not specified here remain open, not provider leaks.
 
 ## `Model`
 
@@ -78,7 +79,9 @@ exception mappings belong to each adapter (#38, #39). Unsupported requested
 capabilities raise [`UnsupportedCapabilityError`](runtime.md#unsupportedcapabilityerror)
 before sending. Managed generation (`ctx.generate`, #35) turns `REFUSED` into
 `ModelRefusalError` and `LENGTH` into `IncompleteOutputError`. Structured
-output (`output=`, M4), tools (`tools=`, M5) and streaming remain later, with
+output (`output=`) is implemented by the managed layer (M4 #53); adapters send
+[`ModelRequest.output`](#modelrequest) to their provider. Tools (`tools=`, M5)
+and streaming remain later, with
 optional [AG-UI](streaming.md) mapping from managed execution, not raw
 provider events.
 
@@ -310,7 +313,7 @@ ScriptedModel(replies: Iterable[str | ModelResponse | Exception] = (), *, capabi
 | Parameter / attribute | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `replies` | `Iterable[str \| ModelResponse \| Exception]` | Default empty | One reply per `generate` call, in order. A `str` returns a `COMPLETED` response with unknown usage; a `ModelResponse` is returned as given (scripted usage/finish reason); an exception, such as `ProviderError(..., transient=True)`, is raised. |
-| `capabilities` | `ModelCapabilities \| None` | Default `ModelCapabilities(context_window=SCRIPTED_CONTEXT_WINDOW)` (128000) | Returned by `capabilities()`. Pass `ModelCapabilities()` to test a model that reports no context window. |
+| `capabilities` | `ModelCapabilities \| None` | Default `ModelCapabilities(context_window=SCRIPTED_CONTEXT_WINDOW)` (128000), with no structured output or tools | Returned by `capabilities()`. Pass `ModelCapabilities()` to test a model that reports no context window, or `ModelCapabilities(context_window=..., structured_output=True)` to test `ctx.generate(..., output=...)`. |
 | `requests` | `list[ModelRequest]` | Attribute | Every request `generate` received, for asserting on assembled messages and settings. |
 | `closed` | `bool` | Attribute | Whether `close()` (or `async with` exit) ran. |
 
@@ -380,6 +383,45 @@ async def test_runs_with_a_model_that_reports_no_context_window() -> None:
     assert result == "Shorter."
 ```
 
+For structured output, a scripted string is the JSON text a real adapter would
+return; no other reply type is needed:
+
+```python
+from pydantic import BaseModel
+
+from agentframe import Agent, ModelCapabilities, RunContext, Runtime, agent, skill
+from agentframe.testing import ScriptedModel
+
+
+class Summary(BaseModel):
+    text: str
+    key_points: list[str]
+
+
+@agent(version="1.0.0")
+class Summarizer(Agent):
+    """Summarizes text."""
+
+    @skill("summarize", tags=["text"])
+    async def summarize(self, text: str, ctx: RunContext) -> Summary:
+        """Summarize text."""
+        return await ctx.generate(text, output=Summary)
+
+
+async def test_summarize_returns_a_summary() -> None:
+    model = ScriptedModel(
+        ['{"text": "Short.", "key_points": ["one"]}'],
+        capabilities=ModelCapabilities(context_window=8192, structured_output=True),
+    )
+
+    summary = await Runtime().invoke(
+        Summarizer(model=model), skill="summarize", arguments={"text": "Long."}
+    )
+
+    assert summary == Summary(text="Short.", key_points=["one"])
+    assert model.requests[0].output is not None
+```
+
 **Behavior / failures:** calling `generate` more times than scripted raises
 `AssertionError` naming the call count, so tests fail clearly. No I/O, no
 provider SDK; importing `agentframe` does not import `agentframe.testing`.
@@ -438,7 +480,7 @@ ModelCapabilities(context_window: int | None = None, structured_output: bool = F
 | Field | Type | Default | Meaning and constraints |
 | --- | --- | --- | --- |
 | `context_window` | `int \| None` | `None` | Most input plus output tokens accepted. `None` is unknown, not unlimited. |
-| `structured_output` | `bool` | `False` | Whether schema-constrained output is supported (M4). |
+| `structured_output` | `bool` | `False` | Whether schema-constrained output is supported. `ctx.generate(..., output=...)` checks it before reserving tokens or sending; `False` raises `UnsupportedCapabilityError` (M4 #53). |
 | `tools` | `bool` | `False` | Whether tool calling is supported (M5). |
 
 ```python
@@ -542,16 +584,17 @@ message. Tool-call/result messages and other content types remain open (M5).
 **Purpose / direction:** normalized outbound generation input shared by model
 adapters, keeping trusted instructions distinct from untrusted content.
 
-**Signature (implemented, M3 #33):** frozen dataclass.
+**Signature (implemented, M3 #33; `output` M4 #53):** frozen dataclass.
 
 ```text
-ModelRequest(messages: tuple[Message, ...], settings: ModelSettings)
+ModelRequest(messages: tuple[Message, ...], settings: ModelSettings, output: OutputSchema | None = None)
 ```
 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `messages` | `tuple[Message, ...]` | Required | The conversation in order; preserves instruction/user provenance. |
 | `settings` | [`ModelSettings`](#modelsettings) | Required, fully resolved | The effective settings for this call. Every field must be set: an unset (`None`) field raises `DefinitionError` (M3 #42), so adapters never guess defaults. The runtime always sends merged settings. |
+| `output` | [`OutputSchema`](#outputschema) ` \| None` | Default `None` (plain text) | The JSON shape the reply must have. When set, the adapter constrains generation to it and returns the JSON as `ModelResponse.text`; the managed layer validates it. |
 
 ```python
 from agentframe import Message, ModelRequest, ModelSettings
@@ -565,12 +608,51 @@ request = ModelRequest(
 
 **Behavior / failures:** managed execution applies outbound checks to every
 request. Invalid/unsupported requests, denied egress and exceeded allowances
-must stop dispatch. Tool definitions and output contracts for
-`ctx.generate(..., output=Summary)` and `ctx.generate(..., tools=[...])` are
-decided author forms whose request fields remain open (M4, M5).
+must stop dispatch. `ctx.generate(..., output=Summary)` sends the same messages
+as the text form plus `output=OutputSchema(name="Summary", json_schema=...)`;
+the serialized schema counts toward the call's input token estimate. Tool
+request fields for `ctx.generate(..., tools=[...])` remain open (M5).
 
 **Related:** [`ExecutionPolicy`](authorization.md#executionpolicy),
 [outbound checks](../design/prompt-safeguarding.md#check-at-the-boundary-not-just-once).
+
+## `OutputSchema`
+
+**Purpose / decision:** the provider-neutral JSON shape a structured-output call
+must return. The managed layer builds it from the `output=` class; adapters
+translate it to their provider's format and never validate the reply.
+
+**Signature (implemented, M4 #53):** frozen dataclass, exported from `agentframe`.
+
+```text
+OutputSchema(name: str, json_schema: dict[str, Any])
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `name` | `str` | Required | The output class's name, for example `"Summary"`. Adapters may need to sanitize it for their provider. |
+| `json_schema` | `dict[str, Any]` | Required | The class's Pydantic `model_json_schema()` (validation mode), including any `$defs`. |
+
+```python
+from pydantic import BaseModel
+
+from agentframe import OutputSchema
+
+
+class Summary(BaseModel):
+    text: str
+    key_points: list[str]
+
+
+schema = OutputSchema(name="Summary", json_schema=Summary.model_json_schema())
+```
+
+**Behavior / failures:** only `BaseModel` subclasses (not `RootModel`) produce
+an `OutputSchema`; anything else raises `DefinitionError` before sending.
+Provider strict-mode conversion is the adapter's job (Foundry #55, Ollama #56).
+
+**Related:** [`ModelRequest`](#modelrequest),
+[`RunContext.generate`](agents.md#runcontextgenerate).
 
 ## `ModelResponse`
 
@@ -585,7 +667,7 @@ ModelResponse(text: str, usage: Usage, finish_reason: FinishReason)
 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `text` | `str` | Required | Generated text; possibly truncated when `finish_reason` is not `COMPLETED`. |
+| `text` | `str` | Required | Generated text, or the JSON text for a structured-output request; possibly truncated when `finish_reason` is not `COMPLETED`. |
 | `usage` | [`Usage`](runtime.md#runresult) | Required | Tokens for this call; unknown counts are `None`, never zero; `estimated` marks estimates. |
 | `finish_reason` | [`FinishReason`](runtime.md#runresult) | Required | `COMPLETED`, `LENGTH`, `REFUSED` or `CONTENT_FILTER`. |
 
@@ -604,8 +686,8 @@ response = ModelResponse(
 success-shaped text. Refusal and truncation are reported through
 `finish_reason`; the managed helper raises `ModelRefusalError` and
 `IncompleteOutputError` (partial-result opt-in syntax open) and never returns
-them as success. Tool-call linkage and typed structured content remain open
-(M4, M5). Failed-run usage retrieval remains open; no hard billing guarantee
+them as success. Structured replies are JSON in `text`, validated by the
+managed layer (M4 #53). Tool-call linkage remains open (M5). Failed-run usage retrieval remains open; no hard billing guarantee
 is implied.
 
 **Related:** [`Model.generate`](#modelgenerate),
