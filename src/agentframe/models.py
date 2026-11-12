@@ -4,7 +4,7 @@ Model adapters translate these AgentFrame-owned types to and from their
 provider's types, so skills never see provider SDKs.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from types import TracebackType
 from typing import Literal, Protocol, Self
 
@@ -66,12 +66,27 @@ class ModelRequest:
 
     Attributes:
         messages: The conversation, in order.
-        settings: The effective settings for this call. Requests built by
-            the runtime have every field set.
+        settings: The fully resolved settings for this call. Every field
+            must be set, so adapters never have to guess a default.
+
+    Raises:
+        DefinitionError: If any field of ``settings`` is unset (``None``).
     """
 
     messages: tuple[Message, ...]
     settings: ModelSettings
+
+    def __post_init__(self) -> None:
+        unset = [
+            field.name
+            for field in fields(self.settings)
+            if getattr(self.settings, field.name) is None
+        ]
+        if unset:
+            raise DefinitionError(
+                "ModelRequest.settings must be fully resolved; unset: "
+                + ", ".join(unset)
+            )
 
 
 @dataclass(frozen=True)

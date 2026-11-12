@@ -85,6 +85,14 @@ def test_max_output_tokens_must_be_positive() -> None:
         ModelSettings(max_output_tokens=0)
 
 
+def test_model_request_rejects_unset_settings() -> None:
+    # Adapters rely on fully resolved settings, e.g. an output-token cap.
+    with pytest.raises(DefinitionError, match="unset: max_output_tokens"):
+        ModelRequest(
+            messages=(Message(role="user", content="Hi"),), settings=ModelSettings()
+        )
+
+
 def test_provider_error_carries_retry_and_accounting_details() -> None:
     partial = Usage(
         input_tokens=12, output_tokens=None, total_tokens=None, estimated=False

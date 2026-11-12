@@ -306,7 +306,8 @@ from agentframe.testing import ScriptedModel
 async def test_retry_after_rate_limit() -> None:
     model = ScriptedModel([ProviderError("Rate limited.", transient=True), "Hello!"])
     request = ModelRequest(
-        messages=(Message(role="user", content="Hi"),), settings=ModelSettings()
+        messages=(Message(role="user", content="Hi"),),
+        settings=ModelSettings(max_output_tokens=100),
     )
 
     try:
@@ -490,7 +491,7 @@ ModelRequest(messages: tuple[Message, ...], settings: ModelSettings)
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `messages` | `tuple[Message, ...]` | Required | The conversation in order; preserves instruction/user provenance. |
-| `settings` | [`ModelSettings`](#modelsettings) | Required | The effective settings for this call. |
+| `settings` | [`ModelSettings`](#modelsettings) | Required, fully resolved | The effective settings for this call. Every field must be set: an unset (`None`) field raises `DefinitionError` (M3 #42), so adapters never guess defaults. The runtime always sends merged settings. |
 
 ```python
 from agentframe import Message, ModelRequest, ModelSettings
@@ -498,7 +499,7 @@ from agentframe import Message, ModelRequest, ModelSettings
 
 request = ModelRequest(
     messages=(Message(role="user", content="Hello"),),
-    settings=ModelSettings(),
+    settings=ModelSettings(max_output_tokens=100),
 )
 ```
 
