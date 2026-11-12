@@ -1,5 +1,7 @@
 """AgentFrame: define agents with Python, communicate through A2A."""
 
+from typing import TYPE_CHECKING
+
 from agentframe.agent import Agent
 from agentframe.app import AgentApp
 from agentframe.auth import (
@@ -46,6 +48,9 @@ from agentframe.routing import Clarification, SkillCall, SkillRouter
 from agentframe.runtime import RunResult, Runtime
 from agentframe.services import Inject, Services
 from agentframe.usage import FinishReason, Usage
+
+if TYPE_CHECKING:
+    from agentframe.ollama_model import OllamaModel as OllamaModel
 
 __version__ = "0.1.0.dev0"
 
@@ -98,3 +103,13 @@ __all__ = [
     "agent",
     "skill",
 ]
+
+
+def __getattr__(name: str) -> object:
+    # Provider adapters are imported on first use so that ``import agentframe``
+    # works without their optional extras installed.
+    if name == "OllamaModel":
+        from agentframe.ollama_model import OllamaModel as OllamaModel
+
+        return OllamaModel
+    raise AttributeError(f"module 'agentframe' has no attribute {name!r}")
