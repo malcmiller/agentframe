@@ -34,7 +34,7 @@ AgentApp(
 | `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization)` | The single authoritative runtime and service container for every request. Passing it together with `services=` or `authorization=` raises `DefinitionError`. Pass a runtime to authorize tool calls: `AgentApp(runtime=Runtime(services=..., tool_authorization=...))`; there is no separate host setting (M5 #62). |
 | `a2a` | `A2AConfig` | A2A enabled by default; exact object default open | Selected native binding and implemented features only. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
-| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68). Activated structured selection bypasses it, not runtime controls. |
+| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app never closes a router's model. |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
 | `authorization` | `AuthorizationPolicy` | Optional; only without `runtime=` | Resource policy applied to every run, as on [`Runtime`](runtime.md#runtime). |
 | `directory` | `AgentDirectory` | M8+ when remote bindings need discovery | Resolve `Remote["name"]`; validate configured names at startup. Sources/cache lifecycle follows ownership, not automatic transfer. |
@@ -79,6 +79,12 @@ authenticator; no remote host starts without a choice.
   the agent's model reports no context window and a skill has no
   `RunLimits.max_input_tokens`, startup fails with `DefinitionError` and no
   request is served. A context size is never guessed.
+- With a [`ModelRouter`](#modelrouter) (M6 #69), construction also builds its
+  selection and extraction schemas, and startup checks its model: see
+  [`ModelRouter` hosting](#modelrouter-hosting). Custom routers are not
+  checked; they own their own validation.
+- The app never closes the agent's or the router's model; the application
+  owns them. The same model instance may serve both.
 - `GET /.well-known/agent-card.json` serves the generated card publicly, without
   credentials.
 - `POST /a2a` is the A2A 1.0 JSON-RPC endpoint from the official SDK. Every
@@ -687,7 +693,7 @@ Pass it as `AgentApp(agent=..., host=..., router=GreetingRouter())`.
 
 | Situation | Result |
 | --- | --- |
-| No router configured, free text | JSON-RPC `UnsupportedOperationError` (`-32004`), no task. |
+| No router configured, free text | JSON-RPC `UnsupportedOperationError` (`-32004`), no task and no model call, even when the agent has a model (M6 #69). |
 | `SkillCall` to an offered skill | The skill runs through the runtime: argument validation, permissions and the authorization policy all apply. |
 | `SkillCall` to a skill not offered (unknown, or the caller lacks its permissions), invalid arguments, an empty question or any other return value | Task `REJECTED` with a safe message that does not echo the skill ID. |
 | `Clarification` | Task `INPUT_REQUIRED` with the question as the status message. |
@@ -838,8 +844,8 @@ the skill and extracts its arguments, or the router asks the caller a question;
 it never guesses. Structured extension requests bypass it and its cost.
 Injecting a model into an agent never enables it.
 
-**Signature status:** implemented in M6 (#68). Hosting wiring and startup
-checks follow in #69; until then pass it as `router=` like any custom router.
+**Signature status:** implemented in M6 (#68); hosting checks and outcomes in
+#69. The only opt-in is `AgentApp(..., router=ModelRouter(model))`.
 
 ```python
 ModelRouter(
@@ -906,6 +912,34 @@ Keeping roles separate does not guarantee resistance to prompt injection; see
 [prompt safeguarding](../design/prompt-safeguarding.md). Selection is not
 authorization: only skills the caller may run are offered, and every run is
 still authorized.
+
+### `ModelRouter` hosting
+
+**Implemented behavior (M6 #69):** `AgentApp` checks a `ModelRouter` before
+serving. Custom routers skip these checks.
+
+| When | Check | Failure |
+| --- | --- | --- |
+| `AgentApp(...)` construction | Build the `Selection` schema and every skill's `Extraction` schema once. | `DefinitionError` naming the skill whose arguments have no JSON schema (such as a `Callable` argument). |
+| Server startup (ASGI lifespan), after [`Runtime.validate_model`](runtime.md#runtimevalidate_model) | Read the router model's capabilities, bounded by the agent's `timeout_seconds`. The model must support structured output and have a known input limit: the agent's `RunLimits.max_input_tokens`, else the model's context window. | `DefinitionError` (no request is served); `ProviderError` if the capabilities cannot be read in time. |
+
+Whether a model's adapter accepts each schema (for example Foundry strict
+mode and a `dict` argument) is only known at the first routing call, which
+fails with `UnsupportedCapabilityError`; there is no adapter schema check at
+startup. The router model is application-owned: `AgentApp` never closes it,
+and it may be the agent's own model instance. The Agent Card does not change:
+routing is not a capability claim.
+
+Hosted outcomes of a free-text message:
+
+| Situation | A2A result |
+| --- | --- |
+| No `router=`, even when the agent has a model | `UnsupportedOperationError` (`-32004`), no task, no model call. |
+| Routed and the skill succeeds | Task `COMPLETED`; usage counts both routing calls plus the skill's. |
+| The model asks a question, or arguments are missing or invalid | Task `INPUT_REQUIRED` with the question; the caller answers in the same task and the whole conversation is routed again. |
+| No skill is available to the caller, or the skill rejects the run (invalid arguments, permission or policy denied) | Task `REJECTED`, safe message. |
+| Routing limit, refusal, provider error, unsupported capability, invalid model reply or timeout | Task `FAILED` with the error's safe message. |
+| Structured skill-call extension request | Bypasses the router: no routing calls and no routing cost. |
 
 **Related:** [`SkillRouter`](#skillrouter), [`RoutingContext`](#routingcontext),
 [routing and extraction](../guides/annotations.md#skill-registration-versus-request-routing),

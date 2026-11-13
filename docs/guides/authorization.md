@@ -148,6 +148,12 @@ bypass Python methods; AgentFrame is not a sandbox against that application.
    routing, retrieval, or other sensitive work.
 2. Limit discovery/routing candidates to skills the caller is eligible to use.
    Discovery filtering is not the final resource authorization decision.
+   Implemented for routing in M2 (#6) and used by the built-in
+   [`ModelRouter`](../api/hosting.md#modelrouter) (M6 #68, #69): a router is
+   offered only skills whose `requires_permissions` the caller holds, so the
+   model never sees the others' descriptions. A caller with no eligible skill
+   gets `REJECTED` without a model call; the selected skill is authorized
+   again when it runs.
 3. Select a skill and validate its arguments without performing unauthorized
    resource access. Do not trust model-selected resource ownership or tenant IDs.
 4. Require the declared permissions and evaluate application resource policy
