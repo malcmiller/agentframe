@@ -40,6 +40,7 @@ from agentframe.security.authorization import (
     AuthorizationPolicy,
     ToolAuthorizationPolicy,
 )
+from agentframe.security.execution_policy import ExecutionPolicy, enforce_checks
 from agentframe.security.principal import Principal
 
 
@@ -73,6 +74,9 @@ class Runtime:
             a model asks for, with its validated arguments, before it runs.
             ``None`` means only the tools' ``requires_permissions`` are
             checked. Strongly advised for tools with side effects.
+        policy: Application content checks on each run's input, every model
+            request and the output. They add to authorization, never replace
+            it. ``None`` means no content checks.
     """
 
     def __init__(
@@ -81,10 +85,12 @@ class Runtime:
         services: Services | None = None,
         authorization: AuthorizationPolicy | None = None,
         tool_authorization: ToolAuthorizationPolicy | None = None,
+        policy: ExecutionPolicy | None = None,
     ) -> None:
         self._services = services or Services()
         self._authorization = authorization
         self._tool_authorization = tool_authorization
+        self._policy = policy
 
     def validate(self, agent: Agent) -> None:
         """Check that ``agent`` can run here before accepting any work.
@@ -196,10 +202,12 @@ class Runtime:
             DefinitionError: Undecorated agent, or a service needed by the
                 skill or a registered tool is not registered.
             PermissionDeniedError: The principal lacks a permission the skill
-                or a tool the model called requires, or an authorization
-                policy denied the run or the tool call.
-            PolicyUnavailableError: An authorization policy raised an error
-                or did not answer before the run's deadline.
+                or a tool the model called requires, an authorization policy
+                denied the run or the tool call, or an execution policy check
+                blocked the input, a model request or the output.
+            PolicyUnavailableError: An authorization policy or execution
+                policy check raised an error or did not answer before the
+                run's deadline.
             LimitExceededError: The run exceeded a limit. The subclass names
                 which one: ``TimeoutLimitExceededError``,
                 ``TokenLimitExceededError``, ``ModelCallLimitExceededError``
@@ -303,6 +311,14 @@ class Runtime:
             started_at = asyncio.get_running_loop().time()
         deadline = started_at + timeout_seconds
         await self._check_policy(skill, principal, validated_arguments, deadline)
+        if self._policy is not None:
+            await enforce_checks(
+                self._policy.input_checks,
+                skill,
+                principal,
+                MappingProxyType(validated_arguments),
+                deadline,
+            )
         try:
             async with (
                 asyncio.timeout_at(deadline) as timeout,
@@ -318,6 +334,8 @@ class Runtime:
                     accounting=accounting,
                     tools=agent.tools,
                     tool_authorization=self._tool_authorization,
+                    skill=skill,
+                    policy=self._policy,
                 )
                 ctx = RunContext(invocation_id, principal, deadline, generation)
                 injected = await services.resolve(skill.injected)
@@ -328,7 +346,12 @@ class Runtime:
             raise TimeoutLimitExceededError(
                 f"Skill '{skill.id}' exceeded its timeout of {timeout_seconds} seconds"
             ) from None
-        return _validate_output(skill, result)
+        value = _validate_output(skill, result)
+        if self._policy is not None:
+            await enforce_checks(
+                self._policy.output_checks, skill, principal, value, deadline
+            )
+        return value
 
     async def _check_policy(
         self,

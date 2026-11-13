@@ -25,6 +25,7 @@ from agentframe.models.base import Message as ModelMessage
 from agentframe.runtime.generation import GenerationState, RunAccounting
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import merge_settings
+from agentframe.security.execution_policy import ExecutionPolicy
 from agentframe.security.principal import Principal
 
 ROUTER_FAILED_MESSAGE = "The skill router failed."
@@ -149,8 +150,8 @@ class RoutingContext:
         )
         # The generation layer reads the deadline from a RunContext and hands
         # it to tools. Routing offers no tools, so this context stays internal.
-        # Execution-policy model-request checks (#77) run in that layer too,
-        # with no skill, since none is selected yet.
+        # That layer also runs the execution policy's model-request checks,
+        # with skill=None since none is selected yet.
         run_ctx = RunContext(
             self.invocation_id, self.principal, self.deadline, generation
         )
@@ -185,6 +186,7 @@ def new_routing_context(
     started_at: float,
     accounting: RunAccounting,
     limits_ceiling: RunLimits | None = None,
+    policy: ExecutionPolicy | None = None,
 ) -> RoutingContext:
     """Return the context for routing one message of a run.
 
@@ -201,6 +203,8 @@ def new_routing_context(
         started_at: Event-loop time when the run started.
         accounting: The run's accounting, shared with the selected skill.
         limits_ceiling: The host's ceiling, or ``None`` for no ceiling.
+        policy: The runtime's execution policy, whose model-request checks
+            run before every routing model call, or ``None``.
     """
     limits = routing_limits(agent, limits_ceiling)
     assert limits.timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
@@ -212,6 +216,7 @@ def new_routing_context(
         # Routing offers no tools, so it needs no services.
         services=Services().scope(AsyncExitStack()),
         accounting=accounting,
+        policy=policy,
     )
     return RoutingContext(
         invocation_id, principal, started_at + limits.timeout_seconds, generation

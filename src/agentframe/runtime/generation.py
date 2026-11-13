@@ -47,11 +47,12 @@ from agentframe.runtime.tools import (
     tool_spec,
 )
 from agentframe.runtime.usage import FinishReason, Usage
+from agentframe.security.execution_policy import ExecutionPolicy, enforce_checks
 
 if TYPE_CHECKING:
     # Imported only for type checking: these modules import this one.
     from agentframe.authoring.context import RunContext
-    from agentframe.authoring.definitions import ToolDefinition
+    from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
     from agentframe.security.authorization import ToolAuthorizationPolicy
 
 NO_USAGE = Usage(input_tokens=0, output_tokens=0, total_tokens=0, estimated=False)
@@ -180,6 +181,10 @@ class GenerationState:
         tools: The agent's registered tools by name.
         tool_authorization: Application policy checked before every tool
             call, or ``None`` for ``requires_permissions`` checks only.
+        skill: The running skill, or ``None`` while routing, before one is
+            selected. Execution policy checks receive it.
+        policy: Execution policy whose model-request checks run before every
+            model request, or ``None`` for no checks.
     """
 
     model: Model | None
@@ -192,6 +197,8 @@ class GenerationState:
         default_factory=lambda: MappingProxyType({})
     )
     tool_authorization: "ToolAuthorizationPolicy | None" = None
+    skill: "SkillDefinition | None" = None
+    policy: ExecutionPolicy | None = None
 
     async def generate_text(
         self,
@@ -322,7 +329,9 @@ class GenerationState:
         are finite. A tool call is never retried.
 
         Tools the caller lacks a required permission for are left out of the
-        request, and every call is authorized again before it runs.
+        request, and every call is authorized again before it runs. Every
+        request, including each continuation, passes the execution policy's
+        model-request checks before it is sent.
         """
         specs = tuple(
             tool_spec(tool)
@@ -333,6 +342,7 @@ class GenerationState:
             request = ModelRequest(
                 messages=messages, settings=self.settings, output=output, tools=specs
             )
+            await self._check_request(request, ctx)
             response = await self._call_with_retries(model, request, ctx.deadline)
             # Checked before the finish reason: a tool-call response has no text.
             if not response.tool_calls:
@@ -344,6 +354,22 @@ class GenerationState:
                     call, tools, self.services, ctx, self.tool_authorization
                 )
                 messages += (tool_message(call, result),)
+
+    async def _check_request(self, request: ModelRequest, ctx: "RunContext") -> None:
+        """Run the model-request checks once for a logical request.
+
+        Checked before any tokens are reserved, and not again when a
+        transient failure retries the identical request.
+        """
+        if self.policy is None:
+            return
+        await enforce_checks(
+            self.policy.model_request_checks,
+            self.skill,
+            ctx.principal,
+            request,
+            ctx.deadline,
+        )
 
     def select_tools(
         self, functions: Iterable[Callable[..., Any]]

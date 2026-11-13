@@ -319,6 +319,9 @@ class RuntimeExecutor(AgentExecutor):
             started_at,
             accounting,
             self._limits_ceiling,
+            # Routing requests pass the same model-request checks as the skill's.
+            # noinspection PyProtectedMember
+            self._runtime._policy,
         )
         return await route(
             self._router, conversation, eligible_skills(definition, principal), ctx

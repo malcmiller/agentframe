@@ -51,6 +51,7 @@ from agentframe.runtime.options import merge_settings
 from agentframe.runtime.runtime import Runtime
 from agentframe.security.authentication import authenticate_request, www_authenticate
 from agentframe.security.authorization import AuthorizationPolicy
+from agentframe.security.execution_policy import ExecutionPolicy
 from agentframe.security.principal import Principal
 
 type Endpoint = Callable[[Request], Awaitable[Response]]
@@ -83,12 +84,15 @@ class AgentApp:
         agent: Instance of an ``@agent``-decorated class.
         host: Where and how the agent is served, including authentication.
         runtime: The runtime that runs every request. Defaults to a new
-            ``Runtime`` built from ``services`` and ``authorization``. Pass
+            ``Runtime`` built from ``services``, ``authorization`` and
+            ``policy``. Pass
             one to authorize tool calls with ``Runtime(tool_authorization=...)``.
         services: Services for ``Inject[T]`` parameters, when ``runtime`` is
             not given.
         authorization: Resource authorization policy, when ``runtime`` is not
             given.
+        policy: Execution policy content checks, when ``runtime`` is not
+            given. Its model-request checks also cover routing requests.
         router: Selects the skill for free-text messages or asks the caller a
             question. ``None`` refuses free text with a protocol error, even
             when the agent has a model. A ``ModelRouter``'s schemas are built
@@ -97,8 +101,8 @@ class AgentApp:
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
             not registered, an agent or skill limit is explicitly set above
-            ``host.limits_ceiling``, ``runtime`` is combined with ``services``
-            or ``authorization``, the authenticator cannot describe its
+            ``host.limits_ceiling``, ``runtime`` is combined with ``services``,
+            ``authorization`` or ``policy``, the authenticator cannot describe its
             security on the Agent Card, or a ``ModelRouter`` cannot describe a
             skill's arguments as a JSON schema.
     """
@@ -111,15 +115,20 @@ class AgentApp:
         runtime: Runtime | None = None,
         services: Services | None = None,
         authorization: AuthorizationPolicy | None = None,
+        policy: ExecutionPolicy | None = None,
         router: SkillRouter | None = None,
     ) -> None:
-        if runtime is not None and (services is not None or authorization is not None):
+        if runtime is not None and (
+            services is not None or authorization is not None or policy is not None
+        ):
             raise DefinitionError(
-                "Pass services and authorization either to AgentApp or to its "
-                "Runtime, not both; the runtime is the single source of them."
+                "Pass services, authorization and policy either to AgentApp or "
+                "to its Runtime, not both; the runtime is the single source of them."
             )
         if runtime is None:
-            runtime = Runtime(services=services, authorization=authorization)
+            runtime = Runtime(
+                services=services, authorization=authorization, policy=policy
+            )
         runtime.validate(agent)
         _check_limits_within_ceiling(agent, host)
         definition = type(agent).definition()

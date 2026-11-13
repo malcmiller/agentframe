@@ -64,6 +64,12 @@ from agentframe.security.authorization import (
     AuthorizationPolicy,
     ToolAuthorizationPolicy,
 )
+from agentframe.security.execution_policy import (
+    ExecutionPolicy,
+    InputCheck,
+    ModelRequestCheck,
+    OutputCheck,
+)
 from agentframe.security.principal import Principal
 
 if TYPE_CHECKING:
@@ -87,10 +93,12 @@ __all__ = [
     "Clarification",
     "DeclaresCardSecurity",
     "DefinitionError",
+    "ExecutionPolicy",
     "FinishReason",
     "HostConfig",
     "IncompleteOutputError",
     "Inject",
+    "InputCheck",
     "InputValidationError",
     "LimitExceededError",
     "Message",
@@ -100,9 +108,11 @@ __all__ = [
     "ModelError",
     "ModelRefusalError",
     "ModelRequest",
+    "ModelRequestCheck",
     "ModelResponse",
     "ModelRouter",
     "ModelSettings",
+    "OutputCheck",
     "OutputSchema",
     "OutputValidationError",
     "PermissionDeniedError",
