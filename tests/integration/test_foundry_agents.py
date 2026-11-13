@@ -1,5 +1,9 @@
 """Opt-in: list a real Foundry project's A2A agents, fetch one card and call it.
 
+The Foundry agent is also the real non-AgentFrame A2A server of the #94
+interoperability acceptance; ``test_multi_agent_interop.py`` covers the
+same cases against a plain SDK peer in CI.
+
 Needs a Foundry project with one prompt agent that has incoming A2A enabled,
 and ``az login`` as an identity with the roles in docs/api/discovery.md
 ("FoundryAgentRegistry"). Default ``uv run pytest`` runs and CI skip it::
@@ -8,8 +12,8 @@ and ``az login`` as an identity with the roles in docs/api/discovery.md
         AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT=<project-endpoint> \\
         AGENTFRAME_FOUNDRY_A2A_AGENT=<agent-name> uv run pytest -m foundry
 
-Nothing in the project is created or changed; the last test sends the agent
-one short message, which costs a little.
+Nothing in the project is created or changed; one test sends the agent one
+short message, which costs a little, and the ``call`` test sends nothing.
 """
 
 import os
@@ -25,6 +29,7 @@ from agentframe import (
     EntraAppCredential,
     FoundryAgentRegistry,
     Remote,
+    RemoteAgentError,
     RunContext,
     Runtime,
     Service,
@@ -91,9 +96,36 @@ async def test_an_orchestrator_asks_a_real_foundry_agent_with_its_app_token() ->
                 directory=agents, remotes={agent_name: Service(credential=token)}
             )
             await runtime.validate_remotes(Planner())
-            answer = await runtime.invoke(
+            result = await runtime.run(
                 Planner(), skill="plan", arguments={"goal": "Reply with: ready"}
             )
 
-    assert isinstance(answer, str)
-    assert answer
+    assert isinstance(result.value, str)
+    assert result.value
+    # Foundry agents report no AgentFrame usage, so it is unknown, not zero.
+    assert result.usage.total_tokens is None
+
+
+async def test_call_to_a_real_foundry_agent_is_refused_before_sending() -> None:
+    project_endpoint = required_env("AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT")
+    agent_name = required_env("AGENTFRAME_FOUNDRY_A2A_AGENT")
+    target = Remote[Literal[agent_name]]  # type: ignore[valid-type]
+
+    @agent(name="Planner", description="Calls a Foundry agent.", version="0.1.0")
+    class Planner(Agent):
+        @skill(id="plan", description="Call the agent.", tags=["planning"])
+        async def plan(self, goal: str, peer: target, ctx: RunContext) -> str:
+            answer: str = await peer.call("any_skill", goal=goal, output=str)
+            return answer
+
+    async with AzureCliCredential() as credential:
+        source = FoundryAgentRegistry(
+            project_endpoint=project_endpoint, credential=credential
+        )
+        token = EntraAppCredential(credential, scope=FOUNDRY_SCOPE)
+        async with AgentDirectory(sources=[source]) as agents:
+            runtime = Runtime(
+                directory=agents, remotes={agent_name: Service(credential=token)}
+            )
+            with pytest.raises(RemoteAgentError, match="skill-call extension"):
+                await runtime.invoke(Planner(), skill="plan", arguments={"goal": "x"})
