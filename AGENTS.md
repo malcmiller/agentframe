@@ -259,6 +259,12 @@ downgrade to prompts. Implemented wire format (M2 #5): activate the card's
 skill-call URI via `A2A-Extensions` (echoed in the response), skill ID in message
 metadata `agentframe.skill`, exactly one JSON-object data part; malformed ->
 JSON-RPC InvalidParams, no task. Not a standard A2A `skill` field.
+Implemented (#89): the same URI carries caller context; an activated message
+without `agentframe.skill` is free text. Cards list `params.context`
+(`deadline_ms`, `hops`); senders send only listed fields (0.1.0 lists none).
+Receiver timeout = min(own, `agentframe.deadline_ms`); `RunContext.hops`;
+`RunLimits.max_remote_hops=5`: caller fails before sending, deeper request
+REJECTED with base `LimitExceededError` message; depth is cooperative.
 Free-text/extension-unaware callers use custom or opt-in model routing plus
 validated extraction. Ambiguity/missing arguments asks back through
 `TASK_STATE_INPUT_REQUIRED`, never guesses; the caller answers in the same task,

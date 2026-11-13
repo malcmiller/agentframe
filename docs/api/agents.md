@@ -88,7 +88,8 @@ count), so concurrent runs never share accounting. Further accessors remain open
 | --- | --- | --- | --- |
 | `invocation_id` | `str` (UUID) | Always set | Same value as `RunResult.invocation_id` and error `invocation_id`; correlation, never authentication. |
 | `principal` | `Principal \| None` | Runtime-supplied; `None` when no identity was supplied | Verified immutable identity, required for protected work. Never supplied as business data or inferred from model output, roles, session IDs, or tracing. |
-| `deadline` | `float` | Always set | Event-loop time (`loop.time()`) when the run's timeout expires, as used by `asyncio.timeout_at`. |
+| `deadline` | `float` | Always set | Event-loop time (`loop.time()`) when the run's timeout expires, as used by `asyncio.timeout_at`. A hosted run's timeout is capped by the caller's remaining time when it sent one (M8 #89). |
+| `hops` | `int` | `0` for a local run or a caller that sent no depth | The run's depth in a chain of calls between agents, read from `agentframe.hops` (M8 #89). `Remote` sends one more; see [`RunLimits.max_remote_hops`](configuration.md#runlimits). |
 | Service injection | Skill parameters annotated `Inject[T]` | Services registered by trusted application | No untyped context service bag; injected parameters are excluded from caller input and all published schemas/cards. |
 | Model access | Injected `Model` through `generate` | Model optional until used | No implicit model or fallback. No additional public model accessor is specified. |
 | Cancellation, run state | Exact accessors/types open | Managed per invocation | Enforce effective limits and isolation; IDs/accounting work without tracing. |

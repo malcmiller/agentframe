@@ -32,6 +32,7 @@ from agentframe import (
     EntraAppCredential,
     HostConfig,
     InputValidationError,
+    LimitExceededError,
     OutputValidationError,
     Remote,
     RemoteAgentError,
@@ -295,6 +296,56 @@ async def test_ask_sends_one_text_part_to_the_interface_url() -> None:
     assert sent.headers["A2A-Version"] == "1.0"
     assert body["params"]["message"]["parts"] == [{"text": "tides"}]
     assert body["params"]["configuration"]["returnImmediately"] is True
+    # The card lists no context fields, so the message is plain A2A.
+    assert "A2A-Extensions" not in sent.headers
+    assert "metadata" not in body["params"]["message"]
+
+
+def context_card(*fields: str) -> dict[str, Any]:
+    extension = {"uri": SKILL_CALL_EXTENSION_URI, "params": {"context": list(fields)}}
+    return card_json(capabilities={"extensions": [extension]})
+
+
+async def test_ask_sends_the_context_fields_the_card_advertises() -> None:
+    peer = Peer(
+        task(TaskState.TASK_STATE_COMPLETED, "Findings"),
+        card=context_card("deadline_ms", "hops"),
+    )
+
+    await ask(peer)
+
+    sent = peer.requests[-1]
+    metadata = json.loads(sent.content)["params"]["message"]["metadata"]
+    assert sent.headers["A2A-Extensions"] == SKILL_CALL_EXTENSION_URI
+    assert metadata["agentframe.hops"] == 1
+    # A local run's default timeout is 120 seconds; what is left goes along.
+    assert 119_000 < metadata["agentframe.deadline_ms"] <= 120_000
+
+
+async def test_ask_sends_only_the_fields_the_card_advertises() -> None:
+    peer = Peer(
+        task(TaskState.TASK_STATE_COMPLETED, "Findings"), card=context_card("hops")
+    )
+
+    await ask(peer)
+
+    body = json.loads(peer.requests[-1].content)
+    assert body["params"]["message"]["metadata"] == {"agentframe.hops": 1}
+
+
+async def test_a_run_at_the_depth_limit_fails_before_sending() -> None:
+    peer = Peer(card=context_card("deadline_ms", "hops"))
+    remote_agent = await research(peer, hops=5)
+
+    with pytest.raises(LimitExceededError) as asked:
+        await remote_agent.ask("tides")
+    with pytest.raises(LimitExceededError) as called:
+        await remote_agent.call("find_sources", topic="tides")
+
+    assert asked.value.message == "Maximum remote call depth of 5 exceeded"
+    assert asked.value.invocation_id == "run-1"
+    assert called.value.message == asked.value.message
+    assert peer.methods() == []
 
 
 async def test_ask_polls_an_unfinished_task_until_it_completes() -> None:
@@ -343,7 +394,7 @@ async def test_a_non_text_result_raises_remote_agent_error() -> None:
 # Calling a skill
 
 
-async def research(peer: Peer) -> Research:
+async def research(peer: Peer, hops: int = 0) -> Research:
     deadline = asyncio.get_running_loop().time() + 10
     return await bind_remote(
         peer.directory(),
@@ -352,6 +403,8 @@ async def research(peer: Peer) -> Research:
         invocation_id="run-1",
         principal=None,
         identity=None,
+        hops=hops,
+        max_hops=5,
     )
 
 
@@ -366,6 +419,22 @@ async def test_call_sends_a_skill_call_with_json_arguments() -> None:
     assert sent.headers["A2A-Version"] == "1.0"
     assert message["metadata"] == {"agentframe.skill": "find_sources"}
     assert message["parts"] == [{"data": {"topic": {"name": "tides"}}}]
+
+
+async def test_call_adds_the_advertised_context_under_the_same_extension() -> None:
+    card = skill_call_card("find_sources")
+    card["capabilities"]["extensions"][0]["params"] = {"context": ["hops"]}
+    peer = Peer(result([]), card=card)
+
+    await (await research(peer, hops=2)).call("find_sources", topic="tides")
+
+    sent = peer.requests[-1]
+    message = json.loads(sent.content)["params"]["message"]
+    assert sent.headers["A2A-Extensions"] == SKILL_CALL_EXTENSION_URI
+    assert message["metadata"] == {
+        "agentframe.skill": "find_sources",
+        "agentframe.hops": 3,
+    }
 
 
 async def test_call_validates_the_result_into_the_output_type() -> None:

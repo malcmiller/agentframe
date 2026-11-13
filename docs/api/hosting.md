@@ -265,12 +265,14 @@ runtime validates and runs exactly that skill. A router is never consulted.
 
 | Element | Wire format |
 | --- | --- |
-| Extension | `https://github.com/malcmiller/agentframe/extensions/skill-call/v1`, declared on the Agent Card with `required: false`. Its `params.skills` maps each skill ID to the JSON Schema of its arguments; requests are validated against the same schema. |
+| Extension | `https://github.com/malcmiller/agentframe/extensions/skill-call/v1`, declared on the Agent Card with `required: false`. Its `params.skills` maps each skill ID to the JSON Schema of its arguments; requests are validated against the same schema. Its `params.context` lists the caller-context fields the agent reads: `["deadline_ms", "hops"]` (M8 #89; absent on 0.1.0 cards). |
 | Activation | The caller lists the URI in the `A2A-Extensions` HTTP request header (comma-separated with any others). Activation is per request. |
 | Acknowledgement | The response to every authenticated request that activated it carries `A2A-Extensions: <uri>`. Other requested URIs are not supported and are ignored. |
-| Skill ID | Message metadata key `agentframe.skill`: a non-empty string. |
+| Skill ID | Message metadata key `agentframe.skill`: a non-empty string. With the extension activated, a message is a skill call only when it carries this key; otherwise it is free text (M8 #89 relaxed M2's `InvalidParams` rule). |
+| Caller context (M8 #89) | Optional metadata, read only with the extension activated, on skill calls and free text alike: `agentframe.deadline_ms`, the caller's remaining time as a whole number of milliseconds (at least 1), and `agentframe.hops`, the request's depth (a whole number, at least 0; missing means 0). Callers send only the fields the receiver's card lists. |
 | Arguments | Exactly one message part, a data part holding a JSON object (`{}` for a skill without arguments). |
 | Other metadata | Other `agentframe.`-prefixed metadata keys are unknown fields. Keys outside that namespace belong to other extensions and are ignored. |
+| Run limits (M8 #89) | The run's timeout is the smaller of its own (after host ceilings) and `deadline_ms`; a request whose `hops` exceeds `RunLimits.max_remote_hops` (agent level, capped by the host ceiling) ends `REJECTED` with "Maximum remote call depth of N exceeded" before routing or the skill. |
 
 ```http
 POST /a2a HTTP/1.1
@@ -297,9 +299,10 @@ X-API-Key: <development key>
 | Request | Result |
 | --- | --- |
 | Extension activated, valid skill ID and arguments | The skill runs through `Runtime.run`; the task completes with its result. |
-| Extension activated, but no skill ID, not exactly one part, a part that is not a JSON-object data part, or an unknown `agentframe.` metadata field | JSON-RPC `InvalidParamsError` (`-32602`); no task is created. Never reinterpreted as free text. |
+| Extension activated, an empty or non-string skill ID, not exactly one part, a part that is not a JSON-object data part, an unknown `agentframe.` metadata field, or a malformed `deadline_ms`/`hops` | JSON-RPC `InvalidParamsError` (`-32602`); no task is created. Never reinterpreted as free text. |
+| Extension activated without `agentframe.skill` | Free text carrying the caller context: routed by the [`SkillRouter`](#skillrouter), or refused with `-32004` when none is configured. |
 | Extension activated, unknown skill ID or invalid arguments | Task `REJECTED` with a safe message. |
-| Extension not activated | Free text, even if `agentframe.skill` is present: routed by the [`SkillRouter`](#skillrouter), or refused with `-32004` when none is configured. |
+| Extension not activated | Free text, even if `agentframe.` metadata is present (it is ignored): routed by the [`SkillRouter`](#skillrouter), or refused with `-32004` when none is configured. |
 
 With the official Python client, activate the extension per call:
 
