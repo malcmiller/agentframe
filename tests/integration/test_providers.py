@@ -28,7 +28,7 @@ from a2a.types import TaskState
 from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 from pydantic import BaseModel
 
-from a2a_client import call_skill, connect
+from a2a_client import call_skill, connect, say
 from agentframe import (
     Agent,
     AgentApp,
@@ -52,6 +52,7 @@ from agentframe.models.foundry import FOUNDRY_SCOPE
 from agentframe.models.ollama import DEFAULT_ENDPOINT
 from examples.assistant import Summary, create_app
 from examples.orders import create_app as create_orders_app
+from examples.routed_assistant import create_app as create_routed_app
 from local_server import ServeLocally
 
 # A name no provider has, to prove an unknown model fails clearly.
@@ -358,6 +359,34 @@ async def test_order_example_uses_a_tool_over_a2a(
     assert "shipped" in get_artifact_text(task.artifacts[0]).lower()
     usage = task.metadata["usage"]
     assert usage["tool_calls"] == 1
+    assert usage["model_calls"] == 2
+    assert usage["total_tokens"]
+    assert not usage["estimated"]
+
+
+# Model routing: free text over A2A, routed by the built-in router
+
+
+async def test_free_text_is_routed_to_the_skill_it_asks_for(
+    serve: ServeLocally, model: Model, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def make_app(public_url: str) -> AgentApp:
+        monkeypatch.setenv("ASSISTANT_PUBLIC_URL", public_url)
+        return create_routed_app(model)
+
+    async with serve(make_app) as base_url, await connect(base_url) as client:
+        # Two reasoning model calls can take longer than the client's default.
+        task = await say(
+            client, "Convert 25 degrees Celsius to Fahrenheit.", timeout=60
+        )
+
+    # Routing is nondeterministic, so only the selected skill and the
+    # presence of its argument are checked: only to_fahrenheit returns data.
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    [data] = get_data_parts(task.artifacts[0].parts)
+    assert set(data["value"]) == {"celsius", "fahrenheit"}
+    usage = task.metadata["usage"]
+    # Selection and extraction; the skill itself makes no model call.
     assert usage["model_calls"] == 2
     assert usage["total_tokens"]
     assert not usage["estimated"]
