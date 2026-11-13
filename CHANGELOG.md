@@ -6,7 +6,7 @@ All notable changes to AgentFrame are listed here. The format follows
 Pre-1.0: public APIs may change in minor releases; changes are listed in the
 changelog.
 
-## [0.1.0]
+## [0.1.0] - 2026-11-13
 
 The first usable single-agent release, distributed on PyPI as `agentframe-py`
 and imported as `agentframe`.
