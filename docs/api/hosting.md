@@ -34,7 +34,7 @@ AgentApp(
 | `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization)` | The single authoritative runtime and service container for every request. Passing it together with `services=` or `authorization=` raises `DefinitionError`. Pass a runtime to authorize tool calls: `AgentApp(runtime=Runtime(services=..., tool_authorization=...))`; there is no separate host setting (M5 #62). |
 | `a2a` | `A2AConfig` | A2A enabled by default; exact object default open | Selected native binding and implemented features only. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
-| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in model router in M6. Activated structured selection bypasses it, not runtime controls. |
+| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68). Activated structured selection bypasses it, not runtime controls. |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
 | `authorization` | `AuthorizationPolicy` | Optional; only without `runtime=` | Resource policy applied to every run, as on [`Runtime`](runtime.md#runtime). |
 | `directory` | `AgentDirectory` | M8+ when remote bindings need discovery | Resolve `Remote["name"]`; validate configured names at startup. Sources/cache lifecycle follows ownership, not automatic transfer. |
@@ -623,7 +623,7 @@ deterministically and never call the router.
 one async method; any class with a matching `route` works without inheritance.
 M6 (#67) added the required `ctx: RoutingContext` parameter (a pre-release
 breaking change) so router model calls are charged to the run. The M6 model
-router's construction is decided in #68.
+router is [`ModelRouter`](#modelrouter) (#68).
 
 ```python
 class SkillRouter(Protocol):
@@ -752,7 +752,7 @@ read its fields and call `generate`; they do not construct it.
 async def generate(
     self,
     model: Model,
-    text: str,
+    text: str | Sequence[Message],
     *,
     instructions: str | None = None,
     output: type[T] | None = None,
@@ -763,7 +763,7 @@ async def generate(
 | Parameter | Type | Required/default | Meaning |
 | --- | --- | --- | --- |
 | `model` | `Model` | Required | The router's own model. The agent's model is never used implicitly; pass the same instance explicitly to share it. |
-| `text` | `str` | Required | Untrusted content, sent as a `user` message. |
+| `text` | `str \| Sequence[Message]` | Required | Untrusted content: one `user` message, or a conversation of AgentFrame [`Message`](models.md#message)s with only plain `user` (caller) and `assistant` (agent's earlier questions) roles, sent after the instructions (M6 #68). Any other role or tool calls raise `DefinitionError` before sending. |
 | `instructions` | `str \| None` | `None` | Trusted routing instructions, sent as a `system` message. The agent's own `instructions` are not sent; they are for its skills. |
 | `output` | `type[BaseModel] \| None` | `None` | Validate the reply as this Pydantic model, as in [`RunContext.generate`](agents.md#runcontextgenerate). |
 | `model_settings` | `ModelSettings \| None` | `None` | Router override; each field set replaces the library and agent value. |
@@ -825,70 +825,91 @@ class OneShotRouter(SkillRouter):
 
 `OneShotRouter` is an illustration; `Model` is any configured model, such as
 an `OllamaModel`. The built-in router (#68) adds argument extraction and never
-guesses.
+guesses; see [`ModelRouter`](#modelrouter).
 
 **Related:** [`SkillRouter`](#skillrouter),
 [limits: defaults versus ceilings](../guides/limits.md#defaults-versus-ceilings).
 
-## Built-in model-based router (planned implementation)
+## `ModelRouter`
 
-**Purpose / decision:** first-release library-supplied opt-in selection for
-free-text multi-skill A2A, alongside custom `SkillRouter` implementations.
-M6 follows M3/M4; injecting a model into an agent never activates it.
-Structured extension requests bypass this router and its model-selection cost.
+**Purpose / decision:** the library-supplied, opt-in [`SkillRouter`](#skillrouter)
+for free-text multi-skill A2A, alongside custom routers (M6 #68). A model picks
+the skill and extracts its arguments, or the router asks the caller a question;
+it never guesses. Structured extension requests bypass it and its cost.
+Injecting a model into an agent never enables it.
 
-**Signature status:** public implementation name, constructor/factory, selected
-model configuration, selection/argument-extraction decisions and clarification
-interface remain open. No new class export or constructor fields are settled.
-
-| Concern | Type | Required/default status | Meaning, constraints, precedence |
-| --- | --- | --- | --- |
-| Model routing opt-in | Explicit router configuration; syntax open | Disabled without explicit selection | Does not follow from `Agent(model=...)`; custom routers remain supported. |
-| Model and eligible skills | Normalized model dependency and authorized candidate contracts; open | Needed for model selection | Apply outbound checks and request-wide budget before inference; cannot invent skills or grant permission. |
-| Selected skill/business arguments | Typed decision representation; open | Must be validated before invocation | Unknown/invalid decisions fail explicitly; ambiguity/missing arguments asks back through `TASK_STATE_INPUT_REQUIRED`. Exact clarification contract remains open. |
-
-This example accepts an **already explicitly configured library model router**
-through the proposed interface. It does not invent its constructor or make the
-agent's model double as router configuration.
+**Signature status:** implemented in M6 (#68). Hosting wiring and startup
+checks follow in #69; until then pass it as `router=` like any custom router.
 
 ```python
-from agentframe import (
-    Agent, AgentApp, Authenticator, AuthorizationPolicy, HostConfig, Runtime, SkillRouter,
+ModelRouter(
+    model: Model,
+    *,
+    instructions: str | None = None,
+    model_settings: ModelSettings | None = None,
 )
-
-
-def build_routed_app(
-    agent: Agent, model_router: SkillRouter,
-    development_auth: Authenticator,
-    development_authorization_policy: AuthorizationPolicy,
-) -> AgentApp:
-    return AgentApp(
-        agent=agent,
-        router=model_router,
-        runtime=Runtime(authorization=development_authorization_policy),
-        host=HostConfig(
-            public_url="http://127.0.0.1:8000",
-            auth=development_auth,
-        ),
-    )
 ```
 
-The application chooses a real authenticator and supplies resource policy.
-`APIKeyAuth` is suitable for a development example; `AllowAnonymous()` would
-be a deliberate access choice, not an omitted configuration.
+| Parameter | Type | Required/default | Meaning, constraints, precedence |
+| --- | --- | --- | --- |
+| `model` | `Model` | Required | The router's own model; it must support structured output. The agent's model is never used implicitly; pass the same instance explicitly to share it. |
+| `instructions` | `str \| None` | `None` | Extra trusted instructions (such as domain hints) appended to the router's own for both calls. Never put untrusted content here. |
+| `model_settings` | `ModelSettings \| None` | `None` | Settings for both routing calls; each field set overrides the library and agent value (see [`RoutingContext.generate`](#routingcontextgenerate)). |
 
-**Behavior / failures:** authorize admission/restrict candidates, budget/check
-the selection model, validate extraction and re-check skill/resource policy
-before execution. Exhaustion, refusal, invalid decisions, ambiguity and policy
-failures use the decided typed errors; exact protocol/clarification details
-remain open. Never enable
-automatic multi-agent orchestration, implicit tools or caller authority.
-Input-required clarification is not completed output, human approval workflow
-or durable execution resumption.
+```python
+from agentframe import AgentApp, ModelRouter, OllamaModel
 
-**Related:** [`SkillRouter`](#skillrouter),
+router = ModelRouter(OllamaModel(model="llama3.2:3b", context_window=8192))
+app = AgentApp(agent=assistant, host=host, router=router)
+```
+
+`assistant` and `host` are the application's agent and
+[`HostConfig`](#hostconfig), with the application's authentication.
+
+**Behavior:** each routed message takes two structured-output calls through
+[`RoutingContext.generate`](#routingcontextgenerate), so both are charged to
+the run before the skill runs (a routed model-backed skill reports 2 routing
+model calls plus its own).
+
+1. **Select:** trusted `system` instructions list each eligible skill's ID,
+   name, tags and description. The conversation is sent as untrusted messages:
+   the caller's text as `user`, the agent's earlier questions as `assistant`.
+   The reply is a `Selection`: `skill`, limited by its schema to the eligible
+   IDs, or `question`. Selection always runs, even with one eligible skill, so
+   off-topic requests get a question.
+2. **Extract:** for the chosen skill only, the reply is an `Extraction`:
+   `arguments` following the skill's argument schema, or `question`. Every
+   optional argument is required and nullable in that schema, with no
+   default; the instructions tell the model to use only values the caller
+   stated and never to invent one.
+
+The result is a [`SkillCall`](#skillrouter) with only the arguments the model
+supplied: nulls for optional arguments are dropped, so the skill's defaults
+apply (an optional argument that is nullable with a non-`None` default
+therefore cannot be set to `None` through routing). The arguments are
+validated against the skill first; the runtime validates them again and
+checks permissions and policy when the skill runs. A follow-up answer in the
+same task is routed again with the whole conversation.
+
+| Situation | Result |
+| --- | --- |
+| Model names a skill and gives valid arguments | `SkillCall(skill, arguments)`; task runs the skill. |
+| Model asks a question in either call (even alongside an answer), or gives neither | `Clarification` with its question (or a generic one); task `INPUT_REQUIRED`. |
+| Extracted arguments fail the skill's validation | `Clarification` naming the invalid argument names only, never their values. |
+| The caller's latest message has no text part | `Clarification` asking for text; no model call. Only text parts are ever used. |
+| No skill is available to the caller | `InputValidationError`; no model call. |
+| Model lacks structured output, or its adapter cannot express a skill's argument schema (such as Foundry strict mode and a `dict` argument) | `UnsupportedCapabilityError`; that routing attempt fails. |
+| Selection names a skill that is not eligible, or the reply is not valid JSON for its schema | `OutputValidationError`; never returned as a skill. |
+| Model refusal, limit or provider error | Propagates; task `FAILED` with its safe message (see [`SkillRouter`](#skillrouter)). |
+
+Keeping roles separate does not guarantee resistance to prompt injection; see
+[prompt safeguarding](../design/prompt-safeguarding.md). Selection is not
+authorization: only skills the caller may run are offered, and every run is
+still authorized.
+
+**Related:** [`SkillRouter`](#skillrouter), [`RoutingContext`](#routingcontext),
 [routing and extraction](../guides/annotations.md#skill-registration-versus-request-routing),
-[remaining execution contracts](../design/base-classes.md#decided-execution-contracts-and-remaining-details).
+[A2A request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
 
 ## Native A2A and MCP types
 
