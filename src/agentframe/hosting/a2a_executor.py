@@ -60,6 +60,7 @@ from agentframe.errors import (
     OutputValidationError,
     PermissionDeniedError,
 )
+from agentframe.hosting.admission import RUN_SLOT_STATE_KEY, RunSlot
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.hosting.routing import (
     Clarification,
@@ -181,7 +182,22 @@ class RuntimeExecutor(AgentExecutor):
         self._running: dict[str, RunAccounting] = {}
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Run the requested or routed skill and publish the task's new state."""
+        """Run the requested or routed skill and publish the task's new state.
+
+        A run the app admitted holds its ``RunSlot`` until it ends: completed,
+        failed, cancelled, timed out or asking the caller a question.
+        """
+        slot: RunSlot | None = context.call_context.state.get(RUN_SLOT_STATE_KEY)
+        if slot is not None:
+            slot.start()
+        try:
+            await self._run_task(context, event_queue)
+        finally:
+            if slot is not None:
+                slot.release()
+
+    async def _run_task(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Start or resume the task, run it and record its accounting."""
         # The SDK always fills these in before calling the executor.
         task_id, context_id, message = (
             context.task_id,

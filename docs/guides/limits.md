@@ -36,11 +36,12 @@ First-release bounded registered-tool execution and generation continuations
 share these allowances; typed structured output also must fit the actual
 deployment's capability/context and validate completely. Explicit finite
 tool-call controls use the defaults above. `HostConfig` separately defaults to
-32 concurrent runs (excess immediately rejected with a standard busy error),
+32 concurrent runs (excess immediately rejected with HTTP 503 and
+`Retry-After: 1`, implemented in M7 #72),
 1 MiB request, 4 MiB response, and 30-second shutdown grace; all configurable.
 Shutdown stops accepting, drains, then cancels remaining runs. `/health` is
 liveness; `/ready` means startup checks passed and not shutting down.
-Exact byte measurement, busy-error binding and probe response schemas remain open.
+Exact byte measurement and probe response schemas remain open.
 
 ## Proposed configuration
 
