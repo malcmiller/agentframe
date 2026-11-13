@@ -10,6 +10,16 @@ changelog.
 
 ### Added
 
+- **Multi-agent (M8+):** cross-agent token budgets. `Remote.ask` and
+  `Remote.call` take `max_total_tokens=` (default: everything the run has
+  left), held atomically against the run's `RunLimits.max_total_tokens`
+  before sending and sent as `agentframe.max_total_tokens` to peers whose
+  card lists it in `params.context` (now `deadline_ms`, `hops`,
+  `max_total_tokens`). Receivers use the smaller of it and their own limit.
+  The usage the peer's task reports is charged to the run once, so
+  `RunResult.usage` includes every hop; peers that do not list the field hold
+  nothing and leave usage unknown (`None`), never zero. A ceiling over what is
+  left raises `TokenLimitExceededError` before sending.
 - **Multi-agent (M8+):** `OnBehalfOf(scope=...)` in `remotes=` calls a remote
   agent on behalf of the signed-in user through the Microsoft Entra
   on-behalf-of flow; the incoming token is never forwarded. `EntraIDAuth`
@@ -61,7 +71,7 @@ changelog.
   extension and validates its result into `output` (`OutputValidationError`
   on mismatch). A peer whose card lacks the extension or the skill raises
   `RemoteAgentError` before anything is sent, with no free-text fallback.
-  `output` and `max_total_tokens` are reserved argument names.
+  `output` and `max_total_tokens` cannot be remote argument names.
 - **Outbound identity (M8+):** `remotes={name: Service(credential=...)}` on
   `Runtime` and `AgentApp` authenticates remote calls with the calling
   agent's own identity: `APIKeyCredential(key, header="X-API-Key")` or

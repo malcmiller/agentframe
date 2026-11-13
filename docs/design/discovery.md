@@ -324,8 +324,8 @@ reduce caller permissions.
 The M8+ authoring surface is a `Remote[Literal["research-agent"]]` skill
 parameter, usually through an alias such as
 `type Research = Remote[Literal["research-agent"]]` (the string form
-`Remote["research-agent"]` fails `mypy --strict`). `ask` (#87) and `call` (#88)
-are implemented; `call`'s `max_total_tokens=` arrives with #90:
+`Remote["research-agent"]` fails `mypy --strict`). `ask` (#87), `call` (#88)
+and their `max_total_tokens=` (#90) are implemented:
 
 - `await research.call("find_sources", topic=goal, output=list[Source])`:
   structured extension selection with JSON arguments and validated returned data.
@@ -365,8 +365,12 @@ allowance atomically for TaskGroup fan-out; a per-call default is not a duplicat
 spendable budget. Default maximum depth is **5 remote hops**, with excess failing.
 Deadline, token allowance/usage and depth use the same AgentFrame A2A extension;
 this is not a base-standard A2A field or a promise of enforcement by other peers.
-Non-AgentFrame calls still have local time bounds and unknown usage. Detailed
-wire/accounting trust, clock/depth semantics and configuration remain open.
+Non-AgentFrame calls still have local time bounds and unknown usage.
+Implemented (#90): only peers listing `max_total_tokens` in `params.context` get
+the ceiling and a hold; their reported total replaces the hold even when higher
+(never lowered), and is accounting data, never authorization. `RunResult` keeps
+one usage total; `model_calls` stays local. See
+[cross-agent budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8).
 
 Ordinary A2A callers still get only safe invocation-ID execution correlation,
 not internal `RunResult`. The negotiated cross-agent extension additionally
@@ -375,8 +379,8 @@ Trace/correlation propagation stays independent of optional exporters.
 
 ### Worked composition examples
 
-These are approved call forms, with application data models; `ask` (#87) and
-`call` (#88) are implemented, `max_total_tokens=` is not yet (#90):
+These are approved call forms, with application data models; `ask` (#87),
+`call` (#88) and `max_total_tokens=` (#90) are implemented:
 
 ```python
 import asyncio
@@ -411,9 +415,15 @@ class Planner(Agent):
 
 
 async def compare(goal: str, research: Research, review: Review) -> tuple[str, str]:
+    # Concurrent calls each pass a ceiling: without one, a call holds all the
+    # run has left and the other fails before sending.
     async with asyncio.TaskGroup() as group:
-        findings = group.create_task(research.ask("Research " + goal))
-        critique = group.create_task(review.ask("Review " + goal))
+        findings = group.create_task(
+            research.ask("Research " + goal, max_total_tokens=20_000)
+        )
+        critique = group.create_task(
+            review.ask("Review " + goal, max_total_tokens=10_000)
+        )
     return findings.result(), critique.result()
 
 

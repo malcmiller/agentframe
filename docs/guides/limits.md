@@ -286,8 +286,7 @@ only lower it and report actual usage back through the same AgentFrame A2A
 extension. Charge returned usage to the caller once, without double-counting
 local inference or nested-hop aggregates. Concurrent `asyncio.TaskGroup` calls
 share atomic reservations; each cannot spend the whole remaining allowance.
-Exact reservation allocation, descendant reconciliation and usage trust/markers
-remain open. Strict accounting cannot pretend an unbounded peer is bounded.
+Strict accounting cannot pretend an unbounded peer is bounded.
 
 Non-AgentFrame usage is **unknown, never zero**. Extension-unaware peers do not
 promise token enforcement/reporting, though caller-side waiting remains bounded.
@@ -321,6 +320,52 @@ standard A2A top-level fields.
 - Depth is cooperative: a malicious caller can send `hops=0`. The limit
   prevents accidental loops, not abuse; admission limits and authentication
   handle abuse.
+
+**Implemented (#90): token budgets.**
+
+- `Remote.ask` and `Remote.call` take `max_total_tokens=`. Before sending, the
+  ceiling (by default everything the run has left) is held against the run's
+  `RunLimits.max_total_tokens` in the same accounting as model calls, in one
+  step with no `await`, and sent as `agentframe.max_total_tokens` to peers
+  whose card lists it in `params.context`. A ceiling that does not fit raises
+  `TokenLimitExceededError` before sending.
+- A receiver's run uses the smaller of its own `max_total_tokens` (after host
+  ceilings) and the incoming one, for routing and the skill alike; a larger
+  incoming value never raises it. A specialist allowed 100000 tokens but sent
+  1000 fails with `TokenLimitExceededError` as soon as a model call needs more.
+- When the remote task ends, the hold is replaced by the `total_tokens` of
+  the task's usage snapshot, which already includes the peer's own remote
+  calls. Usage above the ceiling is charged as reported, so later calls fail
+  sooner; it is never lowered. `RunResult.usage` is one total of local and
+  remote usage; `model_calls` and `tool_calls` stay local.
+- Peers that do not list the field (non-AgentFrame agents, 0.1.0 and #89-era
+  AgentFrame agents) get no ceiling and hold nothing; their usage is unknown,
+  so the run's counts become `None`, never zero. An advertising peer that
+  reports no usage, a request lost in transit and a cancelled request keep
+  their hold counted and make usage unknown, as a failed model call does.
+
+Fanning out, pass a ceiling to each call. The default holds everything the
+run has left, so a second concurrent call fails before sending, with a message
+saying to pass `max_total_tokens` per call:
+
+```python
+import asyncio
+from typing import Literal
+
+from agentframe import Remote
+
+type Research = Remote[Literal["research-agent"]]
+
+
+async def both(research: Research) -> list[str]:
+    async with asyncio.TaskGroup() as group:
+        tides = group.create_task(research.ask("Tides", max_total_tokens=20_000))
+        winds = group.create_task(research.ask("Winds", max_total_tokens=20_000))
+    return [tides.result(), winds.result()]
+```
+
+Reported usage is the peer's claim: it is used for accounting only, never for
+authorization, and is not a hard billing guarantee.
 
 ## Retries and duplicate requests
 
