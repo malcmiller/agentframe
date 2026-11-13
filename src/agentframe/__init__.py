@@ -69,6 +69,7 @@ from agentframe.security.principal import Principal
 if TYPE_CHECKING:
     from agentframe.models.foundry import FoundryModel as FoundryModel
     from agentframe.models.ollama import OllamaModel as OllamaModel
+    from agentframe.security.entra import EntraIDAuth as EntraIDAuth
 
 __version__ = "0.1.0.dev0"
 
@@ -137,8 +138,8 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    # Provider adapters are imported on first use so that ``import agentframe``
-    # works without their optional extras installed.
+    # Provider adapters and EntraIDAuth are imported on first use so that
+    # ``import agentframe`` works without their optional extras installed.
     if name == "FoundryModel":
         from agentframe.models.foundry import FoundryModel as FoundryModel
 
@@ -147,4 +148,8 @@ def __getattr__(name: str) -> object:
         from agentframe.models.ollama import OllamaModel as OllamaModel
 
         return OllamaModel
+    if name == "EntraIDAuth":
+        from agentframe.security.entra import EntraIDAuth as EntraIDAuth
+
+        return EntraIDAuth
     raise AttributeError(f"module 'agentframe' has no attribute {name!r}")

@@ -35,6 +35,10 @@ foundry = [
     "azure-identity==1.27.0",
     "openai==3.49.0",
 ]
+entra = [
+    "httpx==0.28.1",
+    "pyjwt[crypto]==2.15.1",
+]
 
 [project.scripts]
 agentframe = "agentframe.cli:main"
@@ -54,7 +58,7 @@ dev = [
     # Imported directly by the tests, so pinned rather than left transitive.
     "httpx2==2.16.0",
     "azure-core==1.41.0",
-    "agentframe[ollama,foundry]",
+    "agentframe[ollama,foundry,entra]",
 ]
 
 [tool.ruff]
@@ -89,4 +93,5 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 markers = [
     "ollama: calls a real Ollama server; runs only with AGENTFRAME_TEST_OLLAMA=1",
     "foundry: calls a real Foundry deployment; runs only with AGENTFRAME_TEST_FOUNDRY=1",
+    "entra: uses a real Microsoft Entra token; runs only with AGENTFRAME_TEST_ENTRA=1",
 ]
