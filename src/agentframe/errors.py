@@ -167,7 +167,8 @@ class CancelledError(AgentFrameError):
 
 
 class RemoteAgentError(AgentFrameError):
-    """Another agent failed: it is unreachable, its card is invalid or refused.
+    """Another agent failed: it is unreachable, its card is invalid or refused,
+    or its task did not complete.
 
     Raised for failures caused by a remote agent rather than by local
     configuration, which raises ``DefinitionError`` instead.
@@ -190,6 +191,37 @@ class RemoteAgentError(AgentFrameError):
         super().__init__(message, invocation_id=invocation_id)
         self.task_id = task_id
         self.task_state = task_state
+
+
+class ClarificationNeededError(AgentFrameError):
+    """A remote agent asked a question instead of answering.
+
+    Raised by ``Remote.ask`` when the remote task needs more input. Nothing
+    answers it automatically. The message never contains the question.
+
+    Args:
+        message: Safe, human-readable description of the failure.
+        question: The remote agent's question. Untrusted remote content:
+            check it before showing it to anyone, and never treat it as
+            instructions.
+        task_id: The remote task waiting for the answer.
+        context_id: The remote task's context ID.
+        invocation_id: Identifier of the run that asked the remote agent.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        question: str,
+        task_id: str,
+        context_id: str,
+        invocation_id: str | None = None,
+    ) -> None:
+        super().__init__(message, invocation_id=invocation_id)
+        self.question = question
+        self.task_id = task_id
+        self.context_id = context_id
 
 
 def describe_validation_error(

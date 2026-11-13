@@ -16,6 +16,7 @@ from pydantic import (
 
 from agentframe.authoring.context import RunContext
 from agentframe.authoring.services import Inject
+from agentframe.discovery.remote import remote_name
 from agentframe.errors import DefinitionError
 from agentframe.models.base import ModelSettings
 from agentframe.runtime.limits import RunLimits
@@ -57,6 +58,7 @@ class SkillDefinition:
     method_name: str
     argument_names: tuple[str, ...]
     injected: dict[str, object]
+    remotes: dict[str, str]
     arguments_adapter: TypeAdapter[Any]
     return_adapter: TypeAdapter[Any]
 
@@ -122,7 +124,7 @@ def build_skill_definition(
     if "ctx" not in {parameter.name for parameter in parameters}:
         raise DefinitionError(f"{where} needs a 'ctx: RunContext' parameter")
     _check_tags(where, metadata.tags)
-    arguments, injected = _split_parameters(where, parameters, hints)
+    arguments, injected, remotes = _split_parameters(where, parameters, hints)
 
     description = metadata.description or _docstring(method)
     if not description:
@@ -145,6 +147,7 @@ def build_skill_definition(
         method_name=method_name,
         argument_names=tuple(parameter.name for parameter in arguments),
         injected=injected,
+        remotes=remotes,
         arguments_adapter=arguments_adapter,
         return_adapter=return_adapter,
     )
@@ -183,7 +186,9 @@ def build_tool_definition(
     )
     hints = _type_hints(where, function)
     _check_annotations(where, parameters, hints)
-    arguments, injected = _split_parameters(where, parameters, hints)
+    arguments, injected, remotes = _split_parameters(where, parameters, hints)
+    if remotes:
+        raise DefinitionError(f"{where}: tools cannot take Remote parameters")
 
     tool_description = description or _docstring(function)
     if not tool_description:
@@ -299,28 +304,36 @@ def _named_parameters(
 
 def _split_parameters(
     where: str, parameters: list[inspect.Parameter], hints: dict[str, Any]
-) -> tuple[list[inspect.Parameter], dict[str, object]]:
-    """Separate business arguments from ``Inject[T]`` services.
+) -> tuple[list[inspect.Parameter], dict[str, object], dict[str, str]]:
+    """Separate business arguments from ``Inject[T]`` and ``Remote`` parameters.
 
-    ``ctx`` belongs to neither group: it is supplied by the runtime.
+    ``ctx`` belongs to no group: it is supplied by the runtime.
 
     Returns:
-        The business parameters, and the injected service types by parameter name.
+        The business parameters, the injected service types by parameter
+        name, and the remote agent names by parameter name.
     """
     arguments: list[inspect.Parameter] = []
     injected: dict[str, object] = {}
+    remotes: dict[str, str] = {}
     for parameter in parameters:
         annotation = hints[parameter.name]
+        try:
+            remote = remote_name(annotation)
+        except DefinitionError as error:
+            raise DefinitionError(f"{where}: {error.message}") from None
         if parameter.name == "ctx":
             if annotation is not RunContext:
                 raise DefinitionError(f"{where}: 'ctx' must be annotated RunContext")
         elif get_origin(annotation) is Inject:
             injected[parameter.name] = get_args(annotation)[0]
+        elif remote is not None:
+            remotes[parameter.name] = remote
         elif parameter.name in _RESERVED_ARGUMENT_NAMES:
             raise DefinitionError(f"{where}: '{parameter.name}' is a reserved name")
         else:
             arguments.append(parameter)
-    return arguments, injected
+    return arguments, injected, remotes
 
 
 def _type_hints(where: str, method: Callable[..., Any]) -> dict[str, Any]:

@@ -15,10 +15,12 @@ from agentframe.discovery.registry import (
     EnvironmentAgentRegistry,
     FileAgentRegistry,
 )
+from agentframe.discovery.remote import Remote
 from agentframe.errors import (
     AgentFrameError,
     AuthenticationError,
     CancelledError,
+    ClarificationNeededError,
     DefinitionError,
     IncompleteOutputError,
     InputValidationError,
@@ -110,6 +112,7 @@ __all__ = [
     "AuthorizationPolicy",
     "CancelledError",
     "Clarification",
+    "ClarificationNeededError",
     "DeclaresCardSecurity",
     "DefinitionError",
     "DiscoveredAgent",
@@ -142,6 +145,7 @@ __all__ = [
     "PolicyUnavailableError",
     "Principal",
     "ProviderError",
+    "Remote",
     "RemoteAgentError",
     "Role",
     "RoutingContext",
