@@ -4,7 +4,9 @@ This document records approved defaults and design contracts. Timeouts (M1)
 token/model-call limits (M3 #36, see
 [implemented token accounting](#implemented-token-accounting-m3)) and tool-call
 limits (M5 #61, see [implemented tool-call limits](#implemented-tool-call-limits-m5))
-are enforced; the rest is not implemented yet. Limits are typed configuration; `@skill(limits=RunLimits(...))`
+are enforced, as are host ceilings and the `HostConfig` admission, size and
+shutdown limits (M7 #71-#74, proven end to end in M7 #79); the rest is not
+implemented yet. Limits are typed configuration; `@skill(limits=RunLimits(...))`
 sets skill-specific overrides. Every entry point uses the same accounting
 and execution policy, whether called locally, through A2A, or through MCP.
 
@@ -289,8 +291,8 @@ remain open. Strict accounting cannot pretend an unbounded peer is bounded.
 
 Non-AgentFrame usage is **unknown, never zero**. Extension-unaware peers do not
 promise token enforcement/reporting, though caller-side waiting remains bounded.
-This negotiated accounting extension is a narrow exception to ordinary A2A
-invocation-ID-only metadata; it never exposes internal `RunResult` or raw provider data.
+This negotiated accounting extension goes beyond ordinary A2A metadata (the
+invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts)); it never exposes internal `RunResult` or raw provider data.
 
 Track remote call depth with a default maximum of **5 hops**; exceeding it fails
 instead of continuing a recursion loop. The configuration carrier, root/hop
