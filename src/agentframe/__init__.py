@@ -7,6 +7,13 @@ from agentframe.authoring.context import RunContext
 from agentframe.authoring.decorators import agent, skill, tool
 from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
 from agentframe.authoring.services import Inject, Services
+from agentframe.discovery.registry import (
+    AgentQuery,
+    AgentReference,
+    AgentRegistry,
+    EnvironmentAgentRegistry,
+    FileAgentRegistry,
+)
 from agentframe.errors import (
     AgentFrameError,
     AuthenticationError,
@@ -88,6 +95,9 @@ __all__ = [
     "Agent",
     "AgentApp",
     "AgentFrameError",
+    "AgentQuery",
+    "AgentReference",
+    "AgentRegistry",
     "AllowAnonymous",
     "AuthenticationError",
     "Authenticator",
@@ -96,7 +106,9 @@ __all__ = [
     "Clarification",
     "DeclaresCardSecurity",
     "DefinitionError",
+    "EnvironmentAgentRegistry",
     "ExecutionPolicy",
+    "FileAgentRegistry",
     "FinishReason",
     "HostConfig",
     "IncompleteOutputError",

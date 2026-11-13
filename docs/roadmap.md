@@ -112,10 +112,13 @@ framework base class.
 
 ## Multi-agent discovery building blocks
 
-As part of the next core multi-agent release (M8+) after M7, propose
-a read-only `AgentRegistry` abstract base with async `get`/`list`, validated `AgentReference`/`AgentQuery`,
-explicit environment/file sources, and the chosen Foundry project agents API
-with A2A-enabled filtering/card mapping still to prove. This is agent discovery, not a process-global
+As part of the next core multi-agent release (M8+) after M7, a read-only
+`AgentRegistry` abstract base with async `get`/`list`, validated
+`AgentReference(name, card_url)` / `AgentQuery(names=...)` and explicit
+`EnvironmentAgentRegistry` (comma-separated `name=url`) and `FileAgentRegistry`
+(YAML `name`/`url` list, PyYAML core dependency) sources is implemented (#83).
+The chosen Foundry project agents API source, with A2A-enabled filtering/card
+mapping still to prove, is not. This is agent discovery, not a process-global
 plugin registry; model deployments are not agent endpoints.
 
 A separate resolver and library-managed `AgentDirectory` fetch/validate native

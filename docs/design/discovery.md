@@ -1,7 +1,8 @@
 # Read-first agent discovery and managed directories
 
-This is a proposed next-release design, not an implemented registry or tested
-Foundry integration. The Foundry source API is chosen below; this does not
+This is a proposed next-release design. The read-only registries (`AgentRegistry`,
+`FileAgentRegistry`, `EnvironmentAgentRegistry`) are implemented (M8+ #83); the
+directory, Foundry source and remote calls are not. The Foundry source API is chosen below; this does not
 expand the initial authoring slice into a platform.
 Discovery/registry and remote A2A invocation are **core scope for the next
 multi-agent release (M8+) after the M7 single-agent release**, not optional
@@ -28,8 +29,8 @@ trusted source -> AgentRegistry -> validated AgentReference
 | Surface | Responsibility | Not its responsibility |
 | --- | --- | --- |
 | `AgentRegistry` | Small read-only abstract base: async `get(agent_id)` and `list(query)` return references. Users extend this base for a source. | HTTP/card fetching, cache loops, required registration writes, agent deployment. |
-| `AgentReference` | Validated stable identity, endpoint/discovery location, transport, non-secret connection metadata. | Credentials, authorization grants, assumed skill metadata or guaranteed live endpoint. |
-| `AgentQuery` | Supported ID/skill/tag filters with explicit matching semantics. | Granting access or inventing fields absent from a source. |
+| `AgentReference` | Validated name plus Agent Card URL (`name`, `card_url`). | Credentials, authorization grants, assumed skill metadata or guaranteed live endpoint. |
+| `AgentQuery` | Name filter (`names`, or `None` for every agent). | Skill/tag matching (done on cards by `AgentDirectory.find`) or granting access. |
 | `AgentCardResolver` | Fetch and validate native official SDK cards under outbound authentication/destination policy. | Trusting arbitrary URLs, delegating work, or owning a registry protocol. |
 | `AgentDirectory` | Multiple sources, card-backed `find`, cache, stale refresh and resource lifecycle. | Workflow scheduling, remote task lifecycle, or per-backend card-refresh loops in application code. |
 | `Remote["name"]` | Injected remote authoring surface: structured `call`, plain-text `ask`, bounded task waiting. | Automatic clarification conversations, authority grants or per-method RPC. |
@@ -42,22 +43,41 @@ abstract base here does not add another required agent subclass.
 
 ## Sources and reference format
 
-**Decided:** `FileAgentRegistry("agents.yaml")` reads a YAML list of names and
-URLs; this supersedes the earlier JSON-file proposal. The following illustrates
-the chosen information, not a finalized schema or standard A2A payload:
+**Implemented (#83):** `FileAgentRegistry("agents.yaml")` reads a YAML list of
+names and URLs; this supersedes the earlier JSON-file proposal. Each entry has
+exactly the keys `name` and `url`:
 
 ```yaml
 - name: research-agent
   url: https://research.example.com/.well-known/agent-card.json
 ```
 
-Final key spelling, URL meaning (endpoint versus card), schema/version, optional
-transport metadata and duplicate-name precedence across sources remain open.
-`EnvironmentAgentRegistry("AGENTFRAME_AGENTS")` selects an explicit variable;
-its payload encoding is still open, not implicitly the file format. No automatic
-environment/file search, executable YAML tags or secrets in source text.
-Bound and safely validate reads; missing/malformed/unavailable sources are
-explicit failures, not empty lists. No actual source file is created here.
+`EnvironmentAgentRegistry("AGENTFRAME_AGENTS")` reads an explicitly named
+variable holding comma-separated `name=url` pairs, easy to set in shells and
+Compose files:
+
+```shell
+AGENTFRAME_AGENTS="research-agent=https://research.example.com/.well-known/agent-card.json,review-agent=http://127.0.0.1:8002/.well-known/agent-card.json"
+```
+
+Decisions confirmed 2026-11-12:
+
+- The URL is the **Agent Card URL**, not the A2A endpoint. It is explicit and
+  also fits Foundry's non-standard card path.
+- Names are non-empty and unique within a source. URLs are absolute `http` or
+  `https` without credentials, query or fragment (the `HostConfig.public_url`
+  check). The registry accepts plain `http`; the directory (#84) refuses it
+  except for loopback hosts or hosts listed in `AgentDirectory(allow_http_hosts=[...])`.
+- The file is read on each call (`asyncio.to_thread`, at most 1 MiB,
+  `yaml.safe_load`); the directory caches cards, not files. PyYAML is an
+  exactly pinned core dependency.
+- Configuration problems raise `DefinitionError` naming the source and agent.
+
+There is no I/O at import or construction, no automatic environment/file search,
+no executable YAML tags and no secrets in source text. Missing, malformed or
+unreadable sources are explicit failures, never empty lists; `[]` or an empty
+variable is an authoritative empty source. Duplicate-name precedence across
+sources is the directory's concern (#84).
 
 `FoundryAgentRegistry` has a **chosen source API**: the Foundry project agents
 API via official `azure-ai-projects` 2.x (2.10.0 observed on 2026-11-11;
@@ -90,8 +110,8 @@ still needs implementation proof.
 
 ## Extending the read base
 
-These illustrative signatures use an async `get(agent_id) -> AgentReference`
-and `list(query: AgentQuery) -> list[AgentReference]`. Pagination and consistency
+The base declares async `get(agent_id) -> AgentReference` and
+`list(query: AgentQuery) -> list[AgentReference]`. Pagination and consistency
 semantics need design before stabilization; a list return is not a promise of
 unbounded enumeration or completeness from a paginated source.
 
@@ -120,21 +140,18 @@ The application supplies source-access functions returning validated references.
 They must implement/document supported query semantics and raise on unsupported
 filters or read failure, not swallow errors or return success-shaped empties.
 They do not implement HTTP/card refresh/cache loops; the directory/resolver owns
-those. Exact validation timing, missing-ID failure, and exception names are open.
+those. The supplied registries raise `DefinitionError` for an unknown name or
+an invalid source; custom registries should do the same for configuration problems.
 The read base requires no `register`, `update`, or `delete`; write registration
 can be a separately designed future interface.
 
 ## Query matching and card enrichment
 
-ID matching can use validated reference identity. Skill/tag matching is available
-only where the source actually supplies appropriate validated metadata or an
-explicit card-enrichment stage has fetched it. A reference containing only
-identity/location/transport cannot answer skill/tag queries.
-
-Document which layer performs filtering and how unsupported filters fail.
-Do not silently ignore them, call a partial result complete, or add undeclared
-reference properties just to make a query example work. Exact query field names,
-all/any semantics, ordering and pagination remain open.
+Registries filter only by name: `AgentQuery(names=[...])` (#83). A reference
+holds only a name and a card URL, so it cannot answer skill/tag queries; those
+match on cards fetched by the directory. Do not call a partial result complete
+or add undeclared reference properties just to make a query example work.
+Ordering and pagination for paginated sources remain open.
 **Decided:** `await directory.find(skill="find_sources")` or
 `await directory.find(tags=["research"])` returns matching native Agent Cards.
 The directory resolves/validates cards and matches their advertised skills/tags;
@@ -427,8 +444,7 @@ pluggable persistent task store; task persistence is not crash recovery of Pytho
 skills. Approvals stay application-owned. If later added, workflows belong in
 an optional separate package (candidate `agentframe-workflows`), not core.
 
-Before stabilization, resolve YAML/environment/reference schemas, transport
-values, source conflicts and search combination/pagination. Also resolve
+Before stabilization, resolve transport values, source conflicts and search combination/pagination. Also resolve
 resolver/auth/destination interfaces, result/error details, source
 reconciliation/removal races, stale-age bounds, background opt-in, cache keys and
 ownership transfer. OBO/service configuration and extension

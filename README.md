@@ -46,8 +46,10 @@ M7 hardening is in place: host limit ceilings, run admission, request and
 response size limits, graceful shutdown with `/health` and `/ready`, A2A
 message deduplication, `EntraIDAuth` and `ExecutionPolicy` checks, proven end
 to end by `tests/integration/test_hardening.py`.
-Multi-agent discovery and remote A2A composition (M8+), MCP, telemetry and
-streaming are not implemented yet; documentation for them is labeled as planned
+M8+ multi-agent composition has started: read-only agent registries
+(`FileAgentRegistry` for a YAML list, `EnvironmentAgentRegistry` for
+`name=url` pairs) are available; the managed directory and remote A2A calls,
+MCP, telemetry and streaming are not implemented yet; documentation for them is labeled as planned
 design, and their unspecified interfaces remain open.
 
 ## Installation

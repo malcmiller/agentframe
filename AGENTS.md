@@ -93,6 +93,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`; `strict_schema.py` (OpenAI strict JSON-schema converter). |
 | `src/agentframe/hosting/` | `AgentApp`, `HostConfig`, Agent Card, A2A executor, routing. |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
+| `src/agentframe/discovery/` | `AgentRegistry`, `AgentReference`, `AgentQuery`, file and environment registries (M8+). |
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
 | `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`). |
@@ -402,9 +403,11 @@ call specialists over A2A, not a workflow/graph engine.
 `AgentRegistry` is a small read-only abstract base with proposed async
 `get(agent_id) -> AgentReference` and `list(query: AgentQuery) ->
 list[AgentReference]`; pagination is unresolved. Environment/file adapters read
-explicit sources. `FileAgentRegistry("agents.yaml")` reads a YAML name+URL list
-(detailed keys/schema open); `EnvironmentAgentRegistry("AGENTFRAME_AGENTS")`
-uses an explicit variable (payload encoding open).
+explicit sources. Implemented (#83): `AgentReference(name, card_url)` (the Agent
+Card URL), `AgentQuery(names=...)`; `FileAgentRegistry("agents.yaml")` reads a
+YAML `name`/`url` list on each call (1 MiB, `safe_load`, PyYAML core dep);
+`EnvironmentAgentRegistry("AGENTFRAME_AGENTS")` reads comma-separated
+`name=url` pairs. Config problems and unknown names raise `DefinitionError`.
 `FoundryAgentRegistry` uses the chosen Foundry project agents API through
 `azure-ai-projects` 2.x (2.10.0 observed), project endpoint
 `https://{account}.services.ai.azure.com/api/projects/{project}`. Incoming A2A
