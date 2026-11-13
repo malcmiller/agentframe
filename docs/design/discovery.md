@@ -1,8 +1,9 @@
 # Read-first agent discovery and managed directories
 
 This is a proposed next-release design. The read-only registries (`AgentRegistry`,
-`FileAgentRegistry`, `EnvironmentAgentRegistry`) are implemented (M8+ #83); the
-directory, Foundry source and remote calls are not. The Foundry source API is chosen below; this does not
+`FileAgentRegistry`, `EnvironmentAgentRegistry`) are implemented (M8+ #83), and
+`AgentDirectory` with validated, cached card resolution (#84); `find`, the
+Foundry source and remote calls are not. The Foundry source API is chosen below; this does not
 expand the initial authoring slice into a platform.
 Discovery/registry and remote A2A invocation are **core scope for the next
 multi-agent release (M8+) after the M7 single-agent release**, not optional
@@ -17,7 +18,7 @@ See the [surface reference](../api/discovery.md) for individual API entries.
 ```text
 trusted source -> AgentRegistry -> validated AgentReference
                                       |
-                         AgentDirectory + AgentCardResolver
+                AgentDirectory (internal card fetch + cache)
                                       |
                         native AgentCard + reference/freshness metadata
                                       |
@@ -31,8 +32,7 @@ trusted source -> AgentRegistry -> validated AgentReference
 | `AgentRegistry` | Small read-only abstract base: async `get(agent_id)` and `list(query)` return references. Users extend this base for a source. | HTTP/card fetching, cache loops, required registration writes, agent deployment. |
 | `AgentReference` | Validated name plus Agent Card URL (`name`, `card_url`). | Credentials, authorization grants, assumed skill metadata or guaranteed live endpoint. |
 | `AgentQuery` | Name filter (`names`, or `None` for every agent). | Skill/tag matching (done on cards by `AgentDirectory.find`) or granting access. |
-| `AgentCardResolver` | Fetch and validate native official SDK cards under outbound authentication/destination policy. | Trusting arbitrary URLs, delegating work, or owning a registry protocol. |
-| `AgentDirectory` | Multiple sources, card-backed `find`, cache, stale refresh and resource lifecycle. | Workflow scheduling, remote task lifecycle, or per-backend card-refresh loops in application code. |
+| `AgentDirectory` | Multiple sources; internal native-card fetch/validation under a fixed destination rule; cache, stale refresh, card-backed `find` (#85) and resource lifecycle. | Workflow scheduling, remote task lifecycle, or per-backend card-refresh loops in application code. |
 | `Remote["name"]` | Injected remote authoring surface: structured `call`, plain-text `ask`, bounded task waiting. | Automatic clarification conversations, authority grants or per-method RPC. |
 | `RemoteAgentClient` | Underlying/explicit native A2A client; construction remains open. | A competing wire protocol or automatic dispatch from discovery. |
 
@@ -163,58 +163,62 @@ authorization.
 
 ## Managed directory lifecycle
 
-All imports/signatures below are proposals. `outbound_authentication` and
-`destination_policy` are application-selected trusted dependencies; `object`
-marks their unresolved interfaces, not acceptance of arbitrary objects.
+**Implemented (#84):** `AgentDirectory` combines sources and returns validated
+native cards. Decisions confirmed 2026-11-12: no public `AgentCardResolver` or
+`CardCacheConfig` (keyword arguments until a second resolver is needed); the
+same name in two sources raises `DefinitionError` naming both; failures caused
+by another agent raise one `RemoteAgentError`, configuration mistakes stay
+`DefinitionError`; a fixed destination rule (https except loopback or explicit
+`allow_http_hosts`, no redirects, interface URL on the card's origin) rather
+than a pluggable policy; and a small fetch function, because the SDK's
+`A2ACardResolver` cannot bound the body size or refuse redirects (the SDK's
+`parse_agent_card` still parses the card).
 
 ```python
-from agentframe import (
-    AgentCardResolver, AgentDirectory, CardCacheConfig, FileAgentRegistry,
-)
+from agentframe import AgentDirectory, EnvironmentAgentRegistry, FileAgentRegistry
 
 
-async def inspect_research_agent(
-    outbound_authentication: object, destination_policy: object,
-) -> None:
+async def inspect_research_agent() -> None:
     directory = AgentDirectory(
-        sources=[FileAgentRegistry("agents.yaml")],
-        resolver=AgentCardResolver(
-            authentication=outbound_authentication,
-            destination_policy=destination_policy,
-        ),
-        cache=CardCacheConfig(ttl_seconds=300, allow_stale=False),
+        sources=[
+            FileAgentRegistry("agents.yaml"),
+            EnvironmentAgentRegistry("AGENTFRAME_AGENTS"),
+        ],
+        card_ttl_seconds=300,
+        allow_stale=False,
     )
     async with directory:
-        discovered = await directory.get("research-agent")
-        card = discovered.card
-        print(type(card).__name__)
+        found = await directory.get("research-agent")
+        print(found.card.name, found.interface_url, found.stale)
 ```
 
-Construction/import does no source read, HTTP I/O, or polling. `get` performs
-bounded source/card resolution and validation or uses fresh cached state under
-the configured source/freshness policy. The result carries the native card plus
-reference and freshness metadata; only `.card` is illustrated, not a finalized
-result class or timestamp field set. Explicit `refresh` is proposed; exact
-arguments, return shape, source reconciliation and per-card refresh scope remain
-open. Cards cache for **300 seconds** by default and automatically refresh when
-accessed stale. Failed refresh fails the call unless `allow_stale=True` is explicit;
-stale use is never silently current. This on-access refresh does not enable a
-background polling loop; background refresh remains opt-in.
+Construction/import does no source read, HTTP I/O, or polling, and nothing runs
+in the background. Every `get` reads the sources (cheap for files and the
+environment; edits and removals apply at once), so a card cache hit never
+bypasses source reconciliation. Cards are cached per card URL for **300
+seconds** by default and refetched on the next access after that. One lock per
+card URL makes concurrent stale reads refresh once. A failed refresh raises
+`RemoteAgentError` unless `allow_stale=True`, which serves the previous card
+with `found.stale` set and logs a warning; it never resets freshness, so the
+next call tries again. `refresh(name)` forces a refetch and always raises on
+failure. A source failure raises and leaves cached cards in place: it is not
+evidence of removal.
 
-Source-reference freshness and card freshness must be distinguished;
-one timestamp cannot silently certify both. A card cache hit must not bypass
-required source reconciliation or caller policy. Failed refresh must not reset
-freshness or silently return stale content as current. If stale use is explicitly
-permitted, expose stale status and the safe failure information under the
-application's bounded policy; stale-age limits and result fields remain open.
+Cards are fetched only with the source's own credential (none today;
+`card_headers` arrives with the Foundry source in #86), never with the current
+caller's identity, so one card variant is shared by every caller. Per-caller
+and authenticated extended cards are out of scope. Fetches are bounded to 10
+seconds and 1 MiB and never follow redirects; a run's deadline also cancels
+them. The registry's `card_url` is the only trusted origin: the card's JSON-RPC
+A2A 1.0 interface must share its scheme, host and port, and later outbound
+credentials go only there.
 
-The async context manager closes only resources created/owned by the library,
-or explicitly transferred by contract; injected clients/dependencies stay
-caller-owned otherwise. A host may own lifespan for a library-created or
-explicitly transferred directory. Merely injecting a directory does not transfer
-ownership. `AgentApp(directory=directory)` is decided host wiring; it does not
-silently transfer caller-owned directory/client resources. Application lifespan
-still opens/closes externally supplied singletons; host-created resources are owned.
+The async context manager closes only the HTTP client the directory created.
+A caller-supplied `http_client` stays caller-owned and must not carry
+credentials in its defaults. Injecting the directory as a service does not
+transfer ownership. `AgentApp(directory=directory)` is decided host wiring
+(#87); it does not silently transfer caller-owned directory/client resources.
+Background refresh, stale-age bounds and source-wide refresh are not provided.
 
 ## Agent injection and separate invocation
 

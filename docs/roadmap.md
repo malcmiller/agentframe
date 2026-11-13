@@ -121,9 +121,11 @@ The chosen Foundry project agents API source, with A2A-enabled filtering/card
 mapping still to prove, is not. This is agent discovery, not a process-global
 plugin registry; model deployments are not agent endpoints.
 
-A separate resolver and library-managed `AgentDirectory` fetch/validate native
-cards, cache with caller/tenant/auth variant isolation, expose freshness and
-explicit refresh, and close only owned resources. Applications should not write
+Implemented (#84): `AgentDirectory(sources=[...])` fetches/validates native
+cards with an internal fetcher (no public resolver/cache classes), caches one
+credential-free card variant per card URL for 300 seconds, exposes `stale` and
+explicit `refresh`, raises `RemoteAgentError` for remote failures and closes
+only owned resources. Applications should not write
 HTTP/refresh loops per source. Construction/import does no I/O/polling;
 background refresh is opt-in. Source failure is not deletion, and stale cards
 are never silently current. Source reconciliation/removal, card TTL and
