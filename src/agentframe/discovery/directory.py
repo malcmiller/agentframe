@@ -18,6 +18,8 @@ from agentframe.errors import DefinitionError, RemoteAgentError
 
 logger = logging.getLogger(__name__)
 
+MAX_CONCURRENT_FETCHES = 8
+
 
 @dataclass(frozen=True)
 class DiscoveredAgent:
@@ -145,12 +147,46 @@ class AgentDirectory:
             RemoteAgentError: The card cannot be fetched or is invalid or
                 refused, and no stale card may be served.
         """
-        reference = await self._find_reference(name)
-        async with self._lock(reference.card_url):
-            cached = self._cards.get(reference.card_url)
-            if cached is not None and self._is_fresh(cached):
-                return _discovered(reference, cached.validated)
-            return await self._fetch(reference, cached)
+        return await self._resolve(await self._find_reference(name))
+
+    async def find(
+        self, *, skill: str | None = None, tags: Collection[str] = ()
+    ) -> list[AgentCard]:
+        """Return the cards of every listed agent with a matching skill.
+
+        A card matches when one of its advertised skills has the ID ``skill``
+        (if given) and carries every tag in ``tags``. Both filters apply to
+        the same skill. Every agent of every source is resolved, through the
+        cache, with at most eight card fetches at a time, so ``find`` is meant
+        for small curated sources; there is no pagination. A match is not
+        permission to call the agent.
+
+        Args:
+            skill: The skill ID to look for.
+            tags: Tags the same skill must all have.
+
+        Returns:
+            The matching cards, in source order.
+
+        Raises:
+            DefinitionError: No filter is given, ``tags`` is a single string,
+                a name is listed by more than one source, a source cannot be
+                read, or the directory needs ``async with``.
+            RemoteAgentError: Any card cannot be fetched or is invalid or
+                refused, and no stale card may be served. A failure is never
+                turned into a shorter result.
+        """
+        wanted_tags = _checked_tags(tags)
+        if skill is None and not wanted_tags:
+            raise DefinitionError(
+                "AgentDirectory.find needs a skill, tags, or both to match on."
+            )
+        found = await self._resolve_all(await self._list_references())
+        return [
+            agent.card
+            for agent in found
+            if _has_matching_skill(agent.card, skill, wanted_tags)
+        ]
 
     async def refresh(self, name: str) -> DiscoveredAgent:
         """Fetch an agent's card again, even if the cached one is fresh.
@@ -171,6 +207,45 @@ class AgentDirectory:
         reference = await self._find_reference(name)
         async with self._lock(reference.card_url):
             return await self._fetch(reference, previous=None)
+
+    async def _resolve(self, reference: AgentReference) -> DiscoveredAgent:
+        async with self._lock(reference.card_url):
+            cached = self._cards.get(reference.card_url)
+            if cached is not None and self._is_fresh(cached):
+                return _discovered(reference, cached.validated)
+            return await self._fetch(reference, cached)
+
+    async def _resolve_all(
+        self, references: Sequence[AgentReference]
+    ) -> list[DiscoveredAgent]:
+        slots = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
+
+        async def resolve(reference: AgentReference) -> DiscoveredAgent:
+            async with slots:
+                return await self._resolve(reference)
+
+        try:
+            async with asyncio.TaskGroup() as group:
+                tasks = [group.create_task(resolve(ref)) for ref in references]
+        except ExceptionGroup as failures:
+            # Callers expect the same single errors as get(); the task group
+            # cancels the remaining fetches once one fails.
+            raise failures.exceptions[0] from None
+        return [task.result() for task in tasks]
+
+    async def _list_references(self) -> list[AgentReference]:
+        listed: dict[str, AgentRegistry] = {}
+        references: list[AgentReference] = []
+        for source in self._sources:
+            for reference in await source.list(AgentQuery()):
+                if reference.name in listed:
+                    raise DefinitionError(
+                        f"Agent '{reference.name}' is listed by more than one "
+                        f"source: {listed[reference.name]!r} and {source!r}."
+                    )
+                listed[reference.name] = source
+                references.append(reference)
+        return references
 
     async def _find_reference(self, name: str) -> AgentReference:
         # Listing by name tells "not listed" (empty) apart from a source
@@ -222,6 +297,24 @@ def _discovered(
     reference: AgentReference, validated: ValidatedCard, *, stale: bool = False
 ) -> DiscoveredAgent:
     return DiscoveredAgent(reference, validated.card, validated.interface_url, stale)
+
+
+def _has_matching_skill(
+    card: AgentCard, skill: str | None, tags: frozenset[str]
+) -> bool:
+    return any(
+        (skill is None or advertised.id == skill) and tags <= set(advertised.tags)
+        for advertised in card.skills
+    )
+
+
+def _checked_tags(tags: Collection[str]) -> frozenset[str]:
+    # A bare string would otherwise be read as one tag per character.
+    if isinstance(tags, str):
+        raise DefinitionError(
+            "AgentDirectory.find tags must be a list of tags, not a single string."
+        )
+    return frozenset(tags)
 
 
 def _checked_sources(sources: Sequence[AgentRegistry]) -> tuple[AgentRegistry, ...]:
