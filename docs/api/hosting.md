@@ -141,6 +141,28 @@ authenticator; no remote host starts without a choice.
   running frees it at once. A task waiting for input (`INPUT_REQUIRED`) holds
   no slot, so its answer is admitted like a new message. `GetTask`,
   `ListTasks`, `CancelTask` and the Agent Card are never counted or refused.
+- `GET /health` (liveness) answers `200 {"status": "ok"}` whenever the app is
+  serving. `GET /ready` (readiness) answers `200 {"status": "ready"}` only
+  after lifespan startup, including the model checks above, succeeded and
+  before shutdown starts; otherwise `503 {"status": "not ready"}`. Both need
+  no credentials, reveal nothing about the agent, are not on the Agent Card
+  and have fixed paths (M7 #74).
+- Graceful shutdown (M7 #74) is bounded by
+  `HostConfig.shutdown_grace_seconds`, measured once from when shutdown
+  starts. From then on `/ready` is 503 and a new `SendMessage` gets HTTP 503
+  with `Retry-After: 1` and `{"error": "The agent is shutting down; retry
+  later."}`, with no task; `GetTask`, `ListTasks`, `CancelTask` and the card
+  keep working. Running runs that finish within the grace period complete
+  normally, and the app's shutdown ends as soon as none is left. Runs still
+  going after it are cancelled as `CancelTask` would: their tasks end
+  `CANCELED` and their per-run services are cleaned up. Tasks waiting for
+  input have no run and are left as they are. Shutdown starts on the shutdown
+  signal under [`agentframe run`](#agentframe-run). Under another ASGI server
+  it starts at lifespan shutdown, after that server's own wait for open
+  requests, so set that server's graceful timeout to at least
+  `shutdown_grace_seconds` (for example Uvicorn's
+  `--timeout-graceful-shutdown`); the total can then reach about twice the
+  grace period.
 
 ### Result and failure mapping
 
@@ -161,6 +183,7 @@ Every other outcome follows this table:
 | Request body over `max_request_bytes` (M7 #73), checked before authentication | HTTP 413 with `{"error": "Request too large."}`, no task |
 | Missing or invalid credentials | HTTP 401 with `WWW-Authenticate`, no task |
 | `SendMessage` while `max_concurrent_runs` runs are running (M7 #72) | HTTP 503 with `Retry-After: 1`, no task |
+| `SendMessage` once shutdown has started (M7 #74) | HTTP 503 with `Retry-After: 1`, no task |
 | Malformed A2A request or extension misuse | Standard A2A/JSON-RPC protocol error, no task |
 | Unknown skill, invalid arguments, permission or policy denied, including a tool call (M5 #62) | Task `REJECTED`, safe message |
 | Clarification needed | Task `INPUT_REQUIRED` |
@@ -423,8 +446,19 @@ anything other than an `AgentApp` (an agent class without `--dev` suggests
 `AgentApp`), `--dev` with a non-localhost host, a non-agent class or one that
 needs constructor arguments, and a missing Uvicorn installation. Errors raised by
 the application's own code, including imports inside its modules, keep their
-traceback. Importing agents never starts serving. Shutdown follows Uvicorn's
-default graceful shutdown until the host grace period arrives in M7.
+traceback. Importing agents never starts serving. If the server then fails
+to start, for example because a startup model check fails, the command also
+exits with code 1.
+
+On SIGTERM or Ctrl+C (M7 #74), the app's
+[graceful shutdown](#agentapp) starts at once, from Uvicorn's signal handler:
+`/ready` turns 503 and new messages are refused. Uvicorn stops accepting
+connections and waits for open requests, at most
+`HostConfig.shutdown_grace_seconds` (rounded up to whole seconds); the app
+then waits only for what remains of the same grace period before cancelling
+leftover runs. The process exits within about one grace period plus a small
+margin. With `--reload`, Uvicorn's wait is bounded the same way but the app's
+shutdown starts only after it.
 Multi-agent `agentframe.yaml` is M8+ ([`agentframe dev`](#agentframe-dev)).
 
 **Related:** [single-agent development](../guides/development.md#one-agent-m2),
@@ -470,18 +504,16 @@ and is stored read-only. `limits_ceiling` is implemented (M7 #71): an optional
 `RunLimits` that caps every hosted run, described in the table below.
 `max_concurrent_runs` is implemented (M7 #72), and `max_request_bytes` and
 `max_response_bytes` (M7 #73); a value below 1 for any of them raises
-`DefinitionError`.
-
-**Not yet available (M7):** `shutdown_grace_seconds` and the
-`/health` and `/ready` probes. Existing URL/ceiling composition is illustrative
-where not specified.
+`DefinitionError`. `shutdown_grace_seconds` is implemented (M7 #74); a value
+that is not positive raises `DefinitionError`. Existing URL/ceiling
+composition is illustrative where not specified.
 
 ```text
 HostConfig(
     *, public_url: str, auth: Authenticator, role_permissions = ...,
     limits_ceiling: RunLimits | None = None,
     max_concurrent_runs: int = 32, max_request_bytes: int = 1048576,
-    max_response_bytes: int = 4194304, shutdown_grace_seconds: ... = 30,
+    max_response_bytes: int = 4194304, shutdown_grace_seconds: float = 30,
 )
 ```
 
@@ -494,7 +526,7 @@ HostConfig(
 | `max_concurrent_runs` | `int` | `32`, configurable; at least 1 (implemented) | How many messages may run at once. Excess `SendMessage` requests get HTTP 503 with `Retry-After: 1` and the body `{"error": "The agent is busy; retry later."}` before the SDK sees them, never queued and with no task created. A task waiting for input holds no slot. Task reads, lists and cancels are not counted. See [`AgentApp`](#agentapp). |
 | `max_request_bytes` | `int` | `1048576` (1 MiB), configurable; at least 1 (implemented) | Largest `/a2a` request body, in bytes as received. Checked first, before authentication: a declared `Content-Length` above it is refused without reading the body, and a chunked body is refused as soon as it passes the limit, so it is never held in full or parsed. Refusal: HTTP 413 with `{"error": "Request too large."}`, no task. A body exactly at the limit is accepted. Independent of token limits. |
 | `max_response_bytes` | `int` | `4194304` (4 MiB), configurable; at least 1 (implemented) | Largest result or clarification question a task returns: a text result's or question's UTF-8 bytes, or the compact JSON of a data part's `{"value": ...}`; the JSON-RPC envelope is not counted. A larger one fails the task with `LimitExceededError` and the safe message "The result exceeds the host's response size limit"; none of it is sent. Never truncated. Task history is bounded by `max_request_bytes`. |
-| `shutdown_grace_seconds` | Numeric seconds; exact type open | `30`, configurable | Stop accepting, drain up to grace, then cancel remaining runs and clean up scoped services. |
+| `shutdown_grace_seconds` | `float` | `30`, configurable; positive (implemented) | How long shutdown waits for running work, measured once from when it starts: stop accepting new messages, drain running runs up to the grace period, then cancel the rest (tasks `CANCELED`, scoped services cleaned up). See [`AgentApp`](#agentapp) and [`agentframe run`](#agentframe-run). |
 
 ```python
 from agentframe import Authenticator, HostConfig, RunLimits
@@ -522,11 +554,13 @@ local development. A card's security declaration is not enforcement.
 Host security/ceilings cannot be weakened by agent/run options; reject invalid
 or excessive explicit requests instead of silently clamping. Missing identity/
 required integration fails protected work. The decided admission, byte and
-shutdown fields must be enforced independently
-of token limits; admission (M7 #72) and byte limits (M7 #73) are. `/health` is liveness; `/ready` reports startup checks passed
-and not shutting down. Startup includes auth/definition/service validation.
-Probe status/body schema remains open; the busy error (HTTP 503, M7 #72) and
-size errors (HTTP 413 and `LimitExceededError`, M7 #73) are decided.
+shutdown fields are enforced independently
+of token limits (M7 #72, #73, #74). `/health` is liveness; `/ready` reports
+startup checks passed and not shutting down. Startup includes auth/definition/
+service validation. The probe bodies (`{"status": "ok"}`, `{"status":
+"ready"}`, `{"status": "not ready"}`), the busy and shutting-down errors
+(HTTP 503) and the size errors (HTTP 413 and `LimitExceededError`) are
+decided.
 
 **Related:** [`Principal`](authorization.md#principal),
 [`AgentConfig`](configuration.md#agentconfig),

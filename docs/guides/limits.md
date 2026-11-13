@@ -43,9 +43,11 @@ shutdown grace; all configurable. An oversized request body gets HTTP 413
 before authentication and creates no task; a result or clarification question
 over the response limit fails its task with `LimitExceededError` and is never
 sent in part.
-Shutdown stops accepting, drains, then cancels remaining runs. `/health` is
-liveness; `/ready` means startup checks passed and not shutting down.
-Probe response schemas remain open.
+Shutdown stops accepting, drains, then cancels remaining runs, all within one
+grace period measured from the shutdown signal (implemented in M7 #74).
+`/health` is liveness; `/ready` means startup checks passed and not shutting
+down. Probe bodies are minimal: `{"status": "ok"}`, `{"status": "ready"}` or
+`{"status": "not ready"}`.
 
 ## Proposed configuration
 

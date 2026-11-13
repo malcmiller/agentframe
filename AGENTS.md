@@ -303,9 +303,10 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
   max_request_bytes=1048576 (HTTP 413 before auth, no task; M7 #73),
   max_response_bytes=4194304 (serialized result part/question; over it the task
   fails with base `LimitExceededError`, never truncated; M7 #73),
-  shutdown_grace_seconds=30 (stop accepting, drain, cancel). `/health` is liveness;
-  `/ready` means startup checks passed and not shutting down. Probe schemas
-  remain open.
+  shutdown_grace_seconds=30 (stop accepting, drain, cancel; measured from the
+  signal, `agentframe run` starts it in Uvicorn's handler; M7 #74). `/health` is
+  liveness; `/ready` means startup checks passed and not shutting down; minimal
+  `{"status": ...}` bodies, fixed paths.
 - Enforce host ceilings independently of defaults and permitted tighter run
   options. Preflight/reserve budget and reconcile reported usage, including
   retries. Unknown usage is not zero; strict accounting cannot assume a bound.
