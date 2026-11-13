@@ -128,6 +128,19 @@ authenticator; no remote host starts without a choice.
   `UnsupportedOperationError`, because it would otherwise reveal every
   anonymous caller's tasks, inputs and results. Use an authenticator when
   callers must not see each other's tasks.
+- At most `HostConfig.max_concurrent_runs` messages run at once (M7 #72).
+  Every `/a2a` request is checked in a fixed order before the SDK sees it:
+  authentication, then admission. A `SendMessage` beyond the limit, blocking or
+  `returnImmediately`, gets HTTP 503 with `Retry-After: 1` and the body
+  `{"error": "The agent is busy; retry later."}`: it is never queued, no task is
+  created and no skill runs. A2A 1.0 defines no busy JSON-RPC error, so the
+  official SDK client raises `A2AClientError` whose cause is an
+  `httpx.HTTPStatusError` with status 503. A slot is held from admission until
+  the run ends (completed, failed, timed out, cancelled or asking a question),
+  including after a non-blocking response; a message the SDK refuses before
+  running frees it at once. A task waiting for input (`INPUT_REQUIRED`) holds
+  no slot, so its answer is admitted like a new message. `GetTask`,
+  `ListTasks`, `CancelTask` and the Agent Card are never counted or refused.
 
 ### Result and failure mapping
 
@@ -146,6 +159,7 @@ Every other outcome follows this table:
 | Situation | Result |
 | --- | --- |
 | Missing or invalid credentials | HTTP 401 with `WWW-Authenticate`, no task |
+| `SendMessage` while `max_concurrent_runs` runs are running (M7 #72) | HTTP 503 with `Retry-After: 1`, no task |
 | Malformed A2A request or extension misuse | Standard A2A/JSON-RPC protocol error, no task |
 | Unknown skill, invalid arguments, permission or policy denied, including a tool call (M5 #62) | Task `REJECTED`, safe message |
 | Clarification needed | Task `INPUT_REQUIRED` |
@@ -452,9 +466,10 @@ credentials, query or fragment; `auth` must not be `None`; and each
 Any violation raises `DefinitionError`. `role_permissions` defaults to no roles
 and is stored read-only. `limits_ceiling` is implemented (M7 #71): an optional
 `RunLimits` that caps every hosted run, described in the table below.
+`max_concurrent_runs` is implemented (M7 #72); a value below 1 raises
+`DefinitionError`.
 
-**Not yet available (M7):** `max_concurrent_runs`,
-`max_request_bytes`, `max_response_bytes`, `shutdown_grace_seconds` and the
+**Not yet available (M7):** `max_request_bytes`, `max_response_bytes`, `shutdown_grace_seconds` and the
 `/health` and `/ready` probes. Existing URL/ceiling composition is illustrative
 where not specified.
 
@@ -473,7 +488,7 @@ HostConfig(
 | `auth` | `Authenticator` | Required for remote hosting; no default | Built-in Entra/API key/explicit anonymous or custom; omitted choice refuses startup. |
 | `role_permissions` | `Mapping[str, Iterable[str]]` | Optional; default no roles (implemented) | Maps verified roles, e.g. `{"Editor": ["documents:write"]}`; never trusts roles from skill arguments. Permissions are the union over the caller's verified roles; unknown roles grant nothing. Entra scope details remain open. |
 | `limits_ceiling` | `RunLimits \| None` | Optional; default `None` caps nothing (implemented) | Independent host constraint, not another default layer. Each field it sets caps that limit after library -> agent -> skill -> per-run merging; unset fields cap nothing. A library default above the ceiling is lowered to it; an agent or skill limit explicitly set above it fails `AgentApp` construction with `DefinitionError` naming the skill and field. Hosted runs, free-text routing (deadline and budget) and startup model checks use the capped limits; a `max_input_tokens` ceiling stands in for an unknown or larger context window. A `max_total_tokens` ceiling also bounds `ModelSettings.max_output_tokens`: a call whose output cap does not fit fails with `TokenLimitExceededError`, never silently shrunk. Local `Runtime` takes no ceiling. |
-| `max_concurrent_runs` | `int` | `32`, configurable | Excess is rejected immediately with a standard busy error, not indefinitely queued; exact binding error mapping open. |
+| `max_concurrent_runs` | `int` | `32`, configurable; at least 1 (implemented) | How many messages may run at once. Excess `SendMessage` requests get HTTP 503 with `Retry-After: 1` and the body `{"error": "The agent is busy; retry later."}` before the SDK sees them, never queued and with no task created. A task waiting for input holds no slot. Task reads, lists and cancels are not counted. See [`AgentApp`](#agentapp). |
 | `max_request_bytes` | `int` | `1048576` (1 MiB), configurable | Bound ingress before work; protocol/encoding measurement details open. |
 | `max_response_bytes` | `int` | `4194304` (4 MiB), configurable | Bound outgoing content; no silent truncation into successful output. Exact error mapping open. |
 | `shutdown_grace_seconds` | Numeric seconds; exact type open | `30`, configurable | Stop accepting, drain up to grace, then cancel remaining runs and clean up scoped services. |
@@ -507,7 +522,8 @@ required integration fails protected work. The decided admission, byte and
 shutdown fields must be enforced independently
 of token limits. `/health` is liveness; `/ready` reports startup checks passed
 and not shutting down. Startup includes auth/definition/service validation.
-Probe status/body schema and byte-accounting/error details remain open.
+Probe status/body schema and byte-accounting/error details remain open; the
+busy error is decided (HTTP 503, M7 #72).
 
 **Related:** [`Principal`](authorization.md#principal),
 [`AgentConfig`](configuration.md#agentconfig),

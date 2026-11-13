@@ -291,10 +291,11 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
 - A2A same verified caller + `messageId` within default 10 minutes returns
   original task; in-memory default, pluggable multi-instance store, not
   exactly-once. Store/window API, atomicity/payload conflicts remain open.
-- `HostConfig` defaults: max_concurrent_runs=32 (immediate standard busy rejection),
+- `HostConfig` defaults: max_concurrent_runs=32 (immediate HTTP 503 +
+  `Retry-After: 1` before the SDK, no task; INPUT_REQUIRED holds no slot; M7 #72),
   max_request_bytes=1048576, max_response_bytes=4194304,
   shutdown_grace_seconds=30 (stop accepting, drain, cancel). `/health` is liveness;
-  `/ready` means startup checks passed and not shutting down. Byte/error/probe
+  `/ready` means startup checks passed and not shutting down. Byte/probe
   schemas remain open.
 - Enforce host ceilings independently of defaults and permitted tighter run
   options. Preflight/reserve budget and reconcile reported usage, including
