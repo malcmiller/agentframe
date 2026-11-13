@@ -6,6 +6,7 @@ from types import MappingProxyType
 from urllib.parse import urlsplit
 
 from agentframe.errors import DefinitionError
+from agentframe.hosting.dedup import MessageDedupStore
 from agentframe.runtime.limits import RunLimits
 from agentframe.security.authentication import Authenticator
 
@@ -83,6 +84,31 @@ class HostConfig:
                 raise DefinitionError(f"HostConfig {name} must be at least 1")
         if not self.shutdown_grace_seconds > 0:
             raise DefinitionError("HostConfig shutdown_grace_seconds must be positive")
+
+
+@dataclass(frozen=True)
+class A2AConfig:
+    """Settings for the A2A endpoint.
+
+    Args:
+        dedup_window_seconds: How long a caller's ``messageId`` is remembered.
+            The same verified caller resending the same ``messageId`` within it
+            gets the original task back instead of running the message again.
+            Defaults to 600 (10 minutes).
+        dedup_store: Where those ``messageId`` claims are kept. ``None`` (the
+            default) keeps them in this process's memory, so they are lost on
+            restart and not shared with other instances.
+
+    Raises:
+        DefinitionError: ``dedup_window_seconds`` is not positive.
+    """
+
+    dedup_window_seconds: float = 600
+    dedup_store: MessageDedupStore | None = None
+
+    def __post_init__(self) -> None:
+        if not self.dedup_window_seconds > 0:
+            raise DefinitionError("A2AConfig dedup_window_seconds must be positive")
 
 
 def _check_public_url(public_url: str) -> None:

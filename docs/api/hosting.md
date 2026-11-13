@@ -14,8 +14,9 @@ agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 
 **Constructor status:** implemented in M2 (#3, #6) as
 `AgentApp(*, agent, host, runtime=None, services=None, authorization=None,
-router=None)`; the other parameters below arrive with their stories
-(`a2a=`/`mcp=` later, M8+ `directory=`, later `ag_ui=`). `services=`, `directory=` and `ag_ui=`
+policy=None, router=None, a2a=None)`, with `policy=` from M7 #77 and `a2a=` from
+M7 #75; the other parameters below arrive with their stories (`mcp=` later,
+M8+ `directory=`, later `ag_ui=`). `services=`, `directory=` and `ag_ui=`
 are decided; unspecified omission details remain illustrative.
 
 ```text
@@ -32,7 +33,7 @@ AgentApp(
 | `agent` | `Agent` instance | Required in current shape | Valid registered skills and identity; no per-method A2A RPC endpoints. |
 | `host` | `HostConfig` | Explicit in current examples; omission contract open | Advertised origin, authentication integration, independent resource ceilings. |
 | `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization, policy=policy)` | The single authoritative runtime and service container for every request. Passing it together with `services=`, `authorization=` or `policy=` raises `DefinitionError`. Pass a runtime to authorize tool calls: `AgentApp(runtime=Runtime(services=..., tool_authorization=...))`; there is no separate host setting (M5 #62). |
-| `a2a` | `A2AConfig` | A2A enabled by default; exact object default open | Selected native binding and implemented features only. |
+| `a2a` | [`A2AConfig`](#a2aconfig) | Optional; `None` means `A2AConfig()` (M7 #75) | A2A endpoint settings; today only [message deduplication](#a2aconfig). A2A is always served. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
 | `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app never closes a router's model. |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
@@ -131,7 +132,9 @@ authenticator; no remote host starts without a choice.
   callers must not see each other's tasks.
 - At most `HostConfig.max_concurrent_runs` messages run at once (M7 #72).
   Every `/a2a` request is checked in a fixed order before the SDK sees it:
-  body size (M7 #73), authentication, then admission. A `SendMessage` beyond the limit, blocking or
+  body size (M7 #73), authentication, [deduplication](#a2aconfig) (M7 #75),
+  then admission. A repeated message takes no slot, so it gets its original
+  task even while the host is full. A `SendMessage` beyond the limit, blocking or
   `returnImmediately`, gets HTTP 503 with `Retry-After: 1` and the body
   `{"error": "The agent is busy; retry later."}`: it is never queued, no task is
   created and no skill runs. A2A 1.0 defines no busy JSON-RPC error, so the
@@ -185,6 +188,8 @@ Every other outcome follows this table:
 | Missing or invalid credentials | HTTP 401 with `WWW-Authenticate`, no task |
 | `SendMessage` while `max_concurrent_runs` runs are running (M7 #72) | HTTP 503 with `Retry-After: 1`, no task |
 | `SendMessage` once shutdown has started (M7 #74) | HTTP 503 with `Retry-After: 1`, no task |
+| `SendMessage` repeating a verified caller's `messageId` within the dedup window (M7 #75) | The original task, whatever its state; nothing runs and no slot is taken |
+| `SendMessage` reusing a verified caller's `messageId` for a different message (M7 #75) | JSON-RPC `InvalidParams`, no task |
 | Malformed A2A request or extension misuse | Standard A2A/JSON-RPC protocol error, no task |
 | Unknown skill, invalid arguments, permission or policy denied, including a tool call (M5 #62) or an execution policy check on the input, a model request, a tool call or the output (M7 #77, #78) | Task `REJECTED`, safe message; a blocked output is never published |
 | Clarification needed | Task `INPUT_REQUIRED` |
@@ -346,14 +351,11 @@ the invocation ID in response metadata, not internal `RunResult` fields.
 Safe failures map to failed/rejected task states as applicable; protocol failures
 and input-required clarification retain native semantics.
 
-**Not yet available (M7):** request deduplication, described next.
-
-Duplicate A2A requests from the same verified caller with the same `messageId`
-within the default 10-minute window return the original task instead of
-re-running. Default storage is in-memory; a pluggable store supports multiple
-instances. This is not exactly-once execution. Window/store configuration
-syntax, atomicity details, conflicting-payload handling and message-only result
-interaction remain open; never claim process restarts preserve memory.
+**Message deduplication (implemented, M7 #75):** a `SendMessage` from the
+same verified caller with the same `messageId` within
+[`A2AConfig.dedup_window_seconds`](#a2aconfig) (default 10 minutes) returns the
+original task, whatever its state, instead of running again; see
+[`A2AConfig`](#a2aconfig) for the full behavior and its limits.
 
 **Agent Card (implemented, M2 #2):** the card is built with official SDK types
 by a deterministic, I/O-free function from the `@agent`/`@skill` definition and
@@ -574,30 +576,69 @@ protocol/SDK types and actual supported endpoint behavior. Accept preferred
 structured selection plus JSON arguments through a declared/activated A2A 1.0
 extension, and free-text requests through custom or opt-in model routing.
 
-**Proposed known constructor fields:**
+**Constructor status:** implemented in M7 #75 as
+`A2AConfig(*, dedup_window_seconds=600, dedup_store=None)`, passed as
+`AgentApp(a2a=...)`. `enabled` and `path` stay proposed and unimplemented:
+A2A is always served at `/a2a`.
 
 ```text
-A2AConfig(*, enabled: bool = ..., path: str = ...)
+A2AConfig(*, dedup_window_seconds: float = 600, dedup_store: MessageDedupStore | None = None)
 ```
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `enabled` | `bool` | A2A enabled by default on `AgentApp`; field default open | Controls the adapter, not caller authorization. |
-| `path` | `str` | `/a2a` in examples; concrete default open | Selected A2A binding endpoint, not a route per skill. |
+| `dedup_window_seconds` | `float` | `600` (10 minutes), configurable; must be positive or `DefinitionError` (implemented) | How long a verified caller's `messageId` is remembered. The same caller resending it within the window gets the original task back. |
+| `dedup_store` | [`MessageDedupStore`](#messagededupstore) or `None` | `None`: in-process memory (implemented) | Where `messageId` claims are kept. Supply a shared store for multi-instance hosts. |
+| `enabled` | `bool` | Proposed, not implemented | Would control the adapter, not caller authorization. |
+| `path` | `str` | Proposed, not implemented; today always `/a2a` | Selected A2A binding endpoint, not a route per skill. |
 | Binding | No constructor field | JSON-RPC over HTTP, A2A 1.0 only (decided M2) | Advertised as `protocolBinding: "JSONRPC"`, `protocolVersion: "1.0"`. No gRPC, HTTP+JSON/REST or 0.3 compatibility; requests without `A2A-Version: 1.0` are rejected. |
 | Task-store integration, supported capabilities | Exact fields/types open | Select/verify before release | Reuse SDK interfaces; first-release complete results only. Do not advertise streaming/push/task features the host cannot execute. |
 | Structured requests | A2A extension declaration/activation, data-part arguments; [wire format implemented (M2 #5)](#structured-skill-call-wire-format) | Preferred request style; no constructor keyword | Card declares support; caller selects a skill under that extension, bypassing routing but not authorization/typed validation/limits/accounting/tracing. |
 | Prompt clarification | Native A2A task/status message; exact contract open | Required for ambiguous/missing prompt input | Return `TASK_STATE_INPUT_REQUIRED` with an ask-back, not a guessed invocation or successful final result. |
-| Duplicate requests | Same caller + A2A `messageId`; store/window fields open | 10-minute window, in-memory default; configurable/pluggable | Return original task instead of re-running; multi-instance store support, no exactly-once claim or task-access bypass. |
 | Response correlation/errors | Native response metadata/task states; exact mappings open | Only invocation ID exposed from run internals | Safe failed/rejected states as appropriate; no `RunResult`, raw provider exception, stack trace or secrets. |
 | Long-running tasks | Native A2A task store; constructor setting open | In-memory default, persistent store pluggable | Task persistence is not Python skill checkpointing, human approval resume or exactly-once execution. |
 
 ```python
-from agentframe import A2AConfig
+from agentframe import A2AConfig, Agent, AgentApp, HostConfig
 
 
-a2a = A2AConfig(enabled=True, path="/a2a")
+def build_app(agent: Agent, host: HostConfig) -> AgentApp:
+    # Remember each caller's messageIds for 5 minutes instead of 10.
+    return AgentApp(agent=agent, host=host, a2a=A2AConfig(dedup_window_seconds=300))
 ```
+
+**Message deduplication (implemented, M7 #75):** a caller that retries after a
+network failure resends its message with the same `messageId`; the retry gets
+the original task instead of running the skill again.
+
+- The key is the verified caller's ID plus the `messageId`. Each `/a2a` request
+  is checked in order: body size, authentication, deduplication, then
+  admission. A repeat therefore takes no run slot and gets its task even while
+  `max_concurrent_runs` is reached or shutdown has started.
+- A repeat within the window gets the original task as it is now, whatever its
+  state: working, completed, failed, cancelled, rejected or waiting for input.
+  Failed and cancelled tasks are not re-run.
+- Answers to input-required tasks (messages with a `taskId`) are deduplicated
+  with the same key, so a repeated answer is not routed twice.
+- Reusing a `messageId` for a different message, compared by a SHA-256 hash of
+  its parts and metadata (or naming a different task), is refused with JSON-RPC
+  `InvalidParams` ("messageId was already used for a different message").
+- Two copies sent at once run the skill once: repeats of one caller's message
+  are handled one at a time within a process, and the later copy gets the
+  task the first one created.
+- A message refused before it ran (busy, shutting down, or a protocol error)
+  is not a repeat: its retry runs normally.
+- **Anonymous callers are not deduplicated.** They share one namespace, so a
+  guessable `messageId` would let one anonymous caller fetch another's task.
+- **No bypass of task authorization.** The original task is looked up as the
+  caller, exactly as `GetTask` would; another caller using the same
+  `messageId` gets its own task and never sees the first caller's.
+- **Not exactly-once.** With the default in-memory store, claims are **lost on
+  restart** and not shared between instances. After the window expires the
+  same `messageId` runs again. A shared store across instances still needs the
+  tasks themselves to be visible to every instance, and concurrent copies on
+  different instances can both run. Applications that need exactly-once side
+  effects use idempotent backends ([retries](../guides/limits.md#retries-and-duplicate-requests)).
 
 **Behavior / failures:** structured selection is deterministic with no routing
 model call/cost; the selected skill can still run inference. Unknown skill IDs
@@ -620,6 +661,49 @@ remains input-required, not automatically failed or conversed with.
 **Related:** [`SkillRouter`](#skillrouter),
 [native SDK types](#native-a2a-and-mcp-types),
 [A2A routing guide](../guides/agent-examples.md#a2a-hosting-and-selection).
+
+## `MessageDedupStore`
+
+**Purpose / decision:** the pluggable store behind
+[message deduplication](#a2aconfig), so hosts with several instances can share
+`messageId` claims. Implemented in M7 #75 as a structural protocol; implement
+it without inheriting from anything.
+
+```python
+class MessageDedupStore(Protocol):
+    async def put_if_absent(
+        self, key: str, task_id: str, ttl_seconds: float
+    ) -> str | None:
+        """Store key -> task_id unless present; return the existing task_id if it was."""
+```
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `key` | `str` | Identifies one verified caller's `messageId`. Treat it as opaque. |
+| `task_id` | `str` | The task the message will run in. |
+| `ttl_seconds` | `float` | How long to keep the entry: `A2AConfig.dedup_window_seconds`. |
+
+Returns `None` when it stored `task_id`, or the task ID already stored under
+`key`. **It must be atomic:** of two concurrent calls with one key, exactly one
+may store its task ID. The default keeps entries in a dict with expiry times,
+pruned on use, and loses them on restart.
+
+```python
+from agentframe import A2AConfig, MessageDedupStore
+
+
+class SharedDedupStore:  # Application-defined, for example over Redis SET NX EX.
+    async def put_if_absent(
+        self, key: str, task_id: str, ttl_seconds: float
+    ) -> str | None: ...
+
+
+store: MessageDedupStore = SharedDedupStore()
+a2a = A2AConfig(dedup_store=store)
+```
+
+**Related:** [`A2AConfig`](#a2aconfig),
+[retries and duplicate requests](../guides/limits.md#retries-and-duplicate-requests).
 
 ## `MCPConfig`
 
