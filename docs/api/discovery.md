@@ -506,7 +506,7 @@ Implemented (#84) as a frozen dataclass.
 | --- | --- | --- |
 | `reference` | `AgentReference` | The source entry the agent was found through. |
 | `card` | `a2a.types.AgentCard` | The validated official SDK card. |
-| `interface_url` | `str` | The card's JSON-RPC A2A 1.0 interface URL, always on the card URL's origin. `Remote.ask` sends only here. |
+| `interface_url` | `str` | The card's JSON-RPC A2A 1.0 interface URL, always on the card URL's origin. `Remote.ask` and `Remote.call` send only here. |
 | `stale` | `bool` | `True` only when `allow_stale=True` served an old card after a failed refresh. |
 
 ```python
@@ -733,10 +733,10 @@ Implemented (#87) as `class Remote[N: str]`; AgentFrame reads the name from
 the `Literal`. The string form `Remote["name"]` is not used, because
 `mypy --strict` reads a string subscript as a forward reference.
 
-**Signature status:** the annotation, [`ask`](#remoteask) and the
-`directory=` parameters are implemented; [`call`](#remotecall) (#88),
-deadline/hop propagation (#89) and outbound identity (#92, #93) are later
-stories. `Remote[ResearchAgent]` typed proxies are later only.
+**Signature status:** the annotation, [`ask`](#remoteask), [`call`](#remotecall)
+(#88) and the `directory=` parameters are implemented; deadline/hop
+propagation (#89), token budgets (#90) and outbound identity (#92, #93) are
+later stories. `Remote[ResearchAgent]` typed proxies are later only.
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -797,28 +797,38 @@ conversation.
 
 ## `Remote.call`
 
-**Purpose / decision:** select a remote skill with a structured A2A extension
-request and optionally validate its typed result.
+**Purpose / signature:** run one of a remote AgentFrame agent's skills by ID
+with typed arguments, through the structured
+[skill-call extension](hosting.md#structured-skill-call-wire-format), and
+validate its result. Implemented (#88).
 
-**Decided call:** `await research.call("find_sources", topic=goal,
-output=list[Source], max_total_tokens=20_000)`. Exact overloads and reserved-name
-collision handling remain open, not new business-argument envelope syntax.
+```python
+@overload
+async def call[T](self, skill: str, /, *, output: type[T], **arguments: Any) -> T: ...
+@overload
+async def call(self, skill: str, /, **arguments: Any) -> Any: ...
+```
 
 | Parameter/result | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Skill ID | `str` | Required positional | Card-declared/caller-activated structured extension; no prompt fallback. |
-| Business arguments | Typed keyword values | Selected signature determines requirements | Native data-part JSON; validate remotely, no injected arguments. |
-| `output` | Python/Pydantic contract such as `list[Source]` | Optional validation target; omitted result shape open | Validate returned data, not prompt instructions or fabricated output. |
-| `max_total_tokens` | `int` | Caller remaining budget by default | Per-call ceiling; receiver can only lower, shared reservations prevent double spend. |
-| Return | Validated requested output when specified | After task completion | Within remaining caller deadline; native result/part mapping still open. |
+| `skill` | `str` | Required, positional only | A skill ID listed on the peer's card. |
+| `**arguments` | Keyword values | As the remote skill requires | Sent as one JSON object data part in Pydantic JSON mode, so Pydantic models, dates and enums work. The peer validates them. `output` and `max_total_tokens` are reserved and cannot be remote argument names. |
+| `output` | A type such as `list[Source]` or `Summary` | Optional | Validates the result with Pydantic's `TypeAdapter`. Without it the result is returned as decoded JSON (numbers come back as `float`), or as `str` for a text result. |
+| `max_total_tokens` | `int` | Not implemented yet (#90) | Reserved for a per-call token ceiling; passing it raises `DefinitionError` and sends nothing. |
+| Return | `T`, or the JSON value | After the task completes | The skill's result. Untrusted remote data until validated. |
 
 ```python
 from typing import Literal
 
 from pydantic import BaseModel
-from agentframe import Remote
+
+from agentframe import Agent, Remote, RunContext, agent, skill
 
 type Research = Remote[Literal["research-agent"]]
+
+
+class Topic(BaseModel):
+    name: str
 
 
 class Source(BaseModel):
@@ -826,21 +836,42 @@ class Source(BaseModel):
     url: str
 
 
-async def sources(research: Research, goal: str) -> list[Source]:
-    return await research.call(
-        "find_sources", topic=goal, output=list[Source], max_total_tokens=20_000,
-    )
+@agent(name="Planner", description="Plans with research.", version="0.1.0")
+class Planner(Agent):
+    @skill(id="sources", description="Find sources for a goal.", tags=["planning"])
+    async def sources(
+        self, goal: str, research: Research, ctx: RunContext
+    ) -> list[Source]:
+        return await research.call(
+            "find_sources", topic=Topic(name=goal), output=list[Source]
+        )
 ```
 
-Use the already-managed skill binding, not a manually constructed annotation.
+**Behavior / failures:** before sending, the peer's card must declare the
+skill-call extension and list `skill`; otherwise `call` raises
+[`RemoteAgentError`](runtime.md#remoteagenterror) naming the missing extension
+or skill, sends nothing, and never falls back to free text (use
+[`ask`](#remoteask) for agents without the extension). The request activates
+the extension with the `A2A-Extensions` header on that request only, names the
+skill in message metadata `agentframe.skill` and carries the arguments in one
+data part, exactly the M2 wire format. Sending, polling, deadline,
+cancellation and question handling are those of [`ask`](#remoteask).
 
-**Behavior / failures:** await task completion, stop waiting at caller deadline,
-raise `ClarificationNeededError` on input-required without auto-answering.
-Unsupported extension/unknown skill/invalid input/output fail explicitly.
-Send deadline/token/depth via the shared extension, reconcile AgentFrame usage
-once, preserve other-agent usage as unknown. Cancellation is not rollback.
+- Completed: the result part is decoded as an AgentFrame host sends it (one
+  text part for a `str`, otherwise one data part `{"value": ...}`). Any other
+  result raises `RemoteAgentError`.
+- The result does not match `output`: raises `OutputValidationError` without
+  the remote data or the validation details.
+- The peer rejects the call (unknown skill, invalid arguments, permission
+  denied): raises `RemoteAgentError` with task state `TASK_STATE_REJECTED`;
+  the peer's message is not repeated.
+- An argument that cannot be represented as JSON raises Pydantic's
+  `PydanticSerializationError` before anything is sent.
+
+Deadline, usage and hop propagation to AgentFrame peers is #89 and #90.
 
 **Related:** [`ClarificationNeededError`](#clarificationneedederror),
+[request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary),
 [budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8).
 
 ## `Remote.ask`

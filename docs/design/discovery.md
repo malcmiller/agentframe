@@ -324,8 +324,8 @@ reduce caller permissions.
 The M8+ authoring surface is a `Remote[Literal["research-agent"]]` skill
 parameter, usually through an alias such as
 `type Research = Remote[Literal["research-agent"]]` (the string form
-`Remote["research-agent"]` fails `mypy --strict`). `ask` is implemented (#87);
-`call` is #88:
+`Remote["research-agent"]` fails `mypy --strict`). `ask` (#87) and `call` (#88)
+are implemented; `call`'s `max_total_tokens=` arrives with #90:
 
 - `await research.call("find_sources", topic=goal, output=list[Source])`:
   structured extension selection with JSON arguments and validated returned data.
@@ -374,8 +374,8 @@ Trace/correlation propagation stays independent of optional exporters.
 
 ### Worked composition examples
 
-These are approved call forms, with application data models; `ask` is
-implemented (#87), `call` is not yet (#88):
+These are approved call forms, with application data models; `ask` (#87) and
+`call` (#88) are implemented, `max_total_tokens=` is not yet (#90):
 
 ```python
 import asyncio

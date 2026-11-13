@@ -38,6 +38,12 @@ changelog.
   task on deadline or cancellation. New `ClarificationNeededError` when the
   remote agent asks a question. Agents whose card requires credentials,
   including Foundry agents, cannot be called yet.
+- **Remote agents (M8+):** `await remote.call("skill", output=Type, **arguments)`
+  runs a remote AgentFrame agent's skill by ID through the skill-call
+  extension and validates its result into `output` (`OutputValidationError`
+  on mismatch). A peer whose card lacks the extension or the skill raises
+  `RemoteAgentError` before anything is sent, with no free-text fallback.
+  `output` and `max_total_tokens` are reserved argument names.
 
 ### Fixed
 
