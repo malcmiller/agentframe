@@ -16,6 +16,7 @@ from a2a.client import ClientConfig, ClientFactory
 from a2a.helpers import get_artifact_text, get_message_text, new_text_part
 from a2a.types import Message, Role, SendMessageRequest, TaskState
 from a2a.utils.constants import TransportProtocol
+from pydantic import BaseModel
 
 from agentframe import (
     Agent,
@@ -25,7 +26,14 @@ from agentframe import (
     AuthorizationPolicy,
     Clarification,
     HostConfig,
+    ModelCapabilities,
+    ModelRefusalError,
+    ModelRequest,
+    ModelResponse,
+    ModelSettings,
     Principal,
+    ProviderError,
+    RoutingContext,
     RunContext,
     RunLimits,
     SkillCall,
@@ -34,7 +42,11 @@ from agentframe import (
     agent,
     skill,
 )
+from agentframe.hosting import a2a_executor
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.hosting.routing import new_routing_context
+from agentframe.runtime.generation import RunAccounting
+from agentframe.testing import ScriptedModel
 from local_server import ServeLocally
 
 # Test-only values; real applications load keys from the environment.
@@ -80,7 +92,10 @@ class GreetingRouter(SkillRouter):
         self.offered: list[list[str]] = []
 
     async def route(
-        self, conversation: Sequence[Message], skills: Sequence[SkillDefinition]
+        self,
+        conversation: Sequence[Message],
+        skills: Sequence[SkillDefinition],
+        ctx: RoutingContext,
     ) -> SkillCall | Clarification:
         self.conversations.append([get_message_text(m) for m in conversation])
         self.offered.append([s.id for s in skills])
@@ -103,7 +118,10 @@ class FixedRouter(SkillRouter):
         self.behave = behave
 
     async def route(
-        self, conversation: Sequence[Message], skills: Sequence[SkillDefinition]
+        self,
+        conversation: Sequence[Message],
+        skills: Sequence[SkillDefinition],
+        ctx: RoutingContext,
     ) -> Any:
         if self.behave is not None:
             await self.behave()
@@ -417,3 +435,258 @@ async def test_routing_time_counts_against_the_runs_timeout(
 
     assert state(task) == "TASK_STATE_FAILED"
     assert "timeout" in status_text(task)
+
+
+# Model-backed routing is charged to the run
+
+
+@agent(version="1.0.0")
+class Writer(Agent):
+    """Writes about topics with its model."""
+
+    instructions = "You are a writer."
+    limits = RunLimits(timeout_seconds=0.5, max_model_calls=2)
+    model_settings = ModelSettings(max_output_tokens=300)
+
+    @skill("write", tags=["test"])
+    async def write(self, topic: str, ctx: RunContext) -> str:
+        """Write about a topic."""
+        return await ctx.generate(topic)
+
+    @skill("echo", tags=["test"])
+    async def echo(self, text: str, ctx: RunContext) -> str:
+        """Repeat text without a model."""
+        return text
+
+
+class ModelBackedRouter(SkillRouter):
+    """Asks its own model ``calls`` times, then returns ``decision``."""
+
+    def __init__(self, model: Any, decision: object, calls: int = 1) -> None:
+        self.model = model
+        self.decision = decision
+        self.calls = calls
+
+    async def route(
+        self,
+        conversation: Sequence[Message],
+        skills: Sequence[SkillDefinition],
+        ctx: RoutingContext,
+    ) -> Any:
+        for _ in range(self.calls):
+            await ctx.generate(
+                self.model,
+                get_message_text(conversation[-1]),
+                instructions="Choose a skill.",
+            )
+        return self.decision
+
+
+class SlowModel(ScriptedModel):
+    """A model that takes five seconds to answer."""
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        await asyncio.sleep(5)
+        raise AssertionError("unreachable within the test's timeout")
+
+
+@asynccontextmanager
+async def serve_writer(
+    serve: ServeLocally, router: SkillRouter, writer_model: ScriptedModel
+) -> AsyncIterator[httpx.AsyncClient]:
+    def make_app(public_url: str) -> AgentApp:
+        return AgentApp(
+            agent=Writer(model=writer_model), host=host(public_url), router=router
+        )
+
+    async with serve(make_app) as base_url, httpx.AsyncClient(base_url=base_url) as h:
+        yield h
+
+
+def model_calls(task: Mapping[str, Any]) -> int:
+    calls: int = task["metadata"]["usage"]["model_calls"]
+    return calls
+
+
+WRITE_TEA = SkillCall("write", {"topic": "tea"})
+
+
+@pytest.mark.parametrize(
+    ("decision", "writer_replies", "expected_state", "expected_calls"),
+    [
+        (WRITE_TEA, ["Tea is nice."], "TASK_STATE_COMPLETED", 2),
+        (Clarification("Which topic?"), [], "TASK_STATE_INPUT_REQUIRED", 1),
+        (
+            WRITE_TEA,
+            [ModelRefusalError("The model refused the request")],
+            "TASK_STATE_FAILED",
+            2,
+        ),
+    ],
+    ids=["completed", "input-required", "failed"],
+)
+async def test_task_usage_includes_the_routing_model_call(
+    serve: ServeLocally,
+    decision: object,
+    writer_replies: list[Any],
+    expected_state: str,
+    expected_calls: int,
+) -> None:
+    router = ModelBackedRouter(ScriptedModel(["write"]), decision)
+
+    async with serve_writer(serve, router, ScriptedModel(writer_replies)) as h:
+        task = await say_task(h, "something about tea")
+
+    assert state(task) == expected_state
+    assert model_calls(task) == expected_calls
+
+
+async def test_routing_calls_leave_a_model_backed_skill_no_model_calls(
+    serve: ServeLocally,
+) -> None:
+    router = ModelBackedRouter(ScriptedModel(["write", "write"]), WRITE_TEA, calls=2)
+    writer_model = ScriptedModel(["Tea is nice."])
+
+    async with serve_writer(serve, router, writer_model) as h:
+        task = await say_task(h, "something about tea")
+
+    assert state(task) == "TASK_STATE_FAILED"
+    assert status_text(task) == "The run reached its limit of 2 model calls"
+    assert writer_model.requests == []
+
+
+async def test_routing_calls_leave_a_model_free_skill_working(
+    serve: ServeLocally,
+) -> None:
+    echo = SkillCall("echo", {"text": "tea"})
+    router = ModelBackedRouter(ScriptedModel(["echo", "echo"]), echo, calls=2)
+
+    async with serve_writer(serve, router, ScriptedModel()) as h:
+        task = await say_task(h, "repeat tea")
+
+    assert state(task) == "TASK_STATE_COMPLETED"
+    assert task["artifacts"][0]["parts"][0]["text"] == "tea"
+    assert model_calls(task) == 2
+
+
+async def test_a_routing_model_call_past_the_timeout_fails(
+    serve: ServeLocally,
+) -> None:
+    router = ModelBackedRouter(SlowModel(), WRITE_TEA)
+
+    async with serve_writer(serve, router, ScriptedModel()) as h:
+        task = await say_task(h, "something about tea")
+
+    assert state(task) == "TASK_STATE_FAILED"
+    assert "timeout" in status_text(task)
+    assert model_calls(task) == 1
+
+
+@pytest.mark.parametrize(
+    ("router_replies", "calls", "message"),
+    [
+        (
+            [ModelRefusalError("The model refused the request")],
+            1,
+            "The model refused the request",
+        ),
+        (
+            [ProviderError("The model provider is unavailable", transient=False)],
+            1,
+            "The model provider is unavailable",
+        ),
+        (["a", "b"], 3, "The run reached its limit of 2 model calls"),
+    ],
+    ids=["refusal", "provider", "model-call-limit"],
+)
+async def test_model_errors_while_routing_fail_with_their_safe_messages(
+    serve: ServeLocally, router_replies: list[Any], calls: int, message: str
+) -> None:
+    router = ModelBackedRouter(ScriptedModel(router_replies), WRITE_TEA, calls=calls)
+
+    async with serve_writer(serve, router, ScriptedModel()) as h:
+        task = await say_task(h, "something about tea")
+
+    assert state(task) == "TASK_STATE_FAILED"
+    assert status_text(task) == message
+    assert invocation_id(task)
+
+
+async def test_structured_skill_calls_skip_routing_and_its_cost(
+    serve: ServeLocally, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_routing_context(*args: object) -> None:
+        raise AssertionError("a structured skill call created a RoutingContext")
+
+    monkeypatch.setattr(a2a_executor, "new_routing_context", no_routing_context)
+    router_model = ScriptedModel()
+    router = ModelBackedRouter(router_model, WRITE_TEA)
+    body = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "messageId": "m-1",
+                "role": "ROLE_USER",
+                "parts": [{"data": {"topic": "tea"}}],
+                "metadata": {"agentframe.skill": "write"},
+            }
+        },
+    }
+    headers = {
+        "A2A-Version": "1.0",
+        "X-API-Key": ALICE_KEY,
+        "A2A-Extensions": SKILL_CALL_EXTENSION_URI,
+    }
+
+    async with serve_writer(serve, router, ScriptedModel(["Tea is nice."])) as h:
+        response = await h.post("/a2a", json=body, headers=headers)
+
+    task = response.json()["result"]["task"]
+    assert state(task) == "TASK_STATE_COMPLETED"
+    assert model_calls(task) == 1
+    assert router_model.requests == []
+
+
+class Choice(BaseModel):
+    skill: str
+
+
+async def test_routing_context_uses_the_given_model_and_agent_level_settings() -> None:
+    writer_model = ScriptedModel()
+    router_model = ScriptedModel(
+        ['{"skill": "write"}', "write"],
+        capabilities=ModelCapabilities(context_window=8192, structured_output=True),
+    )
+    accounting = RunAccounting()
+    ctx = new_routing_context(
+        Writer(model=writer_model),
+        "run-1",
+        None,
+        asyncio.get_running_loop().time(),
+        accounting,
+    )
+
+    choice = await ctx.generate(
+        router_model,
+        "something about tea",
+        instructions="Choose a skill.",
+        output=Choice,
+    )
+    text = await ctx.generate(
+        router_model, "tea", model_settings=ModelSettings(max_output_tokens=50)
+    )
+
+    assert choice == Choice(skill="write")
+    assert text == "write"
+    assert writer_model.requests == []
+    first, second = router_model.requests
+    # The agent's instructions are for its skills, not for routing.
+    assert [(m.role, m.content) for m in first.messages] == [
+        ("system", "Choose a skill."),
+        ("user", "something about tea"),
+    ]
+    assert first.settings.max_output_tokens == 300  # The agent's setting.
+    assert second.settings.max_output_tokens == 50  # The router's override.
+    assert accounting.model_calls == 2

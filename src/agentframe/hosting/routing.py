@@ -3,17 +3,26 @@
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any, Protocol
+from contextlib import AsyncExitStack
+from dataclasses import dataclass, field, replace
+from typing import Any, Protocol, overload
 
 from a2a.types import Message
+from pydantic import BaseModel
 
+from agentframe.authoring.agent import Agent
+from agentframe.authoring.context import RunContext
 from agentframe.authoring.definitions import AgentDefinition, SkillDefinition
+from agentframe.authoring.services import Services
 from agentframe.errors import (
     AgentFrameError,
     InputValidationError,
     TimeoutLimitExceededError,
 )
+from agentframe.models.base import DEFAULT_MODEL_SETTINGS, Model, ModelSettings
+from agentframe.runtime.generation import GenerationState, RunAccounting
+from agentframe.runtime.limits import DEFAULT_LIMITS
+from agentframe.runtime.options import merge_settings
 from agentframe.security.principal import Principal
 
 ROUTER_FAILED_MESSAGE = "The skill router failed."
@@ -47,6 +56,139 @@ class Clarification:
     question: str
 
 
+@dataclass(frozen=True)
+class RoutingContext:
+    """Per-message context passed to a router. Never shared between messages.
+
+    Model calls made through ``generate`` are charged to the same run as the
+    skill the router selects: they count toward the agent's token and
+    model-call limits, so the skill only gets what remains.
+
+    Attributes:
+        invocation_id: Library-generated identifier of the run being routed.
+        principal: Verified caller identity, or ``None`` when there is none.
+        deadline: Event-loop time (``loop.time()``) when routing times out:
+            the agent's timeout, counted from when the run started.
+    """
+
+    invocation_id: str
+    principal: Principal | None
+    deadline: float
+    # Private: the run's shared accounting plus agent-level limits and
+    # settings. Its model is unset; every call names its model explicitly.
+    _generation: GenerationState = field(repr=False, compare=False)
+
+    @overload
+    async def generate(
+        self,
+        model: Model,
+        text: str,
+        *,
+        instructions: str | None = None,
+        model_settings: ModelSettings | None = None,
+    ) -> str: ...
+
+    @overload
+    async def generate[T: BaseModel](
+        self,
+        model: Model,
+        text: str,
+        *,
+        instructions: str | None = None,
+        output: type[T],
+        model_settings: ModelSettings | None = None,
+    ) -> T: ...
+
+    async def generate(
+        self,
+        model: Model,
+        text: str,
+        *,
+        instructions: str | None = None,
+        output: type[BaseModel] | None = None,
+        model_settings: ModelSettings | None = None,
+    ) -> str | BaseModel:
+        """Generate text, or a validated ``output`` instance, with ``model``.
+
+        Follows the same rules as ``RunContext.generate``, without tools:
+        ``instructions`` is sent as a trusted ``system`` message and ``text``
+        as a separate ``user`` message. The agent's own instructions are not
+        sent; they are for its skills. The call is checked against and
+        charged to the run's limits.
+
+        Args:
+            model: The router's model. The agent's model is never used
+                implicitly.
+            text: Untrusted content, such as the caller's messages.
+            instructions: Trusted routing instructions. Never put untrusted
+                content here.
+            output: A Pydantic ``BaseModel`` subclass to validate the reply as.
+            model_settings: Settings for this call. Each field set overrides
+                the library's and agent's value.
+
+        Returns:
+            The model's complete answer, or an ``output`` instance.
+
+        Raises:
+            AgentFrameError: The same errors as ``RunContext.generate``, such
+                as ``ModelCallLimitExceededError`` or ``ModelRefusalError``.
+                They reach the caller with their own safe messages.
+        """
+        generation = replace(
+            self._generation,
+            model=model,
+            settings=merge_settings(self._generation.settings, model_settings),
+        )
+        # The generation layer reads the deadline from a RunContext and hands
+        # it to tools. Routing offers no tools, so this context stays internal.
+        # Execution-policy model-request checks (#77) run in that layer too,
+        # with no skill, since none is selected yet.
+        run_ctx = RunContext(
+            self.invocation_id, self.principal, self.deadline, generation
+        )
+        if output is None:
+            return await run_ctx.generate(text, instructions=instructions)
+        return await run_ctx.generate(text, instructions=instructions, output=output)
+
+
+def new_routing_context(
+    agent: Agent,
+    invocation_id: str,
+    principal: Principal | None,
+    started_at: float,
+    accounting: RunAccounting,
+) -> RoutingContext:
+    """Return the context for routing one message of a run.
+
+    The skill is not known yet, so routing uses the library defaults merged
+    with the agent's limits and model settings. Its deadline is the agent's
+    timeout from ``started_at``; the selected skill's deadline counts from
+    the same start, and its model calls share ``accounting``.
+
+    Args:
+        agent: The hosted agent instance.
+        invocation_id: The run being routed.
+        principal: Verified caller identity, or ``None``.
+        started_at: Event-loop time when the run started.
+        accounting: The run's accounting, shared with the selected skill.
+    """
+    # Host limit ceilings (#71) will cap these limits, and so the deadline.
+    limits = merge_settings(DEFAULT_LIMITS, agent.limits)
+    assert limits.timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
+    generation = GenerationState(
+        model=None,
+        instructions=None,
+        settings=merge_settings(DEFAULT_MODEL_SETTINGS, agent.model_settings),
+        limits=limits,
+        # Routing offers no tools, so it needs no services.
+        services=Services().scope(AsyncExitStack()),
+        accounting=accounting,
+    )
+    return RoutingContext(
+        invocation_id, principal, started_at + limits.timeout_seconds, generation
+    )
+
+
 class SkillRouter(Protocol):
     """Chooses the skill for a free-text A2A message, or asks the caller.
 
@@ -56,7 +198,10 @@ class SkillRouter(Protocol):
     """
 
     async def route(
-        self, conversation: Sequence[Message], skills: Sequence[SkillDefinition]
+        self,
+        conversation: Sequence[Message],
+        skills: Sequence[SkillDefinition],
+        ctx: RoutingContext,
     ) -> SkillCall | Clarification:
         """Select a skill and extract its arguments, or ask a question.
 
@@ -69,6 +214,8 @@ class SkillRouter(Protocol):
                 last message is the one being routed.
             skills: The skills this caller may run. Selecting any other skill
                 rejects the request.
+            ctx: The run's routing context. Use ``ctx.generate`` for model
+                calls, so they are charged to the run.
 
         Returns:
             The skill to run with its arguments, or a question for the caller.
@@ -101,18 +248,17 @@ async def route(
     router: SkillRouter,
     conversation: Sequence[Message],
     skills: Sequence[SkillDefinition],
-    deadline: float,
-    invocation_id: str,
+    ctx: RoutingContext,
 ) -> SkillCall | Clarification:
-    """Ask ``router`` about ``conversation`` before ``deadline`` and check its answer.
+    """Ask ``router`` about ``conversation`` before ``ctx.deadline``; check its answer.
 
     Args:
         router: The application's router.
         conversation: The task's messages so far, oldest first.
         skills: The skills the caller may be routed to.
-        deadline: Event-loop time by which the router must answer; the run's
-            timeout, so routing time counts against it.
-        invocation_id: The run being routed, logged with router failures.
+        ctx: The routing context. Its deadline is the run's timeout, so
+            routing time counts against it; its invocation ID is logged with
+            router failures.
 
     Returns:
         The router's decision: a call to one of ``skills`` or a non-empty
@@ -120,14 +266,19 @@ async def route(
 
     Raises:
         TimeoutLimitExceededError: The router did not answer before the deadline.
-        AgentFrameError: The router raised an exception. The caller gets a
-            generic message; the details are only logged.
+        AgentFrameError: The router raised one, for example a limit or
+            model error from ``ctx.generate``; it keeps its safe message.
+            Any other exception becomes an ``AgentFrameError`` with a generic
+            message; the details are only logged.
         InputValidationError: The router returned something other than a call
             to one of ``skills`` or a non-empty question.
     """
+    invocation_id = ctx.invocation_id
     try:
-        async with asyncio.timeout_at(deadline) as timeout:
-            decision = await router.route(conversation, skills)
+        async with asyncio.timeout_at(ctx.deadline) as timeout:
+            decision = await router.route(conversation, skills, ctx)
+    except AgentFrameError:
+        raise
     except TimeoutError:
         if not timeout.expired():
             raise _router_failed(invocation_id) from None

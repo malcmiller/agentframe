@@ -29,7 +29,12 @@ from agentframe.errors import (
 )
 from agentframe.hosting.app import AgentApp
 from agentframe.hosting.host import HostConfig
-from agentframe.hosting.routing import Clarification, SkillCall, SkillRouter
+from agentframe.hosting.routing import (
+    Clarification,
+    RoutingContext,
+    SkillCall,
+    SkillRouter,
+)
 from agentframe.models.base import (
     Message,
     Model,
@@ -102,6 +107,7 @@ __all__ = [
     "Principal",
     "ProviderError",
     "Role",
+    "RoutingContext",
     "RunContext",
     "RunLimits",
     "RunOptions",
