@@ -2,8 +2,9 @@
 
 [Reference index and status conventions](README.md). Defaults and precedence
 identified as decided below are approved design contracts; field-by-field
-[precedence](#precedence), `RunOptions` and the `timeout_seconds` limit are
-implemented, other limits and host ceilings are not yet enforced. Example overrides are not the library defaults.
+[precedence](#precedence), `RunOptions`, `RunLimits` and host ceilings
+([`HostConfig.limits_ceiling`](hosting.md#hostconfig), M7 #71) are implemented.
+Example overrides are not the library defaults.
 
 ## `AgentConfig`
 
@@ -187,8 +188,18 @@ class Editor(Agent):
 ```
 
 Hosted A2A requests use library, agent and skill settings only; callers cannot
-send per-run options in M3. Host ceilings (M7) will cap the merged result as an
-independent constraint; they are not implemented yet.
+send per-run options. On a host with
+[`HostConfig(limits_ceiling=...)`](hosting.md#hostconfig) (M7 #71), the ceiling
+then caps the merged limits as an independent constraint, not another default
+layer: each field it sets caps that limit, and unset fields cap nothing. A
+library default above the ceiling is lowered to it, while an agent or skill
+limit explicitly set above it fails `AgentApp` construction with
+`DefinitionError` naming the skill and field. Free-text routing and startup
+model checks use the capped agent-level limits. A `max_total_tokens` ceiling
+also bounds `ModelSettings.max_output_tokens`: a call whose output cap does not
+fit the capped budget fails with `TokenLimitExceededError`, never silently
+shrunk. Local `Runtime` runs take no ceiling; their options come from trusted
+code.
 
 **Related:** [`RunOptions`](#runoptions), [`RunLimits`](#runlimits),
 [`ModelSettings`](models.md#modelsettings),
@@ -226,8 +237,8 @@ async def short_summary(runtime: Runtime, writer: Agent) -> str:
 **Behavior / failures:** options apply to one run only and never change the
 agent, skill or other runs. Invalid values fail when the `RunLimits` or
 `ModelSettings` is constructed (`DefinitionError`). Hosted requests never
-accept per-run options from callers in M3; authenticated remote overrides and
-host ceilings remain later work.
+accept per-run options from callers; authenticated remote overrides remain
+later work, and host ceilings cap hosted runs ([precedence](#precedence)).
 
 **Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
 [`Runtime.run`](runtime.md#runtimerun), [precedence](#precedence).

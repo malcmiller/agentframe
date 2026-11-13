@@ -99,15 +99,34 @@ host = HostConfig(
 ```
 
 `tenant_id` and `audience` are trusted application configuration; the URL does not configure
-TLS or binding. The ceiling fields are illustrative proposals. The host must
-validate configured agent allowances against its ceilings before accepting work.
+TLS or binding. The ceiling values are examples, not library defaults.
+
+Implemented in M7 (#71): each field the ceiling sets caps that limit after the
+library → agent → skill → per-run merge; unset fields cap nothing.
+
+- A library default above the ceiling is lowered to it: with the example above,
+  the 120-second default timeout becomes 45 seconds. Defaults are not explicit
+  requests.
+- An agent or skill limit explicitly set above the ceiling fails `AgentApp`
+  construction with `DefinitionError` naming the skill and field, before any
+  I/O or request.
+- Hosted runs, the free-text routing deadline and budget, and startup model
+  checks (`Runtime.validate_model`, `ModelRouter`) use the capped limits. A
+  `max_input_tokens` ceiling caps the model's context window as the input
+  limit, and stands in for a window the model does not report.
+- A `max_total_tokens` ceiling also bounds `ModelSettings.max_output_tokens`:
+  each call reserves its full output cap, so a call whose cap cannot fit the
+  capped budget fails with `TokenLimitExceededError`; it is never silently
+  shrunk.
+- Local `Runtime` takes no ceiling: ceilings protect a host from remote
+  callers, while local `RunOptions` come from trusted code.
 
 For A2A model-backed routing, establish a request-wide budget and deadline
 before routing. The selected skill inherits the remaining allowance.
 Implemented in M6 (#67): a router's
 [`RoutingContext.generate`](../api/hosting.md#routingcontextgenerate) calls use
 the library defaults merged with the agent's limits and model settings (the
-skill is not known yet), charged to the run's shared accounting. The selected
+skill is not known yet), capped by any host ceiling (M7 #71), charged to the run's shared accounting. The selected
 skill then runs with its own effective limits against the same accounting and
 the same deadline start, so routing tokens and model calls count against its
 `max_total_tokens` and `max_model_calls`. Routing,
