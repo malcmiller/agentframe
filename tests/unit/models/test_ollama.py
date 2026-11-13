@@ -27,17 +27,22 @@ from agentframe import (
     ProviderError,
     RunContext,
     Runtime,
+    ToolCall,
     ToolSpec,
     UnsupportedCapabilityError,
     agent,
     skill,
+    tool,
 )
 
 type Handler = Callable[[httpx.Request], httpx.Response]
 
 SHOW_LLAMA = {
-    "model_info": {"general.architecture": "llama", "llama.context_length": 8192}
+    "model_info": {"general.architecture": "llama", "llama.context_length": 8192},
+    "capabilities": ["completion", "tools"],
 }
+SHOW_WITHOUT_TOOLS = {**SHOW_LLAMA, "capabilities": ["completion"]}
+SHOW_OLDER_SERVER = {"model_info": SHOW_LLAMA["model_info"]}
 
 
 def chat_reply(
@@ -177,7 +182,7 @@ async def test_context_window_is_read_once_from_model_metadata(
 
     assert capabilities.context_window == 8192
     assert capabilities.structured_output is True
-    assert capabilities.tools is False
+    assert capabilities.tools is True
     assert server.paths() == ["/api/show", "/api/chat", "/api/chat"]
 
 
@@ -193,7 +198,7 @@ async def test_concurrent_first_calls_read_metadata_once(
     assert server.paths().count("/api/show") == 1
 
 
-async def test_configured_context_window_is_sent_without_reading_metadata(
+async def test_configured_context_window_still_reads_metadata_once(
     use_server: Callable[[FakeOllama], None],
 ) -> None:
     server = FakeOllama()
@@ -201,11 +206,24 @@ async def test_configured_context_window_is_sent_without_reading_metadata(
 
     async with OllamaModel(model="llama3.2:3b", context_window=4096) as model:
         capabilities = await model.capabilities()
-        await model.generate(ask("Say hello"))
+        await model.generate(ask("One"))
+        await model.generate(ask("Two"))
 
     assert capabilities.context_window == 4096
+    assert capabilities.tools is True
     assert server.chat_bodies()[0]["options"]["num_ctx"] == 4096
-    assert server.paths() == ["/api/chat"]
+    assert server.paths() == ["/api/show", "/api/chat", "/api/chat"]
+
+
+async def test_configured_context_window_needs_no_context_length_in_metadata(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    use_server(FakeOllama(show={"model_info": {}, "capabilities": ["tools"]}))
+
+    async with OllamaModel(model="llama3.2:3b", context_window=4096) as model:
+        capabilities = await model.capabilities()
+
+    assert capabilities.context_window == 4096
 
 
 async def test_metadata_without_context_length_fails_explicitly(
@@ -315,26 +333,183 @@ def test_missing_extra_names_the_extra_to_install() -> None:
     assert "agentframe[ollama]" in result.stderr
 
 
+# Tools
+
+
 TOOL_REQUEST = ModelRequest(
     messages=(Message(role="user", content="Where is order A1?"),),
     settings=ModelSettings(max_output_tokens=100),
     tools=(
-        ToolSpec(name="lookup_order", description="Look up an order.", parameters={}),
+        ToolSpec(
+            name="lookup_order",
+            description="Look up an order.",
+            parameters={
+                "type": "object",
+                "properties": {"order_id": {"type": "string"}},
+                "required": ["order_id"],
+            },
+        ),
     ),
 )
 
 
-async def test_tools_are_not_supported_yet_and_nothing_is_sent(
+def tool_call_reply(*calls: tuple[str, dict[str, Any]]) -> dict[str, Any]:
+    reply = chat_reply("", prompt_eval_count=20, eval_count=8)
+    reply["message"]["tool_calls"] = [
+        {"function": {"name": name, "arguments": arguments}}
+        for name, arguments in calls
+    ]
+    return reply
+
+
+async def test_tools_are_sent_in_ollama_function_shape(
     use_server: Callable[[FakeOllama], None],
 ) -> None:
     server = FakeOllama()
     use_server(server)
 
     async with OllamaModel(model="llama3.2:3b") as model:
+        await model.generate(TOOL_REQUEST)
+
+    [body] = server.chat_bodies()
+    assert body["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup_order",
+                "description": "Look up an order.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"order_id": {"type": "string"}},
+                    "required": ["order_id"],
+                },
+            },
+        }
+    ]
+
+
+async def test_tool_calls_are_parsed_with_generated_ids(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    reply = tool_call_reply(
+        ("lookup_order", {"order_id": "A1"}), ("lookup_order", {"order_id": "B2"})
+    )
+    use_server(FakeOllama(chat=reply))
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        response = await model.generate(TOOL_REQUEST)
+
+    assert response.finish_reason is FinishReason.TOOL_CALLS
+    assert response.text == ""
+    assert response.tool_calls == (
+        ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}'),
+        ToolCall(id="call_2", name="lookup_order", arguments='{"order_id": "B2"}'),
+    )
+    assert response.usage.total_tokens == 28
+
+
+async def test_tool_calls_and_results_are_replayed_with_tool_name(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    server = FakeOllama()
+    use_server(server)
+    call = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}')
+    request = ModelRequest(
+        messages=(
+            *TOOL_REQUEST.messages,
+            Message(role="assistant", content="", tool_calls=(call,)),
+            Message(
+                role="tool",
+                content='{"status": "shipped"}',
+                tool_call_id="call_1",
+                tool_name="lookup_order",
+            ),
+        ),
+        settings=TOOL_REQUEST.settings,
+        tools=TOOL_REQUEST.tools,
+    )
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        await model.generate(request)
+
+    [body] = server.chat_bodies()
+    assert body["messages"][1:] == [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"function": {"name": "lookup_order", "arguments": {"order_id": "A1"}}}
+            ],
+        },
+        {
+            "role": "tool",
+            "content": '{"status": "shipped"}',
+            "tool_name": "lookup_order",
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    "show", [SHOW_WITHOUT_TOOLS, SHOW_OLDER_SERVER], ids=["no-tools", "older-server"]
+)
+async def test_models_without_listed_tool_support_fail_before_sending(
+    use_server: Callable[[FakeOllama], None], show: dict[str, Any]
+) -> None:
+    server = FakeOllama(show=show)
+    use_server(server)
+
+    async with OllamaModel(model="llama3.2:3b", context_window=8192) as model:
+        capabilities = await model.capabilities()
         with pytest.raises(UnsupportedCapabilityError, match="tools"):
             await model.generate(TOOL_REQUEST)
 
-    assert server.paths() == []
+    assert capabilities.tools is False
+    assert server.chat_bodies() == []
+
+
+@tool(description="Look up an order's status.")
+def lookup_order(order_id: str) -> str:
+    return "shipped"
+
+
+@agent(version="1.0.0")
+class OrderDesk(Agent):
+    """Answers questions about orders."""
+
+    @skill("status", tags=["orders"])
+    async def status(self, question: str, ctx: RunContext) -> str:
+        """Answer a question about an order."""
+        return await ctx.generate(question, tools=[lookup_order])
+
+
+async def test_runtime_completes_a_tool_round_trip(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    replies = iter(
+        [
+            tool_call_reply(("lookup_order", {"order_id": "A1"})),
+            chat_reply("Order A1 has shipped.", prompt_eval_count=30, eval_count=6),
+        ]
+    )
+    server = FakeOllama(chat=lambda request: httpx.Response(200, json=next(replies)))
+    use_server(server)
+
+    async with OllamaModel(model="llama3.2:3b", context_window=8192) as model:
+        result = await Runtime().run(
+            OrderDesk(model=model, tools=[lookup_order]),
+            skill="status",
+            arguments={"question": "Where is order A1?"},
+        )
+
+    assert result.value == "Order A1 has shipped."
+    assert result.model_calls == 2
+    assert result.tool_calls == 1
+    assert result.usage.total_tokens == 64
+    second = server.chat_bodies()[1]
+    assert second["messages"][-1] == {
+        "role": "tool",
+        "content": '"shipped"',
+        "tool_name": "lookup_order",
+    }
 
 
 # Structured output
