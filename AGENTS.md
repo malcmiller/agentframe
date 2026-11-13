@@ -476,13 +476,20 @@ startup, bound per run inside its deadline. `ask` sends via the SDK
 `JsonRpcTransport` with the directory client to `interface_url` only,
 `return_immediately` then `GetTask` polling (0.25 s -> 1 s), per-request
 `A2A-Version`/timeout headers; deadline or cancellation sends best-effort
-`CancelTask`. Cards declaring security are refused until #92/#93.
+`CancelTask`.
 Implemented (#88): `call(skill, /, *, output=None, **arguments)` checks the
 card declares the skill-call extension and skill (else `RemoteAgentError`, no
 send, no `ask` fallback), sends the M2 wire format with per-request
 `A2A-Extensions`, reuses `ask`'s wait/cancel, decodes text or `{"value": ...}`
 and validates `output` (`OutputValidationError`, no remote data); `output` and
 `max_total_tokens` are reserved (the latter raises `DefinitionError` until #90).
+Implemented (#92): `remotes={name: Service(credential=...)}` on
+`Runtime`/`AgentApp` (same rule as `services=`); `OutboundCredential` protocol
+`async headers()` + `satisfies(scheme)`, built-ins `APIKeyCredential(key,
+header="X-API-Key")`, `EntraAppCredential(credential, scope=...)`. Headers per
+request (send, polls, cancel) to `interface_url` only; no redirects. Startup:
+card security must be met by the entry, else `DefinitionError`; open cards need
+none. #93 `OnBehalfOf` plugs in as another per-remote mode.
 `ClarificationNeededError(question, task_id, context_id)` fails a hosted
 orchestrator task. See `docs/design/discovery.md` and `docs/api/discovery.md`.
 

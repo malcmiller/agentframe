@@ -36,14 +36,23 @@ changelog.
   `Runtime.validate_remotes`. `await remote.ask(text)` sends plain A2A text and
   returns the text answer within the run's deadline, cancelling the remote
   task on deadline or cancellation. New `ClarificationNeededError` when the
-  remote agent asks a question. Agents whose card requires credentials,
-  including Foundry agents, cannot be called yet.
+  remote agent asks a question.
 - **Remote agents (M8+):** `await remote.call("skill", output=Type, **arguments)`
   runs a remote AgentFrame agent's skill by ID through the skill-call
   extension and validates its result into `output` (`OutputValidationError`
   on mismatch). A peer whose card lacks the extension or the skill raises
   `RemoteAgentError` before anything is sent, with no free-text fallback.
   `output` and `max_total_tokens` are reserved argument names.
+- **Outbound identity (M8+):** `remotes={name: Service(credential=...)}` on
+  `Runtime` and `AgentApp` authenticates remote calls with the calling
+  agent's own identity: `APIKeyCredential(key, header="X-API-Key")` or
+  `EntraAppCredential(credential, scope=...)` (any `azure.core` async token
+  credential, sent as a bearer token), or any `OutboundCredential`.
+  Credentials go per request only to the card's validated interface origin,
+  never with redirects, and incoming caller credentials are never forwarded.
+  Agents whose card declares security, including Foundry A2A agents, can now
+  be called; startup fails with `DefinitionError` when the configured
+  credential cannot satisfy the card's security.
 
 ### Fixed
 

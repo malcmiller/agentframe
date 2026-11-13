@@ -260,8 +260,47 @@ Target-scoped credentials must match approved destinations, including redirects.
 Entra targets verify issuer/audience/expiry/signature and user/actor context;
 service targets independently authenticate and authorize the calling agent.
 
-Per-remote mode/configuration carrier, consent/scopes/token-provider interface,
-actor claim verification and non-Entra service credential wiring remain open.
+**Implemented service mode (#92):** configure each remote in `remotes=` on
+`Runtime` or `AgentApp`, kept separate from discovery so credentials never live
+in registries or cards:
+
+```python
+import os
+
+from azure.identity.aio import ManagedIdentityCredential
+
+from agentframe import (
+    AgentDirectory, APIKeyCredential, EntraAppCredential, Runtime, Service,
+)
+
+
+def planner_runtime(
+    directory: AgentDirectory, identity: ManagedIdentityCredential,
+) -> Runtime:
+    return Runtime(
+        directory=directory,
+        remotes={
+            "research-agent": Service(
+                credential=APIKeyCredential(os.environ["RESEARCH_API_KEY"])
+            ),
+            "review-agent": Service(
+                credential=EntraAppCredential(identity, scope="api://review/.default")
+            ),
+        },
+    )
+```
+
+Outbound headers are built only from the configured credential, per request,
+and go only to the remote's validated interface origin (the card URL's
+origin); redirects are never followed with them. A remote without an entry is
+called without credentials, which works only when its card declares no
+security. Startup fails with `DefinitionError`, naming the remote but never
+the secret, when a card's security cannot be met by the configured credential.
+See [`Service`](../api/authorization.md#service) for the exact rules, and
+[`EntraAppCredential`](../api/authorization.md#entraappcredential) for the
+app-role setup an Entra-protected target needs.
+
+The `OnBehalfOf` mode (#93) adds consent/scope and actor-claim handling;
 OBO is not a universal mechanism for every A2A peer; incompatible targets fail
 explicitly under the configured mode rather than silently switching identity.
 See [remote calls](../design/discovery.md#planned-remote-calls-and-cross-agent-context).
