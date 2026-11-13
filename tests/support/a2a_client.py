@@ -8,6 +8,7 @@ declares; nothing here reaches into AgentFrame internals.
 import uuid
 from collections.abc import Mapping
 
+import httpx
 from a2a.client import (
     Client,
     ClientCallContext,
@@ -44,16 +45,22 @@ class StaticCredentials(CredentialService):
         return self.credential
 
 
-async def connect(base_url: str, credential: str | None = None) -> Client:
+async def connect(
+    base_url: str,
+    credential: str | None = None,
+    *,
+    http: httpx.AsyncClient | None = None,
+) -> Client:
     """Connect like any A2A caller: resolve the public card, then use it.
 
     ``credential`` is an API key or bearer token; the SDK sends it the way the
-    card's security scheme says.
+    card's security scheme says. ``http`` replaces the SDK's own HTTP client,
+    for example one that calls an app in-process through ``httpx.ASGITransport``.
     """
     interceptors: list[ClientCallInterceptor] = []
     if credential is not None:
         interceptors.append(AuthInterceptor(StaticCredentials(credential)))
-    return await ClientFactory(ClientConfig()).create_from_url(
+    return await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(
         base_url, interceptors=interceptors
     )
 
