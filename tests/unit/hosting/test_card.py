@@ -167,7 +167,7 @@ async def test_card_publishes_skill_argument_schemas_on_the_extension() -> None:
                 "required": ["text"],
             },
         },
-        "context": ["deadline_ms", "hops"],
+        "context": ["deadline_ms", "hops", "max_total_tokens"],
     }
 
 

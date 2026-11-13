@@ -9,6 +9,10 @@ metadata may carry context about the caller's own run:
   sent the message. Relative, so the two clocks need not agree.
 - ``agentframe.hops``: the request's remote-call depth, the caller's own
   depth plus one. A request without it is a root request, depth 0.
+- ``agentframe.max_total_tokens``: the most tokens the caller lets this
+  request use. The receiver's run uses the smaller of it and its own
+  ``RunLimits.max_total_tokens``; the task's usage snapshot reports what it
+  actually used.
 
 A receiver lists the context fields it supports in its card's extension
 ``params["context"]``; a sender sends only the fields its peer lists. An agent
@@ -44,8 +48,9 @@ CONTEXT_PARAM = "context"
 
 DEADLINE_FIELD = "deadline_ms"
 HOPS_FIELD = "hops"
+MAX_TOTAL_TOKENS_FIELD = "max_total_tokens"
 
-CONTEXT_FIELDS = (DEADLINE_FIELD, HOPS_FIELD)
+CONTEXT_FIELDS = (DEADLINE_FIELD, HOPS_FIELD, MAX_TOTAL_TOKENS_FIELD)
 """The context fields this version reads and advertises on its card."""
 
 KNOWN_METADATA_KEYS = frozenset(
@@ -61,10 +66,13 @@ class CallerContext:
         deadline_seconds: The time the caller had left when it sent the
             message, or ``None`` when it sent none.
         hops: The request's remote-call depth; 0 for a root request.
+        max_total_tokens: The most tokens the caller lets the request use,
+            or ``None`` when it sent no ceiling.
     """
 
     deadline_seconds: float | None = None
     hops: int = 0
+    max_total_tokens: int | None = None
 
 
 def read_caller_context(message: Message) -> CallerContext:
@@ -79,7 +87,8 @@ def read_caller_context(message: Message) -> CallerContext:
     Raises:
         InvalidParamsError: The message carries an unknown ``agentframe.``
             metadata field, or a context field that is not a whole number in
-            range (``deadline_ms`` at least 1, ``hops`` at least 0).
+            range (``deadline_ms`` and ``max_total_tokens`` at least 1,
+            ``hops`` at least 0).
     """
     metadata = dict(message.metadata.items())
     unknown = sorted(
@@ -91,18 +100,20 @@ def read_caller_context(message: Message) -> CallerContext:
         raise InvalidParamsError(
             f"Unknown AgentFrame metadata fields: {', '.join(unknown)}."
         )
-    deadline_key = METADATA_NAMESPACE + DEADLINE_FIELD
-    hops_key = METADATA_NAMESPACE + HOPS_FIELD
-    deadline_seconds = None
-    if deadline_key in metadata:
-        deadline_seconds = _whole_number(deadline_key, metadata[deadline_key], 1) / 1000
-    hops = 0
-    if hops_key in metadata:
-        hops = _whole_number(hops_key, metadata[hops_key], 0)
-    return CallerContext(deadline_seconds, hops)
+    deadline_ms = _whole_number(metadata, DEADLINE_FIELD, 1)
+    return CallerContext(
+        deadline_seconds=None if deadline_ms is None else deadline_ms / 1000,
+        hops=_whole_number(metadata, HOPS_FIELD, 0) or 0,
+        max_total_tokens=_whole_number(metadata, MAX_TOTAL_TOKENS_FIELD, 1),
+    )
 
 
-def _whole_number(key: str, value: object, minimum: int) -> int:
+def _whole_number(metadata: dict[str, object], field: str, minimum: int) -> int | None:
+    """Return a context field's value, or ``None`` when it was not sent."""
+    key = METADATA_NAMESPACE + field
+    if key not in metadata:
+        return None
+    value = metadata[key]
     # JSON numbers arrive as floats; bool is an int subclass but not a number here.
     if (
         isinstance(value, bool)
@@ -135,7 +146,11 @@ def advertised_context(card: AgentCard) -> frozenset[str]:
 
 
 def context_metadata(
-    fields: Collection[str], *, remaining_seconds: float, hops: int
+    fields: Collection[str],
+    *,
+    remaining_seconds: float,
+    hops: int,
+    max_total_tokens: int | None = None,
 ) -> dict[str, int]:
     """Return the message metadata that passes the caller's context on.
 
@@ -143,17 +158,19 @@ def context_metadata(
         fields: The context fields the peer advertises; only these are sent.
         remaining_seconds: The time the caller's run has left.
         hops: The depth of the request being sent.
+        max_total_tokens: The request's token ceiling, or ``None`` to send none.
     """
     values = {
         # Rounded down, so the peer never gets more time than there is; at
         # least 1, the smallest valid value.
         DEADLINE_FIELD: max(1, int(remaining_seconds * 1000)),
         HOPS_FIELD: hops,
+        MAX_TOTAL_TOKENS_FIELD: max_total_tokens,
     }
     return {
         METADATA_NAMESPACE + name: value
         for name, value in values.items()
-        if name in fields
+        if name in fields and value is not None
     }
 
 
