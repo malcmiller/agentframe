@@ -12,16 +12,20 @@ agent code is identical for both providers; only the model passed to it
 differs. Prompts and output caps are tiny to keep paid calls cheap.
 """
 
+import json
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any
 
 import httpx
+import httpx2
+import openai
 import pytest
 from a2a.client import A2ACardResolver
 from a2a.helpers import get_artifact_text, get_data_parts
 from a2a.types import TaskState
-from azure.identity.aio import AzureCliCredential
+from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 from pydantic import BaseModel
 
 from a2a_client import call_skill, connect
@@ -44,6 +48,7 @@ from agentframe import (
     skill,
     tool,
 )
+from agentframe.models.foundry import FOUNDRY_SCOPE
 from agentframe.models.ollama import DEFAULT_ENDPOINT
 from examples.assistant import Summary, create_app
 from local_server import ServeLocally
@@ -306,7 +311,7 @@ async def test_example_summarizes_over_a2a(
     assert not usage["estimated"]
 
 
-# Tool calling (Ollama; Foundry tool calling is #64)
+# Tool calling (Ollama)
 
 
 @pytest.mark.ollama
@@ -328,3 +333,92 @@ async def test_ollama_agent_completes_a_tool_round_trip() -> None:
     assert "tuesday" in result.value.lower()
     assert result.model_calls == 2
     assert result.usage.total_tokens
+
+
+# Tool calling (Foundry): reasoning items round-trip through the tool loop
+
+
+@tool(description="Look up when an order ships.")
+def ship_date(order_id: str, units: str = "days") -> str:
+    return f"Order {order_id} ships in 3 {units}."
+
+
+@agent(version="1.0.0")
+class ShippingDesk(Agent):
+    """Answers questions about orders."""
+
+    model_settings = ModelSettings(max_output_tokens=512)
+    limits = RunLimits(max_input_tokens=2000)
+
+    @skill("ask", tags=["orders"])
+    async def ask(self, question: str, ctx: RunContext) -> str:
+        """Answer with the shipping tool."""
+        return await ctx.generate(question, tools=[ship_date])
+
+
+class ReasoningTransport(httpx2.AsyncBaseTransport):
+    """Turns reasoning on and records every request body sent to Foundry.
+
+    AgentFrame has no reasoning-effort setting, and the deployment's default
+    may skip reasoning, so this application-supplied transport asks for it to
+    make reasoning items appear.
+    """
+
+    def __init__(self) -> None:
+        self.inner = httpx2.AsyncHTTPTransport()
+        self.bodies: list[dict[str, Any]] = []
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content) | {"reasoning": {"effort": "medium"}}
+        self.bodies.append(body)
+        headers = [
+            (name, value)
+            for name, value in request.headers.items()
+            if name.lower() != "content-length"
+        ]
+        return await self.inner.handle_async_request(
+            httpx2.Request(request.method, request.url, headers=headers, json=body)
+        )
+
+    async def aclose(self) -> None:
+        await self.inner.aclose()
+
+
+@pytest.mark.foundry
+@pytest.mark.skipif(
+    os.environ.get("AGENTFRAME_TEST_FOUNDRY") != "1",
+    reason="set AGENTFRAME_TEST_FOUNDRY=1",
+)
+async def test_foundry_tool_call_replays_encrypted_reasoning() -> None:
+    transport = ReasoningTransport()
+    async with (
+        AzureCliCredential() as credential,
+        httpx2.AsyncClient(transport=transport) as http_client,
+    ):
+        client = openai.AsyncOpenAI(
+            base_url=required_env("AGENTFRAME_FOUNDRY_ENDPOINT"),
+            api_key=get_bearer_token_provider(credential, FOUNDRY_SCOPE),
+            http_client=http_client,
+        )
+        model = FoundryModel(
+            deployment=required_env("AGENTFRAME_FOUNDRY_DEPLOYMENT"), client=client
+        )
+        result = await Runtime().run(
+            ShippingDesk(model=model, tools=[ship_date]),
+            skill="ask",
+            arguments={
+                "question": "Today is Monday. On which weekday does order A1 "
+                "ship? Check with the tool."
+            },
+        )
+
+    assert "thursday" in result.value.lower()
+    assert result.model_calls == 2
+    assert result.tool_calls == 1
+    assert not result.usage.estimated
+    first, second = transport.bodies
+    assert first["include"] == ["reasoning.encrypted_content"]
+    assert first["store"] is False
+    replayed = [item.get("type", "message") for item in second["input"]]
+    assert replayed == ["message", "reasoning", "function_call", "function_call_output"]
+    assert second["input"][1]["encrypted_content"]
