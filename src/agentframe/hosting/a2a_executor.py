@@ -43,10 +43,12 @@ A cancelled task reports the usage its run had reached when it was cancelled.
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from a2a.helpers import get_data_parts, new_data_part, new_task, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.context import ServerCallContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import Message, Part, Task, TaskState
@@ -161,6 +163,14 @@ def read_skill_call(message: Message) -> SkillCall:
     return SkillCall(skill_id, data[0])
 
 
+@dataclass(frozen=True)
+class _RunningTask:
+    """What a cancel needs to know about a task whose run is going."""
+
+    accounting: RunAccounting
+    call_context: ServerCallContext
+
+
 class RuntimeExecutor(AgentExecutor):
     """Executes each A2A message as one ``Runtime.run`` of the agent's skill.
 
@@ -189,8 +199,18 @@ class RuntimeExecutor(AgentExecutor):
         self._router = router
         self._limits_ceiling = limits_ceiling
         self._max_response_bytes = max_response_bytes
-        # Accounting of each running task, so a cancel can report its usage.
-        self._running: dict[str, RunAccounting] = {}
+        # Each running task, so a cancel can report its usage and a shutdown
+        # can cancel it on behalf of the caller who started it.
+        self._running: dict[str, _RunningTask] = {}
+
+    def running_tasks(self) -> dict[str, ServerCallContext]:
+        """Return the ID and starting call context of every task now running.
+
+        Tasks waiting for input have no run, so they are not included.
+        """
+        return {
+            task_id: running.call_context for task_id, running in self._running.items()
+        }
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Run the requested or routed skill and publish the task's new state.
@@ -234,7 +254,7 @@ class RuntimeExecutor(AgentExecutor):
             TaskState.TASK_STATE_WORKING,
             metadata=run_metadata(invocation_id, accounting),
         )
-        self._running[task_id] = accounting
+        self._running[task_id] = _RunningTask(accounting, context.call_context)
         try:
             await self._execute(context, task, invocation_id, accounting)
         finally:
@@ -341,7 +361,8 @@ class RuntimeExecutor(AgentExecutor):
             stored = dict(current_task.metadata.items()).get("invocation_id")
             invocation_id = stored if isinstance(stored, str) else None
         # A task waiting for input has no running run, so it used nothing more.
-        accounting = self._running.get(task_id, RunAccounting())
+        running = self._running.get(task_id)
+        accounting = running.accounting if running else RunAccounting()
         await publish_failure(
             task,
             CancelledError(CANCELLED_MESSAGE, invocation_id=invocation_id),

@@ -1,5 +1,7 @@
 """Application code that the ``agentframe run`` tests point the command at."""
 
+import asyncio
+
 from agentframe import (
     Agent,
     AgentApp,
@@ -21,6 +23,17 @@ class Echo(Agent):
         return text
 
 
+@agent(version="0.1.0")
+class Sleeper(Agent):
+    """Has a skill that outlives any short shutdown grace period."""
+
+    @skill(id="sleep", tags=["test"])
+    async def sleep(self, ctx: RunContext) -> str:
+        """Sleep for a minute."""
+        await asyncio.sleep(60)
+        return "awake"
+
+
 class Undecorated(Agent):
     """An agent class someone forgot to decorate with ``@agent``."""
 
@@ -37,6 +50,17 @@ def create_app() -> AgentApp:
     return AgentApp(
         agent=Echo(),
         host=HostConfig(public_url="https://echo.example.com", auth=AllowAnonymous()),
+    )
+
+
+def create_quick_shutdown_app() -> AgentApp:
+    return AgentApp(
+        agent=Sleeper(),
+        host=HostConfig(
+            public_url="https://sleeper.example.com",
+            auth=AllowAnonymous(),
+            shutdown_grace_seconds=1,
+        ),
     )
 
 

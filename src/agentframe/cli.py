@@ -9,13 +9,20 @@ The first form calls the application's own ``create_app()`` function, which
 returns a fully configured ``AgentApp``; secrets belong in environment
 variables read inside it, never in command-line flags. The second form is for
 local development only: it serves an agent class anonymously on localhost.
+
+On SIGTERM or Ctrl+C the app stops being ready and refuses new messages at
+once, waits up to its ``HostConfig.shutdown_grace_seconds`` for running work,
+then cancels the rest and exits. With ``--reload`` that shutdown starts only
+after Uvicorn has waited for open requests, bounded by the same grace period.
 """
 
 import argparse
+import contextlib
 import importlib
 import ipaddress
 import json
 import logging
+import math
 import os
 import sys
 from collections.abc import Sequence
@@ -112,7 +119,8 @@ def serve(settings: RunSettings, *, reload: bool = False) -> None:
     """Build the app described by ``settings`` and serve it until stopped.
 
     The app is built before the server starts, so configuration errors are
-    reported up front, also when reloading.
+    reported up front, also when reloading. Shutdown is graceful, bounded by
+    the app's ``HostConfig.shutdown_grace_seconds``.
 
     Args:
         settings: What to serve and where.
@@ -120,7 +128,8 @@ def serve(settings: RunSettings, *, reload: bool = False) -> None:
 
     Raises:
         CommandError: The target cannot be loaded or is not usable, ``--dev``
-            was asked to bind a non-localhost address, or Uvicorn is missing.
+            was asked to bind a non-localhost address, Uvicorn is missing, or
+            the server failed to start.
         AgentFrameError: The application's configuration is invalid.
     """
     uvicorn = _import_uvicorn()
@@ -130,16 +139,32 @@ def serve(settings: RunSettings, *, reload: bool = False) -> None:
         sys.path.insert(0, os.getcwd())
     app = build_app(settings)
     if not reload:
-        uvicorn.run(app, host=settings.host, port=settings.port)
+        _serve_draining(app, settings)
         return
     os.environ[_RELOAD_SETTINGS_VARIABLE] = json.dumps(asdict(settings))
+    # noinspection PyProtectedMember
+    grace_seconds = app._host.shutdown_grace_seconds
     uvicorn.run(
         f"{__name__}:{_app_for_reload.__name__}",
         factory=True,
         reload=True,
         host=settings.host,
         port=settings.port,
+        timeout_graceful_shutdown=math.ceil(grace_seconds),
     )
+
+
+def _serve_draining(app: AgentApp, settings: RunSettings) -> None:
+    """Serve ``app`` until a signal, starting its shutdown on the signal."""
+    # Imported here because it needs Uvicorn, an optional dependency.
+    from agentframe.hosting.draining_server import DrainingServer
+
+    server = DrainingServer(app, host=settings.host, port=settings.port)
+    # Uvicorn re-raises the signal it handled once it has shut down.
+    with contextlib.suppress(KeyboardInterrupt):
+        server.run()
+    if not server.started:
+        raise CommandError("The server did not start; see the log above.")
 
 
 def build_app(settings: RunSettings) -> AgentApp:
