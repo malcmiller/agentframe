@@ -43,6 +43,7 @@ from agentframe import (
     Clarification,
     HostConfig,
     Principal,
+    RoutingContext,
     RunContext,
     SkillCall,
     SkillDefinition,
@@ -116,7 +117,10 @@ class GreetingRouter(SkillRouter):
     """Routes "greet <name>" to ``greet`` and asks for the name when it is missing."""
 
     async def route(
-        self, conversation: Sequence[Message], skills: Sequence[SkillDefinition]
+        self,
+        conversation: Sequence[Message],
+        skills: Sequence[SkillDefinition],
+        ctx: RoutingContext,
     ) -> SkillCall | Clarification:
         words = " ".join(
             get_message_text(m) for m in conversation if m.role == Role.ROLE_USER

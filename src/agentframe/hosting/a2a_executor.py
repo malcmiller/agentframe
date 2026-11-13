@@ -15,7 +15,9 @@ Outcomes map to native A2A results as follows:
 - A message without the extension is free text. The application's
   ``SkillRouter`` selects the skill and its arguments from the task's
   conversation, or asks the caller a question; without a router free text is
-  refused before a task exists. Routing time counts against the run's timeout.
+  refused before a task exists. Routing time counts against the run's timeout,
+  and the router's model calls (through ``RoutingContext.generate``) are
+  charged to the same run as the selected skill.
 - A result becomes the artifact of a ``COMPLETED`` task: a ``str`` is one text
   part, anything else one data part ``{"value": ...}`` in Pydantic JSON mode.
 - Unknown skills, invalid arguments and denied permissions end the task in
@@ -25,7 +27,9 @@ Outcomes map to native A2A results as follows:
   with a new message in the same task, which is routed again with the earlier
   messages.
 - Router exceptions and timeouts end the task in ``FAILED``; invalid router
-  decisions in ``REJECTED``.
+  decisions in ``REJECTED``. ``AgentFrameError``s raised while routing, such
+  as limit, refusal and provider errors, keep their safe messages; any other
+  router exception gets a generic one.
 
 Every task status carries the run's ``invocation_id`` and a ``usage``
 snapshot in its metadata: ``input_tokens``, ``output_tokens``,
@@ -62,11 +66,11 @@ from agentframe.hosting.routing import (
     SkillCall,
     SkillRouter,
     eligible_skills,
+    new_routing_context,
     route,
 )
 from agentframe.runtime.generation import RunAccounting
-from agentframe.runtime.limits import DEFAULT_LIMITS
-from agentframe.runtime.options import RunOptions, merge_settings
+from agentframe.runtime.options import RunOptions
 from agentframe.runtime.runtime import Runtime
 from agentframe.security.principal import Principal
 
@@ -216,7 +220,7 @@ class RuntimeExecutor(AgentExecutor):
         # noinspection PyBroadException
         try:
             call = await self._choose_skill(
-                context, principal, started_at, invocation_id
+                context, principal, started_at, invocation_id, accounting
             )
             if isinstance(call, Clarification):
                 await publish_input_required(
@@ -257,6 +261,7 @@ class RuntimeExecutor(AgentExecutor):
         principal: Principal | None,
         started_at: float,
         invocation_id: str,
+        accounting: RunAccounting,
     ) -> SkillCall | Clarification:
         """Read the skill call, or ask the router about the free-text message."""
         message = context.message
@@ -268,17 +273,11 @@ class RuntimeExecutor(AgentExecutor):
         assert self._router is not None
         conversation = [*_earlier_messages(context.current_task), message]
         definition = type(self._agent).definition()
-        # The skill is not known yet, so routing is bounded by the agent's
-        # timeout; the selected skill's deadline counts from the same start.
-        limits = merge_settings(DEFAULT_LIMITS, self._agent.limits)
-        assert limits.timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
-        deadline = started_at + limits.timeout_seconds
+        ctx = new_routing_context(
+            self._agent, invocation_id, principal, started_at, accounting
+        )
         return await route(
-            self._router,
-            conversation,
-            eligible_skills(definition, principal),
-            deadline,
-            invocation_id,
+            self._router, conversation, eligible_skills(definition, principal), ctx
         )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
