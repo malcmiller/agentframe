@@ -133,13 +133,14 @@ Model-backed routing is distinct from model-backed skill execution. Neither
 an injected model nor a decorated skill implicitly enables model selection,
 tool access, or multi-skill orchestration. Free-text callers, including clients
 not using the extension, use a configured custom router (M2) or opt-in built-in
-model router (M6). It selects an eligible skill and extracts validated business
+[`ModelRouter`](../api/hosting.md#modelrouter) (M6 #68). It selects an eligible skill and extracts validated business
 arguments; ambiguity or missing input asks back via an A2A
 `TASK_STATE_INPUT_REQUIRED` task, never guesses. A matching single skill still
 needs valid arguments.
 
 The extension's [wire format](../api/hosting.md#structured-skill-call-wire-format)
-is implemented (M2 #5); the router decision and clarification/follow-up contract remain open. Local
+is implemented (M2 #5), and so are the router decision and clarification
+(`SkillCall` / `Clarification`, answered in the same task; M2 #6, M6 #68). Local
 `skill=` is not a standard A2A wire field, and this extension is not claimed as
 an official standard skill-dispatch API. See the [verified A2A 1.0 extension,
 data-part and task-state mechanisms](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
