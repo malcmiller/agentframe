@@ -388,7 +388,9 @@ application input checks, model-request checks before every model request
 (including routing with `skill=None`, structured output and tool-loop
 continuations, once per logical request) and output checks; only an explicit
 `True` allows, a denial raises `PermissionDeniedError` and an erroring or
-late check `PolicyUnavailableError` (#77).
+late check `PolicyUnavailableError` (#77). A manually triggered, reviewer-approved
+GitHub workflow runs the opt-in Foundry tests with OpenID Connect sign-in and no
+stored secret; normal CI still never calls a provider (#81).
 
 ### Resolved M0 platform and API decisions
 
