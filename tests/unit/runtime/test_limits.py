@@ -6,7 +6,6 @@ estimates use four characters per token, so the numbers below are exact.
 """
 
 import asyncio
-import contextlib
 from typing import Any
 
 import pytest
@@ -37,6 +36,7 @@ from agentframe import (
 )
 from agentframe.runtime.limits import DEFAULT_LIMITS
 from agentframe.testing import ScriptedModel
+from local_server import lifespan_startup
 
 UNKNOWN_WINDOW = ModelCapabilities(context_window=None)
 
@@ -343,26 +343,6 @@ async def test_validate_model_reports_a_slow_capabilities_read_as_provider_error
         await Runtime().validate_model(Impatient(model=SlowCapabilitiesModel()))
 
     assert raised.value.transient
-
-
-async def lifespan_startup(app: AgentApp) -> dict[str, Any]:
-    """Run the ASGI lifespan startup and return the server's reply."""
-    events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-    await events.put({"type": "lifespan.startup"})
-    replies: list[dict[str, Any]] = []
-
-    async def receive() -> dict[str, Any]:
-        return await events.get()
-
-    async def send(message: Any) -> None:
-        replies.append(message)
-        await events.put({"type": "lifespan.shutdown"})
-
-    scope = {"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}
-    # Starlette re-raises a startup error after reporting it.
-    with contextlib.suppress(DefinitionError):
-        await app(scope, receive, send)
-    return replies[0]
 
 
 @pytest.fixture

@@ -42,7 +42,8 @@ from agentframe.hosting.a2a_executor import (
 )
 from agentframe.hosting.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
 from agentframe.hosting.host import HostConfig
-from agentframe.hosting.routing import SkillRouter
+from agentframe.hosting.model_router import ModelRouter
+from agentframe.hosting.routing import SkillRouter, routing_limits
 from agentframe.runtime.runtime import Runtime
 from agentframe.security.authentication import authenticate_request, www_authenticate
 from agentframe.security.authorization import AuthorizationPolicy
@@ -63,7 +64,9 @@ class AgentApp:
     ``router``. Constructing
     the app validates everything that needs no I/O and starts nothing; serve
     it with any ASGI server. Server startup then checks the model's input
-    token limits with ``Runtime.validate_model`` and fails if one is unknown.
+    token limits with ``Runtime.validate_model`` and fails if one is unknown,
+    and checks a ``ModelRouter``'s model the same way. The app never closes
+    models; the application owns them.
 
     Args:
         agent: Instance of an ``@agent``-decorated class.
@@ -76,13 +79,16 @@ class AgentApp:
         authorization: Resource authorization policy, when ``runtime`` is not
             given.
         router: Selects the skill for free-text messages or asks the caller a
-            question. ``None`` refuses free text with a protocol error.
+            question. ``None`` refuses free text with a protocol error, even
+            when the agent has a model. A ``ModelRouter``'s schemas are built
+            here and its model is checked at server startup.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
             not registered, ``runtime`` is combined with ``services`` or
-            ``authorization``, or the authenticator cannot describe its
-            security on the Agent Card.
+            ``authorization``, the authenticator cannot describe its
+            security on the Agent Card, or a ``ModelRouter`` cannot describe a
+            skill's arguments as a JSON schema.
     """
 
     def __init__(
@@ -103,7 +109,10 @@ class AgentApp:
         if runtime is None:
             runtime = Runtime(services=services, authorization=authorization)
         runtime.validate(agent)
-        card = build_agent_card(type(agent).definition(), host)
+        definition = type(agent).definition()
+        if isinstance(router, ModelRouter):
+            router.validate_skills(definition.skills.values())
+        card = build_agent_card(definition, host)
         handler = _RequestHandler(
             router=router,
             agent_executor=RuntimeExecutor(agent, runtime, router),
@@ -116,10 +125,14 @@ class AgentApp:
 
         @asynccontextmanager
         async def lifespan(_app: Starlette) -> AsyncIterator[None]:
-            # Fails startup, before any request is served, when a skill has
-            # no input token limit.
+            # Fails startup, before any request is served, when a skill or
+            # the built-in router has no input token limit. Custom routers
+            # check their own models.
             await runtime.validate_model(agent)
+            if isinstance(router, ModelRouter):
+                await router.validate_model(routing_limits(agent))
             yield
+            # Models are application-owned, so they are never closed here.
             await handler.aclose()
 
         self._app = Starlette(

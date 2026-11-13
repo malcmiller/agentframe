@@ -12,23 +12,27 @@ as ``assistant`` messages. The router never guesses: anything ambiguous,
 missing or invalid becomes a ``Clarification``.
 """
 
+import asyncio
 import copy
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any, Literal
 
 from a2a.helpers import get_message_text
 from a2a.types import Message, Role
 from pydantic import (
     BaseModel,
+    PydanticUserError,
     ValidationError,
     create_model,
 )
 
 from agentframe.authoring.definitions import SkillDefinition
-from agentframe.errors import InputValidationError
+from agentframe.errors import DefinitionError, InputValidationError, ProviderError
 from agentframe.hosting.routing import Clarification, RoutingContext, SkillCall
 from agentframe.models.base import Message as ModelMessage
 from agentframe.models.base import Model, ModelSettings
+from agentframe.runtime.generation import input_token_limit, output_schema
+from agentframe.runtime.limits import RunLimits
 
 NO_TEXT_QUESTION = "Please describe in text what you would like me to do."
 """Asked when the caller's latest message has no text to route."""
@@ -86,9 +90,11 @@ class ModelRouter:
     """Routes free-text A2A messages with a model, or asks the caller.
 
     Opt-in: pass it as ``AgentApp(router=...)``. It uses only the model given
-    here, never the agent's. It can only choose among the skills the caller
-    may run, and the runtime still validates the arguments and checks
-    permissions and policy before the skill runs.
+    here, never the agent's, and the application owns and closes that model.
+    ``AgentApp`` checks the model and the skills' schemas before serving.
+    It can only choose among the skills the caller may run, and the runtime
+    still validates the arguments and checks permissions and policy before
+    the skill runs.
 
     Args:
         model: The router's model. It must support structured output. Pass
@@ -188,6 +194,64 @@ class ModelRouter:
         if reply.question or reply.arguments is None:
             return ask(reply.question)
         return checked_call(skill, reply.arguments)
+
+    def validate_skills(self, skills: Iterable[SkillDefinition]) -> None:
+        """Build the selection and extraction schemas for ``skills`` once.
+
+        ``AgentApp`` calls this when it is constructed, so a skill whose
+        arguments have no JSON schema fails before anything is served.
+        Whether the model's adapter accepts each schema is only known at the
+        first routing call (``UnsupportedCapabilityError``).
+
+        Args:
+            skills: Every skill of the hosted agent.
+
+        Raises:
+            DefinitionError: A skill's arguments cannot be described as a
+                JSON schema.
+        """
+        skills = list(skills)
+        output_schema(selection_output(skills))
+        for skill in skills:
+            try:
+                output_schema(extraction_output(skill))
+            except PydanticUserError:
+                raise DefinitionError(
+                    f"ModelRouter cannot describe the arguments of skill "
+                    f"'{skill.id}' as a JSON schema"
+                ) from None
+
+    async def validate_model(self, limits: RunLimits) -> None:
+        """Check that the router's model can route under ``limits``.
+
+        ``AgentApp`` calls this at server startup. Reading the model's
+        capabilities may do I/O, so it is bounded by ``limits.timeout_seconds``.
+
+        Args:
+            limits: The limits routing runs under (the agent's).
+
+        Raises:
+            DefinitionError: The model does not support structured output, or
+                reports no context window while ``max_input_tokens`` is unset.
+            ProviderError: The capabilities could not be read, or reading them
+                took longer than the timeout.
+        """
+        try:
+            async with asyncio.timeout(limits.timeout_seconds):
+                capabilities = await self.model.capabilities()
+        except TimeoutError:
+            raise ProviderError(
+                "Reading the router model's capabilities timed out", transient=True
+            ) from None
+        if not capabilities.structured_output:
+            raise DefinitionError(
+                "ModelRouter's model does not support structured output, which "
+                "routing needs"
+            )
+        try:
+            input_token_limit(limits, capabilities)
+        except DefinitionError as error:
+            raise DefinitionError(f"ModelRouter: {error.message}") from None
 
     def _with_extra_instructions(self, instructions: str) -> str:
         if self.instructions:
