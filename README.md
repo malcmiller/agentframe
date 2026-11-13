@@ -457,21 +457,32 @@ your Foundry resource and its resource group):
    ```
 
 2. Trust only this repository's `foundry` environment through a federated
-   credential (no client secret):
+   credential (no client secret). The subject must match the token's `sub`
+   claim exactly. Repositories created after July 15, 2026, like this one,
+   use [immutable subject claims](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/)
+   that include the owner and repository IDs (`repo:<owner>@<owner-id>/<repo>@<repo-id>`):
 
    ```bash
    az ad app federated-credential create --id "$APP_ID" --parameters '{
      "name": "agentframe-foundry-environment",
      "issuer": "https://token.actions.githubusercontent.com",
-     "subject": "repo:malcmiller/agentframe:environment:foundry",
+     "subject": "repo:malcmiller@58534574/agentframe@1452010815:environment:foundry",
      "audiences": ["api://AzureADTokenExchange"]
    }'
    ```
 
+   For a fork, read your prefix with
+   `gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix`
+   (or the IDs with `gh api repos/<owner>/<repo> --jq '.owner.id, .id'`) and
+   append `:environment:foundry`. If sign-in fails with **AADSTS700213** (no
+   matching federated identity), copy the `subject claim - ...` value from the
+   workflow's Azure login log into the federated credential.
+
 3. Grant inference only, on the one Foundry resource. **Cognitive Services
    OpenAI User** allows calling deployments (including the Responses API) but
-   not managing them; do not use broader roles such as Foundry User or
-   Contributor:
+   not managing them; do not use broader roles such as Contributor. If calls
+   still fail with 403 after the assignment propagates (a few minutes), assign
+   **Foundry User** (formerly Azure AI User) on the same scope instead:
 
    ```bash
    RESOURCE_ID=$(az cognitiveservices account show --name <resource> \
@@ -492,7 +503,7 @@ your Foundry resource and its resource group):
    | `AZURE_CLIENT_ID` | `$APP_ID` from step 1. |
    | `AZURE_TENANT_ID` | `az account show --query tenantId -o tsv` |
    | `AZURE_SUBSCRIPTION_ID` | The subscription containing the Foundry resource. |
-   | `AGENTFRAME_FOUNDRY_ENDPOINT` | OpenAI v1 base URL, `https://<resource>.openai.azure.com/openai/v1/`. |
+   | `AGENTFRAME_FOUNDRY_ENDPOINT` | OpenAI v1 base URL, `https://<resource>.openai.azure.com/openai/v1/` or `https://<resource>.services.ai.azure.com/openai/v1/`. |
    | `AGENTFRAME_FOUNDRY_DEPLOYMENT` | Deployment name. |
 
    For example, `gh variable set AZURE_CLIENT_ID --env foundry --body "$APP_ID"`.

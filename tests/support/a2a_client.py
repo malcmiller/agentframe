@@ -55,7 +55,9 @@ async def connect(
 
     ``credential`` is an API key or bearer token; the SDK sends it the way the
     card's security scheme says. ``http`` replaces the SDK's own HTTP client,
-    for example one that calls an app in-process through ``httpx.ASGITransport``.
+    for example one that calls an app in-process through ``httpx.ASGITransport``
+    or one with a longer timeout for real models (the SDK's own client uses
+    httpx's 5-second default).
     """
     interceptors: list[ClientCallInterceptor] = []
     if credential is not None:
@@ -71,14 +73,9 @@ async def send(
     *,
     skill_call: bool,
     return_immediately: bool = False,
-    timeout: float | None = None,
 ) -> Task:
-    """Send one message and return the task; ``skill_call`` activates the extension.
-
-    ``timeout`` overrides the client's request timeout (5 seconds by default)
-    in seconds, for runs with several real model calls.
-    """
-    context = ClientCallContext(timeout=timeout)
+    """Send one message and return the task; ``skill_call`` activates the extension."""
+    context = ClientCallContext()
     if skill_call:
         extensions = with_a2a_extensions([SKILL_CALL_EXTENSION_URI])
         context.service_parameters = ServiceParametersFactory.create([extensions])
@@ -109,9 +106,7 @@ async def call_skill(
     )
 
 
-async def say(
-    client: Client, text: str, task_id: str = "", *, timeout: float | None = None
-) -> Task:
+async def say(client: Client, text: str, task_id: str = "") -> Task:
     """Send free text, optionally answering a question in an existing task."""
     message = Message(
         message_id=str(uuid.uuid4()),
@@ -119,4 +114,4 @@ async def say(
         parts=[new_text_part(text)],
         task_id=task_id,
     )
-    return await send(client, message, skill_call=False, timeout=timeout)
+    return await send(client, message, skill_call=False)
