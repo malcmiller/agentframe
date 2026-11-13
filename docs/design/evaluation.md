@@ -1,9 +1,10 @@
 # Evaluation
 
-**Status: proposed (M9), not implemented.** Nothing on this page exists in
-`agentframe` yet. Names, defaults and shapes below are recommendations awaiting
-the maintainer's decisions; each unresolved choice is listed under
-[open questions](#open-questions) with a recommendation.
+**Status: planned (M9), not implemented.** Nothing on this page exists in
+`agentframe` yet. The design choices listed under
+[decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
+exact signatures and remaining details are settled while building the stories
+of the [M9 overview](https://github.com/malcmiller/agentframe/issues/164).
 
 Agents built with AgentFrame are nondeterministic once they call a model. Unit
 tests with [`ScriptedModel`](../api/models.md#scriptedmodel) prove the code
@@ -77,9 +78,10 @@ repeated votes, and the judge charged to the same budget as everything else.
 
 ## API sketch
 
-All of this is proposed. It lives in a separate `agentframe.evaluation` module
-(like `agentframe.testing`), not in the top-level `agentframe` namespace, so the
-core import stays unchanged ([open question 1](#open-questions)).
+Signatures below are illustrative until built. The harness lives in a separate
+`agentframe.evaluation` module (like `agentframe.testing`), not in the top-level
+`agentframe` namespace, so the core import stays unchanged
+([decisions 1-2](#decisions-confirmed-2026-11-13)).
 
 ```python
 # test_assistant_eval.py - proposed, not implemented
@@ -189,7 +191,7 @@ fails fast instead of producing a confusing score.
 
 ### Targets
 
-A target runs one case and returns its output plus metadata. Two are proposed:
+A target runs one case and returns its output plus metadata. M9 has two:
 
 | Target | Runs | Output and metadata |
 | --- | --- | --- |
@@ -209,7 +211,7 @@ supported because an evaluation run has no signed-in user.
 `principal=`; the harness never invents one.
 
 An in-process hosted target (exercising an `AgentApp`'s router and
-authentication without a network) is not proposed: run the app with
+authentication without a network) is not part of M9: run the app with
 `agentframe dev` and point an `A2ATarget` at it.
 
 ### Scorers
@@ -269,7 +271,7 @@ one output meets a written rubric:
 - **Determinism.** `ModelSettings` has no temperature or seed today, and some
   Foundry reasoning deployments reject temperature. The judge relies on a binary
   rubric, reference answers and votes instead
-  ([open question 10](#open-questions)).
+  ([decision 10](#decisions-confirmed-2026-11-13)).
 - **Self-preference.** The docs recommend a judge model different from the
   target's; the harness does not enforce it.
 
@@ -337,7 +339,7 @@ operator logs with the invocation ID, as for runs.
 
 ### pytest and CI
 
-No pytest plugin is proposed: an installed plugin would load in every project
+There is no pytest plugin: an installed plugin would load in every project
 that has AgentFrame and pytest. Evaluations are ordinary async tests (pytest
 asyncio auto mode works as in this repository), using `report.require(...)`.
 
@@ -351,29 +353,23 @@ asyncio auto mode works as in this repository), using `report.require(...)`.
 
 A small CLI for CI without pytest, `agentframe eval module:create_evaluation
 [--json PATH] [--min-pass-rate RATE]` exiting non-zero below the threshold, is
-proposed as the last, optional story ([open question 14](#open-questions)).
+the last, droppable story ([decision 14](#decisions-confirmed-2026-11-13)).
 
 ## Packaging and dependencies
 
 Everything above can be built from what AgentFrame already depends on: Pydantic
 for cases and verdicts, the A2A SDK through the existing remote client, the
 standard library `json` for JSONL and reports, and provider extras for judge
-models. So the recommendation is **no new runtime dependency** for M9.
+models. So M9 adds **no new runtime dependency**.
 
-The user suggested `pip install "agentframe-py[eval]"`. Options:
+`agentframe.evaluation` ships in the main wheel and is imported only when used
+(like `agentframe.testing`); install with `pip install agentframe-py`, plus the
+`ollama` or `foundry` extra for a judge model. There is no separate extra for
+evaluation: one is added only if evaluation ever needs a dependency of its own,
+and that dependency is then pinned exactly.
 
-1. **Recommended:** ship `agentframe.evaluation` in the main wheel, imported only
-   when used (like `agentframe.testing`), with no `eval` extra until a
-   dependency is actually needed. A judge on Ollama or Foundry already installs
-   with the `ollama` / `foundry` extras.
-2. Declare an `eval` extra now (empty or aliasing provider extras) so the
-   install command is stable. An empty extra installs nothing, which can mislead.
-3. A separate distribution (`agentframe-evals`). Heavier release process for no
-   dependency benefit.
-
-Whichever is chosen: importing `agentframe` never imports the evaluation module,
-no I/O happens at import or construction, and any future dependency is pinned
-exactly when introduced.
+Importing `agentframe` never imports the evaluation module, and no I/O happens
+at import or construction.
 
 ## Security and privacy
 
@@ -399,64 +395,66 @@ agent and safety evaluators can score the same runs, or upload them through
 needs `capture_content=True`, so it is an explicit export, not a default. Not
 in M9.
 
-## Open questions
+## Decisions confirmed 2026-11-13
 
-Each has a recommendation; none is decided yet.
+The maintainer confirmed every recommendation from the planning review on
+2026-11-13. Story-level details are recorded in each story of the
+[M9 overview](https://github.com/malcmiller/agentframe/issues/164).
 
-1. **Packaging and install command.** Recommendation: `agentframe.evaluation` in
-   the main wheel, no `eval` extra until a dependency is needed (option 1 above).
+1. **Packaging and install command.** **Decision:** `agentframe.evaluation` in
+   the main wheel; a separate extra only arrives with a dependency.
    Everything needed is already core or a provider extra.
-2. **Module name.** Recommendation: `agentframe.evaluation`, not
+2. **Module name.** **Decision:** `agentframe.evaluation`, not
    `agentframe.eval`, which reads like the `eval` built-in.
-3. **Case shape.** Recommendation: one `Case` with exactly one of `arguments` or
+3. **Case shape.** **Decision:** one `Case` with exactly one of `arguments` or
    `text`, plus optional `expected` and `tags`. One type covers structured and
    free-text targets.
-4. **Dataset formats.** Recommendation: Python lists and JSONL only in M9 (no
+4. **Dataset formats.** **Decision:** Python lists and JSONL only in M9 (no
    YAML/CSV). JSONL is what Foundry and OpenAI evals read and is easy to append
    and diff.
-5. **Scorer form.** Recommendation: plain sync/async functions returning `bool`
+5. **Scorer form.** **Decision:** plain sync/async functions returning `bool`
    or `Score`, no `@scorer` decorator or base class. Smallest thing a newcomer
    understands.
-6. **Pass rule and numeric scores.** Recommendation: a case passes when all its
+6. **Pass rule and numeric scores.** **Decision:** a case passes when all its
    scorers pass; bare numbers are refused, so thresholds are always explicit in
    the scorer.
-7. **Expected errors.** Recommendation: any target error fails the case in M9;
+7. **Expected errors.** **Decision:** any target error fails the case in M9;
    no `expected_error=` field yet. Keeps the case model small; limit and refusal
    behavior is already covered by unit tests.
-8. **Concurrency default.** Recommendation: `concurrency=4`. Fast enough for
+8. **Concurrency default.** **Decision:** `concurrency=4`. Fast enough for
    small datasets while staying under typical provider rate limits and the
    default host admission of 32.
-9. **Evaluation-wide budget.** Recommendation: optional `max_total_tokens` and
+9. **Evaluation-wide budget.** **Decision:** optional `max_total_tokens` and
    `timeout_seconds` on `Evaluation`, unset by default because per-case
    `RunLimits` already bound every case; when set, reserve per case and mark the
    rest `not_run`.
-10. **Judge determinism.** Recommendation: do not add `temperature`/`seed` to
+10. **Judge determinism.** **Decision:** do not add `temperature`/`seed` to
     `ModelSettings` for M9; use a binary rubric, reference answers and optional
     `votes`. Provider support is uneven and some reasoning deployments reject
     temperature.
-11. **Judge verdict.** Recommendation: binary `passed` plus `reason`, not a 1-10
+11. **Judge verdict.** **Decision:** binary `passed` plus `reason`, not a 1-10
     scale. Binary labels with a rubric are easier to agree on and need no
     threshold.
-12. **Repeats.** Recommendation: `repeats=1` by default; pass rate counts every
+12. **Repeats.** **Decision:** `repeats=1` by default; pass rate counts every
     attempt and mixed outcomes mark a case `flaky`. Makes nondeterminism visible
     without a statistics framework.
-13. **Content capture.** Recommendation: off by default for console and JSON,
+13. **Content capture.** **Decision:** off by default for console and JSON,
     including judge reasons; one explicit `capture_content=True`. Matches the
     tracing and logging redaction rules.
-14. **CLI.** Recommendation: include `agentframe eval` as the last, separable
+14. **CLI.** **Decision:** include `agentframe eval` as the last, separable
     story; pytest plus JSON covers CI first, so it can be dropped without
     blocking the milestone.
-15. **pytest plugin.** Recommendation: none; ordinary tests plus
+15. **pytest plugin.** **Decision:** none; ordinary tests plus
     `report.require(...)`. An entry-point plugin would load in every project with
     AgentFrame installed.
-16. **A2A target scope.** Recommendation: `A2ATarget(directory, name, skill=...)`
+16. **A2A target scope.** **Decision:** `A2ATarget(directory, name, skill=...)`
     reusing the `Remote` binding, service identity only (no on-behalf-of), no
     in-process hosted target. Reuses decided outbound rules instead of adding a
     second client.
-17. **Foundry export.** Recommendation: a later optional adapter alongside MCP,
+17. **Foundry export.** **Decision:** a later optional adapter alongside MCP,
     tracing and AG-UI, not M9. M9 should prove the local harness first, and
     export needs captured content.
-18. **Milestone placement.** Recommendation: M9, after the M8+ release, with no
+18. **Milestone placement.** **Decision:** M9, after the M8+ release, with no
     imposed order relative to the later adapters. Evaluation needs the remote
     client (M8+) but no adapter.
 

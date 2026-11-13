@@ -50,7 +50,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | Document | Purpose |
 | --- | --- |
 | [Base classes](design/base-classes.md) | Complete annotation/subclass/composition decision table, interfaces, and small proposed API examples. |
-| [Evaluation](design/evaluation.md) | Proposed M9 evaluation harness: typed cases, local and A2A targets, scorers and rubric judge, budgets, private-by-default reports and CI use; open questions with recommendations. |
+| [Evaluation](design/evaluation.md) | Planned M9 evaluation harness: typed cases, local and A2A targets, scorers and rubric judge, budgets, private-by-default reports and CI use; decisions confirmed 2026-11-13. |
 | [Discovery](design/discovery.md) | M8+ core registry/directory and remote A2A composition, cross-hop context, local/container deployment direction and acceptance; not a workflow/graph engine. |
 | [MCP skills](design/mcp-skills.md) | Optional allowlisted skill publication, shared A2A/MCP hosting, schema mapping, and protocol boundaries. |
 | [Prompt safeguarding](design/prompt-safeguarding.md) | Shared responsibilities, content-policy hooks, data egress, and prompt-injection limitations. |
