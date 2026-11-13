@@ -279,7 +279,7 @@ development tooling; M1 adds model-free authoring and local execution.
 | 4 | Typed structured outputs (complete) | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
 | 5 | Bounded tool calling (complete) | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
 | 6 | Built-in opt-in model router (complete) | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
-| 7 | Hardening and first usable release (complete; PyPI release #82 pending) | Prove decided defaults/precedence within ceilings, deadlines/cancellation, DI startup/scoped cleanup, `RunResult` without telemetry, safe correlated errors and identity/resource/policy failures. Prove host admission/byte/shutdown limits, health/readiness and A2A deduplication/caller isolation without exactly-once claims; installed-wheel examples return complete validated results. No built-in approval pause/resume. |
+| 7 | Hardening and first usable release (complete) | Prove decided defaults/precedence within ceilings, deadlines/cancellation, DI startup/scoped cleanup, `RunResult` without telemetry, safe correlated errors and identity/resource/policy failures. Prove host admission/byte/shutdown limits, health/readiness and A2A deduplication/caller isolation without exactly-once claims; installed-wheel examples return complete validated results. No built-in approval pause/resume. |
 
 M0 acceptance was verified on **2026-11-11**: all four checks passed locally on
 Python 3.13.16, 3.14.8 and 3.15.0; fresh-clone `uv sync`, pre-commit, sdist/wheel
@@ -422,19 +422,24 @@ message. Local runs never convert `asyncio.CancelledError`; AgentFrame
 `CancelledError` only reports a cancelled hosted task (later a remote call).
 Skill tracebacks stay in operator logs. A shutdown race it found, harmless with
 the in-memory task store, is tracked in #128. With installed-wheel
-examples (#80) merged, the M7 build stories are complete. Two checks wait on
-the maintainer's own setup: the opt-in real-token Entra test (#76) needs an app
-registration, and the first manual Foundry workflow run (#81) needs its
-one-time setup. Publishing the first release to PyPI (#82) is still pending
-and is done by the maintainer; no release has been published. The release
-preparation is in place: version `0.1.0`, `CHANGELOG.md`, the README install
-and pre-1.0 stability statement, and `.github/workflows/release.yml`, which
-publishes a GitHub release from a `v*` tag to TestPyPI, verifies a clean
-install there, then publishes to PyPI with trusted publishing behind the `pypi`
-environment's reviewers (see [releasing](guides/releasing.md)). The PyPI
+examples (#80) merged, the M7 build stories are complete. The two checks that
+needed the maintainer's own setup passed: the first manual Foundry workflow run
+on `main` (#81, fixes in #133) and the opt-in real-token Entra test
+(`pytest -m entra`, #76), on **2026-11-13**.
+
+M7 was completed on **2026-11-13** with the first release (#82): AgentFrame
+[0.1.0](https://pypi.org/project/agentframe-py/0.1.0/) was published to PyPI
+after a TestPyPI rehearsal, via trusted publishing (no stored credentials) from
+the GitHub release [v0.1.0](https://github.com/malcmiller/agentframe/releases/tag/v0.1.0)
+on a `v*` tag. `.github/workflows/release.yml` published to TestPyPI, ran the
+examples smoke runner against a clean install from there, published to PyPI
+behind the `pypi` environment's reviewers, then installed from PyPI on Python
+3.13, 3.14 and 3.15 (see [releasing](guides/releasing.md)). The release carries
+the stability note "Pre-1.0: public APIs may change in minor releases; changes
+are listed in the changelog." and the [changelog](../CHANGELOG.md). The PyPI
 distribution is `agentframe-py`, since PyPI refused `agentframe` as too similar
 to an existing project; the import package and `agentframe` command are
-unchanged.
+unchanged. The next core release is M8+ multi-agent A2A composition (#17).
 
 ### Resolved M0 platform and API decisions
 
