@@ -1,6 +1,6 @@
 """``OllamaModel``: an adapter for models served by an Ollama server.
 
-Needs the optional ``ollama`` package: ``pip install agentframe[ollama]``.
+Needs the optional ``ollama`` package: ``pip install agentframe-py[ollama]``.
 """
 
 import asyncio
@@ -17,7 +17,7 @@ try:
 except ImportError as error:
     raise ImportError(
         "OllamaModel needs the optional 'ollama' package; "
-        "install it with: pip install 'agentframe[ollama]'"
+        "install it with: pip install 'agentframe-py[ollama]'"
     ) from error
 
 from agentframe.errors import DefinitionError, ProviderError, UnsupportedCapabilityError

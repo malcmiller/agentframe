@@ -594,7 +594,7 @@ def test_missing_extra_names_the_extra_to_install() -> None:
     )
 
     assert result.returncode != 0
-    assert "agentframe[foundry]" in result.stderr
+    assert "agentframe-py[foundry]" in result.stderr
 
 
 # Structured output

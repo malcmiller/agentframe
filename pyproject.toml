@@ -3,7 +3,7 @@ requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentframe"
+name = "agentframe-py"
 version = "0.1.0"
 description = "Define agents with Python. Communicate through A2A. Choose your model host."
 readme = "README.md"
@@ -58,8 +58,12 @@ dev = [
     # Imported directly by the tests, so pinned rather than left transitive.
     "httpx2==2.16.0",
     "azure-core==1.41.0",
-    "agentframe[ollama,foundry,entra]",
+    "agentframe-py[ollama,foundry,entra]",
 ]
+
+# The distribution is agentframe-py; the import package stays agentframe.
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentframe"]
 
 [tool.ruff]
 line-length = 88

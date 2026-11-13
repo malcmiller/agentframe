@@ -32,7 +32,7 @@ http-server = [
 ]
 
 [[package]]
-name = "agentframe"
+name = "agentframe-py"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -60,7 +60,7 @@ server = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "agentframe", extra = ["entra", "foundry", "ollama"] },
+    { name = "agentframe-py", extra = ["entra", "foundry", "ollama"] },
     { name = "azure-core" },
     { name = "httpx" },
     { name = "httpx2" },
@@ -89,7 +89,7 @@ provides-extras = ["server", "ollama", "foundry", "entra"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "agentframe", extras = ["ollama", "foundry", "entra"] },
+    { name = "agentframe-py", extras = ["ollama", "foundry", "entra"] },
     { name = "azure-core", specifier = "==1.41.0" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "httpx2", specifier = "==2.16.0" },

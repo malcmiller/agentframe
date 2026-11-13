@@ -2,7 +2,7 @@
 
 Validation follows Microsoft's access token guidance:
 https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validate-tokens
-Needs the optional extra: ``pip install agentframe[entra]``.
+Needs the optional extra: ``pip install agentframe-py[entra]``.
 """
 
 import asyncio
@@ -18,7 +18,7 @@ try:
 except ImportError as error:
     raise ImportError(
         "EntraIDAuth needs the optional 'PyJWT' and 'httpx' packages; "
-        "install them with: pip install 'agentframe[entra]'"
+        "install them with: pip install 'agentframe-py[entra]'"
     ) from error
 
 from a2a.types import OpenIdConnectSecurityScheme, SecurityScheme

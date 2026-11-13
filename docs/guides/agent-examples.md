@@ -155,7 +155,7 @@ def build_writer(
 
 The application supplies the endpoint, deployment and an API key or async
 Azure token credential; `FoundryModel` (implemented in M3 #39, extra
-`agentframe[foundry]`) calls the OpenAI v1 Responses API at
+`agentframe-py[foundry]`) calls the OpenAI v1 Responses API at
 `https://<resource>.openai.azure.com/openai/v1/` through the official `openai`
 package, wrapping a token credential for scope `https://ai.azure.com/.default`.
 Do not use the retired Azure AI Inference SDK. See

@@ -54,11 +54,15 @@ decisions; unspecified interfaces remain open.
 
 ## Installation
 
-From version 0.1.0, AgentFrame is installed from PyPI (Python 3.13 or later):
+Once version 0.1.0 is published, AgentFrame will be installable from PyPI
+(Python 3.13 or later):
 
 ```shell
-pip install agentframe
+pip install agentframe-py
 ```
+
+The distribution is named `agentframe-py`, but you import it as `agentframe`
+(like `scikit-learn` and `sklearn`).
 
 Optional extras add what a deployment needs:
 
@@ -69,7 +73,7 @@ Optional extras add what a deployment needs:
 | `foundry` | `FoundryModel`, for Microsoft Foundry GPT deployments. |
 | `entra` | `EntraIDAuth`, for Microsoft Entra ID caller authentication. |
 
-For example, `pip install "agentframe[server,ollama]"`.
+For example, `pip install "agentframe-py[server,ollama]"`.
 
 **Stability:** Pre-1.0: public APIs may change in minor releases; changes are
 listed in the [changelog](CHANGELOG.md).

@@ -1,4 +1,4 @@
-# Publishes agentframe to TestPyPI, then PyPI, when the maintainer publishes a
+# Publishes agentframe-py to TestPyPI, then PyPI, when the maintainer publishes a
 # GitHub release for a v* tag on main. The distributions are built once, checked,
 # and the same files are uploaded to both indexes. Uploads use PyPI trusted
 # publishing (OpenID Connect), so no API token is stored anywhere; the PyPI
@@ -72,9 +72,9 @@ jobs:
         run: |
           for index in https://pypi.org https://test.pypi.org; do
             status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-              "${index}/pypi/agentframe/${VERSION}/json")"
+              "${index}/pypi/agentframe-py/${VERSION}/json")"
             if [ "${status}" != "404" ]; then
-              echo "::error::agentframe ${VERSION} exists on ${index} or it is unreachable (HTTP ${status})"
+              echo "::error::agentframe-py ${VERSION} exists on ${index} or it is unreachable (HTTP ${status})"
               exit 1
             fi
           done
@@ -86,8 +86,8 @@ jobs:
           files=(dist/*)
           printf '%s\n' "${files[@]}"
           test "${#files[@]}" -eq 2
-          test -f "dist/agentframe-${VERSION}-py3-none-any.whl"
-          test -f "dist/agentframe-${VERSION}.tar.gz"
+          test -f "dist/agentframe_py-${VERSION}-py3-none-any.whl"
+          test -f "dist/agentframe_py-${VERSION}.tar.gz"
       - uses: ./.github/actions/check-wheel
       # Passed to the upload jobs as a job output, separately from the
       # artifact, so they can confirm they upload exactly these files.
@@ -114,7 +114,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/agentframe/${{ needs.build.outputs.version }}/
+      url: https://test.pypi.org/project/agentframe-py/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -149,14 +149,14 @@ jobs:
       - name: Create a clean Python 3.13 environment
         working-directory: ${{ runner.temp }}
         run: uv venv --seed --python 3.13 venv
-      # Only agentframe comes from TestPyPI, so look-alike packages there can
+      # Only agentframe-py comes from TestPyPI, so look-alike packages there can
       # never replace its dependencies. Retried while the index catches up.
-      - name: Install agentframe from TestPyPI
+      - name: Install agentframe-py from TestPyPI
         working-directory: ${{ runner.temp }}
         run: |
           for attempt in 1 2 3 4 5 6; do
             if venv/bin/pip install --no-deps \
-              --index-url https://test.pypi.org/simple/ "agentframe==${VERSION}"; then
+              --index-url https://test.pypi.org/simple/ "agentframe-py==${VERSION}"; then
               exit 0
             fi
             echo "Not installable yet (attempt ${attempt}); retrying in 30 seconds"
@@ -165,7 +165,7 @@ jobs:
           exit 1
       - name: Install its dependencies from PyPI
         working-directory: ${{ runner.temp }}
-        run: venv/bin/pip install "agentframe[server]==${VERSION}"
+        run: venv/bin/pip install "agentframe-py[server]==${VERSION}"
       # A copy outside the checkout, so src/ can never shadow the install.
       - name: Smoke-test the examples against the TestPyPI install
         run: |
@@ -181,7 +181,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: pypi
-      url: https://pypi.org/project/agentframe/${{ needs.build.outputs.version }}/
+      url: https://pypi.org/project/agentframe-py/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -216,11 +216,11 @@ jobs:
       - name: Create a clean Python ${{ matrix.python-version }} environment
         working-directory: ${{ runner.temp }}
         run: uv venv --seed --python "${{ matrix.python-version }}" venv
-      - name: pip install agentframe from PyPI
+      - name: pip install agentframe-py from PyPI
         working-directory: ${{ runner.temp }}
         run: |
           for attempt in 1 2 3 4 5 6; do
-            if venv/bin/pip install "agentframe[server]==${VERSION}"; then
+            if venv/bin/pip install "agentframe-py[server]==${VERSION}"; then
               exit 0
             fi
             echo "Not installable yet (attempt ${attempt}); retrying in 30 seconds"
