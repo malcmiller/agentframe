@@ -185,8 +185,9 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
 - Offer no shell, filesystem, network-fetching, or other tools by default.
 - Bound tool execution and generation continuations, validate tool arguments
   and results, authorize each action, and never retry side effects implicitly.
-  Normalized tool-call layouts are settled (M5 #59); additional tool retry
-  rules remain open.
+  Normalized tool-call layouts are settled (M5 #59). No tool is ever retried
+  automatically, model retries never replay tools, and repeated model-requested
+  calls are new counted calls, not blocked (M5 #63).
 - Host defaults: 32 concurrent runs (excess immediately rejected with standard
   busy error), 1 MiB request, 4 MiB response, 30-second shutdown grace (stop
   accepting, drain, then cancel). `/health` is liveness; `/ready` means startup
