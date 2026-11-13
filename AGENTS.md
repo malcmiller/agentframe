@@ -110,7 +110,8 @@ server and a real Foundry deployment: text generation with usage, a tiny
 `max_output_tokens` raising `IncompleteOutputError` (text and structured), a
 clear error for an unknown model/deployment, a hosted structured call through
 the official A2A client, a validated typed `output=` result and the example's
-`summarize` skill returning a typed data part over A2A. They are marked
+`summarize` skill returning a typed data part over A2A, plus an Ollama one-tool
+round trip (skipped if the model lacks tool support). They are marked
 `ollama` / `foundry` and skipped unless enabled, so
 default `uv run pytest` and CI never call a provider (no secrets in CI for M3;
 revisit a manual Foundry workflow at M7). Endpoints and model names come only
