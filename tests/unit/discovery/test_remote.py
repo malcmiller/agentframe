@@ -585,6 +585,8 @@ async def test_call_sends_the_credential_with_the_extension_header() -> None:
         invocation_id="run-1",
         principal=None,
         identity=remotes["research-agent"],
+        hops=0,
+        max_hops=5,
     )
 
     await binding.call("find_sources", topic=Topic(name="tides"))
@@ -592,6 +594,31 @@ async def test_call_sends_the_credential_with_the_extension_header() -> None:
     sent = peer.requests[-1]
     assert sent.headers["X-API-Key"] == "planner-key"
     assert sent.headers["A2A-Extensions"] == SKILL_CALL_EXTENSION_URI
+
+
+async def test_ask_sends_the_credential_and_context_under_one_extension() -> None:
+    card = context_card("deadline_ms", "hops")
+    card["securitySchemes"] = API_KEY_SCHEMES
+    peer = Peer(task(TaskState.TASK_STATE_COMPLETED, "Findings"), card=card)
+    binding = await bind_remote(
+        peer.directory(),
+        "research-agent",
+        deadline=asyncio.get_running_loop().time() + 10,
+        invocation_id="run-1",
+        principal=None,
+        identity=with_key()["research-agent"],
+        hops=2,
+        max_hops=5,
+    )
+
+    await binding.ask("tides")
+
+    sent = peer.requests[-1]
+    metadata = json.loads(sent.content)["params"]["message"]["metadata"]
+    assert sent.headers["X-API-Key"] == "planner-key"
+    assert sent.headers["A2A-Extensions"] == SKILL_CALL_EXTENSION_URI
+    assert metadata["agentframe.hops"] == 3
+    assert 9_000 < metadata["agentframe.deadline_ms"] <= 10_000
 
 
 async def test_the_cancel_request_carries_the_credential_too() -> None:
