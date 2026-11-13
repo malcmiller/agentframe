@@ -89,11 +89,11 @@ def run_dev(
             in time, or exited while running. Every agent is stopped first.
     """
     agents = load_project(project_file)
+    client_key = _client_key()
     _check_ports_free(agents)
     directory = project_file.resolve().parent
     registry = _write_registry(directory, agents)
     keys = {agent.name: secrets.token_urlsafe(32) for agent in agents}
-    client_key = os.environ.get(CLIENT_KEY_VARIABLE, "").strip() or None
     stop = threading.Event()
     children: list[_Child] = []
     with _stop_on_signals(stop):
@@ -151,6 +151,14 @@ def child_environment(
         }
     )
     return environment
+
+
+def _client_key() -> str | None:
+    key = os.environ.get(CLIENT_KEY_VARIABLE, "").strip()
+    # The key travels inside comma-separated name=key pairs.
+    if "," in key or "=" in key:
+        raise DevError(f"{CLIENT_KEY_VARIABLE} must not contain ',' or '='.")
+    return key or None
 
 
 def _check_ports_free(agents: Sequence[ProjectAgent]) -> None:
