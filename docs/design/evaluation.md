@@ -196,7 +196,7 @@ A target runs one case and returns its output plus metadata. M9 has two:
 | Target | Runs | Output and metadata |
 | --- | --- | --- |
 | `LocalSkill(agent, skill=..., runtime=None, principal=None, options=None)` | `Runtime.run` with the case's `arguments`. A default `Runtime()` is created when none is given. | The validated value; `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` and `invocation_id` from `RunResult`. |
-| `A2ATarget(directory, name, skill=None, output=None, identity=None)` | `Remote.call(skill, **arguments)` when `skill` is set, otherwise `Remote.ask(text)`, through the same internal binding a skill's `Remote` uses. | The decoded (and, with `output=`, validated) result; usage from the peer's task snapshot when it advertises it, otherwise unknown; wall-clock latency measured by the harness. |
+| `A2ATarget(directory, name, skill=None, output=None, identity=None, options=None)` | `Remote.call(skill, **arguments)` when `skill` is set, otherwise `Remote.ask(text)`, through the same internal binding a skill's `Remote` uses. | The decoded (and, with `output=`, validated) result; usage from the peer's task snapshot when it advertises it, otherwise unknown; wall-clock latency measured by the harness. |
 
 Because `A2ATarget` reuses the `Remote` binding, every per-case request gets the
 same deadline, `max_total_tokens` hold, outbound identity, same-origin and
@@ -205,6 +205,15 @@ skill's remote call. Non-AgentFrame agents and Foundry agents work through
 `ask`; `call` needs a peer whose card declares AgentFrame's skill-call extension
 and skill, exactly as `Remote.call` requires. `OnBehalfOf` identities are not
 supported because an evaluation run has no signed-in user.
+
+Each `A2ATarget` case is its own short caller run. Its limits resolve like a
+local run's: `options: RunOptions | None` fields first, then the library
+defaults. From them the harness takes, per case, the deadline (now +
+`timeout_seconds`, default 120 s), the token ceiling the case's `call`/`ask`
+holds and sends as `max_total_tokens` (`max_total_tokens`, default 100 000) and
+`max_hops` (`max_remote_hops`, default 5, starting at depth 0), which are the
+values the internal `bind_remote` needs. `options.model_settings` does not
+apply, since the target calls no model itself.
 
 `LocalSkill` goes through the full runtime pipeline (validation, permissions,
 `ExecutionPolicy`, limits). Protected skills need an explicit trusted
@@ -229,12 +238,14 @@ class Score:
 
 
 def mentions_order(case: Case[str], output: str) -> bool:
-    return case.arguments["order_id"] in output
+    arguments = case.arguments or {}
+    return str(arguments.get("order_id")) in output
 ```
 
 A scorer's name in the report is the function's `__name__` (or the built-in
 scorer's name). A case passes when every scorer passes. A scorer that returns a
-bare number is refused rather than guessing a threshold; return
+bare number is refused rather than guessing a threshold: that case is marked
+`errored` (the run continues), and the fix is to return
 `Score(passed=value >= 0.8, value=value)` instead. A scorer that raises marks the
 case as errored with the scorer name and exception class, not as a failed score.
 
@@ -259,8 +270,14 @@ one output meets a written rubric:
   `OutputValidationError` instead of being parsed from prose.
 - **Ordinary AgentFrame run.** Internally the judge is one model-backed skill
   run through `Runtime`, so its calls get `RunLimits`, retries, usage accounting
-  and the evaluation's token budget. Judge usage is reported separately from the
-  target's.
+  and the evaluation's token budget. Its per-call limits come from
+  `Judge(..., options=RunOptions(...))` or the library defaults. Judge usage is
+  reported separately from the target's.
+- **Judge budget.** Each judge run (each vote) is held separately against the
+  evaluation-wide budget just before it starts, for its own resolved
+  `max_total_tokens`; it is not part of the case's hold. When the remainder is
+  too small for the next vote, the case is marked `errored` with
+  `TokenLimitExceededError` rather than scored on fewer votes.
 - **Bias mitigations.** One answer per call (no pairwise comparison, so no
   position bias between candidates); the case's `expected` value is included as
   a reference when present; the rubric is trusted instructions while the case
@@ -290,10 +307,17 @@ max_total_tokens=None, timeout_seconds=None, capture_content=False)`:
 - **Repeats** run every case `repeats` times to measure nondeterminism. The pass
   rate counts every attempt; a case whose attempts disagree is marked `flaky`.
 - **Evaluation-wide budget.** `max_total_tokens` covers target and judge calls
-  together. Each case holds its per-case ceiling against it before starting (the
-  same reservation pattern as concurrent remote calls), so the total cannot be
-  exceeded by known usage; once the remainder is too small, no new case starts
-  and the rest are reported `not_run`. Cases whose usage is unknown (peers that
+  together. Each case holds its per-case ceiling against it before starting,
+  and each judge run holds its own ceiling before it starts (the same
+  reservation pattern as concurrent remote calls), so admission never
+  over-commits the budget; once the remainder is too small, no new case starts
+  and the rest are reported `not_run`. Overruns are possible and reported, not
+  prevented: as for remote calls (#90), a peer's reported usage replaces its
+  hold even when higher, so the report shows the actual total and flags it when
+  it exceeds the budget. Because holds are full per-case ceilings, the default
+  100 000-token ceiling lets a 200 000-token budget admit only two cases at a
+  time; set smaller per-case limits (`options=RunOptions(limits=RunLimits(
+  max_total_tokens=...))`) to use the configured concurrency. Cases whose usage is unknown (peers that
   report none) are counted as unknown, and the report says the budget could not
   be fully enforced. `timeout_seconds` bounds the whole evaluation: on expiry,
   running cases are cancelled (best effort, as for remote calls) and the rest are
@@ -334,8 +358,10 @@ Output formats:
 statuses, scorer names, numbers and error classes only: no case arguments or
 text, expected values, outputs or judge reasons. `capture_content=True` adds
 them to the in-memory report and JSON file for local debugging; treat such a file
-as sensitive. Error messages are AgentFrame's safe messages; tracebacks stay in
-operator logs with the invocation ID, as for runs.
+as sensitive. The harness itself never logs case content, outputs or judge
+reasons, whatever `capture_content` is; its logs carry case IDs, statuses and
+invocation IDs only. Error messages are AgentFrame's safe messages; tracebacks
+stay in operator logs with the invocation ID, as for runs.
 
 ### pytest and CI
 
@@ -449,7 +475,7 @@ The maintainer confirmed every recommendation from the planning review on
     AgentFrame installed.
 16. **A2A target scope.** **Decision:** `A2ATarget(directory, name, skill=...)`
     reusing the `Remote` binding, service identity only (no on-behalf-of), no
-    in-process hosted target. Reuses decided outbound rules instead of adding a
+    in-process hosted target; per-case limits from `options=RunOptions(...)`. Reuses decided outbound rules instead of adding a
     second client.
 17. **Foundry export.** **Decision:** a later optional adapter alongside MCP,
     tracing and AG-UI, not M9. M9 should prove the local harness first, and

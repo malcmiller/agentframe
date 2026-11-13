@@ -676,8 +676,8 @@ guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
 `authorization.md`, `development.md`) and the design docs
 (`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
 `prompt-safeguarding.md`, `discovery.md`, `streaming.md`, `evaluation.md`)
-consistent, including discovery/streaming API pages and navigation. Preserve the distinction between
-confirmed product direction and illustrative API details.
+consistent, including discovery/streaming API pages and navigation. Preserve
+the distinction between confirmed product direction and illustrative API details.
 
 Maintain `docs/api/README.md` and its linked surface reference pages alongside
 those design documents. Give every proposed decorator, class, and known public
