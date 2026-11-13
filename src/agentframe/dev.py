@@ -10,6 +10,9 @@ by and to call the other agents:
     The agent's own address, such as ``http://127.0.0.1:8001``.
 ``AGENTFRAME_DEV_REGISTRY``
     The generated registry file of agent names and local Agent Card URLs.
+``AGENTFRAME_AGENTS``
+    Optional registry as comma-separated ``name=url`` Agent Card URL pairs,
+    which ``agentframe compose`` sets for containers instead of a file.
 ``AGENTFRAME_DEV_API_KEYS``
     The API keys this agent accepts, as comma-separated ``caller=key`` pairs.
 ``AGENTFRAME_DEV_REMOTE_KEYS``
@@ -30,13 +33,18 @@ import httpx
 
 from agentframe.discovery.directory import AgentDirectory
 from agentframe.discovery.identity import APIKeyCredential, Service
-from agentframe.discovery.registry import FileAgentRegistry
+from agentframe.discovery.registry import (
+    AgentRegistry,
+    EnvironmentAgentRegistry,
+    FileAgentRegistry,
+)
 from agentframe.errors import DefinitionError
 from agentframe.security.authentication import APIKey, APIKeyAuth
 
 DEV_VARIABLE = "AGENTFRAME_DEV"
 PUBLIC_URL_VARIABLE = "AGENTFRAME_PUBLIC_URL"
 REGISTRY_VARIABLE = "AGENTFRAME_DEV_REGISTRY"
+AGENTS_VARIABLE = "AGENTFRAME_AGENTS"
 API_KEYS_VARIABLE = "AGENTFRAME_DEV_API_KEYS"
 REMOTE_KEYS_VARIABLE = "AGENTFRAME_DEV_REMOTE_KEYS"
 ALLOW_HTTP_HOSTS_VARIABLE = "AGENTFRAME_ALLOW_HTTP_HOSTS"
@@ -53,7 +61,7 @@ class DevSettings:
         auth: Accepts the other agents' development API keys, for
             ``HostConfig(auth=...)``. Each caller is verified as its agent name.
         directory: Finds the other agents by name, for ``AgentApp(directory=...)``;
-            ``None`` when no registry was given.
+            ``None`` when neither registry variable was given.
         remotes: The development API key to call each other agent with, for
             ``AgentApp(remotes=...)``.
     """
@@ -154,12 +162,17 @@ def _required(variable: str) -> str:
 
 
 def _directory() -> AgentDirectory | None:
+    sources: list[AgentRegistry] = []
     registry = os.environ.get(REGISTRY_VARIABLE, "").strip()
-    if not registry:
+    if registry:
+        sources.append(FileAgentRegistry(registry))
+    if os.environ.get(AGENTS_VARIABLE, "").strip():
+        sources.append(EnvironmentAgentRegistry(AGENTS_VARIABLE))
+    if not sources:
         return None
     allowed = os.environ.get(ALLOW_HTTP_HOSTS_VARIABLE, "").split(",")
     return AgentDirectory(
-        sources=[FileAgentRegistry(registry)],
+        sources=sources,
         allow_http_hosts=[host.strip() for host in allowed if host.strip()],
         # Like the directory's own client: credentials are never followed
         # through a redirect.

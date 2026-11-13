@@ -553,7 +553,10 @@ Each agent's process gets this environment:
 `AGENTFRAME_DEV_CLIENT_KEY`, when set in the environment `dev` runs in, is
 accepted by every agent as caller `developer`, so a person, script or test can
 call them; it is not passed on under its own name. Unset, only the agents can
-call each other. Keys are never written to disk, printed or logged.
+call each other. It must not contain `,` or `=`, which would break the key
+pairs; `dev` refuses it without showing it. Keys are never written to disk,
+printed or logged, but they are in each agent's environment, which other
+processes of the same OS user can read (for example with `ps eww`).
 
 **Behavior / failures:** an invalid project file, a port in use (checked
 before anything starts), an agent that exits (for example on an import
@@ -566,11 +569,65 @@ IDs. Ctrl+C or SIGTERM sends SIGTERM to every agent once (agents run in their
 own process group, so a terminal's Ctrl+C does not reach them twice), waits
 up to 35 seconds for their graceful shutdown, kills any still running and
 exits 0. Development keys are not production defaults; this is not
-infrastructure management. Container packaging (#96) is separate.
+infrastructure management. For containers, see
+[`agentframe compose`](#agentframe-compose).
 
 **Related:** [`dev_settings()`](#dev_settings),
 [multiple agents](../guides/development.md#multiple-agents-m8),
 [`AgentDirectory`](discovery.md#agentdirectory).
+
+## `agentframe compose`
+
+**Purpose / decision:** write a development `compose.yaml`, one container per
+agent of `agentframe.yaml`, and a `Dockerfile` template. Implemented in M8+
+(#96). It only writes files; it never builds, starts or pushes anything.
+
+```text
+agentframe compose [--config FILE] [--force]
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `--config` | path | Default `agentframe.yaml` | The project file, read like [`agentframe dev`](#agentframe-dev). Files are written next to it. |
+| `--force` | flag | Default off | Overwrite an existing `compose.yaml`. |
+
+It writes `compose.yaml` and, only if there is none, a `Dockerfile` from a
+template: `python:3.13-slim` pinned by digest, `pip install` of every wheel in
+`dist/` (your project's wheel, which must depend on `agentframe-py[server]`),
+running as the non-root user `10001:10001`. An existing `Dockerfile` is never
+changed, even with `--force`, since it is yours to edit.
+
+Each agent becomes one service, named after it, that runs
+`agentframe run APP --host 0.0.0.0 --port PORT`, publishes
+`127.0.0.1:PORT:PORT` only, has a healthcheck on `/ready`, waits for the
+agents listed before it to be healthy and gets 35 seconds to stop. Its
+environment is the [`agentframe dev`](#agentframe-dev) contract with service
+names instead of `127.0.0.1`:
+
+| Variable | Value |
+| --- | --- |
+| `AGENTFRAME_DEV` | `1` |
+| `AGENTFRAME_PUBLIC_URL` | `http://NAME:PORT`, the address other containers reach it at. |
+| `AGENTFRAME_AGENTS` | Every agent's `name=http://NAME:PORT/.well-known/agent-card.json`, read by [`EnvironmentAgentRegistry`](discovery.md#environmentagentregistry). |
+| `AGENTFRAME_ALLOW_HTTP_HOSTS` | Every service name, the explicit development opt-in for plain http between containers. |
+| `AGENTFRAME_DEV_API_KEYS` | `caller=${CALLER_API_KEY:?...}` per other agent, plus `developer=${AGENTFRAME_DEV_CLIENT_KEY:?...}`. |
+| `AGENTFRAME_DEV_REMOTE_KEYS` | `name=${OWN_API_KEY:?...}` per other agent. |
+
+The key variable of `research-agent` is `RESEARCH_AGENT_API_KEY`; agent names
+must start with a letter. Keys appear only as these `${...}` references,
+which Compose fills from a `.env` file you create, and stops with a clear
+message if one is missing. The command prints the variables to set.
+
+**Behavior / failures:** an invalid project file, an agent name starting with
+a digit, or an existing `compose.yaml` without `--force` exits with code 1 and
+one `agentframe: error: ...` line, and nothing is written. The generated file
+is labelled development only: without `AGENTFRAME_DEV=1`,
+[`dev_settings()`](#dev_settings) refuses to run, and without
+`AGENTFRAME_ALLOW_HTTP_HOSTS` the directory refuses the plain-http service
+URLs. No secret value is written to any file.
+
+**Related:** [containers](../guides/development.md#containers),
+[`dev_settings()`](#dev_settings).
 
 ## `dev_settings()`
 
@@ -588,7 +645,7 @@ dev_settings() -> DevSettings
 | --- | --- | --- |
 | `public_url` | `str` | `AGENTFRAME_PUBLIC_URL`, for `HostConfig(public_url=...)`. Required. |
 | `auth` | `APIKeyAuth` | Accepts `AGENTFRAME_DEV_API_KEYS`, each verified as its caller name. At least one key is required. |
-| `directory` | `AgentDirectory \| None` | A `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY`, or `None` when unset. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It has its own `httpx.AsyncClient` (no redirects) open for the life of the process, because a factory has no `async with` to open it in. |
+| `directory` | `AgentDirectory \| None` | A `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY` and/or an `EnvironmentAgentRegistry` of `AGENTFRAME_AGENTS` (set by [`agentframe compose`](#agentframe-compose)), whichever are set, or `None` when neither is. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It has its own `httpx.AsyncClient` (no redirects) open for the life of the process, because a factory has no `async with` to open it in. |
 | `remotes` | `Mapping[str, Service]` | `Service(credential=APIKeyCredential(key))` per `AGENTFRAME_DEV_REMOTE_KEYS` entry, sent in the default `X-API-Key` header. |
 
 ```python

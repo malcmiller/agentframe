@@ -104,4 +104,5 @@ markers = [
     "ollama: calls a real Ollama server; runs only with AGENTFRAME_TEST_OLLAMA=1",
     "foundry: calls real Foundry; runs only with AGENTFRAME_TEST_FOUNDRY=1 (models) or AGENTFRAME_TEST_FOUNDRY_AGENTS=1 (agents registry)",
     "entra: uses a real Microsoft Entra token; runs only with AGENTFRAME_TEST_ENTRA=1",
+    "docker: builds and runs containers; runs only with AGENTFRAME_TEST_DOCKER=1",
 ]

@@ -87,7 +87,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | Path | Contents |
 | --- | --- |
 | `src/agentframe/__init__.py` | Public API re-exports; every public name is importable from `agentframe`. |
-| `src/agentframe/` (root) | `errors.py`, `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run` / `dev`), `project.py` (`agentframe.yaml`), `dev.py` (`dev_settings()`), `dev_server.py` (`agentframe dev` supervisor). |
+| `src/agentframe/` (root) | `errors.py`, `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run` / `dev` / `compose`), `project.py` (`agentframe.yaml`), `dev.py` (`dev_settings()`), `dev_server.py` (`agentframe dev` supervisor), `compose.py` (`agentframe compose` generator). |
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
 | `src/agentframe/runtime/` | `Runtime`, generation, `RunLimits`, `RunOptions`, `Usage`. |
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`; `strict_schema.py` (OpenAI strict JSON-schema converter). |
@@ -557,8 +557,19 @@ via child env (`AGENTFRAME_DEV`, `AGENTFRAME_PUBLIC_URL`,
 `dev_settings()` (refuses without `AGENTFRAME_DEV=1`; directory has its own
 http client; reads `AGENTFRAME_ALLOW_HTTP_HOSTS`). Output prefixed
 `[agent-name]`, agents log INFO; failures stop all and exit 1; Ctrl+C sends
-one SIGTERM (children in own session), kills after 35 s. One container per
-agent; Dockerfile template and generated docker-compose example (#96) open.
+one SIGTERM (children in own session), kills after 35 s; a client key with
+`,`/`=` is refused. Implemented (#96): `agentframe compose [--config]
+[--force]` (`compose.py`) writes development `compose.yaml` (one service per
+agent, `agentframe run APP --host 0.0.0.0 --port P`, `127.0.0.1:P:P`, `/ready`
+healthcheck, depends on earlier agents healthy; env = dev contract with
+`AGENTFRAME_PUBLIC_URL=http://name:P`, `AGENTFRAME_AGENTS` (read by
+`dev_settings()` as an `EnvironmentAgentRegistry`), `AGENTFRAME_DEV=1`,
+`AGENTFRAME_ALLOW_HTTP_HOSTS`=service names; keys only
+`${NAME_API_KEY:?...}`/`${AGENTFRAME_DEV_CLIENT_KEY:?...}` from user `.env`)
+and, only if missing, a `Dockerfile` (digest-pinned `python:3.13-slim`,
+`dist/*.whl`, `USER 10001:10001`); `--force` overwrites only `compose.yaml`.
+Golden files in `tests/unit/golden/`; opt-in `docker` test
+(`AGENTFRAME_TEST_DOCKER=1`, skipped without a running Docker).
 No hosting platform is implied. See `docs/guides/development.md`.
 
 ### Initial release boundaries

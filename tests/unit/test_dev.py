@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from agentframe import DefinitionError, dev_settings
-from agentframe.dev_server import child_environment
+from agentframe.dev_server import DevError, child_environment, run_dev
 from agentframe.project import ProjectAgent
 
 RESEARCH = ProjectAgent("research-agent", "myapp.research:create_app", 8001)
@@ -104,3 +104,20 @@ def test_dev_settings_refuse_malformed_variables_without_showing_keys(
         dev_settings()
 
     assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("client_key", ["a,secret", "a=secret"])
+def test_a_client_key_that_would_break_the_key_pairs_is_refused_unshown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, client_key: str
+) -> None:
+    project = tmp_path / "agentframe.yaml"
+    project.write_text(
+        "agents:\n  echo:\n    app: myapp.echo:create_app\n    port: 8001\n"
+    )
+    monkeypatch.setenv("AGENTFRAME_DEV_CLIENT_KEY", client_key)
+
+    with pytest.raises(DevError, match="must not contain") as error:
+        run_dev(project)
+
+    assert "secret" not in str(error.value)
+    assert not (tmp_path / ".agentframe").exists()
