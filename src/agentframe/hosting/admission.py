@@ -44,7 +44,15 @@ class RunSlot:
         self._released = False
 
     def start(self) -> None:
-        """Hand the slot to the run, which now releases it when it ends."""
+        """Hand the slot to the run, which now releases it when it ends.
+
+        The executor calls this before it publishes the task, and the SDK
+        responds to ``SendMessage``, even with ``returnImmediately``, only
+        after that first task event. So the app sees ``started`` before it
+        decides whether to release the slot itself. Should a run ever start
+        after the app released its slot, the run goes ahead but its own
+        release is a no-op, so the count never goes negative.
+        """
         self.started = True
 
     def release(self) -> None:
