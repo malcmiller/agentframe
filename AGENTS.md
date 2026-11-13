@@ -16,10 +16,11 @@ generation, M4 typed structured outputs, M5 bounded tool calling, M6 built-in
 opt-in model routing and M7 hardening alongside design documentation. Version
 0.1.0, the first usable single-agent release, is published on PyPI as
 `agentframe-py` (import `agentframe`). Pre-1.0 there is no stable API, and
-M8+ and later features are not implemented. Keep design API examples beyond the implemented surface labeled
-as unimplemented; explicitly approved names/defaults
-are decisions, not still-unresolved recommendations. Do not scaffold implementation or
-add dependencies merely to make design snippets executable.
+M8+ and later features are not implemented. Keep design API examples beyond
+the implemented surface labeled as unimplemented; explicitly approved
+names/defaults are decisions, not still-unresolved recommendations. Do not
+scaffold implementation or add dependencies merely to make design snippets
+executable.
 
 ## Code quality and readability
 

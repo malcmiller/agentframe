@@ -296,7 +296,7 @@ content capture is off by default; MCP publishes explicitly allowlisted skills,
 not every skill or internal tool. A custom REST skill API is deferred.
 
 Skills may declare required permissions; application roles map to grants outside
-the agent definition. The proposed runtime enforces verified identity and
+the agent definition. The runtime enforces verified identity and
 application resource policy across entry points. Prompt safeguarding combines
 library trust boundaries with application checks, not a guaranteed injection filter.
 
