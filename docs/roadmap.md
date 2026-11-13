@@ -88,7 +88,7 @@ framework base class.
 | First usable release | One `ctx.generate`: text, `output=Summary` for validated Pydantic output, `tools=[...]` for registered bounded continuations; complete validated results, not partial streams. AgentFrame owns normalized model types; unsupported capabilities fail before sending; refusals/truncation raise typed errors. | Normalized usage layouts; provider schema subsets are documented per adapter (M4 #55/#56); no implicit partial-output success (explicit opt-in: catch `IncompleteOutputError`, read `.partial_text`, M4 #54). |
 | Services and results | `Inject[T]`, `Services.add` / `add_scoped`, `services=` on app/runtime; startup missing-service errors. `invoke` returns a value; `run` returns `RunResult` independent of tracing. | Factory/disposal interfaces, generic typing, duration unit, usage marker fields and failed-run metadata access. |
 | Errors and identity | Named [safe error hierarchy](api/runtime.md#agentframeerror); `Authenticator` with `EntraIDAuth`, `APIKeyAuth`, explicit `AllowAnonymous()`. `HostConfig.auth` is mandatory remotely; `role_permissions` maps verified claims. | Error constructors/startup correlation and exact transport mapping, principal/custom-auth methods and API-key entries. `EntraIDAuth` maps roles and scopes together (#76). |
-| Retry and host defaults | Transient model failures only, two retries/backoff, SDK retries disabled; side-effecting tools never auto-retry. Same caller/A2A message ID dedupes for 10 minutes (memory, pluggable store), not exactly-once. Host defaults 32 runs/1 MiB request/4 MiB response/30 seconds drain; `/health` and `/ready`. | Retry/store configuration, atomicity/payload conflicts, byte measurement, probe schema; defaults themselves decided. |
+| Retry and host defaults | Transient model failures only, two retries/backoff, SDK retries disabled; side-effecting tools never auto-retry. Same caller/A2A message ID dedupes for 10 minutes (memory, pluggable store), not exactly-once. Host defaults 32 runs/1 MiB request/4 MiB response/30 seconds drain; `/health` and `/ready`. | Retry/store configuration, atomicity/payload conflicts, probe schema; defaults themselves decided. |
 | A2A request styles | Prefer deterministic structured skill/JSON-argument requests through a card-declared, caller-activated extension. Free-text uses custom or opt-in model routing; ambiguity/missing input asks back via input-required tasks. No automatic routing from agent model injection. | Router/extraction/clarification contract, native result mappings. The skill-call extension wire format is implemented (M2 #5). |
 | Human approvals | Application-owned workflows; no built-in approval pause/resume in first release. Required tool/action authorization remains enforced. | Application integration/decision types; protocol tasks are not durable approval workflows. |
 | Multi-agent composition | M8+: `Remote["name"]` injection, structured `call`, plain `ask`, input-required error; multi-source directory/find, YAML files, 300-second stale-refresh cache, OBO/service identity, deadline/token/depth controls (5 hops), plain Python orchestration, dev CLI/containers. | Detailed extension schema/identity config, source conflicts/card mapping/search pagination, accounting trust and dev config; typed class proxy only later, no initial orchestration helpers. |
@@ -189,10 +189,12 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
   automatically, model retries never replay tools, and repeated model-requested
   calls are new counted calls, not blocked (M5 #63).
 - Host defaults: 32 concurrent runs (excess immediately rejected with HTTP 503
-  and `Retry-After: 1`, M7 #72), 1 MiB request, 4 MiB response, 30-second shutdown grace (stop
-  accepting, drain, then cancel). `/health` is liveness; `/ready` means startup
-  checks passed and not shutting down. All are configurable; exact byte/error
-  mappings and probe response bodies remain open.
+  and `Retry-After: 1`, M7 #72), 1 MiB request (HTTP 413 before
+  authentication, no task, M7 #73), 4 MiB response (serialized result part or
+  question; over it the task fails with `LimitExceededError`, M7 #73),
+  30-second shutdown grace (stop accepting, drain, then cancel). `/health` is
+  liveness; `/ready` means startup checks passed and not shutting down. All
+  are configurable; probe response bodies remain open.
 - A2A deduplicates the same caller and `messageId` for a configurable 10-minute
   window, returning the original task. In-memory default, pluggable multi-instance
   store; not exactly-once or restart-durable. Task access is still authorized.
@@ -486,7 +488,7 @@ belongs to that release even though telemetry exporters/integration stay optiona
   async generator), `timedelta` duration and `Usage(..., estimated)` markers.
   `RunResult` generics for `run`, provider usage completeness details and
   failed-run usage access remain open, not whether local metadata exists.
-- Host byte measurement and probe bodies; retry configuration/
+- Host probe bodies; retry configuration/
   backoff/transient codes; dedupe store/window API, atomicity, changed payloads
   and message-only interactions. Protection defaults and no-side-effect replay
   are decided.

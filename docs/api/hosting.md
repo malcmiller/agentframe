@@ -130,7 +130,7 @@ authenticator; no remote host starts without a choice.
   callers must not see each other's tasks.
 - At most `HostConfig.max_concurrent_runs` messages run at once (M7 #72).
   Every `/a2a` request is checked in a fixed order before the SDK sees it:
-  authentication, then admission. A `SendMessage` beyond the limit, blocking or
+  body size (M7 #73), authentication, then admission. A `SendMessage` beyond the limit, blocking or
   `returnImmediately`, gets HTTP 503 with `Retry-After: 1` and the body
   `{"error": "The agent is busy; retry later."}`: it is never queued, no task is
   created and no skill runs. A2A 1.0 defines no busy JSON-RPC error, so the
@@ -158,6 +158,7 @@ Every other outcome follows this table:
 
 | Situation | Result |
 | --- | --- |
+| Request body over `max_request_bytes` (M7 #73), checked before authentication | HTTP 413 with `{"error": "Request too large."}`, no task |
 | Missing or invalid credentials | HTTP 401 with `WWW-Authenticate`, no task |
 | `SendMessage` while `max_concurrent_runs` runs are running (M7 #72) | HTTP 503 with `Retry-After: 1`, no task |
 | Malformed A2A request or extension misuse | Standard A2A/JSON-RPC protocol error, no task |
@@ -166,6 +167,7 @@ Every other outcome follows this table:
 | Timeout, output validation failure, skill or router exception, router timeout, policy unavailable (skill or tool policy, M5 #62) | Task `FAILED`, safe message |
 | Model error: unsupported capability, refusal, incomplete output, provider failure (M3 #33; structured output proven end to end in M4 #57) | Task `FAILED`, safe message; never the model's text |
 | Token, model-call or tool-call limit exceeded (M3 #36, M5 #61) | Task `FAILED`, safe message |
+| Result or clarification question over `max_response_bytes` (M7 #73) | Task `FAILED` with `LimitExceededError`'s "The result exceeds the host's response size limit", `invocation_id` and usage; no artifact or question is sent |
 | A tool raises (M5 #61) | Task `FAILED`, reported like a skill exception: "The skill failed.", details logged with the `invocation_id` |
 | Cancelled | Task `CANCELED` |
 
@@ -466,10 +468,11 @@ credentials, query or fragment; `auth` must not be `None`; and each
 Any violation raises `DefinitionError`. `role_permissions` defaults to no roles
 and is stored read-only. `limits_ceiling` is implemented (M7 #71): an optional
 `RunLimits` that caps every hosted run, described in the table below.
-`max_concurrent_runs` is implemented (M7 #72); a value below 1 raises
+`max_concurrent_runs` is implemented (M7 #72), and `max_request_bytes` and
+`max_response_bytes` (M7 #73); a value below 1 for any of them raises
 `DefinitionError`.
 
-**Not yet available (M7):** `max_request_bytes`, `max_response_bytes`, `shutdown_grace_seconds` and the
+**Not yet available (M7):** `shutdown_grace_seconds` and the
 `/health` and `/ready` probes. Existing URL/ceiling composition is illustrative
 where not specified.
 
@@ -489,8 +492,8 @@ HostConfig(
 | `role_permissions` | `Mapping[str, Iterable[str]]` | Optional; default no roles (implemented) | Maps verified roles, e.g. `{"Editor": ["documents:write"]}`; never trusts roles from skill arguments. Permissions are the union over the caller's verified roles; unknown roles grant nothing. `EntraIDAuth` supplies app roles and delegated scopes as roles (M7 #76). |
 | `limits_ceiling` | `RunLimits \| None` | Optional; default `None` caps nothing (implemented) | Independent host constraint, not another default layer. Each field it sets caps that limit after library -> agent -> skill -> per-run merging; unset fields cap nothing. A library default above the ceiling is lowered to it; an agent or skill limit explicitly set above it fails `AgentApp` construction with `DefinitionError` naming the skill and field. Hosted runs, free-text routing (deadline and budget) and startup model checks use the capped limits; a `max_input_tokens` ceiling stands in for an unknown or larger context window. A `max_total_tokens` ceiling also bounds `ModelSettings.max_output_tokens`: a call whose output cap does not fit fails with `TokenLimitExceededError`, never silently shrunk. Local `Runtime` takes no ceiling. |
 | `max_concurrent_runs` | `int` | `32`, configurable; at least 1 (implemented) | How many messages may run at once. Excess `SendMessage` requests get HTTP 503 with `Retry-After: 1` and the body `{"error": "The agent is busy; retry later."}` before the SDK sees them, never queued and with no task created. A task waiting for input holds no slot. Task reads, lists and cancels are not counted. See [`AgentApp`](#agentapp). |
-| `max_request_bytes` | `int` | `1048576` (1 MiB), configurable | Bound ingress before work; protocol/encoding measurement details open. |
-| `max_response_bytes` | `int` | `4194304` (4 MiB), configurable | Bound outgoing content; no silent truncation into successful output. Exact error mapping open. |
+| `max_request_bytes` | `int` | `1048576` (1 MiB), configurable; at least 1 (implemented) | Largest `/a2a` request body, in bytes as received. Checked first, before authentication: a declared `Content-Length` above it is refused without reading the body, and a chunked body is refused as soon as it passes the limit, so it is never held in full or parsed. Refusal: HTTP 413 with `{"error": "Request too large."}`, no task. A body exactly at the limit is accepted. Independent of token limits. |
+| `max_response_bytes` | `int` | `4194304` (4 MiB), configurable; at least 1 (implemented) | Largest result or clarification question a task returns: a text result's or question's UTF-8 bytes, or the compact JSON of a data part's `{"value": ...}`; the JSON-RPC envelope is not counted. A larger one fails the task with `LimitExceededError` and the safe message "The result exceeds the host's response size limit"; none of it is sent. Never truncated. Task history is bounded by `max_request_bytes`. |
 | `shutdown_grace_seconds` | Numeric seconds; exact type open | `30`, configurable | Stop accepting, drain up to grace, then cancel remaining runs and clean up scoped services. |
 
 ```python
@@ -520,10 +523,10 @@ Host security/ceilings cannot be weakened by agent/run options; reject invalid
 or excessive explicit requests instead of silently clamping. Missing identity/
 required integration fails protected work. The decided admission, byte and
 shutdown fields must be enforced independently
-of token limits. `/health` is liveness; `/ready` reports startup checks passed
+of token limits; admission (M7 #72) and byte limits (M7 #73) are. `/health` is liveness; `/ready` reports startup checks passed
 and not shutting down. Startup includes auth/definition/service validation.
-Probe status/body schema and byte-accounting/error details remain open; the
-busy error is decided (HTTP 503, M7 #72).
+Probe status/body schema remains open; the busy error (HTTP 503, M7 #72) and
+size errors (HTTP 413 and `LimitExceededError`, M7 #73) are decided.
 
 **Related:** [`Principal`](authorization.md#principal),
 [`AgentConfig`](configuration.md#agentconfig),

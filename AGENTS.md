@@ -300,10 +300,12 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
   exactly-once. Store/window API, atomicity/payload conflicts remain open.
 - `HostConfig` defaults: max_concurrent_runs=32 (immediate HTTP 503 +
   `Retry-After: 1` before the SDK, no task; INPUT_REQUIRED holds no slot; M7 #72),
-  max_request_bytes=1048576, max_response_bytes=4194304,
+  max_request_bytes=1048576 (HTTP 413 before auth, no task; M7 #73),
+  max_response_bytes=4194304 (serialized result part/question; over it the task
+  fails with base `LimitExceededError`, never truncated; M7 #73),
   shutdown_grace_seconds=30 (stop accepting, drain, cancel). `/health` is liveness;
-  `/ready` means startup checks passed and not shutting down. Byte/probe
-  schemas remain open.
+  `/ready` means startup checks passed and not shutting down. Probe schemas
+  remain open.
 - Enforce host ceilings independently of defaults and permitted tighter run
   options. Preflight/reserve budget and reconcile reported usage, including
   retries. Unknown usage is not zero; strict accounting cannot assume a bound.

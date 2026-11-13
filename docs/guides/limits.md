@@ -38,10 +38,14 @@ deployment's capability/context and validate completely. Explicit finite
 tool-call controls use the defaults above. `HostConfig` separately defaults to
 32 concurrent runs (excess immediately rejected with HTTP 503 and
 `Retry-After: 1`, implemented in M7 #72),
-1 MiB request, 4 MiB response, and 30-second shutdown grace; all configurable.
+1 MiB request, 4 MiB response (both implemented in M7 #73), and 30-second
+shutdown grace; all configurable. An oversized request body gets HTTP 413
+before authentication and creates no task; a result or clarification question
+over the response limit fails its task with `LimitExceededError` and is never
+sent in part.
 Shutdown stops accepting, drains, then cancels remaining runs. `/health` is
 liveness; `/ready` means startup checks passed and not shutting down.
-Exact byte measurement and probe response schemas remain open.
+Probe response schemas remain open.
 
 ## Proposed configuration
 
