@@ -104,8 +104,11 @@ class RunContext:
             PermissionDeniedError: The model called a tool the caller lacks
                 a required permission for, or the runtime's tool
                 authorization policy denied a call. The model is never told.
-            PolicyUnavailableError: The tool authorization policy raised an
-                error or did not answer before the run's deadline.
+                Also raised, before anything is sent, when an execution
+                policy model-request check blocks a request.
+            PolicyUnavailableError: The tool authorization policy or an
+                execution policy model-request check raised an error or did
+                not answer before the run's deadline.
             LimitExceededError: A model call does not fit the run's limits,
                 the run has made ``max_tool_calls`` tool calls, or the run's
                 timeout expired during a model or tool call.

@@ -369,6 +369,11 @@ accounting caveats, and protocol boundaries.
 - Optional `ExecutionPolicy` hooks cover input, each outbound model request,
   tools/actions, and final output. Required checks fail closed and cannot waive
   authorization. External screening requires explicit egress approval.
+  Implemented (M7 #77): `Runtime(policy=ExecutionPolicy(...))` / `AgentApp(policy=)`
+  with input, model-request and output checks, each an async
+  `(skill, principal, content) -> bool`; only `True` allows; model-request
+  checks run once per logical request in the generation layer (routing gets
+  `skill=None`). Tool checks are #78.
 - Whole-output checks may require buffering or disabling streaming. Output
   rejection cannot undo previously executed actions or released content.
 

@@ -321,6 +321,7 @@ against the annotation and sent as JSON text.
 | The run's timeout expires during a tool | The tool is cancelled; `TimeoutLimitExceededError`; scoped services are still cleaned up |
 | The run is cancelled during a tool | The tool is cancelled and cancellation propagates; scoped services are cleaned up |
 | The model does not report tool support | `UnsupportedCapabilityError`; nothing is sent |
+| An [`ExecutionPolicy`](authorization.md#executionpolicy) model-request check blocks a request, including a continuation (M7 #77) | Nothing is sent and no tokens are reserved; `PermissionDeniedError` (`PolicyUnavailableError` when the check raises) |
 
 Tools are never automatically retried; a model retry re-sends the same request,
 which already holds earlier tool results. Each call is authorized after its

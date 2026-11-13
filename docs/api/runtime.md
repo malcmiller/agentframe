@@ -10,7 +10,8 @@ adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
 `Runtime.validate_model`, token/model-call accounting in `RunResult` and the
 `TokenLimitExceededError`, `ModelCallLimitExceededError` and
 `TimeoutLimitExceededError` subtypes. M5 #61 adds `ToolCallLimitExceededError`
-and real `RunResult.tool_calls` counts. The remaining parameters and errors
+and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`.
+The remaining parameters and errors
 arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
 
@@ -33,7 +34,7 @@ Runtime(
 | --- | --- | --- | --- |
 | `authorization` | `AuthorizationPolicy` implementation | Needed for protected operations; constructor omission allowed in unprotected local examples | Enforces mandatory skill permissions plus application resource rules. Missing required integration fails closed. |
 | `tool_authorization` | [`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy) implementation | Optional; default `None` checks only tools' `requires_permissions` | Checks every model-requested tool call with its validated arguments before it runs. Not required for side-effecting tools, but strongly advised for them. Hosted apps pass it through `AgentApp(runtime=...)`. |
-| `policy` | `ExecutionPolicy` | Optional supplementary checks; exact default open | Input/model/action/output checks cannot waive authorization. Configured required checks cannot be silently skipped. |
+| `policy` | [`ExecutionPolicy`](authorization.md#executionpolicy) | Optional; default `None` runs no content checks | Input, model-request and output checks (M7 #77; tool checks #78). They run after authorization and cannot waive it; every configured check runs and fails closed. Hosted apps pass it as `AgentApp(policy=...)` or through `runtime=`. |
 | `tracing` | `TracingConfig` | Optional; tracing disabled unless configured | Application owns provider/exporters/sampling; accounting and invocation IDs do not depend on export. |
 | `services` | `Services` | Explicit when skills need registered dependencies | Resolve `Inject[T]` parameters; missing registration is a startup `DefinitionError`. Same service container contract as `AgentApp`. |
 
@@ -48,7 +49,8 @@ This unprotected local construction requires no identity provider, model, or
 telemetry integration. It does not declare any remote access policy. M2
 implements `Runtime(*, services: Services | None = None, authorization:
 AuthorizationPolicy | None = None)`; omitting `authorization` means no resource
-checks. M5 #62 adds `tool_authorization: ToolAuthorizationPolicy | None = None`.
+checks. M5 #62 adds `tool_authorization: ToolAuthorizationPolicy | None = None`
+and M7 #77 adds `policy: ExecutionPolicy | None = None`.
 
 **Behavior / failures:** no inference on construction. Validate definitions and
 configuration; create invocation-scoped context, enforce policy/limits, validate

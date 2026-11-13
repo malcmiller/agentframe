@@ -20,7 +20,11 @@ Separating message roles helps preserve intended trust boundaries; it does not
 make a model immune to conflicting instructions embedded in untrusted content.
 The strongest protection is limiting what a compromised agent can access or do.
 
-## Proposed policy hooks
+## Policy hooks
+
+Input, model-request and output checks are implemented (M7 #77); tool checks
+follow in #78. See [`ExecutionPolicy`](../api/authorization.md#executionpolicy)
+for the check signatures and their order in a run.
 
 ```python
 from agentframe import ExecutionPolicy, Runtime
@@ -28,7 +32,6 @@ from agentframe import ExecutionPolicy, Runtime
 policy = ExecutionPolicy(
     input_checks=[request_policy],
     model_request_checks=[sensitive_data_policy],
-    tool_checks=[action_policy],
     output_checks=[response_policy],
 )
 
@@ -41,8 +44,9 @@ runtime = Runtime(
 All named policies are application-supplied dependencies. `ExecutionPolicy`
 provides additional boundary checks; the required permission/resource checks
 in `authorization_policy` remain mandatory and cannot be overridden by an
-input filter or a model's assessment. Exact hook signatures and typed decision
-objects remain open. No external screening service is enabled by default.
+input filter or a model's assessment. Each check is an async callable taking
+the skill, principal and content, and only an explicit `True` allows; there is
+no typed decision object. No external screening service is enabled by default.
 
 ## Check at the boundary, not just once
 
@@ -61,7 +65,10 @@ authenticate and authorize admission
 Model-backed routing must use the same outbound data checks before sending any
 content to its model. Later model requests containing tool results, retrieved
 documents, and conversation history must also pass checks; the first prompt
-alone is not sufficient coverage.
+alone is not sufficient coverage. AgentFrame therefore runs model-request
+checks in its generation layer, before every request is sent: routing calls
+(with no skill yet), structured output and each tool-loop continuation all
+pass through that one point.
 
 First release returns complete validated results. For later streamed responses,
 including the proposed [AG-UI adapter](streaming.md), configured output checks

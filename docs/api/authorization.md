@@ -6,7 +6,9 @@ M2 story #4 implements `Authenticator`, `APIKeyAuth` and `AllowAnonymous` as
 standalone units, which the HTTP host [`AgentApp`](hosting.md#agentapp) (#3)
 wires in. M2 story #19 implements
 `AuthorizationPolicy` with the local `Runtime`; M5 story #62 implements
-`ToolAuthorizationPolicy` and `@tool(requires_permissions=...)`. Authentication, authorization,
+`ToolAuthorizationPolicy` and `@tool(requires_permissions=...)`. M7 story #77
+implements `ExecutionPolicy` input, model-request and output checks; tool
+checks follow in #78. Authentication, authorization,
 and prompt/content checks are separate responsibilities.
 
 ## `Principal`
@@ -133,7 +135,8 @@ skill body runs:
 
 Without `authorization=`, `Runtime` performs no resource checks; this is only
 appropriate for unprotected local use. Content checks belong to
-[`ExecutionPolicy`](#executionpolicy), which remains a later milestone.
+[`ExecutionPolicy`](#executionpolicy), which runs its input checks after this
+policy allows.
 
 The application implements/supplies the policy; no default role directory,
 identity database, token issuer, wildcard grants, or `admin` bypass is implied.
@@ -268,7 +271,7 @@ task in `REJECTED` and an outage in `FAILED`
 required for `side_effects=True` tools, but give consequential tools a policy
 or `requires_permissions`, or both. Approval workflows stay application-owned;
 there is no built-in pause/resume. Future
-[`ExecutionPolicy`](#executionpolicy) tool checks (#78) run after this
+[`ExecutionPolicy`](#executionpolicy) tool checks (#78) will run after this
 authorization and cannot waive it.
 
 **Related:** [`@tool`](decorators.md#tool),
@@ -278,50 +281,104 @@ authorization and cannot waive it.
 
 ## `ExecutionPolicy`
 
-**Purpose / decision:** optional supplementary checks at content/action
-boundaries. It cannot replace authorization or guarantee injection prevention.
+**Purpose / decision:** optional application checks on a run's content at its
+boundaries: the input, every outbound model request and the output. They add
+to authorization and never replace it, and they are not a universal prompt
+injection detector.
 
-**Proposed configuration shape:**
+**Signature status:** implemented in M7 (#77) as a frozen, keyword-only
+dataclass, configured with `Runtime(policy=...)` or `AgentApp(policy=...)`.
+Tool checks (`tool_checks`) are added by #78; until then a policy has no tool
+field, so no configured tool check can be silently ignored.
 
 ```text
 ExecutionPolicy(
-    *, input_checks = ..., model_request_checks = ...,
-    tool_checks = ..., output_checks = ...,
+    *,
+    input_checks: Sequence[InputCheck] = (),
+    model_request_checks: Sequence[ModelRequestCheck] = (),
+    output_checks: Sequence[OutputCheck] = (),
 )
 ```
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `input_checks` | Collection of application checks; callback/decision types open | Optional configuration; concrete default open | Validate incoming content at its boundary, not a source of identity or permissions. |
-| `model_request_checks` | Collection of application checks; types open | Optional configuration; concrete default open | Inspect every outbound request, including model-backed routing, retrieval/history/tool continuations and data egress. |
-| `tool_checks` | Collection of application checks; types open | Optional configuration; concrete default open | Check proposed tools/actions before side effects, alongside mandatory authorization and limits. |
-| `output_checks` | Collection of application checks; types open | Optional configuration; concrete default open | Inspect validated final output before release; whole-output rules may require buffering or declining streaming. |
+| `input_checks` | `Sequence[InputCheck]` | Optional; default none | Run after argument validation and the [`AuthorizationPolicy`](#authorizationpolicy), before services are resolved or the skill runs. Receive the validated arguments, read-only. |
+| `model_request_checks` | `Sequence[ModelRequestCheck]` | Optional; default none | Run before every model request is sent and before its tokens are reserved: text, structured output, each tool-loop continuation and every [`ModelRouter`](hosting.md#modelrouter) or custom-router `RoutingContext.generate` call (with `skill=None`). Checked once per logical request, not again when a transient failure is retried. |
+| `output_checks` | `Sequence[OutputCheck]` | Optional; default none | Run after the skill's value is validated, before it is returned or published. |
 
-```python
-from agentframe import ExecutionPolicy, Runtime
+Each check is an async callable taking three positional arguments, the skill,
+the principal and the content, and returning `bool`. Any async function or
+object with a matching `__call__` works; no inheritance is needed:
 
-
-def checked_runtime(policy: ExecutionPolicy) -> Runtime:
-    return Runtime(policy=policy)
+```text
+InputCheck:        (skill: SkillDefinition, principal: Principal | None,
+                    arguments: Mapping[str, Any]) -> bool
+ModelRequestCheck: (skill: SkillDefinition | None, principal: Principal | None,
+                    request: ModelRequest) -> bool
+OutputCheck:       (skill: SkillDefinition, principal: Principal | None,
+                    value: Any) -> bool
 ```
 
-To configure the proposed collections, the design uses
-`ExecutionPolicy(input_checks=[request_policy], model_request_checks=[egress_policy],
-tool_checks=[action_policy], output_checks=[response_policy])`. These names are
-application-supplied check placeholders, not built-ins. Callback signatures
-and decision types must be settled before implementing them.
+`skill` is `None` for model-request checks during routing, which runs before a
+skill is selected. `request` is the complete
+[`ModelRequest`](models.md#modelrequest): messages, settings, output schema and
+tool specs.
 
-**Behavior / failures:** required checks are bounded by invocation deadlines;
-denial, timeout, or unavailability stops the affected operation. Never silently
-drop checks or turn rejection into successful generated text. No external
-screening service is enabled by default; approve destinations/data handling
-explicitly and apply needed local checks before approved egress.
+```python
+from typing import Any
 
-Keep trusted instructions separate from untrusted user/retrieval/tool content;
-no universal injection detector is promised. Never store secrets in prompts.
-Schema-valid output is not necessarily safe or factual. Output rejection cannot
-undo actions or released content, so checks/approvals must precede effects.
-Tracing is not required for policy; diagnostics must not leak blocked content.
+from agentframe import (
+    ExecutionPolicy, ModelRequest, Principal, Runtime, SkillDefinition,
+)
+
+
+async def no_card_numbers(
+    skill: SkillDefinition | None, principal: Principal | None, request: ModelRequest
+) -> bool:
+    # Application-supplied placeholder rule: block requests that look like
+    # they contain a payment card number.
+    return not any("4111 1111" in message.content for message in request.messages)
+
+
+async def short_answers(
+    skill: SkillDefinition, principal: Principal | None, value: Any
+) -> bool:
+    return not isinstance(value, str) or len(value) < 2_000
+
+
+runtime = Runtime(
+    policy=ExecutionPolicy(
+        model_request_checks=[no_card_numbers], output_checks=[short_answers]
+    )
+)
+```
+
+**Order in a run:** declared permissions -> argument validation ->
+authorization policy -> **input checks** -> skill (every model request ->
+**model-request checks**) -> output validation -> **output checks**. Hosted
+free-text requests pass their routing model requests through the same
+model-request checks first.
+
+**Behavior / failures:** checks in each group run in order and stop at the
+first failure; the run fails closed.
+
+- Only an explicit `True` allows. Any other value, including truthy ones,
+  raises `PermissionDeniedError` ("Skill 'x' was blocked by an execution
+  policy check"; "The request was blocked ..." while routing). A denied model
+  request is never sent and reserves no tokens; a denied output is never
+  returned. Over A2A a denial ends the task `REJECTED`.
+- A check that raises, or is still running at the run's deadline, raises
+  `PolicyUnavailableError` (A2A task `FAILED`); a blocked model request is
+  never sent.
+- Check time counts against the run's timeout. Messages name only the skill,
+  never the checked content, and AgentFrame never logs that content.
+- With no policy, runs are unchanged.
+
+No external screening service is enabled by default; approve destinations and
+data handling explicitly and apply needed local checks before approved
+egress. Schema-valid output is not necessarily safe or factual. Output
+rejection cannot undo actions or released content, so checks/approvals must
+precede effects. Tracing is not required for policy.
 
 Complete validated results are first-release behavior. Later
 [AG-UI streaming](streaming.md) applies release checks to text, tool arguments/
