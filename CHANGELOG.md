@@ -10,6 +10,15 @@ changelog.
 
 ### Added
 
+- **Multi-agent (M8+):** `Remote.ask` sends the run's remaining time
+  (`agentframe.deadline_ms`) and depth (`agentframe.hops`) to peers whose card
+  lists them in the skill-call extension's new `params.context`; others get
+  plain A2A. Receivers cap their timeout by the caller's deadline and reject
+  requests deeper than the new `RunLimits.max_remote_hops` (default 5); a run
+  at that depth fails before sending. New `RunContext.hops`. With the
+  extension activated, a message without `agentframe.skill` is now free text
+  instead of an `InvalidParams` error.
+
 - **Discovery (M8+):** read-only `AgentRegistry` base with `AgentReference`
   (agent name and Agent Card URL) and `AgentQuery` (name filter), plus
   `FileAgentRegistry` (YAML `name`/`url` list) and `EnvironmentAgentRegistry`

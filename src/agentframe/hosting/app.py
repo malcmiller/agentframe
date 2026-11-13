@@ -50,6 +50,7 @@ from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.hosting.a2a_executor import (
     PRINCIPAL_STATE_KEY,
     RuntimeExecutor,
+    incoming_context,
     is_skill_call,
     read_skill_call,
 )
@@ -97,8 +98,10 @@ class AgentApp:
     host's authenticator, then runs through the runtime. Tasks live in the
     SDK's in-memory store, scoped to the caller, and are lost on restart;
     anonymous callers share one namespace and cannot list tasks. Messages that
-    do not activate the skill-call extension are free text, routed by
-    ``router``. Constructing
+    do not name a skill through the skill-call extension are free text, routed
+    by ``router``. A caller's deadline and call depth, sent in the extension,
+    shorten hosted runs and reject requests deeper than
+    ``RunLimits.max_remote_hops``. Constructing
     the app validates everything that needs no I/O and starts nothing; serve
     it with any ASGI server. Server startup then checks the model's input
     token limits with ``Runtime.validate_model`` and fails if one is unknown,
@@ -457,7 +460,7 @@ class _RequestHandler(DefaultRequestHandler):
     The SDK creates or resumes a task before it calls the executor, so a
     message that must get a protocol error instead must be refused here:
 
-    - a malformed skill call;
+    - a malformed skill call, or malformed caller context in the extension;
     - free text when no ``SkillRouter`` is configured;
     - a message for one of the caller's tasks that is not waiting for input.
       The SDK already hides other callers' tasks behind ``TaskNotFoundError``,
@@ -525,7 +528,8 @@ class _RequestHandler(DefaultRequestHandler):
             )
         if dedup is not None and dedup.original is not None:
             return dedup.original
-        if is_skill_call(context.requested_extensions):
+        incoming_context(context.requested_extensions, params.message)
+        if is_skill_call(context.requested_extensions, params.message):
             read_skill_call(params.message)
         elif self._router is None:
             raise UnsupportedOperationError(

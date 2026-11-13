@@ -697,7 +697,7 @@ The decided authoring surface is [`Remote[Literal["name"]]`](#remoteliteralname)
 | --- | --- | --- | --- |
 | Discovered destination/card | Validated reference/native card; client interface open | Needed for selected interaction | Re-check destinations, trust, binding and current authorization, not just cache freshness. |
 | Outbound identity | `remotes={name: Service(credential=...)}` (#92); `OnBehalfOf` is #93 | OBO recommended for Entra ingress; service explicit | Exchange target-scoped tokens; never forward incoming token or fall back on exchange failure. API-key/anonymous ingress supports only service. See [`Service`](authorization.md#service). |
-| Deadline/budget/depth | Shared AgentFrame extension; wire schema open | Remaining deadline/budget, default max 5 hops | Receiver lowers ceilings, reports actual usage; caller enforces locally. Other peers' usage unknown, never zero. No hard billing promise. |
+| Deadline/budget/depth | Shared AgentFrame extension; deadline and depth implemented (#89, [wire format](hosting.md#structured-skill-call-wire-format)), budget open | Remaining deadline/budget, default max 5 hops | Receiver lowers ceilings, reports actual usage; caller enforces locally. Other peers' usage unknown, never zero. No hard billing promise. |
 | Typed proxy | Later optional `Remote[ResearchAgent]` | Not first multi-agent release | Method syntax could use same structured request; no proprietary RPC. |
 
 ```python
@@ -737,10 +737,10 @@ the `Literal`. The string form `Remote["name"]` is not used, because
 `mypy --strict` reads a string subscript as a forward reference.
 
 **Signature status:** the annotation, [`ask`](#remoteask), [`call`](#remotecall)
-(#88), the `directory=` parameters and service-mode outbound identity
-([`remotes=`](authorization.md#service), #92) are implemented; deadline/hop
-propagation (#89), token budgets (#90) and Entra on-behalf-of (#93) are later
-stories. `Remote[ResearchAgent]` typed proxies are later only.
+(#88), the `directory=` parameters, service-mode outbound identity
+([`remotes=`](authorization.md#service), #92) and deadline/hop propagation
+(#89) are implemented; token budgets (#90) and Entra on-behalf-of (#93) are
+later stories. `Remote[ResearchAgent]` typed proxies are later only.
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -749,7 +749,7 @@ stories. `Remote[ResearchAgent]` typed proxies are later only.
 | Directory | `Runtime(directory=...)` / `AgentApp(directory=...)` | Required when a skill takes `Remote` | Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. The application opens and closes it. |
 | Card security | The card's `security_schemes`/`security_requirements` | Checked at startup and each run | A card that declares no security is called without credentials. One that declares security needs a `remotes=` entry whose credential satisfies one of its requirements, otherwise `DefinitionError` naming the remote. Foundry A2A agents need [`EntraAppCredential`](authorization.md#entraappcredential) with `https://ai.azure.com/.default`. A source's `card_headers` are used only to fetch cards, never to call agents. |
 | Identity mode | [`Service(credential=...)`](authorization.md#service) in `remotes=` (#92); `OnBehalfOf` later (#93) | Per remote; no implicit mode | No token forwarding, authority amplification or stronger-identity fallback. |
-| Hop limit (later, #89) | Counter/setting representation open | Maximum 5 remote hops by default | Exceeding depth fails, including recursive loops; no guessed wire field. |
+| Hop limit (#89) | [`RunLimits.max_remote_hops`](configuration.md#runlimits) | `5` | A run at that depth cannot call another agent: `ask` and `call` raise `LimitExceededError` before sending. The depth (`RunContext.hops`) and remaining time go to peers that advertise them; see [`Remote.ask`](#remoteask). |
 
 Define a `type` alias per remote to keep signatures short:
 
@@ -872,7 +872,9 @@ cancellation and question handling are those of [`ask`](#remoteask).
 - An argument that cannot be represented as JSON raises Pydantic's
   `PydanticSerializationError` before anything is sent.
 
-Deadline, usage and hop propagation to AgentFrame peers is #89 and #90.
+`call` sends the same [caller context](#remoteask) as `ask` (#89), in the
+same message and under the same activated extension, and fails before
+sending at the `max_remote_hops` depth. Usage propagation is #90.
 
 **Related:** [`ClarificationNeededError`](#clarificationneedederror),
 [request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary),
@@ -924,6 +926,9 @@ shared client's defaults, and redirects are never followed.
   unreachable, refusing or redirecting peer: raises
   [`RemoteAgentError`](runtime.md#remoteagenterror) with the remote task ID and
   state when known. The remote status text is never put in the message.
+- The run is already at its `RunLimits.max_remote_hops` depth (default 5):
+  raises base `LimitExceededError` ("Maximum remote call depth of 5
+  exceeded") before anything is sent.
 - The run's deadline passes: the remote task gets a best-effort `CancelTask`,
   then the run raises `TimeoutLimitExceededError`.
 - The run is cancelled (hosted `CancelTask`, shutdown or local cancellation):
@@ -934,9 +939,19 @@ shared client's defaults, and redirects are never followed.
 
 An uncaught `ClarificationNeededError` in a hosted skill fails the
 orchestrator's own task (`FAILED`) with its safe message; it is not turned into
-the orchestrator's input-required state, and there is no resume. Deadline,
-usage and hop propagation to AgentFrame peers is #89; there is no implicit
-structured fallback.
+the orchestrator's input-required state, and there is no resume. There is no
+implicit structured fallback.
+
+**Caller context (#89):** when the peer's card lists context fields in the
+skill-call extension's `params.context`, `ask` activates the extension and
+sends those fields in message metadata without `agentframe.skill`, so the
+message stays free text: `agentframe.deadline_ms` (the run's remaining time
+in whole milliseconds, rounded down) and `agentframe.hops` (the run's depth
+plus one). A peer that lists none, such as AgentFrame 0.1.0 or any
+non-AgentFrame agent, gets plain A2A without the extension, and the caller
+still stops waiting at its own deadline. See the
+[wire format](hosting.md#structured-skill-call-wire-format) and
+[cross-agent depth](../guides/limits.md#cross-agent-budgets-and-depth-m8).
 
 **Related:** [`Remote.call`](#remotecall), [request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
 

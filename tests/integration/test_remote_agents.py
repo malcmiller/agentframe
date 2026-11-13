@@ -269,6 +269,8 @@ async def bound(directory: AgentDirectory) -> Research:
         invocation_id="run-1",
         principal=None,
         identity=None,
+        hops=0,
+        max_hops=5,
     )
 
 

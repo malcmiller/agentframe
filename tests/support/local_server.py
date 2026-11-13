@@ -9,16 +9,19 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
 import uvicorn
+from starlette.applications import Starlette
 
 from agentframe import AgentApp, AgentFrameError
 
-type AppFactory = Callable[[str], AgentApp]
+# Usually an AgentApp; tests of non-AgentFrame peers serve plain SDK apps.
+type AppFactory = Callable[[str], AgentApp | Starlette]
 type ServeLocally = Callable[[AppFactory], AbstractAsyncContextManager[str]]
 
 
 @asynccontextmanager
 async def serve_locally(make_app: AppFactory) -> AsyncIterator[str]:
-    """Serve an ``AgentApp`` over real HTTP on a free localhost port.
+    """Serve an ``AgentApp`` (or another ASGI app) over real HTTP on a free
+    localhost port.
 
     The server runs in the test's event loop and stops when the block exits.
 

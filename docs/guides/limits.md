@@ -295,10 +295,32 @@ This negotiated accounting extension goes beyond ordinary A2A metadata (the
 invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts)); it never exposes internal `RunResult` or raw provider data.
 
 Track remote call depth with a default maximum of **5 hops**; exceeding it fails
-instead of continuing a recursion loop. The configuration carrier, root/hop
-encoding and precise limit subtype name remain open. Deadline, token allowance/
-reported usage and depth use the same structured-request extension, whose
-URI/schema remain open; these are not invented standard A2A top-level fields.
+instead of continuing a recursion loop. Deadline, token allowance/reported
+usage and depth use the same AgentFrame skill-call extension, not invented
+standard A2A top-level fields.
+
+**Implemented (#89): deadline and depth.**
+
+- `Remote.ask` sends the run's remaining time as `agentframe.deadline_ms`
+  (relative whole milliseconds, rounded down, so clocks need not agree) and
+  the request's depth as `agentframe.hops` (the run's `RunContext.hops` plus
+  one) in message metadata, with the extension activated. It sends only the
+  fields the peer's card lists in the extension's `params.context`, and
+  activates the extension only when the peer lists at least one. AgentFrame
+  0.1.0 and non-AgentFrame agents list none, so they get plain A2A; the caller
+  still stops waiting at its own deadline.
+- A receiver's run deadline is its start plus the smaller of its own timeout
+  (after host ceilings) and `deadline_ms`; a longer incoming deadline never
+  extends it. Missing values mean a root request (depth 0); malformed values
+  are a JSON-RPC `InvalidParams` error and create no task.
+- `RunLimits.max_remote_hops` (default 5) bounds depth. A run at that depth
+  fails locally before sending, with base `LimitExceededError` ("Maximum remote
+  call depth of 5 exceeded"); a request arriving deeper ends `REJECTED` with
+  the same message before routing or the skill. A recursive A -> B -> A loop
+  therefore stops at hop 6.
+- Depth is cooperative: a malicious caller can send `hops=0`. The limit
+  prevents accidental loops, not abuse; admission limits and authentication
+  handle abuse.
 
 ## Retries and duplicate requests
 

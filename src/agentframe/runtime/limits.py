@@ -31,6 +31,10 @@ class RunLimits:
         max_tool_calls: Tool calls a run may make. Every call a model asks
             for counts, including ones with an unknown tool name or invalid
             arguments. Library default: 20.
+        max_remote_hops: How deep a chain of calls between agents may go.
+            A run at this depth cannot call another agent, and an A2A request
+            arriving deeper is rejected. A run started locally, or by a caller
+            that sent no depth, is at depth 0. Library default: 5.
 
     Raises:
         DefinitionError: If a set field is not greater than zero, or
@@ -43,6 +47,7 @@ class RunLimits:
     max_input_tokens: int | None = None
     max_model_retries: int | None = None
     max_tool_calls: int | None = None
+    max_remote_hops: int | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -51,6 +56,7 @@ class RunLimits:
             "max_model_calls",
             "max_input_tokens",
             "max_tool_calls",
+            "max_remote_hops",
         ):
             value = getattr(self, name)
             if value is not None and not value > 0:
@@ -65,6 +71,7 @@ DEFAULT_LIMITS = RunLimits(
     max_model_calls=10,
     max_model_retries=2,
     max_tool_calls=20,
+    max_remote_hops=5,
 )
 """The library defaults: the lowest precedence level.
 

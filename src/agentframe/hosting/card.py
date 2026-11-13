@@ -21,6 +21,7 @@ from a2a.utils.constants import PROTOCOL_VERSION_1_0, TransportProtocol
 from agentframe.authoring.definitions import AgentDefinition, SkillDefinition
 from agentframe.errors import DefinitionError
 from agentframe.hosting.host import HostConfig
+from agentframe.hosting.skill_call import CONTEXT_FIELDS, CONTEXT_PARAM
 from agentframe.hosting.skill_call import (
     SKILL_CALL_EXTENSION_URI as SKILL_CALL_EXTENSION_URI,
 )
@@ -107,12 +108,14 @@ def _skill_call_extension(skills: list[SkillDefinition]) -> AgentExtension:
     return AgentExtension(
         uri=SKILL_CALL_EXTENSION_URI,
         description=(
-            "Call a skill by id with JSON arguments. The 'skills' parameter maps "
-            "each skill id to the JSON Schema of its arguments."
+            "Call a skill by id with JSON arguments, and pass the caller's "
+            "context. The 'skills' parameter maps each skill id to the JSON "
+            "Schema of its arguments; 'context' lists the context fields read."
         ),
         required=False,
         params={
-            "skills": {skill.id: skill_arguments_schema(skill) for skill in skills}
+            "skills": {skill.id: skill_arguments_schema(skill) for skill in skills},
+            CONTEXT_PARAM: list(CONTEXT_FIELDS),
         },
     )
 

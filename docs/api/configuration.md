@@ -64,7 +64,8 @@ not duplicated on `RunLimits`):
 RunLimits(
     *, max_input_tokens: int = ..., max_total_tokens: int = 100000,
     max_model_calls: int = 10, max_model_retries: int = 2,
-    max_tool_calls: int = 20, timeout_seconds: ... = 120,
+    max_tool_calls: int = 20, max_remote_hops: int = 5,
+    timeout_seconds: ... = 120,
 )
 ```
 
@@ -75,7 +76,8 @@ RunLimits(
 | `max_model_calls` | `int \| None` (implemented M3 #36) | `10`, configurable | Dispatched inference attempts including retries, not just successful completions. |
 | `max_model_retries` | `int \| None` (implemented M3 #37) | `2`, configurable; `0` disables retries; negative is a `DefinitionError` | Retries of one model call after a transient `ProviderError`. Each retry counts toward `max_model_calls` and the token budget; see [retries](../guides/limits.md#retries-and-duplicate-requests). |
 | `max_tool_calls` | `int \| None` (implemented M5 #61) | `20`, configurable | Tool calls a run may make. Every model-requested call counts, including unknown-tool and invalid-argument calls that did not run; the call over the limit raises `ToolCallLimitExceededError` before it runs. |
-| `timeout_seconds` | Numeric seconds; accepted numeric type open | `120`, configurable | Wall-clock invocation deadline including model/tool work; retries never reset it. |
+| `max_remote_hops` | `int \| None` (implemented M8 #89) | `5`, configurable | How deep a chain of calls between agents may go. A run at this depth cannot call another agent (`Remote` raises base `LimitExceededError` before sending), and an A2A request arriving deeper is `REJECTED` before routing or the skill, using the agent's limits capped by the host ceiling. Depth is cooperative: it stops accidental loops, not abuse. |
+| `timeout_seconds` | Numeric seconds; accepted numeric type open | `120`, configurable | Wall-clock invocation deadline including model/tool work; retries never reset it. A hosted run's timeout is also capped by the caller's remaining time when it sends `agentframe.deadline_ms` (M8 #89). |
 
 ```python
 from agentframe import RunLimits
@@ -93,11 +95,11 @@ limits = RunLimits(
 `RunLimits(*, timeout_seconds: float | None = None, max_total_tokens: int | None
 = None, max_model_calls: int | None = None, max_input_tokens: int | None =
 None, max_model_retries: int | None = None, max_tool_calls: int | None =
-None)`. Every field defaults to
+None, max_remote_hops: int | None = None)`. Every field defaults to
 `None`, meaning "unset", and is inherited field by field (see
 [precedence](#precedence)); the library defaults are `DEFAULT_LIMITS =
 RunLimits(timeout_seconds=120.0, max_total_tokens=100_000, max_model_calls=10,
-max_model_retries=2, max_tool_calls=20)`,
+max_model_retries=2, max_tool_calls=20, max_remote_hops=5)`,
 with `max_input_tokens` unset so it falls back to the model's context window. A
 field that is set but not greater than zero raises `DefinitionError`. Exceeding
 a limit raises a `LimitExceededError` subclass naming it:
@@ -141,9 +143,9 @@ guarantee.
 Future [AG-UI streaming](streaming.md) must preserve these limits during
 buffering/backpressure and distinguish disconnect/cancellation. Safe local
 execution/usage metadata uses `Runtime.run` / `RunResult`, independent of tracing.
-M8+ additionally propagates remaining deadlines and token ceilings with default
-maximum 5 remote hops; exact depth configuration carrier is still open, not a
-new guessed `RunLimits` field. See [cross-agent budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8).
+M8+ propagates remaining deadlines and depth (implemented #89, with
+`max_remote_hops` above) and later token ceilings (#90). See
+[cross-agent budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8).
 
 **Related:** [`ModelSettings.max_output_tokens`](models.md#modelsettings),
 [`HostConfig.limits_ceiling`](hosting.md#hostconfig),
