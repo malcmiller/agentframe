@@ -70,7 +70,6 @@ from agentframe.errors import (
     PermissionDeniedError,
 )
 from agentframe.hosting.admission import RUN_SLOT_STATE_KEY, RunSlot
-from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.hosting.routing import (
     Clarification,
     SkillCall,
@@ -79,6 +78,7 @@ from agentframe.hosting.routing import (
     new_routing_context,
     route,
 )
+from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI, SKILL_METADATA_KEY
 from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
@@ -87,9 +87,6 @@ from agentframe.security.principal import Principal
 
 SKILL_METADATA_NAMESPACE = "agentframe."
 """Prefix of the message metadata keys the skill-call extension owns."""
-
-SKILL_METADATA_KEY = "agentframe.skill"
-"""Message metadata key that names the skill to run."""
 
 PRINCIPAL_STATE_KEY = "agentframe.principal"
 """``ServerCallContext.state`` key holding the authenticated caller."""
