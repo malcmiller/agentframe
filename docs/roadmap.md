@@ -87,7 +87,7 @@ framework base class.
 | --- | --- | --- |
 | First usable release | One `ctx.generate`: text, `output=Summary` for validated Pydantic output, `tools=[...]` for registered bounded continuations; complete validated results, not partial streams. AgentFrame owns normalized model types; unsupported capabilities fail before sending; refusals/truncation raise typed errors. | Normalized usage layouts; provider schema subsets are documented per adapter (M4 #55/#56); no implicit partial-output success (explicit opt-in: catch `IncompleteOutputError`, read `.partial_text`, M4 #54). |
 | Services and results | `Inject[T]`, `Services.add` / `add_scoped`, `services=` on app/runtime; startup missing-service errors. `invoke` returns a value; `run` returns `RunResult` independent of tracing. | Factory/disposal interfaces, generic typing, duration unit, usage marker fields and failed-run metadata access. |
-| Errors and identity | Named [safe error hierarchy](api/runtime.md#agentframeerror); `Authenticator` with `EntraIDAuth`, `APIKeyAuth`, explicit `AllowAnonymous()`. `HostConfig.auth` is mandatory remotely; `role_permissions` maps verified claims. | Error constructors/startup correlation and exact transport mapping, principal/custom-auth methods, API-key entries and scope/permission merge rules. |
+| Errors and identity | Named [safe error hierarchy](api/runtime.md#agentframeerror); `Authenticator` with `EntraIDAuth`, `APIKeyAuth`, explicit `AllowAnonymous()`. `HostConfig.auth` is mandatory remotely; `role_permissions` maps verified claims. | Error constructors/startup correlation and exact transport mapping, principal/custom-auth methods and API-key entries. `EntraIDAuth` maps roles and scopes together (#76). |
 | Retry and host defaults | Transient model failures only, two retries/backoff, SDK retries disabled; side-effecting tools never auto-retry. Same caller/A2A message ID dedupes for 10 minutes (memory, pluggable store), not exactly-once. Host defaults 32 runs/1 MiB request/4 MiB response/30 seconds drain; `/health` and `/ready`. | Retry/store configuration, atomicity/payload conflicts, byte measurement, probe schema; defaults themselves decided. |
 | A2A request styles | Prefer deterministic structured skill/JSON-argument requests through a card-declared, caller-activated extension. Free-text uses custom or opt-in model routing; ambiguity/missing input asks back via input-required tasks. No automatic routing from agent model injection. | Router/extraction/clarification contract, native result mappings. The skill-call extension wire format is implemented (M2 #5). |
 | Human approvals | Application-owned workflows; no built-in approval pause/resume in first release. Required tool/action authorization remains enforced. | Application integration/decision types; protocol tasks are not durable approval workflows. |
@@ -375,7 +375,11 @@ M1 is the first proof: a model-free agent. M2 adds independent native A2A
 interoperability; M3 meets the [README success criterion](../README.md#first-success-criterion)
 with interchangeable Foundry/Ollama configuration; M4 adds typed structured
 output; M5 adds bounded tool calling; M6 adds built-in opt-in model routing.
-M7 hardening completes the first usable release.
+M7 hardening completes the first usable release. `EntraIDAuth` validates
+Microsoft Entra v2.0 access tokens (signature via the tenant's keys, issuer,
+tenant, client-ID audience, expiry, `ver`), maps `roles` and `scp` through
+`role_permissions`, fails closed when keys are unavailable and declares an
+OpenID Connect card scheme; it needs the optional `entra` extra (#76).
 
 ### Resolved M0 platform and API decisions
 
@@ -503,9 +507,10 @@ belongs to that release even though telemetry exporters/integration stay optiona
 - Pinned MCP/telemetry versions, authorization hooks, schema/result mappings,
   and transport-specific correlation metadata.
 - Principal construction and OBO/service configuration/claims/consent, custom
-  authenticator/resource-policy/content-check methods, API-key entry format,
-  Entra scope mapping and permission merge rules. `auth`, built-in authenticators,
-  `role_permissions` and explicit `AllowAnonymous()` are decided.
+  authenticator/resource-policy/content-check methods and API-key entry format.
+  `auth`, built-in authenticators, `role_permissions` and explicit
+  `AllowAnonymous()` are decided; `EntraIDAuth` maps roles and scopes into one
+  `role_permissions` namespace (M7 #76).
 - Free-text routing beyond one task's clarification: durable or cross-task
   follow-ups and multi-skill orchestration. The `SkillRouter` protocol,
   `ModelRouter`, validated argument extraction and the `INPUT_REQUIRED`

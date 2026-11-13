@@ -142,6 +142,13 @@ AGENTFRAME_TEST_FOUNDRY=1 AGENTFRAME_FOUNDRY_ENDPOINT=<base-url> \
 
 An enabled provider with a missing required variable fails rather than skips.
 
+`tests/integration/test_entra_interoperability.py` has one opt-in `entra` test
+using a real token from `az account get-access-token`, enabled with
+`AGENTFRAME_TEST_ENTRA=1`, `AGENTFRAME_ENTRA_TENANT_ID` and
+`AGENTFRAME_ENTRA_AUDIENCE` (the API's client ID; optional
+`AGENTFRAME_ENTRA_RESOURCE`, default `api://<audience>`). It needs an existing
+app registration; setup is in `docs/api/authorization.md#entraidauth`.
+
 Do not implement M1+ features or add runtime dependencies just to execute design
 snippets.
 
@@ -346,7 +353,10 @@ accounting caveats, and protocol boundaries.
   choice means startup refusal. `role_permissions` maps verified roles/scopes.
   The protocol method is `async authenticate(headers) -> VerifiedCaller | None`
   (M2 #4); API keys use `APIKey(caller_id=..., roles=[...])` and the
-  `X-API-Key` header; permissions are the union of mapped roles. Entra scope mapping remains open.
+  `X-API-Key` header; permissions are the union of mapped roles.
+  `EntraIDAuth` (M7 #76, `entra` extra) accepts v2.0 tokens only; `audience` is the API's client ID GUID (`api://`
+  refused); `oid` is the caller; `roles` and `scp` share the `role_permissions`
+  namespace; unavailable signing keys fail closed (401 plus warning).
   Do not rename separate outbound resolver `authentication=` settings.
 - Restrict routing candidates, re-check invocation and protected task access,
   and enforce consequential tool/resource decisions at the action boundary.
