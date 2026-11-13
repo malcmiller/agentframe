@@ -184,7 +184,8 @@ class GenerationState:
         skill: The running skill, or ``None`` while routing, before one is
             selected. Execution policy checks receive it.
         policy: Execution policy whose model-request checks run before every
-            model request, or ``None`` for no checks.
+            model request and whose tool checks run before every tool call,
+            or ``None`` for no checks.
     """
 
     model: Model | None
@@ -329,8 +330,9 @@ class GenerationState:
         are finite. A tool call is never retried.
 
         Tools the caller lacks a required permission for are left out of the
-        request, and every call is authorized again before it runs. Every
-        request, including each continuation, passes the execution policy's
+        request, and every call is authorized again, then passes the
+        execution policy's tool checks, before it runs. Every request,
+        including each continuation, passes the execution policy's
         model-request checks before it is sent.
         """
         specs = tuple(
@@ -351,7 +353,13 @@ class GenerationState:
             for call in response.tool_calls:
                 self.accounting.count_tool_call(self.limits)
                 result = await run_tool_call(
-                    call, tools, self.services, ctx, self.tool_authorization
+                    call,
+                    tools,
+                    self.services,
+                    ctx,
+                    self.tool_authorization,
+                    self.policy,
+                    self.skill,
                 )
                 messages += (tool_message(call, result),)
 
