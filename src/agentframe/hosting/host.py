@@ -14,7 +14,7 @@ from agentframe.security.authentication import Authenticator
 class HostConfig:
     """Deployment settings for a remotely hosted agent.
 
-    Admission limits and shutdown settings come later (M7).
+    Request size limits and shutdown settings come later (M7).
 
     Args:
         public_url: The origin callers use to reach the agent, for example
@@ -34,18 +34,23 @@ class HostConfig:
             ``ModelSettings.max_output_tokens``: a call whose output cap does
             not fit the remaining budget fails with ``TokenLimitExceededError``.
             ``None`` (the default) caps nothing.
+        max_concurrent_runs: How many messages may run at once. Another
+            ``SendMessage`` is refused immediately with HTTP 503 and
+            ``Retry-After: 1``; nothing is queued. A task waiting for input
+            holds no slot. Defaults to 32.
 
     Raises:
         DefinitionError: ``auth`` is ``None``; ``public_url`` is not an
             absolute http(s) URL, or it contains credentials, a query or a
-            fragment; or a ``role_permissions`` value is a single string
-            instead of a list.
+            fragment; a ``role_permissions`` value is a single string
+            instead of a list; or ``max_concurrent_runs`` is less than 1.
     """
 
     public_url: str
     auth: Authenticator
     role_permissions: Mapping[str, Iterable[str]] = field(default_factory=dict)
     limits_ceiling: RunLimits | None = None
+    max_concurrent_runs: int = 32
 
     def __post_init__(self) -> None:
         _check_public_url(self.public_url)
@@ -58,6 +63,8 @@ class HostConfig:
         object.__setattr__(
             self, "role_permissions", _frozen_role_permissions(self.role_permissions)
         )
+        if self.max_concurrent_runs < 1:
+            raise DefinitionError("HostConfig max_concurrent_runs must be at least 1")
 
 
 def _check_public_url(public_url: str) -> None:

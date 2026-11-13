@@ -40,6 +40,7 @@ from agentframe.hosting.a2a_executor import (
     is_skill_call,
     read_skill_call,
 )
+from agentframe.hosting.admission import RUN_SLOT_STATE_KEY, RunAdmission, RunSlot
 from agentframe.hosting.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
 from agentframe.hosting.host import HostConfig
 from agentframe.hosting.model_router import ModelRouter
@@ -70,6 +71,9 @@ class AgentApp:
     and checks a ``ModelRouter``'s model the same way. The app never closes
     models; the application owns them.
     Hosted runs and routing use limits capped by ``host.limits_ceiling``.
+    At most ``host.max_concurrent_runs`` messages run at once; another
+    ``SendMessage`` gets HTTP 503 with ``Retry-After: 1`` and creates no task.
+    A task waiting for input holds no slot; its answer needs a free one.
 
     Args:
         agent: Instance of an ``@agent``-decorated class.
@@ -145,10 +149,11 @@ class AgentApp:
                 *create_agent_card_routes(card),
                 Route(
                     A2A_PATH,
-                    _require_authentication(
+                    _guard_a2a_endpoint(
                         _acknowledge_skill_call_extension(a2a_route.endpoint),
                         host,
                         card,
+                        RunAdmission(host.max_concurrent_runs),
                     ),
                     methods=["POST"],
                 ),
@@ -170,32 +175,70 @@ def _check_limits_within_ceiling(agent: Agent, host: HostConfig) -> None:
         check_within_ceiling(explicit, host.limits_ceiling, f"Skill '{skill.id}'")
 
 
-def _require_authentication(
-    endpoint: Endpoint, host: HostConfig, card: AgentCard
+def _guard_a2a_endpoint(
+    sdk_endpoint: Endpoint,
+    host: HostConfig,
+    card: AgentCard,
+    admission: RunAdmission,
 ) -> Endpoint:
-    """Wrap ``endpoint`` so it only runs for callers the host authenticates.
+    """Wrap the SDK's A2A endpoint with the host's checks, in a fixed order.
 
-    Rejected callers get a 401 whose ``WWW-Authenticate`` header names the
-    security schemes the Agent Card declares.
+    1. Authentication: every request needs a caller the host verifies.
+    2. Admission: a ``SendMessage`` needs a free run slot.
+
+    Both refusals happen before the SDK sees the request, so no task exists.
+    The request size limit belongs before authentication, and deduplication
+    between authentication and admission, so a repeated message takes no slot.
     """
     challenge = www_authenticate(card.security_schemes)
     challenge_headers = {"WWW-Authenticate": challenge} if challenge else None
 
-    async def authenticated_endpoint(request: Request) -> Response:
+    async def guarded_endpoint(request: Request) -> Response:
         try:
-            principal = await authenticate_request(
+            request.state.principal = await authenticate_request(
                 host.auth, request.headers, host.role_permissions
             )
         except AuthenticationError:
-            # Rejected before the A2A SDK sees the request: no task exists and
-            # the reply reveals nothing about the agent or its skills.
+            # The reply reveals nothing about the agent or its skills.
             return JSONResponse(
                 {"error": "Authentication required."}, 401, headers=challenge_headers
             )
-        request.state.principal = principal
-        return await endpoint(request)
 
-    return authenticated_endpoint
+        if not await _is_send_message(request):
+            return await sdk_endpoint(request)
+        slot = admission.try_admit()
+        if slot is None:
+            # Overload fails fast: the caller retries rather than waiting here.
+            return JSONResponse(
+                {"error": "The agent is busy; retry later."},
+                503,
+                headers={"Retry-After": "1"},
+            )
+        request.state.run_slot = slot
+        try:
+            return await sdk_endpoint(request)
+        finally:
+            # A started run releases its own slot when it ends, which can be
+            # after a non-blocking response. A message the SDK refused never
+            # started a run.
+            if not slot.started:
+                slot.release()
+
+    return guarded_endpoint
+
+
+async def _is_send_message(request: Request) -> bool:
+    """Return whether the JSON-RPC request is ``SendMessage``.
+
+    It is the only method that runs a skill: task reads, lists and cancels
+    take no run slot, and the SDK refuses streaming, which the card does not
+    advertise. Malformed JSON is left for the SDK to report.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("method") == "SendMessage"
 
 
 def _acknowledge_skill_call_extension(endpoint: Endpoint) -> Endpoint:
@@ -300,11 +343,14 @@ class _RequestHandler(DefaultRequestHandler):
 
 
 class _CallerContextBuilder(DefaultServerCallContextBuilder):
-    """Add the authenticated caller to the SDK's per-request call context."""
+    """Add the caller and any run slot to the SDK's per-request call context."""
 
     def build(self, request: Request) -> ServerCallContext:
         context = super().build(request)
         context.state[PRINCIPAL_STATE_KEY] = request.state.principal
+        slot: RunSlot | None = getattr(request.state, "run_slot", None)
+        if slot is not None:
+            context.state[RUN_SLOT_STATE_KEY] = slot
         return context
 
     def build_user(self, request: Request) -> User:
