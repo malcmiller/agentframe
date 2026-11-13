@@ -62,9 +62,9 @@ interfaces remain open. Examples beyond the M1 surface are design proposals.
 
 Decorators describe the agent; an `Agent` subclass implements behavior. Models
 and infrastructure are injected. Each ability is a separate `@skill` method; no
-abstract `handle()` or manual dispatch method is required. This M1 example works
-from source today (it is kept in `tests/integration/test_example.py`); run the `await` lines
-inside an async function or `asyncio.run`:
+abstract `handle()` or manual dispatch method is required. This model-free agent
+is [`examples/echo.py`](examples/echo.py); run the `await` lines inside an async
+function or `asyncio.run`:
 
 ```python
 from agentframe import Agent, Inject, RunContext, Runtime, Services, agent, skill
@@ -104,60 +104,17 @@ Names default to the class/method name and descriptions to docstrings.
 
 ### Hosting over A2A
 
-Serve the same agent to any A2A 1.0 client with a `create_app()` function (also
-kept working in `tests/integration/test_example.py`). The
-API key and policy below are **development placeholders**: production hosts
-need your real identity provider and resource checks. Remote hosts always
-require an explicit `auth=` choice.
-
-```python
-import os
-from collections.abc import Mapping
-
-from agentframe import (
-    AgentApp,
-    APIKey,
-    APIKeyAuth,
-    AuthorizationPolicy,
-    HostConfig,
-    Principal,
-    SkillDefinition,
-)
-
-
-class DevelopmentPolicy(AuthorizationPolicy):
-    """Development placeholder: allow any authenticated caller."""
-
-    async def check(
-        self,
-        principal: Principal | None,
-        skill: SkillDefinition,
-        arguments: Mapping[str, object],
-    ) -> bool:
-        return principal is not None
-
-
-def create_app() -> AgentApp:
-    services = Services()
-    services.add(Greeter, Greeter())
-    # Development placeholder: one API key from the environment.
-    keys = {os.environ["ECHO_API_KEY"]: APIKey("developer")}
-    return AgentApp(
-        agent=Echo(),
-        host=HostConfig(
-            public_url=os.environ.get("ECHO_PUBLIC_URL", "http://127.0.0.1:8000"),
-            auth=APIKeyAuth(keys=keys),
-        ),
-        services=services,
-        authorization=DevelopmentPolicy(),
-    )
-```
+Serve the same agent to any A2A 1.0 client with a `create_app()` function:
+[`examples/echo.py`](examples/echo.py) wraps `Echo` in an `AgentApp` with a
+development API key and authorization policy. These are **development
+placeholders**: production hosts need your real identity provider and resource
+checks. Remote hosts always require an explicit `auth=` choice.
 
 Run it with Uvicorn from the `server` extra (`uv sync --extra server` from
 source):
 
 ```shell
-ECHO_API_KEY=dev-only-key agentframe run myapp:create_app
+ECHO_API_KEY=dev-only-key agentframe run examples.echo:create_app
 ```
 
 The Agent Card is served at `/.well-known/agent-card.json` and the JSON-RPC
@@ -213,49 +170,20 @@ credentials, model downloads, or an inference server.
 
 This works from source today. The agent in
 [`examples/assistant.py`](examples/assistant.py) has a text skill, a typed
-structured-output skill and a model-free skill, and never names a model host:
+structured-output skill and a model-free skill, and never names a model host.
+Its text skill is all a text agent needs:
 
 ```python
-from pydantic import BaseModel
-
-from agentframe import Agent, ModelSettings, RunContext, RunLimits, agent, skill
-
-
-class Summary(BaseModel):
-    """A one-sentence summary of some text and its key points."""
-
-    text: str
-    key_points: list[str]
-
-
 @agent(version="1.0.0")
 class Assistant(Agent):
     """Answers questions, summarizes text and counts words."""
 
     instructions = "Answer in one short sentence."
-    model_settings = ModelSettings(max_output_tokens=512)
-    # Foundry does not report a deployment's context window, so cap the input.
-    limits = RunLimits(max_input_tokens=4000)
 
     @skill("answer", tags=["questions"])
     async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer a question briefly."""
         return await ctx.generate(question)
-
-    @skill("summarize", tags=["text"])
-    async def summarize(self, text: str, ctx: RunContext) -> Summary:
-        """Summarize some text as a sentence and its key points."""
-        return await ctx.generate(
-            text,
-            # Ollama sees only the schema, so describe the shape here too.
-            instructions="Reply with JSON: a one-sentence text and 1-3 key_points.",
-            output=Summary,
-        )
-
-    @skill("count_words", tags=["text"])
-    async def count_words(self, text: str, ctx: RunContext) -> int:
-        """Count the words in some text, without calling the model."""
-        return len(text.split())
 ```
 
 Its `create_app()` reads `AGENTFRAME_MODEL_PROVIDER` and builds an
@@ -395,6 +323,26 @@ automatically advertising A2A streaming.
 The multi-agent release follows the single-agent M7 release. A larger hosted
 platform or durable workflow engine is not a prerequisite for either.
 
+## Runnable examples
+
+Each example is a short, typed module with a `create_app()` you can serve with
+`agentframe run examples.<name>:create_app`. Model-backed examples choose
+Ollama or Foundry from `AGENTFRAME_MODEL_PROVIDER` (see the
+[first success criterion](#first-success-criterion)); their
+`create_app(model=...)` also accepts any model, such as a test model.
+
+| Example | Shows |
+| --- | --- |
+| [`examples/echo.py`](examples/echo.py) | A model-free agent with an injected service, hosted for callers with a development API key. |
+| [`examples/assistant.py`](examples/assistant.py) | Text generation, a typed structured output and a model-free skill on one agent. |
+| [`examples/orders.py`](examples/orders.py) | Tool calling with permissions and a tool policy, behind a development API key. |
+| [`examples/routed_assistant.py`](examples/routed_assistant.py) | Free text routed to a skill by the built-in `ModelRouter`. |
+
+[`examples/smoke.py`](examples/smoke.py) serves every example in-process with
+a scripted model and calls it with the official A2A client, checking each
+returns a complete, validated result. CI runs it against the installed wheel;
+run it yourself from the repository root with `uv run python -m examples.smoke`.
+
 ## Documentation
 
 - [Documentation index](docs/README.md)
@@ -444,7 +392,8 @@ uv build
 
 All four checks must pass before committing: `uv run ruff format --check`,
 `uv run ruff check`, `uv run mypy` and `uv run pytest`. CI runs them on Python
-3.13, 3.14 and 3.15 and verifies an isolated wheel import. Pre-commit runs Ruff
+3.13, 3.14 and 3.15, verifies an isolated wheel import and runs the
+[examples smoke runner](#runnable-examples) against the installed wheel. Pre-commit runs Ruff
 and mypy; tests run in CI, not on every commit. See
 [code quality and readability](AGENTS.md#code-quality-and-readability) for the
 contributor rules, local matrix commands and PyCharm setup.

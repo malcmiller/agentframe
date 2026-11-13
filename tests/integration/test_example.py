@@ -1,7 +1,4 @@
-"""The README examples, kept working as written."""
-
-import os
-from collections.abc import Mapping
+"""The README examples and ``examples/echo.py``, kept working as written."""
 
 import httpx
 import pytest
@@ -13,46 +10,10 @@ from a2a.client.service_parameters import (
 from a2a.helpers import get_artifact_text, new_data_part
 from a2a.types import Message, Role, SendMessageRequest
 
-from agentframe import (
-    Agent,
-    AgentApp,
-    APIKey,
-    APIKeyAuth,
-    AuthorizationPolicy,
-    HostConfig,
-    Inject,
-    Principal,
-    RunContext,
-    Runtime,
-    Services,
-    SkillDefinition,
-    agent,
-    skill,
-)
+from agentframe import AgentApp, Runtime, Services
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
+from examples.echo import Echo, Greeter, create_app
 from local_server import ServeLocally
-
-
-class Greeter:
-    greeting = "Hello"
-
-    def greet(self, name: str) -> str:
-        return f"{self.greeting}, {name}!"
-
-
-@agent(version="0.1.0")
-class Echo(Agent):
-    """Returns supplied text or a greeting."""
-
-    @skill(id="echo", tags=["text"])
-    async def echo(self, text: str, ctx: RunContext) -> str:
-        """Return the text unchanged."""
-        return text
-
-    @skill(id="greet", tags=["greeting"])
-    async def greet(self, name: str, greeter: Inject[Greeter], ctx: RunContext) -> str:
-        """Greet someone by name."""
-        return greeter.greet(name)
 
 
 async def test_readme_example() -> None:
@@ -65,38 +26,6 @@ async def test_readme_example() -> None:
 
     assert value == "hi"
     assert result.value == "Hello, Ada!"
-
-
-# Hosting over A2A
-
-
-class DevelopmentPolicy(AuthorizationPolicy):
-    """Development placeholder: allow any authenticated caller."""
-
-    # noinspection PyShadowingNames
-    async def check(
-        self,
-        principal: Principal | None,
-        skill: SkillDefinition,
-        arguments: Mapping[str, object],
-    ) -> bool:
-        return principal is not None
-
-
-def create_app() -> AgentApp:
-    services = Services()
-    services.add(Greeter, Greeter())
-    # Development placeholder: one API key from the environment.
-    keys = {os.environ["ECHO_API_KEY"]: APIKey("developer")}
-    return AgentApp(
-        agent=Echo(),
-        host=HostConfig(
-            public_url=os.environ.get("ECHO_PUBLIC_URL", "http://127.0.0.1:8000"),
-            auth=APIKeyAuth(keys=keys),
-        ),
-        services=services,
-        authorization=DevelopmentPolicy(),
-    )
 
 
 async def test_readme_hosting_example(

@@ -61,3 +61,11 @@ jobs:
           uv run --isolated --no-project --python 3.13
           --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server]"
           agentframe run --help
+      # A copy outside the checkout, so src/ can never shadow the wheel.
+      - name: Smoke-test the examples against the installed wheel
+        run: |
+          cp -R examples "${RUNNER_TEMP}/examples"
+          cd "${RUNNER_TEMP}"
+          uv run --isolated --no-project --python 3.13 \
+            --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server]" \
+            python -m examples.smoke
