@@ -84,6 +84,9 @@ from agentframe.security.execution_policy import (
 from agentframe.security.principal import Principal
 
 if TYPE_CHECKING:
+    from agentframe.discovery.foundry import (
+        FoundryAgentRegistry as FoundryAgentRegistry,
+    )
     from agentframe.models.foundry import FoundryModel as FoundryModel
     from agentframe.models.ollama import OllamaModel as OllamaModel
     from agentframe.security.entra import EntraIDAuth as EntraIDAuth
@@ -170,8 +173,13 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    # Provider adapters and EntraIDAuth are imported on first use so that
-    # ``import agentframe`` works without their optional extras installed.
+    # Provider adapters, FoundryAgentRegistry and EntraIDAuth are imported on
+    # first use so that ``import agentframe`` works without their optional
+    # extras installed.
+    if name == "FoundryAgentRegistry":
+        from agentframe.discovery.foundry import FoundryAgentRegistry
+
+        return FoundryAgentRegistry
     if name == "FoundryModel":
         from agentframe.models.foundry import FoundryModel as FoundryModel
 

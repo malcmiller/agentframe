@@ -7,7 +7,7 @@ redirects, which the SDK's ``A2ACardResolver`` does not allow.
 
 import asyncio
 import json
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -47,16 +47,21 @@ async def fetch_card(
     client: httpx.AsyncClient,
     reference: AgentReference,
     allow_http_hosts: Collection[str],
+    headers: Mapping[str, str] | None = None,
 ) -> ValidatedCard:
     """Download, parse and validate the Agent Card ``reference`` points to.
 
-    The request carries no credentials: the client's own ``auth`` is disabled
-    and nothing about the current caller is added.
+    The request carries only ``headers``: the client's own ``auth`` is
+    disabled and nothing about the current caller is added. ``headers`` go
+    only to the card URL itself, since redirects are refused.
 
     Args:
-        client: The HTTP client to send the request with.
+        client: The HTTP client to send the request with. It must carry no
+            credentials in its default headers or cookies.
         reference: The agent whose card to fetch.
         allow_http_hosts: Non-loopback hosts that may be reached over plain http.
+        headers: Extra headers from the agent's source, such as the source's
+            own bearer token. Defaults to none.
 
     Returns:
         The validated card and its interface URL.
@@ -68,7 +73,7 @@ async def fetch_card(
     """
     agent = f"Agent '{reference.name}'"
     _check_destination(reference.card_url, allow_http_hosts, agent)
-    body = await _download(client, reference.card_url, agent)
+    body = await _download(client, reference.card_url, headers or {}, agent)
     card = _parse(body, agent)
     return ValidatedCard(card, _interface_url(card, reference.card_url, agent))
 
@@ -88,14 +93,16 @@ def _check_destination(
     )
 
 
-async def _download(client: httpx.AsyncClient, url: str, agent: str) -> bytes:
+async def _download(
+    client: httpx.AsyncClient, url: str, headers: Mapping[str, str], agent: str
+) -> bytes:
     try:
         async with (
             asyncio.timeout(FETCH_TIMEOUT_SECONDS),
             client.stream(
                 "GET",
                 url,
-                headers={"Accept": "application/json"},
+                headers={**headers, "Accept": "application/json"},
                 auth=None,
                 follow_redirects=False,
             ) as response,
