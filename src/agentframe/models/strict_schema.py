@@ -13,8 +13,8 @@ model answers ``null`` to mean "use the default", and
 applies the defaults. A property that was already nullable keeps its
 ``null``, because there ``null`` is a real value.
 
-Used for ``text.format`` schemas, and meant for strict function parameter
-schemas too. See the subset at
+Used for ``text.format`` schemas and strict function parameter schemas.
+See the subset at
 https://developers.openai.com/api/docs/guides/structured-outputs#supported-schemas
 """
 
@@ -207,6 +207,5 @@ def _branches(schema: dict[str, Any], root: dict[str, Any]) -> list[dict[str, An
 
 def _unsupported(construct: str, location: str) -> UnsupportedCapabilityError:
     return UnsupportedCapabilityError(
-        f"Strict structured output does not support {construct} "
-        f"(at {location or 'the root'})"
+        f"Strict schemas do not support {construct} (at {location or 'the root'})"
     )
