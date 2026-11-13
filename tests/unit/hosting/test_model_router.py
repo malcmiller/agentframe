@@ -3,8 +3,8 @@
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Annotated, Any
 
 import httpx
@@ -18,25 +18,32 @@ from agentframe import (
     AgentApp,
     AllowAnonymous,
     Clarification,
+    DefinitionError,
     HostConfig,
     InputValidationError,
     ModelCapabilities,
     ModelRefusalError,
     ModelRouter,
     ModelSettings,
+    ProviderError,
     RoutingContext,
     RunContext,
     RunLimits,
     SkillCall,
+    SkillDefinition,
+    SkillRouter,
     UnsupportedCapabilityError,
     agent,
     skill,
 )
+from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.hosting.model_router import NO_TEXT_QUESTION, extraction_output
 from agentframe.hosting.routing import new_routing_context
 from agentframe.runtime.generation import RunAccounting
 from agentframe.testing import ScriptedModel
-from local_server import ServeLocally
+from local_server import ServeLocally, lifespan_startup
+
+LOCAL_URL = "http://127.0.0.1:8000"
 
 
 class Glossary(BaseModel):
@@ -400,25 +407,49 @@ async def test_both_calls_are_charged_to_the_run_with_the_routers_settings() -> 
 # Hosted: accounting and follow-up answers
 
 
+def anonymous_host(public_url: str) -> HostConfig:
+    # Test-only: anonymous access on a loopback test server.
+    return HostConfig(public_url=public_url, auth=AllowAnonymous())
+
+
 @asynccontextmanager
-async def serve_linguist(
-    serve: ServeLocally, router: ModelRouter, skill_model: ScriptedModel
+async def serve_agent(
+    serve: ServeLocally, agent: Agent, router: SkillRouter | None
 ) -> AsyncIterator[httpx.AsyncClient]:
     def make_app(public_url: str) -> AgentApp:
-        return AgentApp(
-            agent=Linguist(model=skill_model),
-            # Test-only: anonymous access on a loopback test server.
-            host=HostConfig(public_url=public_url, auth=AllowAnonymous()),
-            router=router,
-        )
+        return AgentApp(agent=agent, host=anonymous_host(public_url), router=router)
 
     async with serve(make_app) as base_url, httpx.AsyncClient(base_url=base_url) as h:
         yield h
 
 
-async def say(
-    http: httpx.AsyncClient, text: str, task_id: str | None = None
+def serve_linguist(
+    serve: ServeLocally, router: ModelRouter, skill_model: ScriptedModel
+) -> AbstractAsyncContextManager[httpx.AsyncClient]:
+    return serve_agent(serve, Linguist(model=skill_model), router)
+
+
+async def send(
+    http: httpx.AsyncClient,
+    message: dict[str, Any],
+    extensions: str | None = None,
 ) -> dict[str, Any]:
+    """Send one A2A message and return the decoded JSON-RPC response."""
+    body = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "SendMessage",
+        "params": {"message": message},
+    }
+    headers = {"A2A-Version": "1.0"}
+    if extensions is not None:
+        headers["A2A-Extensions"] = extensions
+    response = await http.post("/a2a", json=body, headers=headers)
+    result: dict[str, Any] = response.json()
+    return result
+
+
+def text_message(text: str, task_id: str | None = None) -> dict[str, Any]:
     message: dict[str, Any] = {
         "messageId": str(uuid.uuid4()),
         "role": "ROLE_USER",
@@ -426,20 +457,26 @@ async def say(
     }
     if task_id is not None:
         message["taskId"] = task_id
-    body = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "method": "SendMessage",
-        "params": {"message": message},
-    }
-    response = await http.post("/a2a", json=body, headers={"A2A-Version": "1.0"})
-    task: dict[str, Any] = response.json()["result"]["task"]
+    return message
+
+
+async def say(
+    http: httpx.AsyncClient, text: str, task_id: str | None = None
+) -> dict[str, Any]:
+    """Send free text and return the task."""
+    task: dict[str, Any] = (await send(http, text_message(text, task_id)))["result"][
+        "task"
+    ]
     return task
 
 
 def state(task: Mapping[str, Any]) -> str:
     value: str = task["status"]["state"]
     return value
+
+
+def status_text(task: Mapping[str, Any]) -> str:
+    return " ".join(part["text"] for part in task["status"]["message"]["parts"])
 
 
 async def test_a_routed_run_reports_both_routing_calls_plus_the_skills(
@@ -471,6 +508,7 @@ async def test_a_follow_up_answer_is_routed_again_with_the_whole_conversation(
         answered = await say(h, "French", task_id=asked["id"])
 
     assert state(asked) == "TASK_STATE_INPUT_REQUIRED"
+    assert status_text(asked) == "Into which language?"
     assert state(answered) == "TASK_STATE_COMPLETED"
     assert answered["artifacts"][0]["parts"][0]["text"] == (
         "[French, formal=False, x1] Hi"
@@ -481,3 +519,216 @@ async def test_a_follow_up_answer_is_routed_again_with_the_whole_conversation(
         ("assistant", "Into which language?"),
         ("user", "French"),
     ]
+
+
+@agent(version="1.0.0")
+class Vault(Agent):
+    """Keeps secrets."""
+
+    @skill("open", requires_permissions=["vault:open"], tags=["vault"])
+    async def open(self, ctx: RunContext) -> str:
+        """Open the vault."""
+        return "opened"
+
+
+@agent(version="1.0.0")
+class ThriftyLinguist(Linguist):
+    """Summarizes and translates text with one model call per run."""
+
+    limits = RunLimits(timeout_seconds=2, max_model_calls=1)
+
+
+async def test_without_a_router_free_text_is_refused_even_with_an_agent_model(
+    serve: ServeLocally,
+) -> None:
+    model = router_model()
+
+    async with serve_agent(serve, Linguist(model=model), router=None) as h:
+        response = await send(h, text_message("Summarize 'Hi'"))
+
+    assert response["error"]["code"] == -32004
+    assert model.requests == []
+
+
+async def test_a_caller_with_no_eligible_skill_is_rejected_without_a_model_call(
+    serve: ServeLocally,
+) -> None:
+    model = router_model()
+
+    async with serve_agent(serve, Vault(), ModelRouter(model)) as h:
+        task = await say(h, "Open the vault")
+
+    assert state(task) == "TASK_STATE_REJECTED"
+    assert status_text(task) == "No skill is available to this caller"
+    assert model.requests == []
+
+
+@pytest.mark.parametrize(
+    ("agent_class", "replies", "message"),
+    [
+        (
+            ThriftyLinguist,
+            [select("summarize")],
+            "The run reached its limit of 1 model calls",
+        ),
+        (
+            Linguist,
+            [ModelRefusalError("The model refused the request")],
+            "The model refused the request",
+        ),
+        (
+            Linguist,
+            [ProviderError("The model provider is unavailable", transient=False)],
+            "The model provider is unavailable",
+        ),
+    ],
+    ids=["limit", "refusal", "provider"],
+)
+async def test_routing_failures_fail_the_task_with_safe_messages(
+    serve: ServeLocally,
+    agent_class: type[Linguist],
+    replies: list[Any],
+    message: str,
+) -> None:
+    model = ScriptedModel(
+        [json.dumps(r) if isinstance(r, dict) else r for r in replies],
+        capabilities=ModelCapabilities(context_window=8192, structured_output=True),
+    )
+
+    async with serve_agent(serve, agent_class(), ModelRouter(model)) as h:
+        task = await say(h, "Summarize 'Hi'")
+
+    assert state(task) == "TASK_STATE_FAILED"
+    assert status_text(task) == message
+    assert task["metadata"]["invocation_id"]
+
+
+async def test_structured_skill_calls_bypass_the_router_and_its_cost(
+    serve: ServeLocally,
+) -> None:
+    model = router_model()
+    message = {
+        "messageId": str(uuid.uuid4()),
+        "role": "ROLE_USER",
+        "parts": [{"data": {"text": "Hi", "language": "French"}}],
+        "metadata": {"agentframe.skill": "translate"},
+    }
+
+    async with serve_linguist(serve, ModelRouter(model), model) as h:
+        response = await send(h, message, extensions=SKILL_CALL_EXTENSION_URI)
+
+    task = response["result"]["task"]
+    assert state(task) == "TASK_STATE_COMPLETED"
+    assert task["metadata"]["usage"]["model_calls"] == 0
+    assert model.requests == []
+
+
+# Startup checks
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "error"),
+    [
+        (
+            ModelCapabilities(context_window=8192, structured_output=False),
+            "does not support structured output",
+        ),
+        (
+            ModelCapabilities(context_window=None, structured_output=True),
+            "ModelRouter: The model does not report its context window",
+        ),
+    ],
+    ids=["no-structured-output", "unknown-context-window"],
+)
+async def test_startup_fails_when_the_router_model_cannot_route(
+    capabilities: ModelCapabilities, error: str
+) -> None:
+    router = ModelRouter(ScriptedModel(capabilities=capabilities))
+    app = AgentApp(agent=Linguist(), host=anonymous_host(LOCAL_URL), router=router)
+
+    startup = await lifespan_startup(app)
+
+    assert startup["type"] == "lifespan.startup.failed"
+    assert error in startup["message"]
+
+
+async def test_an_agent_input_limit_lets_a_router_model_without_a_window_start() -> (
+    None
+):
+    @agent(version="1.0.0")
+    class BoundedLinguist(Linguist):
+        """Summarizes and translates short text."""
+
+        limits = RunLimits(max_input_tokens=4000)
+
+    model = ScriptedModel(
+        capabilities=ModelCapabilities(context_window=None, structured_output=True)
+    )
+    app = AgentApp(
+        agent=BoundedLinguist(),
+        host=anonymous_host(LOCAL_URL),
+        router=ModelRouter(model),
+    )
+
+    startup = await lifespan_startup(app)
+
+    assert startup["type"] == "lifespan.startup.complete"
+
+
+async def test_custom_routers_skip_the_startup_check() -> None:
+    class KeywordRouter:
+        model = ScriptedModel(capabilities=ModelCapabilities())
+
+        async def route(
+            self,
+            conversation: Sequence[Message],
+            skills: Sequence[SkillDefinition],
+            ctx: RoutingContext,
+        ) -> SkillCall | Clarification:
+            return Clarification("What would you like?")
+
+    app = AgentApp(
+        agent=Linguist(), host=anonymous_host(LOCAL_URL), router=KeywordRouter()
+    )
+
+    startup = await lifespan_startup(app)
+
+    assert startup["type"] == "lifespan.startup.complete"
+
+
+def test_a_skill_argument_without_a_json_schema_fails_at_construction() -> None:
+    @agent(version="1.0.0")
+    class Calculator(Agent):
+        """Applies functions."""
+
+        @skill("apply", tags=["math"])
+        async def apply(self, function: Callable[[int], int], ctx: RunContext) -> int:
+            """Apply a function to 1."""
+            return function(1)
+
+    with pytest.raises(DefinitionError, match="skill 'apply' as a JSON schema"):
+        AgentApp(
+            agent=Calculator(),
+            host=anonymous_host(LOCAL_URL),
+            router=ModelRouter(router_model()),
+        )
+
+
+async def test_the_router_model_stays_open_and_may_be_the_agents_model(
+    serve: ServeLocally,
+) -> None:
+    model = ScriptedModel(
+        [
+            json.dumps(select("summarize")),
+            json.dumps(extract({"text": "Hi"})),
+            "A greeting.",
+        ],
+        capabilities=ModelCapabilities(context_window=8192, structured_output=True),
+    )
+
+    async with serve_linguist(serve, ModelRouter(model), model) as h:
+        task = await say(h, "Summarize 'Hi'")
+
+    assert state(task) == "TASK_STATE_COMPLETED"
+    assert len(model.requests) == 3
+    assert not model.closed

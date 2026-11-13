@@ -23,7 +23,7 @@ from agentframe.errors import (
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, Model, ModelSettings
 from agentframe.models.base import Message as ModelMessage
 from agentframe.runtime.generation import GenerationState, RunAccounting
-from agentframe.runtime.limits import DEFAULT_LIMITS
+from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits
 from agentframe.runtime.options import merge_settings
 from agentframe.security.principal import Principal
 
@@ -169,6 +169,15 @@ def _check_conversation(conversation: Sequence[ModelMessage]) -> None:
             )
 
 
+def routing_limits(agent: Agent) -> RunLimits:
+    """Return the limits routing runs under: the library's, then the agent's.
+
+    No skill is selected yet, so skill limits do not apply.
+    """
+    # Host limit ceilings (#71) will cap these limits, and so the deadline.
+    return merge_settings(DEFAULT_LIMITS, agent.limits)
+
+
 def new_routing_context(
     agent: Agent,
     invocation_id: str,
@@ -190,8 +199,7 @@ def new_routing_context(
         started_at: Event-loop time when the run started.
         accounting: The run's accounting, shared with the selected skill.
     """
-    # Host limit ceilings (#71) will cap these limits, and so the deadline.
-    limits = merge_settings(DEFAULT_LIMITS, agent.limits)
+    limits = routing_limits(agent)
     assert limits.timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
     generation = GenerationState(
         model=None,

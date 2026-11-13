@@ -1,13 +1,15 @@
 """Serve an ``AgentApp`` over real localhost HTTP for end-to-end tests."""
 
 import asyncio
+import contextlib
 import socket
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any
 
 import uvicorn
 
-from agentframe import AgentApp
+from agentframe import AgentApp, AgentFrameError
 
 type AppFactory = Callable[[str], AgentApp]
 type ServeLocally = Callable[[AppFactory], AbstractAsyncContextManager[str]]
@@ -43,3 +45,27 @@ async def serve_locally(make_app: AppFactory) -> AsyncIterator[str]:
             await serving
     finally:
         listener.close()
+
+
+async def lifespan_startup(app: AgentApp) -> dict[str, Any]:
+    """Run the app's ASGI lifespan startup and return the server's reply.
+
+    The reply's ``type`` is ``lifespan.startup.complete`` or
+    ``lifespan.startup.failed``, with the error in ``message``.
+    """
+    events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    await events.put({"type": "lifespan.startup"})
+    replies: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return await events.get()
+
+    async def send(message: Any) -> None:
+        replies.append(message)
+        await events.put({"type": "lifespan.shutdown"})
+
+    scope = {"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}
+    # Starlette re-raises a startup error after reporting it.
+    with contextlib.suppress(AgentFrameError):
+        await app(scope, receive, send)
+    return replies[0]
