@@ -7,7 +7,7 @@ or working deployment tooling.
 ## One agent: M2
 
 `agentframe run` starts one agent with Uvicorn (`pip install
-'agentframe[server]'`). Point it at your own `create_app()` function, which
+'agentframe-py[server]'`). Point it at your own `create_app()` function, which
 returns a fully configured `AgentApp`; read secrets from environment variables
 inside it, never from command-line flags:
 

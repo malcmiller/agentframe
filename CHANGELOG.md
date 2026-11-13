@@ -8,7 +8,8 @@ changelog.
 
 ## [0.1.0]
 
-The first usable single-agent release.
+The first usable single-agent release, distributed on PyPI as `agentframe-py`
+and imported as `agentframe`.
 
 ### Added
 

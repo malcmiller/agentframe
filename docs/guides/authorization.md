@@ -24,7 +24,7 @@ organization's permission assignments. Do not invent a built-in `admin` bypass.
 
 Configure application mappings through `HostConfig(role_permissions=...)`,
 using only verified roles/scopes, never roles supplied as skill arguments.
-`EntraIDAuth` (optional extra `agentframe[entra]`) accepts only Microsoft Entra
+`EntraIDAuth` (optional extra `agentframe-py[entra]`) accepts only Microsoft Entra
 v2.0 access tokens for one tenant: it checks the `RS256` signature against the
 tenant's signing keys, the issuer, `tid`, audience (the API's client ID),
 expiry/not-before with 60 seconds of skew and `ver`. The caller's `oid` becomes

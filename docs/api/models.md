@@ -139,7 +139,7 @@ package, not deploy a hosted agent. The Azure AI Inference SDK is retired and
 not used.
 
 **Signature status:** implemented (M3 #39; structured output M4 #55; tools M5 #64);
-decisions confirmed 2026-11-12. Requires the optional extra `agentframe[foundry]`, which pins
+decisions confirmed 2026-11-12. Requires the optional extra `agentframe-py[foundry]`, which pins
 [`openai`](https://github.com/openai/openai-python) (`3.49.0`),
 [`azure-identity`](https://pypi.org/project/azure-identity/) (`1.27.0`) and
 [`aiohttp`](https://pypi.org/project/aiohttp/) (`3.14.5`), azure-core's async
@@ -329,7 +329,7 @@ include=["reasoning.encrypted_content"]   # only with tools and store=False
 initially for locally executed Llama. Llama is a model family, not a host.
 
 **Signature status:** implemented (M3 #38); decisions confirmed 2026-11-12.
-Requires the optional extra `agentframe[ollama]`, which pins the official
+Requires the optional extra `agentframe-py[ollama]`, which pins the official
 [`ollama`](https://github.com/ollama/ollama-python) client (`0.6.3`).
 `import agentframe` works without it; using `OllamaModel` without it raises
 `ImportError` naming the extra.

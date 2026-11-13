@@ -1,7 +1,7 @@
 """``FoundryModel``: an adapter for GPT deployments in Microsoft Foundry.
 
 Calls the OpenAI v1 Responses API through the official ``openai`` package.
-Needs the optional extra: ``pip install agentframe[foundry]``.
+Needs the optional extra: ``pip install agentframe-py[foundry]``.
 """
 
 import json
@@ -33,7 +33,7 @@ try:
 except ImportError as error:
     raise ImportError(
         "FoundryModel needs the optional 'openai' and 'azure-identity' packages; "
-        "install them with: pip install 'agentframe[foundry]'"
+        "install them with: pip install 'agentframe-py[foundry]'"
     ) from error
 
 from agentframe.errors import (

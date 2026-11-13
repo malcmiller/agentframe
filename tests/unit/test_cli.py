@@ -148,7 +148,7 @@ def test_missing_uvicorn_names_the_extra_to_install(
 
     assert main(["run", "cli_targets:create_app"]) == 1
     error_output: str = capsys.readouterr().err
-    assert "pip install 'agentframe[server]'" in error_output
+    assert "pip install 'agentframe-py[server]'" in error_output
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])

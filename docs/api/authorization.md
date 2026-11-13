@@ -523,7 +523,7 @@ declaration is descriptive; the authenticator still enforces credentials.
 tokens and map their verified app roles and scopes to permissions.
 
 **Signature status:** implemented (M7 story #76). Requires the optional extra
-`agentframe[entra]`, which pins `PyJWT[crypto]` and `httpx`; importing
+`agentframe-py[entra]`, which pins `PyJWT[crypto]` and `httpx`; importing
 `EntraIDAuth` without it raises `ImportError` naming the extra.
 
 ```text

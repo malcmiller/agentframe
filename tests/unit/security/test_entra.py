@@ -267,4 +267,4 @@ def test_missing_extra_names_the_extra_to_install() -> None:
     )
 
     assert result.returncode != 0
-    assert "agentframe[entra]" in result.stderr
+    assert "agentframe-py[entra]" in result.stderr

@@ -288,6 +288,6 @@ def _import_uvicorn() -> ModuleType:
     except ImportError:
         raise CommandError(
             "agentframe run needs the uvicorn ASGI server; install it with "
-            "pip install 'agentframe[server]'."
+            "pip install 'agentframe-py[server]'."
         ) from None
     return uvicorn

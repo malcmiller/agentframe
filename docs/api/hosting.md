@@ -408,7 +408,7 @@ returns a fully configured [`AgentApp`](#agentapp) (agent, services, router,
 auth, policy) in plain, type-checked Python; there is no new configuration file
 format. Secrets come from environment variables read inside the factory, never
 from command-line flags. Serving uses [uvicorn](https://www.uvicorn.org/),
-pinned in the optional `server` extra: `pip install 'agentframe[server]'`.
+pinned in the optional `server` extra: `pip install 'agentframe-py[server]'`.
 
 ```text
 agentframe run TARGET [--host HOST] [--port PORT] [--reload] [--dev]
@@ -1112,7 +1112,7 @@ AgentFrame classes** or separately maintained wire schemas.
 
 A2A protocol 1.0 and the official `a2a-sdk` are selected (specification
 release v1.0.1). M2 pins `a2a-sdk[http-server]==1.3.0` as a core dependency
-because A2A hosting is the default interface (the optional `agentframe[server]`
+because A2A hosting is the default interface (the optional `agentframe-py[server]`
 extra only adds Uvicorn for `agentframe run`); the `http-server` extra is listed explicitly rather than relied on transitively.
 The selected binding is **JSON-RPC over HTTP** for protocol 1.0 only, with the
 SDK's 0.3 compatibility disabled. `tests/unit/hosting/test_a2a_binding.py` proves an official
