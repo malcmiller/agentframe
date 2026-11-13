@@ -16,8 +16,8 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 
 ## Status
 
-Milestones M0 to M7 are implemented: 0.1.0 is the first usable single-agent
-release. You can define agents with `@agent` / `@skill`, inject services, and run skills locally
+AgentFrame 0.1.0, the first usable single-agent release (milestones M0 to M7),
+is [published on PyPI](https://pypi.org/project/agentframe-py/0.1.0/). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
 permission checks and a timeout. M2 native A2A hosting is complete: `AgentApp`
 serves an agent as an ASGI application with its Agent Card and an authenticated
@@ -47,15 +47,12 @@ response size limits, graceful shutdown with `/health` and `/ready`, A2A
 message deduplication, `EntraIDAuth` and `ExecutionPolicy` checks, proven end
 to end by `tests/integration/test_hardening.py`.
 Multi-agent discovery and remote A2A composition (M8+), MCP, telemetry and
-streaming are not implemented yet; their documentation and examples are design
-proposals and are labeled as such. Reviewed capability and contract decisions
-are recorded below and in the reference. Approved names/defaults are design
-decisions; unspecified interfaces remain open.
+streaming are not implemented yet; documentation for them is labeled as planned
+design, and their unspecified interfaces remain open.
 
 ## Installation
 
-Once version 0.1.0 is published, AgentFrame will be installable from PyPI
-(Python 3.13 or later):
+Install AgentFrame from PyPI (Python 3.13 or later):
 
 ```shell
 pip install agentframe-py
@@ -299,7 +296,7 @@ content capture is off by default; MCP publishes explicitly allowlisted skills,
 not every skill or internal tool. A custom REST skill API is deferred.
 
 Skills may declare required permissions; application roles map to grants outside
-the agent definition. The proposed runtime enforces verified identity and
+the agent definition. The runtime enforces verified identity and
 application resource policy across entry points. Prompt safeguarding combines
 library trust boundaries with application checks, not a guaranteed injection filter.
 

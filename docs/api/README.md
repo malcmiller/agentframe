@@ -7,8 +7,8 @@ AgentFrame is in early development: M1 model-free authoring (`@agent`, `@skill`,
 the normalized model types, the `Model` protocol and the model errors; #35 adds
 `Agent(model=...)`, agent `instructions` / `model_settings` and text
 `ctx.generate`; #42 adds field-by-field settings precedence and per-run
-`RunOptions`. There is no
-published release or stable import surface. This reference organizes the
+`RunOptions`. Version 0.1.0 is published as `agentframe-py`; pre-1.0 there is
+no stable import surface. This reference organizes the
 current contracts for iteration; it does not turn illustrative signatures into
 implemented release commitments. Entries note where M1 or M2 implements them. Explicitly approved names/defaults are design
 decisions, not still-unresolved recommendations.
