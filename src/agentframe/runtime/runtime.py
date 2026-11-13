@@ -17,6 +17,7 @@ from agentframe.authoring.context import RunContext
 from agentframe.authoring.definitions import SkillDefinition
 from agentframe.authoring.services import Services
 from agentframe.discovery.directory import AgentDirectory
+from agentframe.discovery.identity import Service, checked_remotes
 from agentframe.discovery.remote import bind_remote, find_remote
 from agentframe.errors import (
     AgentFrameError,
@@ -82,6 +83,13 @@ class Runtime:
         directory: Where ``Remote[Literal["name"]]`` parameters find their
             agents. The application opens and closes it. ``None`` means
             skills cannot take ``Remote`` parameters.
+        remotes: How to authenticate to each remote agent, by name, such as
+            ``{"research-agent": Service(credential=APIKeyCredential(key))}``.
+            A remote without an entry is called without credentials, which
+            only works when its card declares no security.
+
+    Raises:
+        DefinitionError: ``remotes`` is not a mapping of names to ``Service``.
     """
 
     def __init__(
@@ -92,12 +100,14 @@ class Runtime:
         tool_authorization: ToolAuthorizationPolicy | None = None,
         policy: ExecutionPolicy | None = None,
         directory: AgentDirectory | None = None,
+        remotes: Mapping[str, Service] | None = None,
     ) -> None:
         self._services = services or Services()
         self._authorization = authorization
         self._tool_authorization = tool_authorization
         self._policy = policy
         self._directory = directory
+        self._remotes = checked_remotes(remotes)
 
     def validate(self, agent: Agent) -> None:
         """Check that ``agent`` can run here before accepting any work.
@@ -176,7 +186,7 @@ class Runtime:
             DefinitionError: A skill takes a ``Remote`` parameter and the
                 runtime has no directory, the directory is not open, no
                 source lists the name, or the agent's card requires
-                credentials.
+                credentials its ``remotes=`` entry cannot provide.
             RemoteAgentError: An agent's card cannot be fetched or is invalid.
         """
         skills = type(agent).definition().skills.values()
@@ -187,7 +197,7 @@ class Runtime:
             return
         assert self._directory is not None  # _check_directory passed.
         for name in sorted(names):
-            await find_remote(self._directory, name)
+            await find_remote(self._directory, name, self._remotes.get(name))
 
     async def invoke(
         self,
@@ -439,6 +449,7 @@ class Runtime:
                 deadline=ctx.deadline,
                 invocation_id=ctx.invocation_id,
                 principal=ctx.principal,
+                identity=self._remotes.get(name),
             )
         return bindings
 

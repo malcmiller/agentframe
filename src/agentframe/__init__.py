@@ -8,6 +8,12 @@ from agentframe.authoring.decorators import agent, skill, tool
 from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
 from agentframe.authoring.services import Inject, Services
 from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
+from agentframe.discovery.identity import (
+    APIKeyCredential,
+    EntraAppCredential,
+    OutboundCredential,
+    Service,
+)
 from agentframe.discovery.registry import (
     AgentQuery,
     AgentReference,
@@ -99,6 +105,7 @@ __all__ = [
     "A2AConfig",
     "APIKey",
     "APIKeyAuth",
+    "APIKeyCredential",
     "Agent",
     "AgentApp",
     "AgentDirectory",
@@ -116,6 +123,7 @@ __all__ = [
     "DeclaresCardSecurity",
     "DefinitionError",
     "DiscoveredAgent",
+    "EntraAppCredential",
     "EnvironmentAgentRegistry",
     "ExecutionPolicy",
     "FileAgentRegistry",
@@ -138,6 +146,7 @@ __all__ = [
     "ModelResponse",
     "ModelRouter",
     "ModelSettings",
+    "OutboundCredential",
     "OutputCheck",
     "OutputSchema",
     "OutputValidationError",
@@ -154,6 +163,7 @@ __all__ = [
     "RunOptions",
     "RunResult",
     "Runtime",
+    "Service",
     "Services",
     "SkillCall",
     "SkillDefinition",

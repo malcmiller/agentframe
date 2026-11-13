@@ -1,12 +1,20 @@
 import asyncio
 import itertools
 import json
+from collections.abc import Mapping
 from typing import Any, Literal, assert_type
 
 import httpx
 import pytest
 from a2a.helpers import new_data_part, new_task, new_text_artifact, new_text_part
-from a2a.types import Message, Role, SendMessageResponse, Task, TaskState
+from a2a.types import (
+    Message,
+    Role,
+    SecurityScheme,
+    SendMessageResponse,
+    Task,
+    TaskState,
+)
 from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
@@ -18,14 +26,21 @@ from agentframe import (
     AgentReference,
     AgentRegistry,
     AllowAnonymous,
+    APIKeyCredential,
+    AuthenticationError,
     DefinitionError,
+    EntraAppCredential,
     HostConfig,
     InputValidationError,
     OutputValidationError,
     Remote,
     RemoteAgentError,
     RunContext,
+    RunLimits,
+    RunOptions,
     Runtime,
+    Service,
+    TimeoutLimitExceededError,
     agent,
     skill,
     tool,
@@ -125,9 +140,14 @@ def task(state: TaskState, *parts: str) -> Task:
 
 
 class Peer:
-    """A fake A2A agent: serves its card and answers JSON-RPC from a script."""
+    """A fake A2A agent: serves its card and answers JSON-RPC from a script.
 
-    def __init__(self, *replies: Task | Message | dict[str, Any], card: Any = None):
+    A reply of ``"hang"`` never answers, so the caller's deadline passes.
+    """
+
+    def __init__(
+        self, *replies: Task | Message | dict[str, Any] | str, card: Any = None
+    ):
         self.card = card_json() if card is None else card
         self.replies = list(replies)
         self.requests: list[httpx.Request] = []
@@ -138,6 +158,9 @@ class Peer:
             return httpx.Response(200, json=self.card)
         rpc = json.loads(request.content)
         reply = self.replies.pop(0)
+        if isinstance(reply, str):  # "hang": wait to be cancelled.
+            await asyncio.sleep(60)
+            raise AssertionError("the caller's deadline should have passed")
         if isinstance(reply, dict):
             return httpx.Response(
                 200, json={"jsonrpc": "2.0", "id": rpc["id"], **reply}
@@ -153,8 +176,11 @@ class Peer:
     def methods(self) -> list[str]:
         return [json.loads(r.content)["method"] for r in self.requests if r.content]
 
-    def directory(self) -> AgentDirectory:
-        client = httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
+    def directory(self, *, follow_redirects: bool = False) -> AgentDirectory:
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(self.handle),
+            follow_redirects=follow_redirects,
+        )
         return AgentDirectory(sources=[OneAgent()], http_client=client)
 
 
@@ -325,6 +351,7 @@ async def research(peer: Peer) -> Research:
         deadline=deadline,
         invocation_id="run-1",
         principal=None,
+        identity=None,
     )
 
 
@@ -420,3 +447,224 @@ async def test_a_result_that_is_not_a_skill_result_raises_remote_agent_error() -
 
     with pytest.raises(RemoteAgentError, match="did not answer with a skill result"):
         await (await research(peer)).call("s")
+
+
+# Outbound identity
+
+
+API_KEY_SCHEMES = {
+    "apiKey": {"apiKeySecurityScheme": {"location": "header", "name": "X-API-Key"}}
+}
+OIDC_SCHEMES = {
+    "entraId": {
+        "openIdConnectSecurityScheme": {
+            "openIdConnectUrl": "https://login.example.com/.well-known/openid"
+        }
+    }
+}
+
+
+def with_key(key: str = "planner-key") -> dict[str, Service]:
+    return {"research-agent": Service(credential=APIKeyCredential(key))}
+
+
+class FakeTokenCredential:
+    """Stands in for an ``azure.core`` async token credential."""
+
+    def __init__(self) -> None:
+        self.scopes: list[tuple[str, ...]] = []
+
+    async def get_token(self, *scopes: str) -> Any:
+        self.scopes.append(scopes)
+        return type("AccessToken", (), {"token": "app-token"})()
+
+
+class FailingCredential:
+    async def headers(self) -> Mapping[str, str]:
+        raise RuntimeError("secret token endpoint detail")
+
+    def satisfies(self, scheme: SecurityScheme) -> bool:
+        return True
+
+
+async def test_the_api_key_goes_with_every_request_but_never_the_card_fetch() -> None:
+    peer = Peer(
+        task(TaskState.TASK_STATE_WORKING),
+        task(TaskState.TASK_STATE_COMPLETED, "Findings"),
+        card=card_json(securitySchemes=API_KEY_SCHEMES),
+    )
+    runtime = Runtime(directory=peer.directory(), remotes=with_key())
+
+    await runtime.invoke(Planner(), skill="plan", arguments={"goal": "tides"})
+
+    card_fetch, *calls = peer.requests
+    assert "X-API-Key" not in card_fetch.headers
+    assert peer.methods() == ["SendMessage", "GetTask"]
+    assert [r.headers["X-API-Key"] for r in calls] == ["planner-key"] * 2
+    assert all(r.headers["A2A-Version"] == "1.0" for r in calls)
+
+
+async def test_call_sends_the_credential_with_the_extension_header() -> None:
+    card = skill_call_card("find_sources")
+    card["securitySchemes"] = API_KEY_SCHEMES
+    peer = Peer(result([]), card=card)
+    remotes = with_key()
+    binding = await bind_remote(
+        peer.directory(),
+        "research-agent",
+        deadline=asyncio.get_running_loop().time() + 10,
+        invocation_id="run-1",
+        principal=None,
+        identity=remotes["research-agent"],
+    )
+
+    await binding.call("find_sources", topic=Topic(name="tides"))
+
+    sent = peer.requests[-1]
+    assert sent.headers["X-API-Key"] == "planner-key"
+    assert sent.headers["A2A-Extensions"] == SKILL_CALL_EXTENSION_URI
+
+
+async def test_the_cancel_request_carries_the_credential_too() -> None:
+    cancelled = task(TaskState.TASK_STATE_CANCELED)
+    peer = Peer(
+        task(TaskState.TASK_STATE_WORKING),
+        "hang",
+        cancelled,
+        card=card_json(securitySchemes=API_KEY_SCHEMES),
+    )
+    runtime = Runtime(directory=peer.directory(), remotes=with_key())
+    options = RunOptions(limits=RunLimits(timeout_seconds=0.2))
+
+    with pytest.raises(TimeoutLimitExceededError):
+        await runtime.invoke(
+            Planner(), skill="plan", arguments={"goal": "x"}, options=options
+        )
+
+    assert peer.methods() == ["SendMessage", "GetTask", "CancelTask"]
+    assert peer.requests[-1].headers["X-API-Key"] == "planner-key"
+
+
+async def test_an_entra_app_credential_sends_its_token_as_a_bearer() -> None:
+    credential = FakeTokenCredential()
+    peer = Peer(
+        task(TaskState.TASK_STATE_COMPLETED, "Findings"),
+        card=card_json(securitySchemes=OIDC_SCHEMES),
+    )
+    entra = EntraAppCredential(credential, scope="api://research/.default")
+    remotes = {"research-agent": Service(credential=entra)}
+    runtime = Runtime(directory=peer.directory(), remotes=remotes)
+
+    await runtime.invoke(Planner(), skill="plan", arguments={"goal": "tides"})
+
+    assert peer.requests[-1].headers["Authorization"] == "Bearer app-token"
+    assert credential.scopes == [("api://research/.default",)]
+    assert "Authorization" not in peer.requests[0].headers
+
+
+async def test_a_card_requiring_credentials_without_an_identity_names_the_remote() -> (
+    None
+):
+    peer = Peer(card=card_json(securitySchemes=API_KEY_SCHEMES))
+
+    with pytest.raises(DefinitionError, match="'research-agent' requires credentials"):
+        await Runtime(directory=peer.directory()).validate_remotes(Planner())
+
+
+async def test_a_mismatched_credential_fails_startup_without_the_secret() -> None:
+    peer = Peer(card=card_json(securitySchemes=OIDC_SCHEMES))
+    app = AgentApp(
+        agent=Planner(),
+        host=HostConfig(public_url="http://127.0.0.1:8000", auth=AllowAnonymous()),
+        directory=peer.directory(),
+        remotes=with_key("super-secret-key"),
+    )
+
+    reply = await lifespan_startup(app)
+
+    assert reply["type"] == "lifespan.startup.failed"
+    assert "'research-agent'" in reply["message"]
+    assert "APIKeyCredential cannot provide" in reply["message"]
+    assert "super-secret-key" not in reply["message"]
+
+
+async def test_credentials_never_go_to_an_interface_on_another_origin() -> None:
+    card = card_json(
+        "https://elsewhere.example.com/a2a", securitySchemes=API_KEY_SCHEMES
+    )
+    peer = Peer(card=card)
+    runtime = Runtime(directory=peer.directory(), remotes=with_key())
+
+    with pytest.raises(RemoteAgentError, match="not on the card URL's origin"):
+        await runtime.invoke(Planner(), skill="plan", arguments={"goal": "x"})
+
+    assert [str(r.url) for r in peer.requests] == [CARD_URL]
+    assert "X-API-Key" not in peer.requests[0].headers
+
+
+async def test_a_redirect_is_not_followed_with_credentials() -> None:
+    redirect = httpx.Response(307, headers={"Location": "https://evil.example.com/"})
+    peer = Peer(card=card_json(securitySchemes=API_KEY_SCHEMES))
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        peer.requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json=peer.card)
+        return redirect
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    directory = AgentDirectory(sources=[OneAgent()], http_client=client)
+    runtime = Runtime(directory=directory, remotes=with_key())
+
+    with pytest.raises(RemoteAgentError, match="could not be reached"):
+        await runtime.invoke(Planner(), skill="plan", arguments={"goal": "x"})
+
+    assert [r.url.host for r in peer.requests] == ["research.example.com"] * 2
+
+
+async def test_credentials_are_refused_with_a_client_that_follows_redirects() -> None:
+    peer = Peer(card=card_json(securitySchemes=API_KEY_SCHEMES))
+    runtime = Runtime(
+        directory=peer.directory(follow_redirects=True), remotes=with_key()
+    )
+
+    with pytest.raises(DefinitionError, match="follows redirects"):
+        await runtime.validate_remotes(Planner())
+
+
+async def test_a_failing_credential_raises_a_safe_authentication_error() -> None:
+    peer = Peer(card=card_json(securitySchemes=API_KEY_SCHEMES))
+    remotes = {"research-agent": Service(credential=FailingCredential())}
+    runtime = Runtime(directory=peer.directory(), remotes=remotes)
+
+    with pytest.raises(AuthenticationError) as raised:
+        await runtime.invoke(Planner(), skill="plan", arguments={"goal": "x"})
+
+    assert "secret" not in raised.value.message
+    assert raised.value.__cause__ is None
+    assert peer.methods() == []
+
+
+async def test_an_open_card_is_called_with_the_configured_credential() -> None:
+    peer = Peer(task(TaskState.TASK_STATE_COMPLETED, "Findings"))
+    runtime = Runtime(directory=peer.directory(), remotes=with_key())
+
+    assert await runtime.invoke(Planner(), skill="plan", arguments={"goal": "x"})
+    assert peer.requests[-1].headers["X-API-Key"] == "planner-key"
+
+
+def test_remotes_must_map_names_to_service_identities() -> None:
+    with pytest.raises(DefinitionError, match="Service"):
+        Runtime(remotes={"research-agent": APIKeyCredential("k")})  # type: ignore[dict-item]
+
+
+def test_remotes_cannot_be_combined_with_a_runtime_on_agent_app() -> None:
+    host = HostConfig(public_url="http://127.0.0.1:8000", auth=AllowAnonymous())
+
+    with pytest.raises(DefinitionError, match="not both"):
+        AgentApp(
+            agent=Planner(),
+            host=host,
+            runtime=Runtime(directory=Peer().directory()),
+            remotes=with_key(),
+        )

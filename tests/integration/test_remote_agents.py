@@ -268,6 +268,7 @@ async def bound(directory: AgentDirectory) -> Research:
         deadline=deadline,
         invocation_id="run-1",
         principal=None,
+        identity=None,
     )
 
 

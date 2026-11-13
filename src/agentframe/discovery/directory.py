@@ -83,7 +83,8 @@ class AgentDirectory:
             plain http, for development only.
         http_client: The client to fetch cards with. When given, it stays
             yours: the directory never closes it, and it must not carry
-            credentials in its default headers or cookies. When omitted, the
+            credentials in its default headers or cookies, nor follow
+            redirects when a remote has credentials. When omitted, the
             directory creates one on ``async with`` and closes it on exit.
 
     Raises:
