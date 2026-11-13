@@ -738,10 +738,10 @@ the `Literal`. The string form `Remote["name"]` is not used, because
 
 **Signature status:** the annotation, [`ask`](#remoteask), [`call`](#remotecall)
 (#88), the `directory=` parameters, service-mode outbound identity
-([`remotes=`](authorization.md#service), #92) and deadline/hop propagation
-(#89), Entra on-behalf-of ([`OnBehalfOf`](authorization.md#onbehalfof), #93)
-and per-call token budgets (#90) are implemented. `Remote[ResearchAgent]`
-typed proxies are later only.
+([`remotes=`](authorization.md#service), #92), deadline/hop propagation
+(#89), Entra on-behalf-of ([`OnBehalfOf`](authorization.md#onbehalfof), #93),
+per-call token budgets (#90) and correlation/trace context propagation (#91)
+are implemented. `Remote[ResearchAgent]` typed proxies are later only.
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -996,7 +996,13 @@ message stays free text: `agentframe.deadline_ms` (the run's remaining time
 in whole milliseconds, rounded down) and `agentframe.hops` (the run's depth
 plus one). A peer that lists none, such as AgentFrame 0.1.0 or any
 non-AgentFrame agent, gets plain A2A without the extension, and the caller
-still stops waiting at its own deadline. See the
+still stops waiting at its own deadline.
+With `root_invocation_id` and `parent_invocation_id` listed (#91), the request
+also carries the run's root invocation ID and the run's own ID as the parent,
+so the peer's logs share the root; a local `Runtime.run` is its own root. A
+valid W3C `traceparent`/`tracestate` the hosted run received goes to every
+peer as unchanged HTTP headers, whether or not its card lists context fields.
+See the
 [wire format](hosting.md#structured-skill-call-wire-format) and
 [cross-agent depth](../guides/limits.md#cross-agent-budgets-and-depth-m8).
 
