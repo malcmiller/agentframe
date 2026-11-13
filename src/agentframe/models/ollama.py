@@ -4,10 +4,12 @@ Needs the optional ``ollama`` package: ``pip install agentframe[ollama]``.
 """
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 
 try:
     import httpx
@@ -19,10 +21,25 @@ except ImportError as error:
     ) from error
 
 from agentframe.errors import DefinitionError, ProviderError, UnsupportedCapabilityError
-from agentframe.models.base import ModelCapabilities, ModelRequest, ModelResponse
+from agentframe.models.base import (
+    Message,
+    ModelCapabilities,
+    ModelRequest,
+    ModelResponse,
+    ToolCall,
+    ToolSpec,
+)
 from agentframe.runtime.usage import FinishReason, Usage
 
 DEFAULT_ENDPOINT = "http://localhost:11434"
+
+
+@dataclass(frozen=True)
+class _Metadata:
+    """What the server's show API says about a model, read once and cached."""
+
+    context_window: int
+    tools: bool
 
 
 class OllamaModel:
@@ -30,7 +47,8 @@ class OllamaModel:
 
     The model must already be installed on the server: AgentFrame never pulls
     models, starts a server or switches to another model. Construction does no
-    I/O; the context window is read from the server on first use and cached.
+    I/O; the model's metadata (tool support and, unless configured, the context
+    window) is read from the server once on first use and cached.
 
     Every request sends the context window explicitly (Ollama's ``num_ctx``),
     so the server never silently truncates input to a smaller default.
@@ -40,6 +58,10 @@ class OllamaModel:
     to the prompt, so describe the expected format in the agent's trusted
     ``instructions``. Ollama has no refusal signal: a reply in prose instead
     of JSON fails validation in the generation layer.
+
+    Tool support depends on the installed model: it is read from the
+    ``capabilities`` the server lists for the model. Ollama returns no tool
+    call IDs, so the adapter numbers the calls in each response.
 
     Prefer an explicit ``context_window`` sized for your inputs, such as
     ``8192``. The metadata size is usually the model's maximum, and Ollama
@@ -72,57 +94,64 @@ class OllamaModel:
             raise DefinitionError("OllamaModel context_window must be greater than 0")
         self.model = model
         self.endpoint = endpoint
-        self._context_window = context_window
-        self._context_window_lock = asyncio.Lock()
+        self._configured_context_window = context_window
+        self._metadata: _Metadata | None = None
+        self._metadata_lock = asyncio.Lock()
         self._client = ollama.AsyncClient(host=endpoint)
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Send ``request`` to the server's chat API and return the full reply.
 
         Raises:
-            UnsupportedCapabilityError: The request uses tools, which this
-                adapter does not support yet. Raised before sending.
+            UnsupportedCapabilityError: The request uses tools, but the model
+                does not support them. Raised before sending.
             ProviderError: The call failed. Connection failures, timeouts,
                 rate limits and server errors are transient; an unknown model
                 or a rejected request is not.
         """
-        if request.uses_tools():
-            raise UnsupportedCapabilityError("OllamaModel does not support tools yet")
-        context_window = await self._get_context_window()
-        messages = [
-            {"role": message.role, "content": message.content}
-            for message in request.messages
-        ]
+        metadata = await self._get_metadata()
+        if request.uses_tools() and not metadata.tools:
+            raise UnsupportedCapabilityError(
+                f"Ollama model {self.model!r} does not support tools"
+            )
         options = {
-            "num_ctx": context_window,
+            "num_ctx": metadata.context_window,
             "num_predict": request.settings.max_output_tokens,
         }
         output_format = request.output.json_schema if request.output else None
         async with _provider_errors(self.model):
             response = await self._client.chat(
                 model=self.model,
-                messages=messages,
+                messages=[_ollama_message(message) for message in request.messages],
+                tools=[_ollama_tool(spec) for spec in request.tools],
                 options=options,
                 format=output_format,
             )
+        tool_calls = _tool_calls(response.message)
         return ModelResponse(
             text=response.message.content or "",
             usage=_usage(response),
-            finish_reason=_finish_reason(response.done_reason),
+            finish_reason=_finish_reason(response.done_reason, tool_calls),
+            tool_calls=tool_calls,
         )
 
     async def capabilities(self) -> ModelCapabilities:
-        """Return the context window and structured-output support; no tools.
+        """Return the context window, structured-output and tool support.
 
         Structured output is reported for every model, because the server
-        constrains generation to the schema rather than the model.
+        constrains generation to the schema rather than the model. Tools are
+        reported only when the server lists ``"tools"`` in the model's
+        capabilities; a server that lists none means no tools.
 
         Raises:
             ProviderError: The model's metadata could not be read, or it does
                 not report a context length and none was configured.
         """
+        metadata = await self._get_metadata()
         return ModelCapabilities(
-            context_window=await self._get_context_window(), structured_output=True
+            context_window=metadata.context_window,
+            structured_output=True,
+            tools=metadata.tools,
         )
 
     async def close(self) -> None:
@@ -143,26 +172,91 @@ class OllamaModel:
         """Close the model."""
         await self.close()
 
-    async def _get_context_window(self) -> int:
+    async def _get_metadata(self) -> _Metadata:
         # The lock makes concurrent first calls share a single metadata fetch.
-        async with self._context_window_lock:
-            if self._context_window is None:
-                self._context_window = await self._fetch_context_window()
-            return self._context_window
+        async with self._metadata_lock:
+            if self._metadata is None:
+                self._metadata = await self._fetch_metadata()
+            return self._metadata
 
-    async def _fetch_context_window(self) -> int:
+    async def _fetch_metadata(self) -> _Metadata:
         async with _provider_errors(self.model):
             details = await self._client.show(self.model)
-        model_info = details.modelinfo or {}
-        architecture = model_info.get("general.architecture")
-        context_length = model_info.get(f"{architecture}.context_length")
-        if not isinstance(context_length, int) or context_length <= 0:
-            raise ProviderError(
-                f"Ollama did not report a context length for model {self.model!r}; "
-                "pass context_window= to OllamaModel",
-                transient=False,
-            )
-        return context_length
+        context_window = self._configured_context_window or _context_length(
+            details, self.model
+        )
+        return _Metadata(
+            context_window=context_window,
+            tools="tools" in (details.capabilities or []),
+        )
+
+
+def _context_length(details: ollama.ShowResponse, model: str) -> int:
+    """Return the context length in a model's metadata.
+
+    Raises:
+        ProviderError: The metadata reports no valid context length.
+    """
+    model_info = details.modelinfo or {}
+    architecture = model_info.get("general.architecture")
+    context_length = model_info.get(f"{architecture}.context_length")
+    if not isinstance(context_length, int) or context_length <= 0:
+        raise ProviderError(
+            f"Ollama did not report a context length for model {model!r}; "
+            "pass context_window= to OllamaModel",
+            transient=False,
+        )
+    return context_length
+
+
+def _ollama_tool(spec: ToolSpec) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": spec.name,
+            "description": spec.description,
+            "parameters": spec.parameters,
+        },
+    }
+
+
+def _ollama_message(message: Message) -> dict[str, Any]:
+    """Return ``message`` in the chat API's shape, including tool calls/results.
+
+    Ollama links a tool result to its call by the tool's name, not an ID.
+    """
+    if message.role == "tool":
+        return {
+            "role": "tool",
+            "content": message.content,
+            "tool_name": message.tool_name,
+        }
+    ollama_message: dict[str, Any] = {
+        "role": message.role,
+        "content": message.content,
+    }
+    if message.tool_calls:
+        ollama_message["tool_calls"] = [
+            {"function": {"name": call.name, "arguments": json.loads(call.arguments)}}
+            for call in message.tool_calls
+        ]
+    return ollama_message
+
+
+def _tool_calls(message: ollama.Message) -> tuple[ToolCall, ...]:
+    """Return the reply's tool calls, numbered because Ollama has no call IDs.
+
+    Ollama returns arguments already parsed; they are turned back into JSON
+    text so the runtime validates them like any other provider's.
+    """
+    return tuple(
+        ToolCall(
+            id=f"call_{number}",
+            name=call.function.name,
+            arguments=json.dumps(call.function.arguments),
+        )
+        for number, call in enumerate(message.tool_calls or (), start=1)
+    )
 
 
 @asynccontextmanager
@@ -215,7 +309,12 @@ def _usage(response: ollama.ChatResponse) -> Usage:
     )
 
 
-def _finish_reason(done_reason: str | None) -> FinishReason:
+def _finish_reason(
+    done_reason: str | None, tool_calls: tuple[ToolCall, ...]
+) -> FinishReason:
+    # Ollama reports "stop" when the model asks to call tools.
+    if tool_calls:
+        return FinishReason.TOOL_CALLS
     if done_reason == "length":
         return FinishReason.LENGTH
     return FinishReason.COMPLETED

@@ -84,10 +84,10 @@ before sending. Managed generation (`ctx.generate`, #35) turns `REFUSED` into
 `ModelRefusalError` and `LENGTH` into `IncompleteOutputError`. Structured
 output (`output=`) is implemented by the managed layer (M4 #53); adapters send
 [`ModelRequest.output`](#modelrequest) to their provider. The tool-call types
-and the managed tool loop (`tools=`, #61) are implemented (M5 #59, #61); adapter
-tool mappings (#64, #65) follow, and until then `FoundryModel` and
-`OllamaModel` raise `UnsupportedCapabilityError` for requests with tool
-content. Streaming remains later, with
+and the managed tool loop (`tools=`, #61) are implemented (M5 #59, #61).
+[`OllamaModel` maps tools](#tool-calling-ollama) (M5 #65); the `FoundryModel`
+mapping (#64) follows, and until then `FoundryModel` raises
+`UnsupportedCapabilityError` for requests with tool content. Streaming remains later, with
 optional [AG-UI](streaming.md) mapping from managed execution, not raw
 provider events.
 
@@ -324,16 +324,18 @@ server, silently switches models, or enables cloud execution.
 - Construction does no I/O. The adapter creates and owns its client;
   [`close`](#modelclose) closes it. A closed model cannot be reused; later
   calls fail with `RuntimeError`.
+- The model's metadata (show API) is read once per model instance on first
+  use and cached, even with `context_window=` configured, because it reports
+  [tool support](#tool-calling-ollama) (decision confirmed 2026-11-12).
 - Every request sends the context window explicitly (Ollama's `num_ctx`), so
   the server cannot silently truncate input to a smaller default. Without
-  `context_window`, the size is read once from the model's metadata (show API)
-  on first use and cached; [`capabilities`](#modelcapabilities-1) reports the
-  same value, so input checks use what is sent. Metadata without a context
-  length raises a non-transient `ProviderError` asking for `context_window=`.
+  `context_window`, the size comes from the model's metadata;
+  [`capabilities`](#modelcapabilities-1) reports the same value, so input
+  checks use what is sent. Metadata without a context length raises a
+  non-transient `ProviderError` asking for `context_window=`.
   Because `AgentApp` reads every model's capabilities at startup, an
-  `OllamaModel` without `context_window=` contacts its server during startup
-  (bounded by the agent's timeout), and startup fails if the server or model
-  is unavailable. With an explicit `context_window`, startup does no I/O.
+  `OllamaModel` contacts its server during startup (bounded by the agent's
+  timeout), and startup fails if the server or model is unavailable.
 - **Memory cost of the default:** the metadata size is usually the model's
   maximum context. Ollama allocates memory for the whole window, so
   `llama3.2:3b` with its 131072-token maximum loads at about 18 GB instead of
@@ -342,17 +344,19 @@ server, silently switches models, or enables cloud execution.
   an explicit `context_window` (examples use `8192`) sized for your inputs.
 - `ModelSettings.max_output_tokens` is sent as `num_predict`.
 - `prompt_eval_count` / `eval_count` become input/output usage (missing counts
-  stay `None`); `done_reason` `length` becomes `FinishReason.LENGTH`, anything
-  else `COMPLETED`.
+  stay `None`); a reply with tool calls becomes `FinishReason.TOOL_CALLS`,
+  `done_reason` `length` becomes `FinishReason.LENGTH`, anything else
+  `COMPLETED`.
 - `structured_output` is reported as supported for every model (see
-  [structured output](#structured-output-ollama)); `tools` is unsupported.
+  [structured output](#structured-output-ollama)); `tools` depends on the
+  installed model (see [tool calling](#tool-calling-ollama)).
 - Connection failures, timeouts, HTTP 408, 429 and 5xx raise a transient
   `ProviderError`; an unknown model (404) or other rejected request raises a
   non-transient one. Messages are safe and do not repeat the server's error
   text. The 0.6 client has no retry loop of its own; AgentFrame retries are
   separate.
 - Opt-in real tests (`tests/integration/test_providers.py`, marker `ollama`, M3 #41;
-  structured output M4 #56/#57): set
+  structured output M4 #56/#57; one-tool round trip M5 #65): set
   `AGENTFRAME_TEST_OLLAMA=1` and `AGENTFRAME_OLLAMA_MODEL` (optionally
   `AGENTFRAME_OLLAMA_ENDPOINT`). Default test runs and CI never call Ollama.
   See `AGENTS.md`.
@@ -381,6 +385,35 @@ unchanged from M3.
   recorded in both failure cases.
 - Validation stays in the generation layer: the adapter returns the JSON text
   and never validates it.
+
+### Tool calling (Ollama)
+
+`ctx.generate(..., tools=[...])` maps to Ollama's chat tool calling (M5 #65).
+Each [`ToolSpec`](#toolspec) is sent as
+`{"type": "function", "function": {"name", "description", "parameters"}}`.
+
+- **Tool support depends on the installed model.** `capabilities().tools` is
+  `True` only when the server lists `"tools"` in the model's show-API
+  `capabilities` (for example `llama3.2:3b`). A model without it, or an older
+  server that reports no capabilities, reports `False`, and a request with
+  tool content raises `UnsupportedCapabilityError` before anything is sent.
+- **Generated call IDs:** Ollama returns no tool-call IDs, so the adapter
+  numbers each response's calls `call_1`, `call_2`, ... Ollama returns
+  arguments already parsed; they become the raw JSON text of
+  [`ToolCall.arguments`](#toolcall), which the runtime validates.
+- A reply with tool calls finishes with `FinishReason.TOOL_CALLS` (Ollama itself
+  reports `done_reason` `stop`).
+- **Replay:** assistant messages carry their `tool_calls` back in Ollama's shape
+  (`{"function": {"name", "arguments"}}`), and `tool` messages are sent as
+  `{"role": "tool", "content": ..., "tool_name": ...}`; Ollama links results to
+  calls by tool name, not ID.
+- **Schema subset:** the official `ollama` 0.6.3 client keeps only `type`,
+  `properties` (each with `type`, `items`, `description`, `enum`), `required`,
+  `items` and `$defs` of a tool's parameter schema; other keywords such as
+  `anyOf`, `$ref`, `default` and constraints are dropped before sending. The
+  runtime still validates every call's arguments against the full schema.
+- Small local models are sensitive to prompts and tool results; in the opt-in
+  test a structured tool result made `llama3.2:3b` answer reliably.
 
 **Related:** [`ModelCapabilities`](#modelcapabilities),
 [local model guide](../guides/agent-examples.md#choose-local-llama-through-ollama).
