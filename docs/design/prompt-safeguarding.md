@@ -22,8 +22,8 @@ The strongest protection is limiting what a compromised agent can access or do.
 
 ## Policy hooks
 
-Input, model-request and output checks are implemented (M7 #77); tool checks
-follow in #78. See [`ExecutionPolicy`](../api/authorization.md#executionpolicy)
+Input, model-request and output checks (M7 #77) and tool checks (M7 #78) are
+implemented. See [`ExecutionPolicy`](../api/authorization.md#executionpolicy)
 for the check signatures and their order in a run.
 
 ```python

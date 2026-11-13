@@ -186,9 +186,9 @@ Every other outcome follows this table:
 | `SendMessage` while `max_concurrent_runs` runs are running (M7 #72) | HTTP 503 with `Retry-After: 1`, no task |
 | `SendMessage` once shutdown has started (M7 #74) | HTTP 503 with `Retry-After: 1`, no task |
 | Malformed A2A request or extension misuse | Standard A2A/JSON-RPC protocol error, no task |
-| Unknown skill, invalid arguments, permission or policy denied, including a tool call (M5 #62) or an execution policy check on the input, a model request or the output (M7 #77) | Task `REJECTED`, safe message; a blocked output is never published |
+| Unknown skill, invalid arguments, permission or policy denied, including a tool call (M5 #62) or an execution policy check on the input, a model request, a tool call or the output (M7 #77, #78) | Task `REJECTED`, safe message; a blocked output is never published |
 | Clarification needed | Task `INPUT_REQUIRED` |
-| Timeout, output validation failure, skill or router exception, router timeout, policy unavailable (skill or tool policy, M5 #62; execution policy check, M7 #77) | Task `FAILED`, safe message |
+| Timeout, output validation failure, skill or router exception, router timeout, policy unavailable (skill or tool policy, M5 #62; execution policy check, M7 #77, #78) | Task `FAILED`, safe message |
 | Model error: unsupported capability, refusal, incomplete output, provider failure (M3 #33; structured output proven end to end in M4 #57) | Task `FAILED`, safe message; never the model's text |
 | Token, model-call or tool-call limit exceeded (M3 #36, M5 #61) | Task `FAILED`, safe message |
 | Result or clarification question over `max_response_bytes` (M7 #73) | Task `FAILED` with `LimitExceededError`'s "The result exceeds the host's response size limit", `invocation_id` and usage; no artifact or question is sent |

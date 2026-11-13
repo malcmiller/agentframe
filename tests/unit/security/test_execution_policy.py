@@ -1,4 +1,4 @@
-"""Tests for ``ExecutionPolicy`` input, model-request and output checks.
+"""Tests for ``ExecutionPolicy`` input, model-request, tool and output checks.
 
 Models are scripted, so no test calls a provider. Hosted tests travel over
 real localhost HTTP to an ``AgentApp`` served by Uvicorn.
@@ -33,7 +33,6 @@ from agentframe import (
     RunContext,
     RunLimits,
     Runtime,
-    SkillDefinition,
     ToolCall,
     agent,
     skill,
@@ -41,7 +40,7 @@ from agentframe import (
 )
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.runtime import generation
-from agentframe.testing import ScriptedModel
+from agentframe.testing import ScriptedModel, ScriptedReply
 from local_server import ServeLocally
 
 SECRET = "the-secret-word"
@@ -60,6 +59,22 @@ def lookup(word: str) -> str:
     return f"definition of {word}"
 
 
+FORGOTTEN: list[str] = []
+
+
+@tool(description="Forget a word.", side_effects=True)
+def forget(word: str) -> str:
+    FORGOTTEN.append(word)
+    return "forgotten"
+
+
+@pytest.fixture
+def forgotten() -> list[str]:
+    """The words the ``forget`` tool really forgot during the test."""
+    FORGOTTEN.clear()
+    return FORGOTTEN
+
+
 @agent(version="1.0.0")
 class Writer(Agent):
     """Writes with and without a model."""
@@ -67,7 +82,7 @@ class Writer(Agent):
     limits = RunLimits(timeout_seconds=1)
 
     def __init__(self, model: ScriptedModel | None = None) -> None:
-        super().__init__(model=model, tools=[lookup])
+        super().__init__(model=model, tools=[lookup, forget])
         self.ran: list[str] = []
 
     @skill("echo", tags=["test"])
@@ -92,6 +107,11 @@ class Writer(Agent):
         """Ask the model, which may look words up."""
         return await ctx.generate(text, tools=[lookup])
 
+    @skill("tidy", tags=["test"])
+    async def tidy(self, text: str, ctx: RunContext) -> str:
+        """Ask the model, which may look words up and forget them."""
+        return await ctx.generate(text, tools=[lookup, forget])
+
     @skill("try_write", tags=["test"])
     async def try_write(self, text: str, ctx: RunContext) -> str:
         """Ask the model, falling back when the request is blocked."""
@@ -102,26 +122,22 @@ class Writer(Agent):
 
 
 class Recorder:
-    """A check that records what it saw and answers with ``decision``."""
+    """A check of any kind that records what it saw and answers ``decision``."""
 
     def __init__(self, decision: object = True) -> None:
         self.decision = decision
-        self.seen: list[tuple[SkillDefinition | None, Principal | None, Any]] = []
+        self.seen: list[tuple[Any, ...]] = []
 
-    async def __call__(
-        self, skill: SkillDefinition | None, principal: Principal | None, content: Any
-    ) -> bool:
-        self.seen.append((skill, principal, content))
+    async def __call__(self, *checked: Any) -> bool:
+        self.seen.append(checked)
         return self.decision  # type: ignore[return-value]
 
 
-async def broken(
-    skill: SkillDefinition | None, principal: object, content: Any
-) -> bool:
-    raise RuntimeError(f"policy service down while checking {content!r}")
+async def broken(*checked: Any) -> bool:
+    raise RuntimeError(f"policy service down while checking {checked!r}")
 
 
-async def hangs(skill: SkillDefinition | None, principal: object, content: Any) -> bool:
+async def hangs(*checked: Any) -> bool:
     await asyncio.sleep(10)
     return True
 
@@ -387,6 +403,177 @@ async def test_a_retried_request_is_checked_once(
     assert len(check.seen) == 1
 
 
+# Tool checks
+
+
+def forget_call(word: str = SECRET, call_id: str = "call-1") -> ToolCall:
+    return ToolCall(id=call_id, name="forget", arguments=json.dumps({"word": word}))
+
+
+def tool_model(*replies: ScriptedReply) -> ScriptedModel:
+    return ScriptedModel(list(replies), capabilities=TOOL_MODEL)
+
+
+async def tidy(runtime: Runtime, model: ScriptedModel) -> object:
+    return await runtime.invoke(
+        Writer(model), skill="tidy", arguments={"text": "Tidy up"}
+    )
+
+
+async def test_an_allowing_tool_check_sees_the_call_and_the_tool_runs(
+    forgotten: list[str],
+) -> None:
+    check = Recorder()
+    model = tool_model(forget_call("cat"), "Done.")
+    runtime = Runtime(policy=ExecutionPolicy(tool_checks=[check]))
+
+    assert await tidy(runtime, model) == "Done."
+
+    [(skill, principal, tool_name, arguments)] = check.seen
+    assert skill.id == "tidy"
+    assert principal is None
+    assert tool_name == "forget"
+    assert arguments == {"word": "cat"}
+    with pytest.raises(TypeError):
+        arguments["word"] = "dog"
+    assert forgotten == ["cat"]
+
+
+async def test_a_denied_tool_call_never_runs_and_the_model_is_never_told(
+    forgotten: list[str],
+) -> None:
+    model = tool_model(forget_call(), "unsent")
+    runtime = Runtime(policy=ExecutionPolicy(tool_checks=[Recorder(False)]))
+
+    with pytest.raises(PermissionDeniedError) as denied:
+        await tidy(runtime, model)
+
+    assert str(denied.value) == "Tool 'forget' was blocked by an execution policy check"
+    assert SECRET not in str(denied.value)
+    assert forgotten == []
+    assert len(model.requests) == 1
+
+
+@pytest.mark.parametrize("decision", [False, None, 1, "yes"])
+async def test_only_an_explicit_true_runs_a_tool(
+    decision: object, forgotten: list[str]
+) -> None:
+    runtime = Runtime(policy=ExecutionPolicy(tool_checks=[Recorder(decision)]))
+
+    with pytest.raises(PermissionDeniedError):
+        await tidy(runtime, tool_model(forget_call(), "unsent"))
+
+    assert forgotten == []
+
+
+async def test_a_broken_tool_check_fails_closed_without_revealing_arguments(
+    forgotten: list[str],
+) -> None:
+    runtime = Runtime(policy=ExecutionPolicy(tool_checks=[broken]))
+
+    with pytest.raises(PolicyUnavailableError) as unavailable:
+        await tidy(runtime, tool_model(forget_call(), "unsent"))
+
+    assert str(unavailable.value) == (
+        "Tool 'forget' could not be checked: an execution policy check is unavailable"
+    )
+    assert forgotten == []
+
+
+async def test_a_tool_check_still_running_at_the_deadline_fails_closed(
+    forgotten: list[str],
+) -> None:
+    runtime = Runtime(policy=ExecutionPolicy(tool_checks=[hangs]))
+
+    with pytest.raises(PolicyUnavailableError):
+        await asyncio.wait_for(tidy(runtime, tool_model(forget_call(), "unsent")), 3)
+
+    assert forgotten == []
+
+
+async def test_tool_checks_run_after_tool_authorization(
+    forgotten: list[str],
+) -> None:
+    order: list[str] = []
+
+    class RecordingAuthorization:
+        def __init__(self, allow: bool) -> None:
+            self.allow = allow
+
+        async def check_tool(self, *checked: Any) -> bool:
+            order.append("authorization")
+            return self.allow
+
+    async def check(*checked: Any) -> bool:
+        order.append("tool check")
+        return True
+
+    policy = ExecutionPolicy(tool_checks=[check])
+    allowed = Runtime(tool_authorization=RecordingAuthorization(True), policy=policy)
+    await tidy(allowed, tool_model(forget_call(), "Done."))
+    assert order == ["authorization", "tool check"]
+    assert forgotten == [SECRET]
+
+    order.clear()
+    denied = Runtime(tool_authorization=RecordingAuthorization(False), policy=policy)
+    with pytest.raises(PermissionDeniedError, match="tool authorization policy"):
+        await tidy(denied, tool_model(forget_call(), "unsent"))
+    assert order == ["authorization"]
+
+
+async def test_tool_checks_see_only_valid_arguments(forgotten: list[str]) -> None:
+    check = Recorder()
+    bad_call = ToolCall(id="call-1", name="forget", arguments='{"word": 7}')
+    runtime = Runtime(policy=ExecutionPolicy(tool_checks=[check]))
+
+    assert await tidy(runtime, tool_model(bad_call, "Sorry.")) == "Sorry."
+
+    assert check.seen == []
+    assert forgotten == []
+
+
+async def test_every_tool_call_in_every_continuation_is_checked(
+    forgotten: list[str],
+) -> None:
+    check = Recorder()
+    first = ToolCall(id="call-1", name="lookup", arguments='{"word": "cat"}')
+    second = forget_call("cat", call_id="call-2")
+    third = forget_call("dog", call_id="call-3")
+    model = tool_model((first, second), third, "Done.")
+    runtime = Runtime(policy=ExecutionPolicy(tool_checks=[check]))
+
+    assert await tidy(runtime, model) == "Done."
+
+    assert [(name, dict(args)) for _, _, name, args in check.seen] == [
+        ("lookup", {"word": "cat"}),
+        ("forget", {"word": "cat"}),
+        ("forget", {"word": "dog"}),
+    ]
+    assert forgotten == ["cat", "dog"]
+
+
+async def test_a_retried_model_request_never_runs_a_tool_unchecked(
+    monkeypatch: pytest.MonkeyPatch, forgotten: list[str]
+) -> None:
+    async def no_wait(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(generation, "wait_before_retry", no_wait)
+    check = Recorder()
+    model = tool_model(
+        forget_call("cat"),
+        ProviderError("busy", transient=True),
+        forget_call("dog", call_id="call-2"),
+        "Done.",
+    )
+    runtime = Runtime(policy=ExecutionPolicy(tool_checks=[check]))
+
+    assert await tidy(runtime, model) == "Done."
+
+    assert [args["word"] for _, _, _, args in check.seen] == ["cat", "dog"]
+    assert forgotten == ["cat", "dog"]
+
+
 # Output checks
 
 
@@ -540,6 +727,41 @@ async def test_hosted_check_outage_fails_the_task_without_revealing_content(
     assert "artifacts" not in task
     assert writer.ran == []
     assert SECRET not in json.dumps(task["status"])
+    assert SECRET not in agentframe_logs(caplog)
+
+
+async def test_hosted_tool_denial_rejects_the_task_and_runs_nothing(
+    serve: ServeLocally, caplog: pytest.LogCaptureFixture, forgotten: list[str]
+) -> None:
+    writer = Writer(tool_model(forget_call(), "unsent"))
+    policy = ExecutionPolicy(tool_checks=[Recorder(False)])
+
+    with caplog.at_level(logging.DEBUG):
+        async with serve_writer(serve, writer, policy) as h:
+            task = await call_skill(h, "tidy", {"text": "Tidy up"})
+
+    assert task["status"]["state"] == "TASK_STATE_REJECTED"
+    assert "artifacts" not in task
+    assert status_text(task) == "Tool 'forget' was blocked by an execution policy check"
+    assert forgotten == []
+    assert SECRET not in json.dumps(task)
+    assert SECRET not in agentframe_logs(caplog)
+
+
+async def test_hosted_tool_check_outage_fails_the_task_without_revealing_arguments(
+    serve: ServeLocally, caplog: pytest.LogCaptureFixture, forgotten: list[str]
+) -> None:
+    writer = Writer(tool_model(forget_call(), "unsent"))
+    policy = ExecutionPolicy(tool_checks=[broken])
+
+    with caplog.at_level(logging.DEBUG):
+        async with serve_writer(serve, writer, policy) as h:
+            task = await call_skill(h, "tidy", {"text": "Tidy up"})
+
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert "artifacts" not in task
+    assert forgotten == []
+    assert SECRET not in json.dumps(task)
     assert SECRET not in agentframe_logs(caplog)
 
 

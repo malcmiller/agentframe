@@ -17,12 +17,13 @@ from agentframe.errors import (
     describe_validation_error,
 )
 from agentframe.models.base import Message, ModelResponse, ToolCall, ToolSpec
+from agentframe.security.execution_policy import ExecutionPolicy, enforce_tool_checks
 from agentframe.security.principal import Principal
 
 if TYPE_CHECKING:
     # Imported only for type checking: these modules import this one.
     from agentframe.authoring.context import RunContext
-    from agentframe.authoring.definitions import ToolDefinition
+    from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
     from agentframe.security.authorization import ToolAuthorizationPolicy
 
 
@@ -69,13 +70,16 @@ async def run_tool_call(
     services: ServiceScope,
     ctx: "RunContext",
     authorization: "ToolAuthorizationPolicy | None",
+    policy: ExecutionPolicy | None,
+    skill: "SkillDefinition | None",
 ) -> str:
     """Run one tool call the model asked for and return its result as JSON text.
 
     A call naming a tool that was not selected, or with invalid arguments,
     runs nothing: its result tells the model what was wrong, using field
-    locations only. A call the caller is not authorized for fails the run
-    instead; the model is never told. Exceptions raised by the tool propagate
+    locations only. A call the caller is not authorized for, or that an
+    execution policy tool check blocks, fails the run instead; the model is
+    never told. Exceptions raised by the tool propagate
     unchanged and fail the run; their text is never sent to the model.
 
     Args:
@@ -85,12 +89,16 @@ async def run_tool_call(
         ctx: The run's context, passed to tools that take ``ctx``.
         authorization: Application policy checked before every tool call.
             ``None`` means only ``requires_permissions`` are checked.
+        policy: Execution policy whose tool checks run after authorization,
+            or ``None`` for no checks.
+        skill: The running skill, passed to the tool checks.
 
     Raises:
         PermissionDeniedError: The caller lacks a permission the tool
-            requires, or the policy denied the call.
-        PolicyUnavailableError: The policy raised an error or did not answer
-            before the run's deadline.
+            requires, or the authorization policy or a tool check denied
+            the call.
+        PolicyUnavailableError: The authorization policy or a tool check
+            raised an error or did not answer before the run's deadline.
         OutputValidationError: The tool returned a value that does not match
             its return annotation.
         DefinitionError: A service the tool needs is not registered.
@@ -110,8 +118,17 @@ async def run_tool_call(
         return error_result(f"Invalid arguments: {describe_validation_error(error)}")
     if authorization is not None:
         await check_tool_policy(authorization, tool, arguments, ctx)
-    # Execution-policy tool checks (#78) go here, after authorization and
-    # before the tool runs.
+    if policy is not None and policy.tool_checks:
+        # Tools are offered only inside a skill; routing never offers them.
+        assert skill is not None
+        await enforce_tool_checks(
+            policy.tool_checks,
+            skill,
+            ctx.principal,
+            tool.name,
+            MappingProxyType(arguments),
+            ctx.deadline,
+        )
     injected = await services.resolve(tool.injected)
     if tool.takes_context:
         injected["ctx"] = ctx

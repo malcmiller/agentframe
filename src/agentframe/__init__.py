@@ -69,6 +69,7 @@ from agentframe.security.execution_policy import (
     InputCheck,
     ModelRequestCheck,
     OutputCheck,
+    ToolCheck,
 )
 from agentframe.security.principal import Principal
 
@@ -135,6 +136,7 @@ __all__ = [
     "ToolAuthorizationPolicy",
     "ToolCall",
     "ToolCallLimitExceededError",
+    "ToolCheck",
     "ToolDefinition",
     "ToolSpec",
     "UnsupportedCapabilityError",
