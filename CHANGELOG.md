@@ -14,6 +14,18 @@ changelog.
   (agent name and Agent Card URL) and `AgentQuery` (name filter), plus
   `FileAgentRegistry` (YAML `name`/`url` list) and `EnvironmentAgentRegistry`
   (comma-separated `name=url` pairs). PyYAML is a new core dependency.
+- **Discovery (M8+):** `AgentDirectory(sources=[...])` returns
+  `DiscoveredAgent` results with validated official SDK Agent Cards, cached
+  for 300 seconds, with `allow_stale`, `refresh`, `allow_http_hosts` and an
+  optional caller-owned `http_client`. New `RemoteAgentError` for failures
+  caused by another agent. `httpx` is now an exactly pinned core dependency.
+
+### Fixed
+
+- URLs with a non-numeric or out-of-range port are refused as
+  `HostConfig.public_url` and registry card URLs.
+- `FileAgentRegistry` strips whitespace around names and URLs, like
+  `EnvironmentAgentRegistry`.
 
 ## [0.1.0] - 2026-11-13
 

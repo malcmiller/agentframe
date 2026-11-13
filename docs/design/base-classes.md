@@ -142,9 +142,7 @@ skills compose independently deployed agents, without a workflow/graph engine.
 | `EnvironmentAgentRegistry` | `EnvironmentAgentRegistry("AGENTFRAME_AGENTS")`; payload encoding still open. |
 | `FileAgentRegistry` | `FileAgentRegistry("agents.yaml")`, YAML name+URL list; detailed keys/schema/version open. |
 | `FoundryAgentRegistry` | Chosen Foundry project agents API via `azure-ai-projects` 2.x; A2A-enabled filtering, card mapping, auth/RBAC and pagination remain open. No tested implementation; model deployments are not agent endpoints. |
-| `AgentCardResolver` | Fetches/validates native SDK cards with application-configured outbound authentication and destination/redirect policy. |
-| `CardCacheConfig` | Default TTL 300 seconds; refresh stale access automatically, fail on refresh error unless explicit `allow_stale=True`. No implicit background polling. |
-| `AgentDirectory` | `sources=[...]`, native card-backed `find(skill=... / tags=...)`, cache/refresh and owned cleanup; `AgentApp(directory=...)` validates named remotes at startup. |
+| `AgentDirectory` | Implemented (#84): `AgentDirectory(sources=[...], card_ttl_seconds=300, allow_stale=False, allow_http_hosts=(), http_client=None)`; validated native cards cached 300 seconds, refreshed on stale access, failed refresh raises unless `allow_stale=True`; internal fetcher/cache (no public `AgentCardResolver`/`CardCacheConfig`). Card-backed `find(skill=... / tags=...)` is #85; `AgentApp(directory=...)` validates named remotes at startup (#87). |
 | `Remote["name"]` | Managed `call(skill, ..., output=Type, max_total_tokens=...)` and `ask(text)`; input-required raises `ClarificationNeededError`, no auto-conversation. |
 | `RemoteAgentClient` | Underlying/explicit native A2A client; construction still open, author calls above decided. |
 

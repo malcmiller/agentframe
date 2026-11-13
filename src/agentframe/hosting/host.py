@@ -1,5 +1,6 @@
 """Host configuration for serving an agent remotely."""
 
+import ipaddress
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -126,6 +127,8 @@ def is_plain_http_url(url: str) -> bool:
     """
     try:
         parts = urlsplit(url)
+        # Reading the port validates it: a non-number or out-of-range port raises.
+        parts.port  # noqa: B018
     except ValueError:
         return False
     return (
@@ -135,6 +138,24 @@ def is_plain_http_url(url: str) -> bool:
         and not parts.query
         and not parts.fragment
     )
+
+
+def is_loopback_host(host: str) -> bool:
+    """Return whether ``host`` names this machine: ``localhost`` or a loopback IP.
+
+    Args:
+        host: A host name or IP address, without brackets or port.
+
+    Returns:
+        ``True`` for ``localhost`` (any case) and loopback addresses such as
+        ``127.0.0.1`` and ``::1``; otherwise ``False``.
+    """
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _check_public_url(public_url: str) -> None:

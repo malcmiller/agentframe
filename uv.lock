@@ -37,6 +37,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk", extra = ["http-server"] },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "starlette" },
@@ -79,6 +80,7 @@ requires-dist = [
     { name = "a2a-sdk", extras = ["http-server"], specifier = "==1.3.0" },
     { name = "aiohttp", marker = "extra == 'foundry'", specifier = "==3.14.5" },
     { name = "azure-identity", marker = "extra == 'foundry'", specifier = "==1.27.0" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "httpx", marker = "extra == 'entra'", specifier = "==0.28.1" },
     { name = "ollama", marker = "extra == 'ollama'", specifier = "==0.6.3" },
     { name = "openai", marker = "extra == 'foundry'", specifier = "==3.49.0" },

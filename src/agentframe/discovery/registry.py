@@ -134,6 +134,9 @@ class FileAgentRegistry(AgentRegistry):
         self._path = Path(path)
         self._source = f"Agent registry file '{self._path}'"
 
+    def __repr__(self) -> str:
+        return f"FileAgentRegistry({str(self._path)!r})"
+
     async def get(self, agent_id: str) -> AgentReference:
         """Return the reference for one agent; see ``AgentRegistry.get``."""
         return _find(await self._read(), agent_id, self._source)
@@ -188,6 +191,9 @@ class EnvironmentAgentRegistry(AgentRegistry):
         self._variable = variable
         self._source = f"Environment variable {variable}"
 
+    def __repr__(self) -> str:
+        return f"EnvironmentAgentRegistry({self._variable!r})"
+
     async def get(self, agent_id: str) -> AgentReference:
         """Return the reference for one agent; see ``AgentRegistry.get``."""
         return _find(self._read(), agent_id, self._source)
@@ -229,7 +235,7 @@ def _file_entries(entries: object, source: str) -> list[tuple[str, str]]:
             raise DefinitionError(
                 f"{source} entry {position} 'name' and 'url' must be strings."
             )
-        pairs.append((name, url))
+        pairs.append((name.strip(), url.strip()))
     return pairs
 
 

@@ -421,11 +421,16 @@ Foundry A2A connections are a possible additional reference source, not decided.
 Model deployments are not agent endpoints; no AgentFrame-to-Foundry deployment
 or tested registry integration is claimed.
 
-Separate `AgentCardResolver` and library-managed `AgentDirectory` own native SDK
-card fetch/validation/cache/refresh and owned-resource lifecycle, not
-per-backend user HTTP loops. No import/construction I/O or implicit polling;
-background refresh is opt-in. Cache TTL defaults to 300 seconds; automatically
-refresh on stale access, failing unless `allow_stale=True` explicitly.
+Implemented (#84): `AgentDirectory(sources=[...], card_ttl_seconds=300,
+allow_stale=False, allow_http_hosts=(), http_client=None)` owns SDK card
+fetch/validation/cache/refresh via an internal fetcher (no public
+`AgentCardResolver`/`CardCacheConfig`). Sources read on every `get`; cards
+cached per card URL, refetched when stale; failed refresh raises unless
+`allow_stale=True` (`DiscoveredAgent.stale`, warning). https only except
+loopback/`allow_http_hosts`, no redirects, 10 s, 1 MiB, interface URL same
+origin as the registry `card_url`; no caller credentials. Remote failures
+raise `RemoteAgentError`; duplicate names across sources `DefinitionError`.
+No construction I/O or background tasks; closes only its own client.
 Compose `AgentDirectory(sources=[...])`, inject via `AgentApp(directory=...)`,
 and validate configured `Remote["name"]` bindings at startup.
 `directory.find(skill="find_sources")` / `find(tags=["research"])` returns
@@ -513,7 +518,9 @@ operator logs with the ID, so authors keep secrets out of exception messages.
 Network host examples must include clearly labeled application-supplied
 development authentication/authorization placeholders where appropriate;
 loopback/omission is not access policy or a production-safe default.
-M8+ adds `ClarificationNeededError` under `AgentFrameError`; local client
+M8+ adds `RemoteAgentError` (#84; failures caused by another agent, optional
+`task_id`/`task_state`) and `ClarificationNeededError` under
+`AgentFrameError`; local client
 input-required question is not a failed remote task or durable resumption.
 
 Use explicit model selection, finite execution limits, validated inputs/outputs,

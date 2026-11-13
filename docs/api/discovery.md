@@ -2,7 +2,10 @@
 
 [Reference status conventions](README.md). The registry entries
 ([`AgentRegistry`](#agentregistry) through [`FileAgentRegistry`](#fileagentregistry))
-are implemented (M8+ #83); every other API here is unimplemented, and its
+are implemented (M8+ #83), and [`AgentDirectory`](#agentdirectory) with
+[`get`](#agentdirectoryget), [`refresh`](#agentdirectoryrefresh), its async
+context manager and [`DiscoveredAgent`](#discoveredagent) (#84); every other API
+here is unimplemented, and its
 confirmed names/defaults are decisions while unspecified signatures remain
 illustrative. Discovery/registry and remote A2A invocation are core
 scope for the next multi-agent release (M8+), after the M7 single-agent release,
@@ -314,174 +317,142 @@ this does not mean AgentFrame agents deploy to Foundry.
 **Related:** [chosen source and mapping boundaries](../design/discovery.md#sources-and-reference-format),
 [`FoundryModel`](models.md#foundrymodel).
 
-## `AgentCardResolver`
-
-**Purpose / decision:** library-owned fetch/validation machinery for native
-official SDK Agent Cards, separate from read adapters.
-
-**Proposed constructor shape:**
-
-```text
-AgentCardResolver(*, authentication = ..., destination_policy = ...)
-```
-
-| Parameter | Type | Required/default status | Meaning, constraints, precedence |
-| --- | --- | --- | --- |
-| `authentication` | Application outbound-authentication dependency; interface open | Explicit in example; omission/public-card behavior open | Select appropriate trusted credentials/card variant; never load credentials from references. |
-| `destination_policy` | Application destination/redirect policy; interface open | Explicit policy required for safe resolution; exact integration open | Approved schemes/addresses/origins, redirects and credential forwarding; applies to fetched and card-advertised URLs. |
-
-```python
-from agentframe import AgentCardResolver
-
-
-def resolver(
-    outbound_authentication: object, destination_policy: object,
-) -> AgentCardResolver:
-    return AgentCardResolver(
-        authentication=outbound_authentication,
-        destination_policy=destination_policy,
-    )
-```
-
-`object` marks unresolved application interfaces, not arbitrary-object support.
-
-**Behavior / failures:** no construction I/O. Directory drives bounded fetches,
-HTTP deadlines/cancellation and version-compatible native card validation.
-Reject unsafe destinations/redirects, malformed cards and unsupported bindings;
-auth/network/timeout failures remain explicit. URL/schema validation alone is
-not SSRF prevention or endpoint trust. No resolver method signature is settled;
-users need not implement card HTTP loops for each backend.
-
-**Related:** [trust boundaries](../design/discovery.md#failure-trust-and-isolation-boundaries),
-[`AgentDirectory`](#agentdirectory).
-
-## `CardCacheConfig`
-
-**Purpose / direction:** explicit card freshness/stale-use settings, not health
-checking or authorization.
-
-**Constructor shape with decided defaults; exact numeric typing remains open:**
-
-```text
-CardCacheConfig(*, ttl_seconds: ... = 300, allow_stale: bool = False)
-```
-
-| Parameter | Type | Required/default status | Meaning, constraints, precedence |
-| --- | --- | --- | --- |
-| `ttl_seconds` | Finite numeric seconds; exact type/range open | `300`, configurable | Automatically refresh on stale access; not background polling or source reconciliation. Zero semantics open. |
-| `allow_stale` | `bool` | `False`; stale use requires explicit `True` | Failed refresh fails the call otherwise; label stale results and failure. Cannot bypass authorization/removal. Stale-age bounds open. |
-
-```python
-from agentframe import CardCacheConfig
-
-
-cache = CardCacheConfig(ttl_seconds=300, allow_stale=False)
-```
-
-**Behavior / failures:** reject invalid settings. Never reset freshness on
-failed refresh or silently label stale as current. Isolate caller/tenant/auth/
-card variants and source/reference versions, including coalesced fetches.
-Cache freshness is neither health, trust nor current permission. Source refresh
-and removal semantics cannot be inferred from card TTL alone.
-
-**Related:** [freshness lifecycle](../design/discovery.md#managed-directory-lifecycle),
-[`AgentDirectory.refresh`](#agentdirectoryrefresh).
-
 ## `AgentDirectory`
 
-**Purpose / decision:** library-managed facade combining registry, resolver,
-cache, automatic on-stale refresh, explicit refresh and discovery-resource lifecycle.
-
-**Decided `sources` composition; resolver/cache extension details remain illustrative:**
+**Purpose / decision:** one directory that combines agent sources and returns
+validated native Agent Cards, so applications never write card-fetching,
+caching or refresh code. Implemented (M8+ #84); [`find`](#agentdirectoryfind)
+arrives in #85. The card fetcher and cache are internal: there are no public
+`AgentCardResolver` or `CardCacheConfig` classes (decided 2026-11-12; keyword
+arguments are enough until a second resolver is needed).
 
 ```text
-AgentDirectory(*, sources: list[AgentRegistry], resolver: AgentCardResolver = ..., cache: CardCacheConfig = ...)
+AgentDirectory(
+    *, sources: Sequence[AgentRegistry], card_ttl_seconds: float = 300,
+    allow_stale: bool = False, allow_http_hosts: Collection[str] = (),
+    http_client: httpx.AsyncClient | None = None,
+)
 ```
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `sources` | Collection of `AgentRegistry`; exact container typing open | Required | Explicit file/Foundry/environment/custom sources; conflict/order rules remain open. |
-| `resolver` | `AgentCardResolver` | Explicit in shape; default unresolved | Library machinery configured with application outbound auth/destination policy. |
-| `cache` | `CardCacheConfig` | 300-second TTL, stale use off by default | Freshness/stale policy plus required isolation; never overrides caller policy. |
+| `sources` | `Sequence[AgentRegistry]` | Required, non-empty | Registries read on every `get`/`refresh`. A name listed by more than one source raises `DefinitionError` naming both; there is no precedence. |
+| `card_ttl_seconds` | `float` | Optional; default `300` | How long a fetched card stays fresh; finite, `0` or more (`0` refetches on every `get`). Not health checking or background polling. |
+| `allow_stale` | `bool` | Optional; default `False` | When a stale card's refresh fails, serve the previous card with `stale=True` and log a warning instead of raising. Does not apply to `refresh` or to source failures. |
+| `allow_http_hosts` | `Collection[str]` | Optional; default empty | Non-loopback host names whose cards may be fetched over plain `http`, for development. Case-insensitive; a single string raises `DefinitionError`. |
+| `http_client` | `httpx.AsyncClient \| None` | Optional; default `None` | Caller-owned client used for card fetches (and, later, remote calls); never closed by the directory. It must not carry credentials in default headers or cookies. When omitted, the directory creates a client on `async with` and closes it on exit. Also lets tests use in-process ASGI apps. |
 
 ```python
-from azure.core.credentials_async import AsyncTokenCredential
-from agentframe import (
-    AgentCardResolver, AgentDirectory, CardCacheConfig, FileAgentRegistry,
-    FoundryAgentRegistry,
-)
+from agentframe import AgentDirectory, EnvironmentAgentRegistry, FileAgentRegistry
 
 
-def build_directory(
-    project_endpoint: str, credential: AsyncTokenCredential,
-    outbound_authentication: object, destination_policy: object,
-) -> AgentDirectory:
-    return AgentDirectory(
+async def research_card_name() -> str:
+    directory = AgentDirectory(
         sources=[
             FileAgentRegistry("agents.yaml"),
-            FoundryAgentRegistry(
-                project_endpoint=project_endpoint, credential=credential,
-            ),
+            EnvironmentAgentRegistry("AGENTFRAME_AGENTS"),
         ],
-        resolver=AgentCardResolver(
-            authentication=outbound_authentication,
-            destination_policy=destination_policy,
-        ),
-        cache=CardCacheConfig(ttl_seconds=300, allow_stale=False),
+        card_ttl_seconds=300,
+        allow_stale=False,
     )
+    async with directory:
+        found = await directory.get("research-agent")
+        return found.card.name
 ```
 
-Application dependencies are placeholders with interfaces still open.
+**Behavior / failures:** construction reads nothing, fetches nothing and starts
+no background task. Sources are read on every call, so edits apply at once;
+cards are cached per card URL. Every card fetch:
 
-**Behavior / failures:** no I/O/polling during construction/import. Use
-`async with directory` for ownership-aware resource lifecycle. Background
-refresh is opt-in; its API remains open. Caller-owned injected directories and
-clients remain caller-owned unless explicitly transferred; a host may manage
-library-created/transferred directory lifespan via `AgentApp(directory=...)`.
-Configured `Remote["name"]` references are validated at startup.
+- goes only to `https`, except loopback hosts (`localhost`, `127.0.0.0/8`,
+  `::1`) and `allow_http_hosts`; refused before any request is sent;
+- carries no credentials: the client's `auth` is disabled and nothing about the
+  current caller is added, so every caller sees the same cached card (one card
+  variant; per-caller or authenticated extended cards are out of scope);
+- is bounded to 10 seconds (and never past the caller's deadline, since a run's
+  deadline cancels it), reads at most 1 MiB and does not follow redirects;
+- is parsed by the official SDK into `a2a.types.AgentCard`, which must have a
+  name and a JSON-RPC A2A 1.0 interface whose URL has the same origin (scheme,
+  host and port) as the registry's card URL. The registry's `card_url` is the
+  only trusted origin; later outbound credentials (#92, #93) go only there.
+
+Failures caused by the other agent (unreachable, non-success HTTP status,
+redirect, timeout, oversized body, invalid JSON, a body that is not an Agent
+Card, no JSON-RPC 1.0 interface, a different-origin interface, refused plain
+`http`) raise [`RemoteAgentError`](runtime.md#remoteagenterror) with a safe
+message naming the agent, never the response body. Configuration mistakes
+(unknown name, the same name in two sources, an unreadable source) raise
+`DefinitionError`. A source failure is never treated as removal: the cached
+card stays, and the call raises. Concurrent calls for one stale card share one
+fetch (one lock per card URL). No deploy/start/stop/delete, registration writes,
+automatic delegation or A2A task lifecycle.
+
 Register a shared directory with `Services.add(AgentDirectory, directory)` and
-inject `Inject[AgentDirectory]` into skills. Applications own/close singletons;
-only an intentionally scoped factory's AgentFrame-created instance is closed
-per run. Injection alone never transfers ownership of a singleton.
-No deploy/start/stop/delete, registration writes, leases/federation, automatic
-delegation, or A2A task lifecycle. Source errors are not removal evidence;
-reconciled removals stop new eligibility, not active tasks. TTL can delay
-observing removal; no instant revocation guarantee.
+inject `Inject[AgentDirectory]` into skills; the application opens and closes
+it. `AgentApp(directory=...)` and startup validation of `Remote` bindings are
+#87.
 
-**Related:** [`get`](#agentdirectoryget), [`find`](#agentdirectoryfind), [`refresh`](#agentdirectoryrefresh),
-[dependency injection](../design/discovery.md#agent-injection-and-separate-invocation).
+**Related:** [`get`](#agentdirectoryget), [`refresh`](#agentdirectoryrefresh),
+[`DiscoveredAgent`](#discoveredagent),
+[managed lifecycle](../design/discovery.md#managed-directory-lifecycle),
+[failure and isolation boundaries](../design/discovery.md#failure-trust-and-isolation-boundaries).
 
-## `AgentDirectory.get`
+## `DiscoveredAgent`
 
-**Purpose / proposed shape:** `await directory.get(agent_id: str)`.
-Returns a discovered result with `.card` plus reference/freshness metadata;
-exact result class, fields and contextual arguments are open.
+**Purpose / decision:** what [`AgentDirectory.get`](#agentdirectoryget) returns.
+Implemented (#84) as a frozen dataclass.
 
-| Parameter/result | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| `agent_id` | `str` | Required in example | Resolve eligible reference under trusted source/caller policy. |
-| Result `.card` | Native official SDK `AgentCard` | Present on successful illustrated result | Validated card, not permission/health proof. |
-| Reference/freshness metadata | Result representation open | Must accompany discovery | Distinguish source/card freshness and permitted stale state without inventing timestamps/field names. |
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `reference` | `AgentReference` | The source entry the agent was found through. |
+| `card` | `a2a.types.AgentCard` | The validated official SDK card. |
+| `interface_url` | `str` | The card's JSON-RPC A2A 1.0 interface URL, always on the card URL's origin. Remote calls (#87) send only here. |
+| `stale` | `bool` | `True` only when `allow_stale=True` served an old card after a failed refresh. |
 
 ```python
 from agentframe import AgentDirectory
 
 
-async def inspect(directory: AgentDirectory) -> str:
-    discovered = await directory.get("research-agent")
-    return type(discovered.card).__name__
+async def research_endpoint(directory: AgentDirectory) -> str:
+    found = await directory.get("research-agent")
+    return found.interface_url
 ```
 
-The caller supplies an entered, appropriately scoped directory.
+**Behavior / failures:** a discovered agent is not proof of health, trust or
+permission to call it.
 
-**Behavior / failures:** fetch/validate or use fresh cache within source
-reconciliation and caller policy. Missing ID, source failure, malformed card,
-denied destination/auth, deadline and cancellation are explicit failures with
-names open. Failed refresh cannot silently return stale as current; explicitly
-permitted stale use must be labeled. Restrict eligible candidates and authorize
-again at invocation/action. Retrieval does not invoke/delegate remotely.
+**Related:** [`AgentDirectory`](#agentdirectory).
 
-**Related:** [`CardCacheConfig`](#cardcacheconfig),
+## `AgentDirectory.get`
+
+**Purpose / signature:** return an agent and its validated card, from the cache
+while fresh. Implemented (#84).
+
+```python
+async def get(self, name: str) -> DiscoveredAgent: ...
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `name` | `str` | Required | The agent's name in exactly one source. |
+
+```python
+from agentframe import AgentDirectory
+
+
+async def research_skills(directory: AgentDirectory) -> list[str]:
+    found = await directory.get("research-agent")
+    return [skill.id for skill in found.card.skills]
+```
+
+**Behavior / failures:** reads the sources, then returns the cached card if it
+is younger than `card_ttl_seconds`; otherwise fetches it again. A failed refresh
+raises `RemoteAgentError` unless `allow_stale=True`, which returns the previous
+card with `stale=True` and logs a warning; a failed refresh never resets
+freshness, so the next call tries again. Without `http_client`, calling before
+`async with` raises `DefinitionError`. Retrieval does not invoke the agent.
+
+**Related:** [`DiscoveredAgent`](#discoveredagent),
 [failure/isolation constraints](../design/discovery.md#failure-trust-and-isolation-boundaries).
 
 ## `AgentDirectory.find`
@@ -518,43 +489,42 @@ automatic remote invocation. Source conflict/result ordering remain open.
 
 ## `AgentDirectory.refresh`
 
-**Purpose / signature status:** explicit refresh is proposed; exact arguments,
-per-ID versus source-wide scope, force semantics, and return type remain open.
-No finalized `refresh(agent_id)` or zero-argument overload is claimed.
+**Purpose / signature:** fetch an agent's card again, even if the cached one is
+fresh. Implemented (#84).
 
-| Concern | Type | Required/default status | Meaning and constraints |
+```python
+async def refresh(self, name: str) -> DiscoveredAgent: ...
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Refresh scope/source reconciliation | Interface open | Must be specified before stabilization | Distinguish source read, card refetch and removal handling; source failure is not an authoritative empty snapshot. |
-| Result/failure metadata | Interface open | Explicit freshness/failure information needed | Never advance freshness on failure or silently authorize stale use. |
+| `name` | `str` | Required | The agent's name in exactly one source. |
 
 ```python
 from agentframe import AgentDirectory
 
 
-def describe_refresh_owner(directory: AgentDirectory) -> str:
-    return type(directory).__name__
+async def reload_research(directory: AgentDirectory) -> str:
+    return (await directory.refresh("research-agent")).card.version
 ```
 
-This dependency-only example intentionally avoids fabricating a refresh call
-before scope/signature design.
-
-**Behavior / failures:** bound refresh work and isolate card variants. Successful
-reconciliation invalidates removed/replaced eligibility/cache entries for new
-selection; active tasks are not automatically canceled. Surface outages,
-malformed data, auth/destination denials and refresh failures explicitly.
-Background refresh is not implicitly enabled by this operation.
+**Behavior / failures:** raises as [`get`](#agentdirectoryget) does, except that
+a failed refresh always raises `RemoteAgentError` (`allow_stale` does not
+apply) and leaves the cached card and its freshness unchanged. It shares the
+per-card-URL lock with `get`. Source-wide refresh and background refresh are
+not provided.
 
 **Related:** [managed lifecycle](../design/discovery.md#managed-directory-lifecycle),
 [`AgentDirectory.get`](#agentdirectoryget).
 
 ## `AgentDirectory.__aenter__`
 
-**Purpose / signature status:** proposed async context-manager entry used by
-`async with directory`; return typing and acquisition timing remain open.
+**Purpose / signature:** `async with directory` opens it. Implemented (#84);
+returns the directory.
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Context entry | Python async context-manager protocol | No user arguments | Establish ownership-scoped lifecycle; no implicit polling/background-refresh grant. |
+| Context entry | Python async context-manager protocol | No user arguments | Creates an `httpx.AsyncClient` (no redirects) when no `http_client` was supplied. Reads no source and fetches no card. |
 
 ```python
 from agentframe import AgentDirectory
@@ -562,29 +532,26 @@ from agentframe import AgentDirectory
 
 async def inspect_scoped(directory: AgentDirectory) -> str:
     async with directory:
-        discovered = await directory.get("research-agent")
-        return type(discovered.card).__name__
+        found = await directory.get("research-agent")
+        return found.card.name
 ```
 
-Here the application delegates the lifecycle scope to this function.
-
-**Behavior / failures:** resource acquisition failures are explicit; no
-construction-time I/O is implied. Reentrancy/reuse and partial-acquisition
-cleanup need specification. Context entry does not grant discovery eligibility
-or transfer ownership of every injected dependency.
+**Behavior / failures:** entering a directory that is already open with its own
+client raises `DefinitionError`. After exit it can be entered again; the card
+cache is kept.
 
 **Related:** [`AgentDirectory`](#agentdirectory),
 [ownership guide](../design/discovery.md#managed-directory-lifecycle).
 
 ## `AgentDirectory.__aexit__`
 
-**Purpose / signature status:** proposed async context-manager exit; Python
-exception-context arguments follow the protocol, final annotations remain open.
+**Purpose / signature:** leaving `async with` closes what the directory owns.
+Implemented (#84).
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Exception context | Python context-manager protocol values | Supplied by Python | Do not turn failed discovery/cancellation into success through suppression. |
-| Owned resources | Library-created or explicitly transferred resources | Cleanup required | Do not close caller-owned clients/dependencies merely because they were injected. |
+| Exception context | Python context-manager protocol values | Supplied by Python | Never suppressed. |
+| Owned resources | The client created on entry | Closed on exit | A caller-supplied `http_client` is never closed. |
 
 ```python
 from agentframe import AgentDirectory
@@ -595,15 +562,10 @@ async def read_and_close(directory: AgentDirectory) -> None:
         await directory.get("research-agent")
 ```
 
-The caller deliberately assigns lifecycle scope to this function.
+**Behavior / failures:** closes only the client the directory created; it does
+not cancel remote A2A tasks or close sources.
 
-**Behavior / failures:** close owned resources, including opt-in background work
-if configured, without automatically canceling remote A2A tasks. Cancellation/
-cleanup-error precedence and shutdown bounds remain open; failures must remain
-explicit rather than silently swallowed.
-
-**Related:** [`AgentDirectory.__aenter__`](#agentdirectory__aenter__),
-[discovery lifecycle scope](../design/discovery.md#phasing-and-open-decisions).
+**Related:** [`AgentDirectory.__aenter__`](#agentdirectory__aenter__).
 
 ## `RemoteAgentClient`
 

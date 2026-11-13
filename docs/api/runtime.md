@@ -10,7 +10,7 @@ adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
 `Runtime.validate_model`, token/model-call accounting in `RunResult` and the
 `TokenLimitExceededError`, `ModelCallLimitExceededError` and
 `TimeoutLimitExceededError` subtypes. M5 #61 adds `ToolCallLimitExceededError`
-and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`.
+and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`; M8+ #84 adds `RemoteAgentError`.
 The remaining parameters and errors
 arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
@@ -733,6 +733,35 @@ cancellation retains protocol semantics.
 M8+ also adds [`ClarificationNeededError`](discovery.md#clarificationneedederror),
 an `AgentFrameError` carrying a remote input-required question; no automatic
 back-and-forth. Native task state stays input-required, not a failed remote task.
+
+## `RemoteAgentError`
+
+**Purpose / decision:** a failure caused by another agent rather than by local
+configuration: an unreachable agent, an invalid or refused Agent Card, and
+later (#87) a failed or rejected remote task.
+**Signature status:** implemented in M8+ #84 as a direct `AgentFrameError`
+subclass:
+`RemoteAgentError(message: str, *, task_id: str | None = None, task_state: str | None = None, invocation_id: str | None = None)`.
+
+| Field | Type | Required/default status | Meaning |
+| --- | --- | --- | --- |
+| `task_id` | `str \| None` | Default `None` | The remote A2A task's ID, when the failure concerns one. |
+| `task_state` | `str \| None` | Default `None` | The remote task's final state, when known. |
+| Inherited error contract | Invocation ID and safe message | Required | The message names the agent, never the remote response body. |
+
+```python
+from agentframe import RemoteAgentError
+
+
+def remote_task(error: RemoteAgentError) -> str | None:
+    return error.task_id
+```
+
+**Behavior / failures:** configuration mistakes (an unknown agent name, the same
+name in two sources, an unreadable source) stay `DefinitionError`.
+`ClarificationNeededError` (M8+) stays a separate error.
+**Related:** [`AgentDirectory`](discovery.md#agentdirectory),
+[`AgentFrameError`](#agentframeerror).
 
 ## `StateStore` (deferred)
 
