@@ -145,13 +145,16 @@ agent, offers it to a model, nor publishes an A2A skill or MCP tool.
 **Signature status:** decided and implemented in M5 (#58, decisions confirmed
 2026-11-12). Agent registration through `Agent(tools=[...])` and
 `ctx.generate(..., tools=[...])` selection are implemented (#60), and so is the
-bounded [tool loop](agents.md#implemented-tool-calling-m5-61) (#61); tool
-authorization (#62) is not implemented yet. Tools may be sync (called inline)
+bounded [tool loop](agents.md#implemented-tool-calling-m5-61) (#61) and tool
+authorization with `requires_permissions` (#62). Tools may be sync (called inline)
 or async, and receive `ctx` only when they declare a `ctx: RunContext`
 parameter.
 
 ```text
-@tool(*, description: str | None = None, side_effects: bool = False, idempotent: bool = False)
+@tool(
+    *, description: str | None = None, side_effects: bool = False,
+    idempotent: bool = False, requires_permissions: Iterable[str] = (),
+)
 ```
 
 Always call it with parentheses, `@tool()` or `@tool(description=...)`; bare
@@ -162,6 +165,7 @@ Always call it with parentheses, `@tool()` or `@tool(description=...)`; bare
 | `description` | `str` | Optional; defaults to the function docstring | Tells the model what the tool does; does not authorize actions. No explicit value and no docstring raises `DefinitionError`. |
 | `side_effects` | `bool` | Optional; default `False` | `True` marks consequential effects, such as cancelling an order. |
 | `idempotent` | `bool` | Optional; default `False` | `True` declares that repeating a call has no further effect. Not a retry grant or exactly-once guarantee. May be combined with `side_effects=True`. |
+| `requires_permissions` | `Iterable[str]` | Optional; default empty | Permissions the caller must all hold, as on [`@skill`](#skill). A tool the caller lacks any of is not offered to the model and fails the run with `PermissionDeniedError` if called anyway. A single string raises `DefinitionError`. |
 
 ```python
 from typing import Literal, Protocol
@@ -186,7 +190,11 @@ async def lookup_order(order_id: str, orders: Inject[OrderStore]) -> OrderStatus
     return await orders.status(order_id)
 
 
-@tool(description="Cancel an order.", side_effects=True)
+@tool(
+    description="Cancel an order.",
+    side_effects=True,
+    requires_permissions=["orders:write"],
+)
 async def cancel_order(order_id: str, orders: Inject[OrderStore]) -> None:
     await orders.cancel(order_id)
 
@@ -217,6 +225,12 @@ name and must be 1-64 ASCII letters, digits, `_` or `-` (the whole name,
 `[a-zA-Z0-9_-]{1,64}`). Every violation raises
 `DefinitionError` naming the tool when the function is decorated (import time).
 
+Declared permissions say a caller may use a tool at all; they do not check the
+resource. For consequential tools, such as `cancel_order` above, also supply a
+[`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy) that
+checks the actual arguments (for example, that the caller owns the order).
+Neither is mandatory for `side_effects=True`, but both are strongly advised.
+
 No tool is ever retried automatically, whatever its flags (#63), so a forgotten
 flag cannot cause a replay. No shell, filesystem, or network tools are granted by
 default. Validated tool results will feed generation continuations under the
@@ -243,6 +257,7 @@ from `agentframe`.
 | `description` | `str` | Explicit description or the docstring. |
 | `side_effects` | `bool` | As declared on `@tool`. |
 | `idempotent` | `bool` | As declared on `@tool`. |
+| `requires_permissions` | `frozenset[str]` | As declared on `@tool`; empty when none. |
 | `function` | callable | The decorated function (the underlying function for a static method). |
 | `takes_context` | `bool` | Whether the function has a `ctx: RunContext` parameter. |
 | `argument_names` | `tuple[str, ...]` | Business parameters, in declaration order. |

@@ -5,7 +5,8 @@ unimplemented design contracts. M1 implements `Principal` and permission checks;
 M2 story #4 implements `Authenticator`, `APIKeyAuth` and `AllowAnonymous` as
 standalone units, which the HTTP host [`AgentApp`](hosting.md#agentapp) (#3)
 wires in. M2 story #19 implements
-`AuthorizationPolicy` with the local `Runtime`. Authentication, authorization,
+`AuthorizationPolicy` with the local `Runtime`; M5 story #62 implements
+`ToolAuthorizationPolicy` and `@tool(requires_permissions=...)`. Authentication, authorization,
 and prompt/content checks are separate responsibilities.
 
 ## `Principal`
@@ -159,6 +160,121 @@ until satisfied, not create an implicit durable workflow from an A2A task.
 
 **Related:** [`@skill`](decorators.md#skill), [`HostConfig`](hosting.md#hostconfig),
 [fail-closed pipeline](../guides/authorization.md#fail-closed-execution-pipeline).
+
+## `ToolAuthorizationPolicy`
+
+**Purpose / decision:** injected application policy that authorizes every tool
+call a model asks for, using the verified caller and the call's actual
+arguments, so a model (or a prompt injection) can never make a tool act beyond
+the caller's authority. Model output and instructions are never authority.
+
+**Signature status:** decided and implemented in M5 (#62, decisions confirmed
+2026-11-12) as a structural `Protocol` with one async method, passed as
+`Runtime(tool_authorization=...)`. It is separate from
+[`AuthorizationPolicy`](#authorizationpolicy), so existing skill policies are
+unchanged; one class may implement both. Hosted apps use the runtime's policy:
+`AgentApp(runtime=Runtime(..., tool_authorization=...))`; there is no separate
+host setting.
+
+```python
+class ToolAuthorizationPolicy(Protocol):
+    async def check_tool(
+        self,
+        principal: Principal | None,
+        tool: ToolDefinition,
+        arguments: Mapping[str, object],
+    ) -> bool: ...
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `principal` | `Principal \| None` | Always passed; `None` when the run has no identity | The run's verified caller (`ctx.principal`), never model or business input. |
+| `tool` | [`ToolDefinition`](decorators.md#tooldefinition) | Always passed | Definition of the tool about to run, including `name`, `side_effects` and `requires_permissions`. |
+| `arguments` | `Mapping[str, object]` | Always passed | The tool's validated business arguments as a read-only mapping; never `ctx` or injected services. |
+| Return | `bool` | Required | Only `True` allows the call. `False` or any other value, including truthy ones, denies it. |
+
+This policy lets callers cancel only orders they own; `ownership` stands for
+application-owned authoritative data:
+
+```python
+from collections.abc import Mapping
+
+from agentframe import (
+    Inject,
+    Principal,
+    Runtime,
+    ToolAuthorizationPolicy,
+    ToolDefinition,
+    tool,
+)
+
+
+class OrderStore:  # Application-defined; registered through Services.
+    async def cancel(self, order_id: str) -> None: ...
+
+
+@tool(
+    description="Cancel an order.",
+    side_effects=True,
+    requires_permissions=["orders:write"],
+)
+async def cancel_order(order_id: str, orders: Inject[OrderStore]) -> None:
+    await orders.cancel(order_id)
+
+
+class OrderToolPolicy(ToolAuthorizationPolicy):
+    def __init__(self, ownership: Mapping[str, str]) -> None:
+        self.ownership = ownership  # order ID -> owner principal ID
+
+    async def check_tool(
+        self,
+        principal: Principal | None,
+        tool: ToolDefinition,
+        arguments: Mapping[str, object],
+    ) -> bool:
+        if principal is None:
+            return False
+        if tool.name != "cancel_order":
+            return True
+        return self.ownership.get(str(arguments["order_id"])) == principal.id
+
+
+runtime = Runtime(tool_authorization=OrderToolPolicy({"A1": "alice"}))
+```
+
+For every tool call inside `ctx.generate(..., tools=[...])`:
+
+1. Tools whose `requires_permissions` the principal does not all hold (or any
+   requirement with no principal) are left out of the request's `tools`, so
+   the model is never offered them.
+2. A call naming a tool that was not selected, or with invalid arguments, runs
+   nothing and the model is told what was wrong, as before.
+3. A call naming a selected tool the caller lacks permissions for fails the run
+   with `PermissionDeniedError`, before its arguments are even validated.
+4. After argument validation, `check_tool` runs under the run's deadline.
+   `True` lets the call continue; any other result raises
+   `PermissionDeniedError` with a generic message that does not reveal whether
+   the requested resource exists.
+5. An exception from the policy, or the run's deadline expiring while it is
+   still deciding, raises `PolicyUnavailableError`. It fails closed and never
+   allows. Cancelling the run while the policy decides still cancels it.
+6. Only then are the tool's services resolved and the tool run.
+
+Denials and outages fail the run; they are never fed back to the model as a
+tool result, so a model cannot probe the policy. Over A2A a denial ends the
+task in `REJECTED` and an outage in `FAILED`
+([mapping](hosting.md#result-and-failure-mapping)). Without
+`tool_authorization=`, only `requires_permissions` are checked. A policy is not
+required for `side_effects=True` tools, but give consequential tools a policy
+or `requires_permissions`, or both. Approval workflows stay application-owned;
+there is no built-in pause/resume. Future
+[`ExecutionPolicy`](#executionpolicy) tool checks (#78) run after this
+authorization and cannot waive it.
+
+**Related:** [`@tool`](decorators.md#tool),
+[`Runtime`](runtime.md#runtime),
+[fail-closed pipeline](../guides/authorization.md#fail-closed-execution-pipeline),
+[prompt safeguarding](../design/prompt-safeguarding.md#responsibility-split).
 
 ## `ExecutionPolicy`
 

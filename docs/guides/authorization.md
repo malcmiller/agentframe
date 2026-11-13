@@ -154,6 +154,13 @@ bypass Python methods; AgentFrame is not a sandbox against that application.
    using verified identity and authoritative data.
 5. Execute with bounded context. Re-check each proposed tool/action and relevant
    resource state at the actual boundary where the side effect happens.
+   Implemented in M5 (#62): tools whose `@tool(requires_permissions=...)` the
+   caller lacks are never offered to the model and fail the run if called;
+   every other call is checked by the runtime's
+   [`ToolAuthorizationPolicy`](../api/authorization.md#toolauthorizationpolicy)
+   with the validated arguments before it runs. Denial raises
+   `PermissionDeniedError`, an outage or missed deadline
+   `PolicyUnavailableError`; neither is fed back to the model.
 6. Validate and apply output policy before returning information.
 
 `documents:publish` is necessary but does not mean "publish all documents."

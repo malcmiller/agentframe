@@ -24,6 +24,7 @@ authorized, bounded execution pipeline without requiring model inference.
 ```text
 Runtime(
     *, authorization: AuthorizationPolicy = ...,
+    tool_authorization: ToolAuthorizationPolicy = ...,
     policy: ExecutionPolicy = ..., tracing: TracingConfig = ..., services: Services = ...,
 )
 ```
@@ -31,6 +32,7 @@ Runtime(
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
 | `authorization` | `AuthorizationPolicy` implementation | Needed for protected operations; constructor omission allowed in unprotected local examples | Enforces mandatory skill permissions plus application resource rules. Missing required integration fails closed. |
+| `tool_authorization` | [`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy) implementation | Optional; default `None` checks only tools' `requires_permissions` | Checks every model-requested tool call with its validated arguments before it runs. Not required for side-effecting tools, but strongly advised for them. Hosted apps pass it through `AgentApp(runtime=...)`. |
 | `policy` | `ExecutionPolicy` | Optional supplementary checks; exact default open | Input/model/action/output checks cannot waive authorization. Configured required checks cannot be silently skipped. |
 | `tracing` | `TracingConfig` | Optional; tracing disabled unless configured | Application owns provider/exporters/sampling; accounting and invocation IDs do not depend on export. |
 | `services` | `Services` | Explicit when skills need registered dependencies | Resolve `Inject[T]` parameters; missing registration is a startup `DefinitionError`. Same service container contract as `AgentApp`. |
@@ -46,7 +48,7 @@ This unprotected local construction requires no identity provider, model, or
 telemetry integration. It does not declare any remote access policy. M2
 implements `Runtime(*, services: Services | None = None, authorization:
 AuthorizationPolicy | None = None)`; omitting `authorization` means no resource
-checks.
+checks. M5 #62 adds `tool_authorization: ToolAuthorizationPolicy | None = None`.
 
 **Behavior / failures:** no inference on construction. Validate definitions and
 configuration; create invocation-scoped context, enforce policy/limits, validate
@@ -422,7 +424,10 @@ def denied(error: PermissionDeniedError) -> object:
 skill declares `requires_permissions` and the principal is `None` or lacks any
 listed permission; the message names the missing permissions. Since M2 it is
 also raised when the `AuthorizationPolicy` denies a run, with a generic message
-that does not reveal whether the requested resource exists.
+that does not reveal whether the requested resource exists. Since M5 #62 it is
+raised when the model calls a tool the caller lacks a `requires_permissions`
+entry for, or the [`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy)
+denies a call; the denial fails the run and is never sent to the model.
 **Related:** [`AuthorizationPolicy`](authorization.md#authorizationpolicy), [`AgentFrameError`](#agentframeerror).
 
 ## `PolicyUnavailableError`
@@ -445,7 +450,9 @@ def policy_failure(error: PolicyUnavailableError) -> object:
 **Behavior / failures:** fail closed. Since M2, `Runtime` raises it when the
 [`AuthorizationPolicy`](authorization.md#authorizationpolicy) raises or the run's
 deadline expires while the policy is deciding; a deadline that expires in the
-skill body remains a `LimitExceededError`. The message never includes the
+skill body remains a `LimitExceededError`. Since M5 #62 the same holds for the
+[`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy) checking
+a tool call. The message never includes the
 policy's own error; the original exception is chained for server-side diagnostics.
 **Related:** [`AuthorizationPolicy`](authorization.md#authorizationpolicy), [`ExecutionPolicy`](authorization.md#executionpolicy), [`AgentFrameError`](#agentframeerror).
 

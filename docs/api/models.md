@@ -911,6 +911,6 @@ call = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}'
 
 **Behavior / failures:** arguments are untrusted model output; nothing runs
 until the managed loop (#61) validates the call; unknown tools and invalid
-arguments run nothing. Action authorization is #62.
+arguments run nothing. Each call is then authorized (#62, [`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy)).
 
 **Related:** [`ModelResponse`](#modelresponse), [`Message`](#message).

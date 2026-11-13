@@ -6,8 +6,8 @@ implemented from source as of M1; M3 #35 adds model injection, agent
 `instructions` / `model_settings` and the text form of `ctx.generate`; M4 #53
 adds the structured `output=` form. M5 #60 adds tool registration
 (`Agent(tools=[...])`) and per-call selection (`ctx.generate(..., tools=[...])`);
-M5 #61 adds the bounded tool-calling loop. `AgentConfig` and tool action
-authorization (#62) are not implemented yet.
+M5 #61 adds the bounded tool-calling loop and M5 #62 tool action
+authorization. `AgentConfig` is not implemented yet.
 Unspecified details remain open.
 Models are dependencies, not a second kind of agent base class.
 
@@ -309,8 +309,11 @@ against the annotation and sent as JSON text.
 | --- | --- |
 | The model calls a tool that was offered, with valid arguments | It runs; its JSON result is sent back and the loop continues |
 | Several calls in one response | Run one at a time in the model's order; every result is sent back |
-| Unknown tool name, or a tool that was not offered (including when none were) | Nothing runs; the model gets `{"error": "Unknown tool. ..."}` |
+| Unknown tool name, or a tool that was not selected (including when none were) | Nothing runs; the model gets `{"error": "Unknown tool. ..."}` |
+| A selected tool whose `requires_permissions` the caller lacks (M5 #62) | Never offered (left out of the request's `tools`); if the model calls it anyway, nothing runs and the run fails with `PermissionDeniedError`, checked before the arguments |
 | Invalid JSON or arguments | Nothing runs; the model gets `{"error": "Invalid arguments: ..."}` naming field locations and problems, never values |
+| The [tool authorization policy](authorization.md#toolauthorizationpolicy) returns anything but `True` (M5 #62) | Nothing runs; `PermissionDeniedError` with a generic message. The model is never told |
+| The policy raises or misses the run's deadline (M5 #62) | Nothing runs; `PolicyUnavailableError` |
 | The tool raises | The exception propagates unchanged and fails the run like a skill exception (hosted: generic `FAILED`, details logged with the `invocation_id`); its text is never sent to the model |
 | The tool returns a value that does not match its annotation | `OutputValidationError` ("Tool '...' returned an invalid value: ...") |
 | `max_tool_calls` reached | `ToolCallLimitExceededError` before the extra call runs. Every model-requested call counts, including unknown and invalid ones |
@@ -320,10 +323,11 @@ against the annotation and sent as JSON text.
 | The model does not report tool support | `UnsupportedCapabilityError`; nothing is sent |
 
 Tools are never automatically retried; a model retry re-sends the same request,
-which already holds earlier tool results. Action authorization before each tool
-runs is #62.
+which already holds earlier tool results. Each call is authorized after its
+arguments are validated and before services are resolved or the tool runs; see
+[`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy).
 
-Hosted runs map these errors to task `FAILED` with their safe message and the
+Hosted runs map a tool denial to task `REJECTED` and the other errors to task `FAILED` with their safe message and the
 run's `invocation_id` (see [result and failure mapping](hosting.md#result-and-failure-mapping)). Token limits and
 reservations work as described in
 [implemented token accounting](../guides/limits.md#implemented-token-accounting-m3);
