@@ -51,6 +51,7 @@ from agentframe import (
 from agentframe.models.foundry import FOUNDRY_SCOPE
 from agentframe.models.ollama import DEFAULT_ENDPOINT
 from examples.assistant import Summary, create_app
+from examples.orders import create_app as create_orders_app
 from local_server import ServeLocally
 
 # A name no provider has, to prove an unknown model fails clearly.
@@ -311,28 +312,55 @@ async def test_example_summarizes_over_a2a(
     assert not usage["estimated"]
 
 
-# Tool calling (Ollama)
+# Tool calling
 
 
-@pytest.mark.ollama
-@pytest.mark.skipif(
-    os.environ.get("AGENTFRAME_TEST_OLLAMA") != "1",
-    reason="set AGENTFRAME_TEST_OLLAMA=1",
-)
-async def test_ollama_agent_completes_a_tool_round_trip() -> None:
-    async with ollama_model() as model:
-        if not (await model.capabilities()).tools:
-            pytest.skip("the configured Ollama model does not support tools")
-        result = await Runtime().run(
-            OrderDesk(model=model, tools=[lookup_order]),
-            skill="status",
-            arguments={"question": "On which day was order A1 delivered?"},
-        )
+async def require_tools(model: Model) -> None:
+    """Skip the test when the configured model cannot call tools."""
+    if not (await model.capabilities()).tools:
+        pytest.skip("the configured model does not support tools")
+
+
+async def test_agent_completes_a_tool_round_trip(model: Model) -> None:
+    await require_tools(model)
+    result = await Runtime().run(
+        OrderDesk(model=model, tools=[lookup_order]),
+        skill="status",
+        arguments={"question": "On which day was order A1 delivered?"},
+    )
 
     assert result.tool_calls == 1
     assert "tuesday" in result.value.lower()
     assert result.model_calls == 2
     assert result.usage.total_tokens
+    assert not result.usage.estimated
+
+
+async def test_order_example_uses_a_tool_over_a2a(
+    serve: ServeLocally, model: Model, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await require_tools(model)
+    monkeypatch.setenv("ORDERS_API_KEY", "test-orders-key")
+
+    def make_app(public_url: str) -> AgentApp:
+        monkeypatch.setenv("ORDERS_PUBLIC_URL", public_url)
+        return create_orders_app(model)
+
+    async with (
+        serve(make_app) as base_url,
+        await connect(base_url, "test-orders-key") as client,
+    ):
+        task = await call_skill(
+            client, "order_help", {"request": "What is the status of order A1?"}
+        )
+
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    assert "shipped" in get_artifact_text(task.artifacts[0]).lower()
+    usage = task.metadata["usage"]
+    assert usage["tool_calls"] == 1
+    assert usage["model_calls"] == 2
+    assert usage["total_tokens"]
+    assert not usage["estimated"]
 
 
 # Tool calling (Foundry): reasoning items round-trip through the tool loop
