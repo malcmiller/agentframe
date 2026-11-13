@@ -5,9 +5,11 @@ Usage::
     agentframe run myapp.hosting:create_app --host 127.0.0.1 --port 8000
     agentframe run myapp.agents:Echo --dev
     agentframe dev
+    agentframe compose
 
 ``agentframe dev`` runs every agent listed in ``agentframe.yaml``; see
-``agentframe.dev_server``.
+``agentframe.dev_server``. ``agentframe compose`` writes a development
+``compose.yaml`` and ``Dockerfile`` for them; see ``agentframe.compose``.
 
 The first form calls the application's own ``create_app()`` function, which
 returns a fully configured ``AgentApp``; secrets belong in environment
@@ -34,6 +36,7 @@ from pathlib import Path
 from types import ModuleType
 
 from agentframe.authoring.agent import Agent
+from agentframe.compose import write_compose
 from agentframe.dev import DEV_VARIABLE
 from agentframe.dev_server import DEFAULT_STARTUP_TIMEOUT_SECONDS, DevError, run_dev
 from agentframe.errors import AgentFrameError
@@ -86,6 +89,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments.command == "dev":
             run_dev(Path(arguments.config), startup_timeout=arguments.startup_timeout)
+        elif arguments.command == "compose":
+            _compose(Path(arguments.config), force=arguments.force)
         else:
             settings = RunSettings(
                 target=arguments.target,
@@ -138,7 +143,34 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_STARTUP_TIMEOUT_SECONDS,
         help="seconds each agent has to become ready",
     )
+    compose = commands.add_parser(
+        "compose",
+        help="write a development compose.yaml and Dockerfile for agentframe.yaml",
+        description=(
+            "Write compose.yaml, one container per agent in agentframe.yaml, "
+            "and a Dockerfile if there is none. Development only."
+        ),
+    )
+    compose.add_argument(
+        "--config", default=PROJECT_FILE, help="the project file to read"
+    )
+    compose.add_argument(
+        "--force", action="store_true", help="overwrite an existing compose.yaml"
+    )
     return parser
+
+
+def _compose(project_file: Path, *, force: bool) -> None:
+    result = write_compose(project_file, force=force)
+    for path in result.written:
+        print(f"agentframe compose: wrote {path}")
+    if result.kept is not None:
+        print(f"agentframe compose: kept the existing {result.kept}")
+    print(
+        "agentframe compose: development only. Set these in a .env file next "
+        "to compose.yaml, each to a different random value: "
+        + ", ".join(result.variables)
+    )
 
 
 def serve(settings: RunSettings, *, reload: bool = False) -> None:
