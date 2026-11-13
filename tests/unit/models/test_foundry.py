@@ -22,6 +22,7 @@ from agentframe import (
     FinishReason,
     FoundryModel,
     IncompleteOutputError,
+    Inject,
     Message,
     ModelError,
     ModelRequest,
@@ -29,12 +30,18 @@ from agentframe import (
     OutputSchema,
     ProviderError,
     RunContext,
+    RunResult,
     Runtime,
+    Services,
+    ToolCall,
     ToolSpec,
     UnsupportedCapabilityError,
     agent,
     skill,
+    tool,
 )
+from agentframe.authoring.definitions import tool_definition
+from agentframe.runtime.tools import tool_spec
 
 ENDPOINT = "https://example.openai.azure.com/openai/v1/"
 API_KEY = "test-key-not-real"
@@ -533,14 +540,15 @@ async def test_capabilities_report_the_configured_context_window() -> None:
 
     assert capabilities.context_window == 128000
     assert capabilities.structured_output is True
-    assert capabilities.tools is False
+    assert capabilities.tools is True
 
 
-async def test_structured_output_support_can_be_turned_off() -> None:
-    async with foundry(structured_output=False) as model:
+async def test_structured_output_and_tool_support_can_be_turned_off() -> None:
+    async with foundry(structured_output=False, tools=False) as model:
         capabilities = await model.capabilities()
 
     assert capabilities.structured_output is False
+    assert capabilities.tools is False
 
 
 async def test_unconfigured_context_window_is_unknown() -> None:
@@ -764,25 +772,346 @@ async def test_unfinished_structured_replies_raise_typed_errors_with_usage(
     assert result.usage.total_tokens == 15
 
 
-# Tools (not supported until #64)
+# Tools
 
-TOOL_REQUEST = ModelRequest(
-    messages=(Message(role="user", content="Where is order A1?"),),
-    settings=ModelSettings(max_output_tokens=100),
-    tools=(
-        ToolSpec(name="lookup_order", description="Look up an order.", parameters={}),
-    ),
-)
+ENCRYPTED = "encrypted-reasoning-not-for-logs"
 
 
-async def test_tools_are_not_supported_yet_and_nothing_is_sent(
+def reasoning_output() -> dict[str, Any]:
+    return {
+        "type": "reasoning",
+        "id": "rs_1",
+        "summary": [],
+        "encrypted_content": ENCRYPTED,
+    }
+
+
+def function_call(
+    call_id: str, arguments: str, name: str = "lookup_order"
+) -> dict[str, Any]:
+    return {
+        "type": "function_call",
+        "id": f"fc_{call_id}",
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+        "status": "completed",
+    }
+
+
+class Replies:
+    """Answers each request with the next reply in order."""
+
+    def __init__(self, *replies: dict[str, Any]) -> None:
+        self.replies = list(replies)
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=self.replies.pop(0))
+
+
+class OrderStore:
+    def __init__(self) -> None:
+        self.lookups: list[tuple[str, int]] = []
+
+
+@tool(description="Look up an order's status.")
+async def lookup_order(
+    order_id: str, orders: Inject[OrderStore], limit: int = 5
+) -> str:
+    orders.lookups.append((order_id, limit))
+    return "shipped"
+
+
+@tool(description="Count words.")
+def count_words(counts: dict[str, int]) -> int:
+    return len(counts)
+
+
+@agent(version="1.0.0")
+class OrderAssistant(Agent):
+    """Answers questions about orders."""
+
+    @skill("ask", tags=["orders"])
+    async def ask(self, question: str, ctx: RunContext) -> str:
+        """Answer with the lookup tool."""
+        return await ctx.generate(question, tools=[lookup_order])
+
+    @skill("count", tags=["orders"])
+    async def count(self, question: str, ctx: RunContext) -> str:
+        """Answer with a tool whose parameters strict mode cannot express."""
+        return await ctx.generate(question, tools=[count_words])
+
+
+def lookup_spec() -> ToolSpec:
+    return tool_spec(tool_definition(lookup_order))
+
+
+def ask_with_tools(*messages: Message) -> ModelRequest:
+    return ModelRequest(
+        messages=messages or (Message(role="user", content="Where is order A1?"),),
+        settings=ModelSettings(max_output_tokens=100),
+        tools=(lookup_spec(),),
+    )
+
+
+async def run_orders(
+    model: FoundryModel, skill_id: str = "ask"
+) -> tuple[RunResult[Any], OrderStore]:
+    orders = OrderStore()
+    assistant = OrderAssistant(model=model, tools=[lookup_order, count_words])
+    services = Services()
+    services.add(OrderStore, orders)
+    result = await Runtime(services=services).run(
+        assistant, skill=skill_id, arguments={"question": "Where is order A1?"}
+    )
+    return result, orders
+
+
+async def test_tools_are_sent_as_strict_functions_with_encrypted_reasoning(
     use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
 ) -> None:
     server = FakeFoundry()
     use_server(server)
 
     async with foundry() as model:
-        with pytest.raises(UnsupportedCapabilityError, match="tools"):
-            await model.generate(TOOL_REQUEST)
+        await model.generate(ask_with_tools())
+
+    [body] = server.bodies()
+    assert body["tools"] == [
+        {
+            "type": "function",
+            "name": "lookup_order",
+            "description": "Look up an order's status.",
+            "parameters": {
+                "type": "object",
+                "title": "lookup_order_arguments",
+                "properties": {
+                    "order_id": {"type": "string", "title": "Order Id"},
+                    "limit": {
+                        "anyOf": [
+                            {"type": "integer", "title": "Limit"},
+                            {"type": "null"},
+                        ]
+                    },
+                },
+                "required": ["order_id", "limit"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        }
+    ]
+    assert body["include"] == ["reasoning.encrypted_content"]
+    assert "parallel_tool_calls" not in body
+    assert "max_tool_calls" not in body
+
+
+async def test_stored_responses_do_not_ask_for_encrypted_reasoning(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+
+    async with foundry(store=True) as model:
+        await model.generate(ask_with_tools())
+
+    assert "include" not in server.bodies()[0]
+
+
+async def test_requests_without_tools_are_unchanged(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+
+    async with foundry() as model:
+        await model.generate(ask())
+
+    [body] = server.bodies()
+    assert set(body) == {"model", "instructions", "input", "max_output_tokens", "store"}
+
+
+async def test_function_calls_become_tool_calls_in_order(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    calls = (
+        function_call("call_1", '{"order_id": "A1", "limit": 2}'),
+        function_call("call_2", '{"order_id": "B2", "limit": 3}'),
+    )
+    use_server(FakeFoundry(reply(reasoning_output(), *calls)))
+
+    async with foundry() as model:
+        response = await model.generate(ask_with_tools())
+
+    assert response.finish_reason is FinishReason.TOOL_CALLS
+    assert response.tool_calls == (
+        ToolCall(
+            id="call_1", name="lookup_order", arguments='{"order_id": "A1", "limit": 2}'
+        ),
+        ToolCall(
+            id="call_2", name="lookup_order", arguments='{"order_id": "B2", "limit": 3}'
+        ),
+    )
+    assert [item["type"] for item in response.provider_items] == [  # type: ignore[index]
+        "reasoning",
+        "function_call",
+        "function_call",
+    ]
+    assert ENCRYPTED not in repr(response)
+
+
+async def test_reasoning_and_calls_are_replayed_before_their_outputs(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    first = reply(
+        reasoning_output(),
+        function_call("call_1", '{"order_id": "A1", "limit": 1}'),
+        function_call("call_2", '{"order_id": "B2", "limit": 2}'),
+    )
+    server = FakeFoundry(Replies(first, reply(text_output("Both shipped."))))
+    use_server(server)
+
+    async with foundry(context_window=128000) as model:
+        result, _ = await run_orders(model)
+
+    assert result.value == "Both shipped."
+    assert result.tool_calls == 2
+    second_input = server.bodies()[1]["input"]
+    assert [item.get("type", "message") for item in second_input] == [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call",
+        "function_call_output",
+        "function_call_output",
+    ]
+    assert second_input[1] == reasoning_output()
+    assert second_input[2] == function_call("call_1", '{"order_id": "A1", "limit": 1}')
+    assert second_input[4] == {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": '"shipped"',
+    }
+    assert second_input[5]["call_id"] == "call_2"
+
+
+async def test_nulls_for_defaulted_tool_parameters_reach_the_tool_as_defaults(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    call = function_call("call_1", '{"order_id": "A1", "limit": null}')
+    use_server(FakeFoundry(Replies(reply(call), reply(text_output("Shipped.")))))
+
+    async with foundry(context_window=128000) as model:
+        _, orders = await run_orders(model)
+
+    assert orders.lookups == [("A1", 5)]
+
+
+async def test_assistant_messages_from_elsewhere_are_sent_as_function_calls(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+    call = ToolCall(id="call_1", name="lookup_order", arguments='{"order_id": "A1"}')
+
+    async with foundry() as model:
+        await model.generate(
+            ask_with_tools(
+                Message(role="user", content="Where is A1?"),
+                Message(role="assistant", content="", tool_calls=(call,)),
+                Message(role="tool", content='"shipped"', tool_call_id="call_1"),
+            )
+        )
+
+    assert server.bodies()[0]["input"][1:] == [
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "lookup_order",
+            "arguments": '{"order_id": "A1"}',
+        },
+        {"type": "function_call_output", "call_id": "call_1", "output": '"shipped"'},
+    ]
+
+
+async def test_calls_in_a_response_cut_short_are_not_run(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    cut_short = reply(
+        function_call("call_1", '{"order_id": "A'),
+        status="incomplete",
+        incomplete_details={"reason": "max_output_tokens"},
+    )
+    use_server(FakeFoundry(cut_short))
+
+    async with foundry() as model:
+        response = await model.generate(ask_with_tools())
+
+    assert response.finish_reason is FinishReason.LENGTH
+    assert response.tool_calls == ()
+
+
+async def test_a_tool_schema_strict_mode_cannot_express_fails_before_sending(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+
+    async with foundry(context_window=128000) as model:
+        with pytest.raises(UnsupportedCapabilityError, match=r"count_words.*free-form"):
+            await run_orders(model, skill_id="count")
 
     assert server.requests == []
+
+
+async def test_a_deployment_that_rejects_tools_is_a_non_transient_error(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    use_server(FakeFoundry(status(400)))
+
+    async with foundry() as model:
+        with pytest.raises(ProviderError, match="tools") as caught:
+            await model.generate(ask_with_tools())
+
+    assert caught.value.transient is False
+    assert "secret details" not in str(caught.value)
+
+
+@tool(description="Always fails.")
+def broken(order_id: str) -> str:
+    raise RuntimeError("backend down")
+
+
+@agent(version="1.0.0")
+class BrokenAssistant(Agent):
+    """Uses a tool that fails."""
+
+    @skill("ask", tags=["orders"])
+    async def ask(self, question: str, ctx: RunContext) -> str:
+        """Answer with the broken tool."""
+        return await ctx.generate(question, tools=[broken])
+
+
+async def test_encrypted_reasoning_stays_out_of_results_errors_and_logs(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    first = reply(reasoning_output(), function_call("call_1", '{"order_id": "A1"}'))
+    use_server(FakeFoundry(Replies(first, reply(text_output("Shipped.")))))
+
+    async with foundry(context_window=128000) as model:
+        result, _ = await run_orders(model)
+    failure = reply(
+        reasoning_output(), function_call("c", '{"order_id": "A1"}', "broken")
+    )
+    use_server(FakeFoundry(failure))
+    async with foundry(context_window=128000) as model:
+        with pytest.raises(RuntimeError) as caught:
+            await Runtime().run(
+                BrokenAssistant(model=model, tools=[broken]),
+                skill="ask",
+                arguments={"question": "Where is A1?"},
+            )
+
+    assert ENCRYPTED not in repr(result)
+    assert ENCRYPTED not in str(caught.value)
+    assert ENCRYPTED not in caplog.text

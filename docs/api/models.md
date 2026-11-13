@@ -85,9 +85,9 @@ before sending. Managed generation (`ctx.generate`, #35) turns `REFUSED` into
 output (`output=`) is implemented by the managed layer (M4 #53); adapters send
 [`ModelRequest.output`](#modelrequest) to their provider. The tool-call types
 and the managed tool loop (`tools=`, #61) are implemented (M5 #59, #61).
-[`OllamaModel` maps tools](#tool-calling-ollama) (M5 #65); the `FoundryModel`
-mapping (#64) follows, and until then `FoundryModel` raises
-`UnsupportedCapabilityError` for requests with tool content. Streaming remains later, with
+[`OllamaModel`](#tool-calling-ollama) (M5 #65) and
+[`FoundryModel`](#tool-calling) (M5 #64) map tools to their providers' function
+calling. Streaming remains later, with
 optional [AG-UI](streaming.md) mapping from managed execution, not raw
 provider events.
 
@@ -138,7 +138,7 @@ through the OpenAI v1 **Responses API** using the official `openai` Python
 package, not deploy a hosted agent. The Azure AI Inference SDK is retired and
 not used.
 
-**Signature status:** implemented (M3 #39; structured output M4 #55);
+**Signature status:** implemented (M3 #39; structured output M4 #55; tools M5 #64);
 decisions confirmed 2026-11-12. Requires the optional extra `agentframe[foundry]`, which pins
 [`openai`](https://github.com/openai/openai-python) (`3.49.0`),
 [`azure-identity`](https://pypi.org/project/azure-identity/) (`1.27.0`) and
@@ -153,7 +153,7 @@ FoundryModel(
     credential: str | AsyncTokenCredential | None = None,
     client: openai.AsyncOpenAI | None = None,
     context_window: int | None = None, store: bool = False,
-    structured_output: bool = True,
+    structured_output: bool = True, tools: bool = True,
 )
 ```
 
@@ -166,6 +166,7 @@ FoundryModel(
 | `context_window` | `int \| None` | `None` | Tokens of input plus output the deployment accepts. The API does not report it, so `None` means unknown, never guessed. Must be greater than zero. |
 | `store` | `bool` | `False` | Whether Foundry stores responses server-side. Controls response storage only, not every provider retention mechanism. |
 | `structured_output` | `bool` | `True` | Whether `capabilities()` reports structured output. The Responses API defines it, so it is on by default (relaxing "unknown = unsupported" for Foundry only); pass `False` for a deployment that rejects it. A rejection fails the call with a non-transient `ProviderError`, never a retry or success. |
+| `tools` | `bool` | `True` | Whether `capabilities()` reports tool calling. The Responses API defines function tools, so it is on by default; pass `False` for a deployment that rejects them, and `ctx.generate(..., tools=[...])` then fails before any model call. A rejection fails the call with a non-transient `ProviderError`. |
 
 ```python
 from azure.identity.aio import AzureCliCredential
@@ -217,12 +218,12 @@ non-streaming Responses call.
   401/403, 404, other 4xx and Entra token failures are not. Messages never
   include the service's error text or credentials.
 - [`capabilities`](#modelcapabilities-1) does no I/O and reports the
-  configured `context_window` (or `None`) and `structured_output`; tools are
-  unsupported. Without `context_window=`, an agent using this model needs an
+  configured `context_window` (or `None`), `structured_output` and `tools`.
+  Without `context_window=`, an agent using this model needs an
   explicit `RunLimits(max_input_tokens=...)`; otherwise `AgentApp` startup
   fails with `DefinitionError` ([limits accounting](../guides/limits.md#implemented-token-accounting-m3), M3 #36).
 - Opt-in real tests (`tests/integration/test_providers.py`, marker `foundry`, M3 #41;
-  structured output M4 #55/#57):
+  structured output M4 #55/#57; tool calling M5 #64):
   set `AGENTFRAME_TEST_FOUNDRY=1`, `AGENTFRAME_FOUNDRY_ENDPOINT` and
   `AGENTFRAME_FOUNDRY_DEPLOYMENT`; they sign in with the Azure CLI credential.
   Default test runs and CI never call Foundry. See `AGENTS.md`.
@@ -274,8 +275,48 @@ text={"format": {"type": "json_schema", "name": <name>,
 - A 4xx rejection of a structured request (for example a deployment without
   structured output, or a schema the converter let through) raises a
   non-transient `ProviderError` saying the deployment may not support
-  structured output or this schema; the schema and the service's text are
+  structured output, or these schemas; the schema and the service's text are
   never echoed.
+
+### Tool calling
+
+`ctx.generate(..., tools=[...])` sends each offered tool as a strict Responses
+API function tool; without tools, requests are unchanged from M4:
+
+```text
+tools=[{"type": "function", "name": <name>, "description": <description>,
+        "parameters": strict_schema(<parameters>), "strict": True}, ...]
+include=["reasoning.encrypted_content"]   # only with tools and store=False
+```
+
+- **Strict schemas only:** tool parameter schemas go through the same
+  `strict_schema` converter as [structured output](#structured-output). A tool
+  whose parameters it cannot express (for example a `dict[str, int]`
+  parameter) fails before sending with `UnsupportedCapabilityError` naming the
+  tool and the construct; there is no non-strict fallback.
+- **Defaulted parameters:** a parameter with a default becomes nullable, and
+  a `null` the model sends for it is dropped from the call's arguments before
+  the `ToolCall` is built, so the tool's own default applies.
+- **Response mapping:** each `function_call` output item becomes
+  `ToolCall(id=call_id, name=name, arguments=arguments)` in output order, and
+  the response finishes `TOOL_CALLS`. Calls in an `incomplete` response are
+  dropped, since their arguments may be cut short; it finishes `LENGTH` or
+  `CONTENT_FILTER` as for text.
+- **Reasoning replay:** every output item of a tool-calling response,
+  including reasoning items, is kept in `ModelResponse.provider_items` and
+  sent back verbatim, in order, in the next request, followed by one
+  `function_call_output` item per tool result. With `store=False` (the
+  default) the request asks for `reasoning.encrypted_content` explicitly, so
+  reasoning survives between stateless calls; `store=False` is kept. These
+  items stay in memory for the run only and never appear in logs, errors,
+  `RunResult` or A2A metadata. An assistant message without them (for example
+  from another source) is sent as plain `function_call` items.
+- `parallel_tool_calls` is left at the provider default, and the Responses
+  API's own `max_tool_calls` is not sent: AgentFrame runs calls one at a time
+  and enforces [`RunLimits.max_tool_calls`](configuration.md#runlimits).
+- A 4xx rejection of a request with tools raises a non-transient
+  `ProviderError` saying the deployment may not support tools or these
+  schemas; schemas and the service's text are never echoed.
 
 **Related:** [`ModelSettings`](#modelsettings),
 [Foundry guide](../guides/agent-examples.md#switch-to-foundry),
