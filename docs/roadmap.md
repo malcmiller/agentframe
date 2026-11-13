@@ -93,6 +93,7 @@ framework base class.
 | Human approvals | Application-owned workflows; no built-in approval pause/resume in first release. Required tool/action authorization remains enforced. | Application integration/decision types; protocol tasks are not durable approval workflows. |
 | Multi-agent composition | M8+: `Remote[Literal["name"]]` injection, structured `call`, plain `ask`, input-required error; multi-source directory/find, YAML files, 300-second stale-refresh cache, OBO/service identity, deadline/token/depth controls (5 hops), plain Python orchestration, dev CLI/containers. | Detailed extension schema/identity config, source conflicts/card mapping/search pagination, accounting trust and dev config; typed class proxy only later, no initial orchestration helpers. |
 | Durable workflows | Revisit after multi-agent usage; no design now. Long work uses native tasks, in-memory default/persistent store pluggable; approvals application-owned. If added, optional separate package (candidate `agentframe-workflows`). | Future evidence/scope; task persistence is not Python crash recovery or durable approval resume. |
+| Evaluation | Planned M9 ([evaluation](design/evaluation.md), decided 2026-11-13): an AgentFrame-owned harness for local skills and A2A agents in `agentframe.evaluation` in the main wheel, no new dependency or extra; `Case` from Python/JSONL, plain-function scorers, binary rubric judge, concurrency 4, optional evaluation-wide budget, private-by-default reports, no pytest plugin. | Exact signatures and report fields while building; Foundry export is a later adapter. |
 | Streaming | Later `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`, same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Version/binding, native event mapping, bounds/backpressure and typed final serialization; frontend tools/shared state later opt-in only. |
 
 ## Architectural rules
@@ -539,6 +540,26 @@ recovery are revisited only after multi-agent real usage. If added, use an
 optional separate package (candidate `agentframe-workflows`). Long work uses
 A2A tasks with an in-memory default and pluggable persistent store; no built-in
 approval workflow or promise of recovering skill execution from persisted tasks.
+
+### M9: Evaluation (planned)
+
+Planned, not built (#164). The design and its decisions, confirmed on
+2026-11-13, are in [evaluation](design/evaluation.md). M9 follows the M8+
+release and has no imposed order relative to the optional adapters below.
+
+| Capability | Decided direction |
+| --- | --- |
+| Cases and datasets | Typed `Case` (`id`, exactly one of `arguments` or `text`, optional `expected`, `tags`) from Python or strict, size-bounded JSONL. |
+| Targets | A local skill through `Runtime.run`, or any A2A 1.0 agent (AgentFrame, non-AgentFrame, Foundry) through the existing `Remote` binding: `call` for a named skill, `ask` for free text. |
+| Scorers | Plain sync/async functions returning `bool` or `Score`; built-in `equals`, `contains`, `valid(T)` and a rubric `Judge` using any AgentFrame `Model` with a typed verdict. |
+| Controls | Existing `RunLimits`, deadlines and token ceilings per case; bounded concurrency, repeats, optional evaluation-wide token budget and timeout. |
+| Reports | Pass rate, per-scorer/per-tag rates, tokens (unknown never zero), latency, call counts and errors by class from `RunResult`; console summary, versioned JSON and `report.require(...)` for pytest/CI. No prompts or outputs unless `capture_content=True`. |
+
+Release acceptance: evaluate a model-free skill and a `ScriptedModel`
+skill in CI, a real Ollama and Foundry skill with a judge in opt-in tests, and a
+non-AgentFrame A2A agent over A2A, gating a build on a JSON report threshold.
+No new runtime dependency, hosted service, dataset store, trajectory scoring or
+pytest plugin. Foundry evaluation export is a later optional adapter.
 
 ### Optional follow-ups after M7
 

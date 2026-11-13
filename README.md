@@ -443,6 +443,7 @@ run it yourself from the repository root with `uv run python -m examples.smoke`.
 - [Future streaming and the optional AG-UI adapter](docs/design/streaming.md)
 - [Execution limits and token accounting](docs/guides/limits.md)
 - [Tracing and correlation](docs/design/tracing.md)
+- [Evaluation harness (planned M9)](docs/design/evaluation.md)
 - [A2A hosting and optional MCP skill configuration](docs/design/mcp-skills.md)
 - [Skill authorization and caller identity](docs/guides/authorization.md)
 - [Prompt safeguarding and shared responsibilities](docs/design/prompt-safeguarding.md)
