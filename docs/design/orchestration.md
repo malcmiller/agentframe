@@ -1,9 +1,10 @@
 # Model-planned orchestration
 
 **Status: planned (M10), not implemented.** Nothing on this page exists in
-`agentframe` yet. Every name, default and signature below is a proposal; the
-[open questions](#open-questions) await the maintainer's confirmation and are
-tracked in the [M10 overview](https://github.com/malcmiller/agentframe/issues/177).
+`agentframe` yet. The design choices listed under
+[decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
+exact signatures and remaining details are settled while building the stories
+of the [M10 overview](https://github.com/malcmiller/agentframe/issues/177).
 
 Since M8+, an orchestrator is an ordinary agent whose skill calls specialists it
 declared as `Remote[Literal["name"]]` parameters, using plain `await` and
@@ -49,8 +50,9 @@ This design lets an orchestrator:
 - Automatic replanning, automatic retries of remote steps or built-in human
   approval.
 - New A2A wire fields. Plans run as ordinary `call`/`ask` requests.
-- Tool retrieval or ranking over large catalogs (hundreds of agents). The
-  catalog is small and curated, like `find`'s sources.
+- Tool retrieval or ranking over large catalogs (hundreds of agents). A
+  catalog holds at most 20 entries; larger registries are narrowed explicitly
+  ([catalog size](#catalog-size)).
 - MCP tool catalogs. MCP stays an optional adapter
   ([#18](https://github.com/malcmiller/agentframe/issues/18)).
 
@@ -70,7 +72,7 @@ M10 deliberately revisits two of them, as opt-in features:
 | M8+ cut | M10 proposal | Why now |
 | --- | --- | --- |
 | No orchestration helpers | `ctx.remote_skills`, `ctx.generate(tools=[*skills])`, `ctx.plan`, `ctx.run_plan`. Plain `await`/`TaskGroup` remain the default and are still documented first. | The multi-agent example (#97) shows the pattern: every new specialist needs hand-written glue, and the orchestrator cannot let its model choose. |
-| No dynamic invocation of found agents | `remote_skills(find=...)` only with an application allowlist (`discoverable=`) and per-name identity ([#175](https://github.com/malcmiller/agentframe/issues/175)). | Lets new specialists join without redeploying, without trusting every listed agent. |
+| No dynamic invocation of found agents | Every agent registered in the directory's sources is eligible: the registry is the allowlist. An agent joins the catalog only if its card is reachable and valid and its security can be satisfied ([#166](https://github.com/malcmiller/agentframe/issues/166), [#175](https://github.com/malcmiller/agentframe/issues/175)). | New specialists join by being registered, without redeploying the orchestrator; the application already curates its sources. |
 | `@tool` cannot take `Remote` | Kept. Catalog entries are the supported way to expose remotes to a model. | One path keeps identity and limits in one place. |
 
 Kept unchanged: no durable workflows, pause/resume or built-in approval; no
@@ -92,7 +94,7 @@ The design borrows ideas, not code or dependencies:
 | [Anthropic, *Building effective agents*](https://www.anthropic.com/engineering/building-effective-agents) | Distinguishes workflows (predefined paths) from agents; recommends the simplest pattern that works; "orchestrator-workers" for unpredictable subtasks. | Keep plain code as the default; offer orchestrator-workers as an opt-in. |
 | [A2A agent discovery](https://a2a-protocol.org/latest/topics/agent-discovery/) | Well-known cards, curated registries, direct configuration; selection by skills, interfaces and security. | Catalog from cards in AgentFrame's existing curated directory; security requirements decide eligibility. |
 | [OpenAI function calling](https://platform.openai.com/docs/guides/function-calling) | Advises fewer than 20 functions at a time for accuracy; tool schemas count as input tokens. | At most 20 catalog entries, bounded descriptions and schemas. |
-| [RAG-MCP (Gan & Sun, 2025)](https://arxiv.org/abs/2505.03275) | Selection accuracy drops sharply as tool count grows ("prompt bloat"); retrieves a few tools first. | Keep catalogs small and narrowable (`only=`); retrieval is out of scope. |
+| [RAG-MCP (Gan & Sun, 2025)](https://arxiv.org/abs/2505.03275) | Selection accuracy drops sharply as tool count grows ("prompt bloat"); retrieves a few tools first. | Keep catalogs small and narrowable (`agents=`, `skill=`, `tags=`); retrieval is out of scope. |
 | [MCP tools specification](https://modelcontextprotocol.io/specification/2025-06-18/server/tools) | Tool descriptions and annotations are untrusted unless from a trusted server; hosts should confirm sensitive calls. | Card text is untrusted data; permissions and checks before calls. |
 
 Security research shapes the boundaries:
@@ -130,7 +132,6 @@ from agentframe import Agent, Remote, RunContext, agent, skill
 
 type Research = Remote[Literal["research-agent"]]
 type Writer = Remote[Literal["writer-agent"]]
-type Legacy = Remote[Literal["legacy-agent"]]  # a non-AgentFrame A2A agent
 
 
 @agent(name="Orchestrator", version="0.1.0")
@@ -138,11 +139,9 @@ class Orchestrator(Agent):
     """Answers goals by delegating to specialist agents."""
 
     @skill(id="answer", tags=["orchestration"])
-    async def answer(
-        self, goal: str, research: Research, writer: Writer, legacy: Legacy, ctx: RunContext
-    ) -> str:
-        """Let the model call specialists one at a time."""
-        skills = await ctx.remote_skills(research, writer, legacy)
+    async def answer(self, goal: str, ctx: RunContext) -> str:
+        """Let the model call any registered specialist, one at a time."""
+        skills = await ctx.remote_skills(tags=["research"])  # whole directory, narrowed
         return await ctx.generate(goal, tools=[*skills])
 
     @skill(id="report", tags=["orchestration"])
@@ -150,7 +149,7 @@ class Orchestrator(Agent):
         self, goal: str, research: Research, writer: Writer, ctx: RunContext
     ) -> str:
         """Plan the whole job first, then run it with parallel steps."""
-        skills = await ctx.remote_skills(research, writer)
+        skills = await ctx.remote_skills(research, writer)  # only these two
         plan = await ctx.plan(goal, skills, max_steps=6)
         result = await ctx.run_plan(plan, skills, max_parallel=4)
         return str(result.value)
@@ -183,9 +182,10 @@ flowchart LR
 
 ## Remote skill catalog
 
-`await ctx.remote_skills(*remotes, only=None, ask=False, permissions=None)`
-returns a `SkillCatalog` ([#166](https://github.com/malcmiller/agentframe/issues/166)):
-an immutable list of `RemoteSkill` entries plus the run's bindings.
+`await ctx.remote_skills(*remotes, agents=None, skill=None, tags=(), ask=False,
+permissions=None, max_tokens_per_call=None)` returns a `SkillCatalog`
+([#166](https://github.com/malcmiller/agentframe/issues/166)): an immutable list
+of `RemoteSkill` entries plus the run's bindings.
 
 | `RemoteSkill` field | Meaning |
 | --- | --- |
@@ -208,25 +208,68 @@ for streaming and extensions on the card.
 
 ### Eligible agents
 
-- **Declared remotes (first).** Only `Remote` parameters the skill declares.
-  They are validated at startup, their `remotes=` identity is configured, and
-  their names are visible in the skill's signature, so a reviewer sees every
-  agent the model could reach.
-- **Discovered agents (later, opt-in).** `remote_skills(find=Find(tags=[...]))`
-  runs `directory.find` and keeps only agents an application allowlist accepts:
-  `AgentApp(discoverable=AllowAgents(names=[...], tags=[...]))`
-  ([#175](https://github.com/malcmiller/agentframe/issues/175)). Without
-  `discoverable=`, `find=` is a `DefinitionError`. Being listed in a directory
-  is never permission to be called.
+The registry is the allowlist. With no positional `remotes`, the catalog
+considers **every agent registered in the directory's sources** (decision 2).
+The application already curates those sources (YAML file, environment,
+Foundry project, custom registry), so registering an agent is what makes it
+available to orchestrators; there is no second allowlist. An agent and its
+skills become options for the model only when:
+
+1. its card is reachable and valid under the existing directory checks (#84:
+   https or an allowed HTTP host, same-origin interface URL, no redirects,
+   size and time bounds, cache and stale rules), and
+2. AgentFrame can satisfy its card's security with the agent's
+   [identity](#identity) (the same check `remotes=` entries get at startup).
+
+Every other agent is **skipped, not fatal**: the catalog logs one WARNING per
+skipped agent with only its name and the reason class (`card unavailable`,
+`card invalid`, `security not satisfied`, `schema too large`), never card
+content or URLs. A source that fails to list is skipped with a warning naming
+only its position and class (for example `source 2 (FoundryAgentRegistry)`),
+and the agents of the other sources are still used. An empty catalog is valid;
+`ctx.plan` with it raises `InputValidationError`. Configuration mistakes
+(no directory, duplicate names across sources, an unknown name in `agents=`)
+still raise `DefinitionError`.
+
+Passing declared `Remote` parameters (`ctx.remote_skills(research, writer)`)
+restricts the catalog to exactly those agents. They were validated at startup,
+so a failure there raises as in M8+ instead of being skipped: the author named
+them explicitly.
+
+### Catalog size
+
+A registry can list more than the 20 entries a model chooses among reliably.
+The catalog **never truncates silently**. Authors narrow it with `agents=`
+(names), `skill=` and `tags=` (the same same-skill, all-of matching as
+`directory.find`, #85) or declared remotes. If more than 20 entries remain
+after narrowing and skipping, `remote_skills` raises `DefinitionError` with the
+count and the narrowing options, before any model call. Failing is the simplest
+safe choice: dropping entries would make the model's options depend on
+registry order, and a growing registry shows up as a clear error instead of
+quietly different behavior.
 
 ### Identity
 
-Every entry uses its agent's existing outbound identity: the `remotes=` entry
-(`Service(credential=...)` or `OnBehalfOf(scope=...)`), or no credentials for an
-open card. For discovered agents, identity is per name only: no wildcard or
-default credential, and a secured card without its own entry is left out of the
-catalog with a warning. A default credential would give the orchestrator's
-identity to any agent that later appears in a source.
+Each agent's credentials are chosen in order (decision 3):
+
+1. its own per-name `remotes=` entry (`Service(credential=...)` or
+   `OnBehalfOf(scope=...)`);
+2. otherwise the application's optional default,
+   `AgentApp(default_remote=Service(...) | OnBehalfOf(...))`
+   ([#175](https://github.com/malcmiller/agentframe/issues/175)), used only for
+   agents whose card security it satisfies;
+3. otherwise no credentials, which works only for open cards.
+
+An agent whose security none of these satisfies is skipped. Without a default,
+only open agents and agents with `remotes=` entries are included. Credentials
+still go only to the card's validated interface origin, never across
+redirects.
+
+The default credential is sent to every registered agent whose card asks for
+its scheme, so each of them receives a token for the default's audience and
+could replay it there. Configure a default only when every registered agent is
+trusted with that audience; give agents with other audiences their own
+`remotes=` entries.
 
 ### Untrusted card text
 
@@ -234,15 +277,16 @@ Card names, descriptions, tags and schemas come from other parties. The catalog:
 
 - cuts descriptions to 500 characters, keeps at most 10 tags, removes control
   characters and does not copy card `examples`;
-- refuses more than 20 entries or a schema over 8 KiB with `DefinitionError`
-  (narrow with `only=`), keeping tool-selection accuracy and prompt cost
-  bounded;
+- holds at most 20 entries ([catalog size](#catalog-size)) and skips, with a
+  warning, an agent whose schema is over 8 KiB, keeping tool-selection accuracy
+  and prompt cost bounded;
 - is shown to the model only as quoted data in the user message or as tool
   definitions, never inside trusted system instructions.
 
 Bounding text reduces, but cannot remove, injection through descriptions; the
-catalog's real protection is that the model can only choose among entries the
-author or application allowed.
+catalog's real protection is that the model can only choose among agents the
+application registered, narrowed by the author, and only with the permissions
+and checks below.
 
 ## Remote skills as model tools
 
@@ -451,60 +495,55 @@ No new dependency: plans use Pydantic, the existing A2A client and
 main wheel, with public names exported from `agentframe` because they appear on
 `RunContext`. No extra.
 
-## Open questions
+## Decisions confirmed 2026-11-13
 
-Each has a recommendation and a one-line reason; none is decided yet.
+The maintainer confirmed these on 2026-11-13: questions 1-5 one at a time
+(decision 2 is the maintainer's own answer, and decision 3 was reframed to fit
+it), and the recommendations for the rest. Story-level details are recorded in
+each story of the [M10 overview](https://github.com/malcmiller/agentframe/issues/177).
 
-1. **Revisit #17's cuts.** Recommendation: lift "orchestration helpers" and
-   "dynamic invocation" as opt-in M10 features and keep every other cut. Real
-   usage needs model-chosen calls, and plain `await` stays the default.
-2. **Eligible agents.** Recommendation: declared `Remote` parameters first;
-   discovered agents later behind an application allowlist. Declared remotes
-   are startup-validated and already have identity.
-3. **Identity for discovered agents.** Recommendation: per-name `remotes=`
-   entries only, no default credential; secured agents without one are
-   excluded. Prevents handing credentials to any newly listed agent.
-4. **Simpler first step.** Recommendation: ship remote skills as model tools
-   before plans. Reuses the M5 loop and is useful alone.
-5. **Plan-then-execute, tool loop, or both.** Recommendation: both; the tool
-   loop for adaptive work, plans for parallelism, cost and injection
-   resistance. Plans fix control flow before untrusted results arrive.
-6. **Graph representation.** Recommendation: flat list of steps, dependencies
+1. **Revisit #17's cuts.** **Decision:** lift "orchestration helpers" and
+   "dynamic invocation" as opt-in features and keep every other cut; plain
+   `await` stays the default.
+2. **Eligible agents.** **Decision:** every agent registered in the
+   directory's sources is eligible; the registry is the allowlist. An agent is
+   added only if its card is reachable and valid under the #84 checks and its
+   security can be satisfied; otherwise it is skipped with a warning by name.
+   No separate application allowlist.
+3. **Identity.** **Decision:** the agent's own `remotes=` entry; otherwise an
+   optional application default (`default_remote=`) used only where it
+   satisfies the card; open agents need none; anything else is skipped.
+4. **First step.** **Decision:** ship remote skills as model tools (#167,
+   #168) before plans.
+5. **Styles.** **Decision:** both: the tool loop for adaptive work, plans for
+   parallel or cost-controlled work.
+6. **Graph representation.** **Decision:** flat list of steps, dependencies
    from references plus `after`, DAG only, public `Plan` but no builder DSL.
-   Smallest shape models emit reliably and people can review.
-7. **Plan limits.** Recommendation: 8 steps by default (never above remaining
+7. **Plan limits.** **Decision:** 8 steps by default (never above remaining
    `max_tool_calls`), 64 KiB, `max_parallel=4`, each step one tool call.
-   Reuses existing ceilings instead of new `RunLimits` fields.
-8. **Data passing.** Recommendation: `{"$ref": "step.field"}` in arguments,
-   `{step.field}` in `ask` text, copied values, no expressions. No model sees
-   data between steps.
-9. **Argument checking.** Recommendation: local top-level required/unknown
-   checks and full validation by the receiver; no JSON Schema validator
-   dependency. The receiver already validates and rejects invalid arguments.
-10. **Per-step token budget.** Recommendation: author-set `max_tokens_per_step`,
-    default an equal share of the remaining budget. Parallel steps need separate
-    holds, and models must not choose budgets.
-11. **Failure policy.** Recommendation: `stop` by default, opt-in `continue`
-    with partial results; limits, authorization, policy and cancellation always
-    stop; no retries. Fail loudly by default, as everywhere in AgentFrame.
-12. **Replanning.** Recommendation: none built in; authors may call `ctx.plan`
-    again explicitly. Automatic replanning feeds untrusted results back into
-    control flow.
-13. **Approval hook.** Recommendation: `ExecutionPolicy.plan_checks` plus a
-    documented propose/execute two-skill pattern, no pause/resume. Approval
-    workflows stay application-owned.
-14. **Authorization of model-chosen calls.** Recommendation: per-entry
-    `permissions=` plus existing `tool_checks` with the entry name, hiding
-    entries the caller lacks. Same fail-closed hooks as M5 and M7.
-15. **Untrusted card text.** Recommendation: 500-character descriptions,
-    10 tags, no examples, at most 20 entries and 8 KiB per schema, card text only
-    in the user message. Cards are input from other parties.
-16. **Planning errors.** Recommendation: reuse `InputValidationError`
-    (unplannable goal, invalid caller plan) and `OutputValidationError` (invalid
-    model plan), no repair. Fewer error classes to learn.
-17. **Package placement.** Recommendation: main wheel, public names from
-    `agentframe`, code in `src/agentframe/orchestration/`, no extra. No new
-    dependency is needed.
-18. **Milestone placement.** Recommendation: M10 after the M8+ release, built in
-    parallel with M9; only the acceptance story waits for M9's harness. Plans
-    should ship measured, but building them need not wait for evaluation.
+8. **Data passing.** **Decision:** `{"$ref": "step.field"}` in arguments,
+   `{step.field}` in `ask` text, copied values, no expressions.
+9. **Argument checking.** **Decision:** local top-level required/unknown
+   checks, full validation by the receiver; no JSON Schema validator dependency.
+10. **Per-step token budget.** **Decision:** author-set `max_tokens_per_step`,
+    default an equal share of the remaining budget.
+11. **Failure policy.** **Decision:** `stop` by default, opt-in `continue` with
+    partial results; limits, authorization, policy and cancellation always
+    stop; no retries.
+12. **Replanning.** **Decision:** none built in; authors may call `ctx.plan`
+    again explicitly.
+13. **Approval hook.** **Decision:** `ExecutionPolicy.plan_checks` plus the
+    documented propose/execute two-skill pattern; no pause/resume.
+14. **Authorization of model-chosen calls.** **Decision:** per-entry
+    `permissions=` plus existing `tool_checks` with the entry name; entries the
+    caller lacks are hidden.
+15. **Untrusted card text.** **Decision:** 500-character descriptions, 10 tags,
+    no examples, at most 20 entries (over the cap fails with `DefinitionError`
+    after narrowing, never truncated), 8 KiB per schema (larger skipped), card
+    text only in the user message.
+16. **Planning errors.** **Decision:** reuse `InputValidationError` and
+    `OutputValidationError`, no repair.
+17. **Package placement.** **Decision:** main wheel, public names from
+    `agentframe`, code in `src/agentframe/orchestration/`, no extra.
+18. **Milestone placement.** **Decision:** M10 after the M8+ release, built in
+    parallel with M9; only the acceptance story (#176) waits for M9's harness.

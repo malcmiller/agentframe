@@ -316,8 +316,8 @@ An orchestrator is an ordinary AgentFrame agent whose skills explicitly call
 other agents. **No orchestration helpers in the first multi-agent release**:
 use ordinary `await`, `asyncio.TaskGroup` and `directory.find`. Add helpers only
 after repeated real usage demonstrates a need (planned M10
-[model-planned orchestration](orchestration.md) proposes opt-in helpers and
-allowlisted dynamic invocation). Models/routers cannot
+[model-planned orchestration](orchestration.md) adds opt-in helpers and
+calls to any registered agent). Models/routers cannot
 grant authority; invoke/action boundaries must authorize again and preserve or
 reduce caller permissions.
 

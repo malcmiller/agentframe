@@ -94,7 +94,7 @@ framework base class.
 | Multi-agent composition | M8+: `Remote[Literal["name"]]` injection, structured `call`, plain `ask`, input-required error; multi-source directory/find, YAML files, 300-second stale-refresh cache, OBO/service identity, deadline/token/depth controls (5 hops), plain Python orchestration, dev CLI/containers. | Detailed extension schema/identity config, source conflicts/card mapping/search pagination, accounting trust and dev config; typed class proxy only later, no initial orchestration helpers. |
 | Durable workflows | Revisit after multi-agent usage; no design now. Long work uses native tasks, in-memory default/persistent store pluggable; approvals application-owned. If added, optional separate package (candidate `agentframe-workflows`). | Future evidence/scope; task persistence is not Python crash recovery or durable approval resume. |
 | Evaluation | Planned M9 ([evaluation](design/evaluation.md), decided 2026-11-13): an AgentFrame-owned harness for local skills and A2A agents in `agentframe.evaluation` in the main wheel, no new dependency or extra; `Case` from Python/JSONL, plain-function scorers, binary rubric judge, concurrency 4, optional evaluation-wide budget, private-by-default reports, no pytest plugin. | Exact signatures and report fields while building; Foundry export is a later adapter. |
-| Model-planned orchestration | Planned M10 ([orchestration](design/orchestration.md), proposed 2026-11-13, open questions pending, #177): a catalog of remote skills from Agent Cards, remote skills as model tools, and a model-made, validated execution plan (flat DAG with data references) run with `asyncio.TaskGroup` and the existing deadline, hop, token, identity and policy controls. Revisits #17's orchestration-helper and dynamic-invocation cuts as opt-in features. | All 18 open questions in the design: eligibility, identity for discovered agents, plan shape/limits, data passing, budgets, failure policy, approval hook, packaging and placement. |
+| Model-planned orchestration | Planned M10 ([orchestration](design/orchestration.md), decided 2026-11-13, #177): a catalog of remote skills from the Agent Cards of every registered agent whose card is valid and whose security can be satisfied (the registry is the allowlist), remote skills as model tools, and a model-made, validated execution plan (flat DAG with data references) run with `asyncio.TaskGroup` and the existing deadline, hop, token, identity and policy controls. Revisits #17's orchestration-helper and dynamic-invocation cuts as opt-in features. | Exact signatures, model-facing plan schema and log fields while building. |
 | Streaming | Later `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`, same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Version/binding, native event mapping, bounds/backpressure and typed final serialization; frontend tools/shared state later opt-in only. |
 
 ## Architectural rules
@@ -564,8 +564,8 @@ pytest plugin. Foundry evaluation export is a later optional adapter.
 
 ### M10: Model-planned orchestration (planned)
 
-Planned, not built (#177); open questions await confirmation. The design is in
-[orchestration](design/orchestration.md). It deliberately revisits two M8+ scope
+Planned, not built (#177). The design and its decisions, confirmed on
+2026-11-13, are in [orchestration](design/orchestration.md). It deliberately revisits two M8+ scope
 cuts from #17, "orchestration helpers" and "dynamic invocation of agents found
 at run time" (also #85 decision 2), as opt-in features; plain `await` and
 `asyncio.TaskGroup` stay the default, and every other cut (durable workflows,
@@ -573,9 +573,10 @@ pause/resume, built-in approval, typed proxies) is kept. M10 starts after the
 M8+ release and can be built in parallel with M9; only its acceptance story
 uses M9's harness.
 
-| Capability | Proposed direction |
+| Capability | Decided direction |
 | --- | --- |
-| Catalog | `ctx.remote_skills(...)` builds `RemoteSkill` entries from declared remotes' Agent Cards: card skills with skill-call extension schemas, or one free-text `ask` entry for other A2A agents; bounded untrusted card text, at most 20 entries. Discovered agents only behind an application allowlist with per-name identity. |
+| Catalog | `ctx.remote_skills(...)` builds `RemoteSkill` entries from the Agent Cards of every agent in the directory's sources (or only declared remotes): card skills with skill-call extension schemas, or one free-text `ask` entry for other A2A agents. Agents with unreachable/invalid cards or unsatisfiable security, and failing sources, are skipped with a warning by name. Bounded untrusted card text; at most 20 entries after `agents=`/`skill=`/`tags=` narrowing, more fails clearly, never truncated. |
+| Identity | Per-name `remotes=` entry, else optional `default_remote=` where it satisfies the card, else none for open cards; otherwise skipped. |
 | Remote skills as tools | `ctx.generate(goal, tools=[*skills])` lets the model call remote skills through the M5 loop; each call is a tool call, never retried, with the existing remote guarantees. |
 | Plans | `ctx.plan(goal, skills)` makes one structured call returning a typed `Plan` (flat DAG, `{"$ref": "step.field"}` references), checked against the catalog and limits before anything runs. |
 | Running plans | `ctx.run_plan(plan, skills)` runs ready steps in parallel (default 4) under `asyncio.TaskGroup` within the run's deadline, hops and token budget; `stop` or opt-in `continue` failure policy; per-step logs and usage. |
@@ -667,8 +668,8 @@ belongs to that release even though telemetry exporters/integration stay optiona
   reconciliation, per-target identity config and result/argument-reserved-name
   collisions. `Remote.call` / `ask`, clarification error and max 5 hops decided.
   CLI config/loading/key lifecycle details remain open;
-  no first-M8+ orchestration helpers (planned M10 revisits this, with its own
-  open questions in [orchestration](design/orchestration.md#open-questions)).
+  no first-M8+ orchestration helpers (planned M10 revisits this; decisions in
+  [orchestration](design/orchestration.md#decisions-confirmed-2026-11-13)).
   Typed class proxies/templates later.
 - Future runtime streaming API, AG-UI version/transport/native event projection,
   typed-result serialization, buffer/write/backpressure/shutdown details.
