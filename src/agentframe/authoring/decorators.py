@@ -152,6 +152,7 @@ def tool[F: Callable[..., Any]](
     description: str | None = None,
     side_effects: bool = False,
     idempotent: bool = False,
+    requires_permissions: Iterable[str] = (),
 ) -> Callable[[F], F]:
     """Mark a typed function as a tool a model may call.
 
@@ -168,6 +169,9 @@ def tool[F: Callable[..., Any]](
             cancelling an order.
         idempotent: Whether repeating a call with the same arguments has no
             further effect. Not a retry grant: tools are never auto-retried.
+        requires_permissions: Permissions the caller must all hold. A tool
+            the caller lacks any of is not offered to the model and fails the
+            run if the model calls it anyway.
 
     Returns:
         A decorator that attaches a ``ToolDefinition`` and returns the same
@@ -177,8 +181,12 @@ def tool[F: Callable[..., Any]](
         DefinitionError: If the function breaks a tool rule: it is a lambda or
             method, is a generator, has an invalid name, unannotated,
             ``*args``/``**kwargs`` or positional-only parameters, an
-            unsupported type, or no description.
+            unsupported type, or no description; or if
+            ``requires_permissions`` is a single string.
     """
+    if isinstance(requires_permissions, str):
+        raise DefinitionError("Tool requires_permissions must be a list of strings")
+    permissions = frozenset(requires_permissions)
 
     def decorator(func: F) -> F:
         definition = build_tool_definition(
@@ -186,6 +194,7 @@ def tool[F: Callable[..., Any]](
             description=description,
             side_effects=side_effects,
             idempotent=idempotent,
+            requires_permissions=permissions,
         )
         setattr(definition.function, TOOL_ATTRIBUTE, definition)
         return func

@@ -31,7 +31,7 @@ AgentApp(
 | --- | --- | --- | --- |
 | `agent` | `Agent` instance | Required in current shape | Valid registered skills and identity; no per-method A2A RPC endpoints. |
 | `host` | `HostConfig` | Explicit in current examples; omission contract open | Advertised origin, authentication integration, independent resource ceilings. |
-| `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization)` | The single authoritative runtime and service container for every request. Passing it together with `services=` or `authorization=` raises `DefinitionError`. |
+| `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization)` | The single authoritative runtime and service container for every request. Passing it together with `services=` or `authorization=` raises `DefinitionError`. Pass a runtime to authorize tool calls: `AgentApp(runtime=Runtime(services=..., tool_authorization=...))`; there is no separate host setting (M5 #62). |
 | `a2a` | `A2AConfig` | A2A enabled by default; exact object default open | Selected native binding and implemented features only. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
 | `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in model router in M6. Activated structured selection bypasses it, not runtime controls. |
@@ -141,9 +141,9 @@ Every other outcome follows this table:
 | --- | --- |
 | Missing or invalid credentials | HTTP 401 with `WWW-Authenticate`, no task |
 | Malformed A2A request or extension misuse | Standard A2A/JSON-RPC protocol error, no task |
-| Unknown skill, invalid arguments, permission or policy denied | Task `REJECTED`, safe message |
+| Unknown skill, invalid arguments, permission or policy denied, including a tool call (M5 #62) | Task `REJECTED`, safe message |
 | Clarification needed | Task `INPUT_REQUIRED` |
-| Timeout, output validation failure, skill or router exception, router timeout, policy unavailable | Task `FAILED`, safe message |
+| Timeout, output validation failure, skill or router exception, router timeout, policy unavailable (skill or tool policy, M5 #62) | Task `FAILED`, safe message |
 | Model error: unsupported capability, refusal, incomplete output, provider failure (M3 #33; structured output proven end to end in M4 #57) | Task `FAILED`, safe message; never the model's text |
 | Token, model-call or tool-call limit exceeded (M3 #36, M5 #61) | Task `FAILED`, safe message |
 | A tool raises (M5 #61) | Task `FAILED`, reported like a skill exception: "The skill failed.", details logged with the `invocation_id` |

@@ -54,7 +54,10 @@ from agentframe.security.authentication import (
     DeclaresCardSecurity,
     VerifiedCaller,
 )
-from agentframe.security.authorization import AuthorizationPolicy
+from agentframe.security.authorization import (
+    AuthorizationPolicy,
+    ToolAuthorizationPolicy,
+)
 from agentframe.security.principal import Principal
 
 if TYPE_CHECKING:
@@ -110,6 +113,7 @@ __all__ = [
     "SkillRouter",
     "TimeoutLimitExceededError",
     "TokenLimitExceededError",
+    "ToolAuthorizationPolicy",
     "ToolCall",
     "ToolCallLimitExceededError",
     "ToolDefinition",

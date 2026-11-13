@@ -357,7 +357,8 @@ This tool example uses the implemented registration and selection shape (M5
 #60): the constructor registers tools, and each `ctx.generate` call names the
 ones it offers, and `ctx.generate` runs the model's tool calls until it
 answers (#61; see [tool calling](../api/agents.md#implemented-tool-calling-m5-61)).
-Action authorization (#62) is not implemented yet. The supplied `model`
+Each tool call is authorized before it runs (#62; see
+[`ToolAuthorizationPolicy`](../api/authorization.md#toolauthorizationpolicy)). The supplied `model`
 must support the requested tool capability; instructions do not grant it.
 
 ```python

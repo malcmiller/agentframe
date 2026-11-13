@@ -69,7 +69,8 @@ class AgentApp:
         agent: Instance of an ``@agent``-decorated class.
         host: Where and how the agent is served, including authentication.
         runtime: The runtime that runs every request. Defaults to a new
-            ``Runtime`` built from ``services`` and ``authorization``.
+            ``Runtime`` built from ``services`` and ``authorization``. Pass
+            one to authorize tool calls with ``Runtime(tool_authorization=...)``.
         services: Services for ``Inject[T]`` parameters, when ``runtime`` is
             not given.
         authorization: Resource authorization policy, when ``runtime`` is not

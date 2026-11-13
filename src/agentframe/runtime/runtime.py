@@ -36,7 +36,10 @@ from agentframe.runtime.generation import (
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.usage import FinishReason, Usage
-from agentframe.security.authorization import AuthorizationPolicy
+from agentframe.security.authorization import (
+    AuthorizationPolicy,
+    ToolAuthorizationPolicy,
+)
 from agentframe.security.principal import Principal
 
 
@@ -66,6 +69,10 @@ class Runtime:
         services: Services available to ``Inject[T]`` parameters.
         authorization: Application policy that checks each run against the
             requested resource. ``None`` means no resource checks.
+        tool_authorization: Application policy that checks every tool call
+            a model asks for, with its validated arguments, before it runs.
+            ``None`` means only the tools' ``requires_permissions`` are
+            checked. Strongly advised for tools with side effects.
     """
 
     def __init__(
@@ -73,9 +80,11 @@ class Runtime:
         *,
         services: Services | None = None,
         authorization: AuthorizationPolicy | None = None,
+        tool_authorization: ToolAuthorizationPolicy | None = None,
     ) -> None:
         self._services = services or Services()
         self._authorization = authorization
+        self._tool_authorization = tool_authorization
 
     def validate(self, agent: Agent) -> None:
         """Check that ``agent`` can run here before accepting any work.
@@ -179,9 +188,10 @@ class Runtime:
             InputValidationError: Unknown skill or invalid arguments.
             DefinitionError: Undecorated agent, or a service needed by the
                 skill or a registered tool is not registered.
-            PermissionDeniedError: The principal lacks a required permission
-                or the authorization policy denied the run.
-            PolicyUnavailableError: The authorization policy raised an error
+            PermissionDeniedError: The principal lacks a permission the skill
+                or a tool the model called requires, or an authorization
+                policy denied the run or the tool call.
+            PolicyUnavailableError: An authorization policy raised an error
                 or did not answer before the run's deadline.
             LimitExceededError: The run exceeded a limit. The subclass names
                 which one: ``TimeoutLimitExceededError``,
@@ -294,6 +304,7 @@ class Runtime:
                     services=services,
                     accounting=accounting,
                     tools=agent.tools,
+                    tool_authorization=self._tool_authorization,
                 )
                 ctx = RunContext(invocation_id, principal, deadline, generation)
                 injected = await services.resolve(skill.injected)
