@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import TracebackType
-from typing import Literal, Self
+from typing import Any, Literal, Self, cast
 
 try:
     import openai
@@ -19,11 +19,17 @@ try:
     from azure.identity.aio import get_bearer_token_provider
     from openai.types.responses import (
         EasyInputMessageParam,
+        FunctionToolParam,
         Response,
+        ResponseFunctionToolCall,
+        ResponseFunctionToolCallParam,
+        ResponseIncludable,
+        ResponseInputItemParam,
         ResponseInputParam,
         ResponseTextConfigParam,
         ResponseUsage,
     )
+    from openai.types.responses.response_input_param import FunctionCallOutput
 except ImportError as error:
     raise ImportError(
         "FoundryModel needs the optional 'openai' and 'azure-identity' packages; "
@@ -43,6 +49,8 @@ from agentframe.models.base import (
     ModelResponse,
     OutputSchema,
     Role,
+    ToolCall,
+    ToolSpec,
 )
 from agentframe.models.strict_schema import drop_defaulted_nulls, strict_schema
 from agentframe.runtime.usage import FinishReason, Usage
@@ -55,7 +63,10 @@ _INPUT_ROLES: dict[Role, Literal["developer", "user", "assistant"]] = {
     "user": "user",
     "assistant": "assistant",
 }
-"""Responses API roles for text messages; tool messages are not supported yet."""
+"""Responses API roles for text messages; tool results are separate input items."""
+
+REASONING_INCLUDE: list[ResponseIncludable] = ["reasoning.encrypted_content"]
+"""Asks for encrypted reasoning, so a stateless tool call can replay it."""
 
 TRANSIENT_FAILURE_CODES = frozenset({"server_error", "rate_limit_exceeded"})
 """Codes of ``failed`` responses that retrying may fix."""
@@ -81,6 +92,15 @@ class FoundryModel:
     Fields with defaults become nullable, and the model's ``null`` for them
     is dropped so Pydantic applies the default.
 
+    Tools are sent as strict function tools, with parameter schemas converted
+    the same way; a tool whose parameters cannot be made strict fails before
+    sending, with no non-strict fallback. A ``null`` for a defaulted tool
+    parameter is dropped from the call's arguments, so the tool's default
+    applies. Every output item of a tool-calling response, including
+    reasoning items, is replayed verbatim in the next request. With
+    ``store=False``, reasoning is requested in encrypted form for that replay;
+    it is kept in memory for the run only and never logged or returned.
+
     Credentials are never logged or included in error messages.
 
     Args:
@@ -103,6 +123,10 @@ class FoundryModel:
             Responses API defines it, so it is on by default; turn it off for
             a deployment that rejects it. A rejection fails the call with a
             non-transient ``ProviderError``.
+        tools: Whether to report tool-calling support. The Responses API
+            defines function tools, so it is on by default; turn it off for a
+            deployment that rejects them. A rejection fails the call with a
+            non-transient ``ProviderError``.
 
     Raises:
         DefinitionError: If neither or both of ``client`` and
@@ -120,12 +144,14 @@ class FoundryModel:
         context_window: int | None = None,
         store: bool = False,
         structured_output: bool = True,
+        tools: bool = True,
     ) -> None:
         if context_window is not None and context_window <= 0:
             raise DefinitionError("FoundryModel context_window must be greater than 0")
         self.deployment = deployment
         self.store = store
         self.structured_output = structured_output
+        self.tools = tools
         self._context_window = context_window
         self._owns_client = client is None
         self._client = _resolve_client(endpoint, credential, client)
@@ -135,27 +161,29 @@ class FoundryModel:
 
         Returns:
             The reply; for a structured-output request, its JSON text without
-            the nulls that stand for defaults. A refusal finishes ``REFUSED``
-            with empty text; output stopped at the token cap finishes
-            ``LENGTH``, and output stopped by a content filter finishes
-            ``CONTENT_FILTER``.
+            the nulls that stand for defaults. A response that calls tools
+            finishes ``TOOL_CALLS``, with the calls in the model's order. A
+            refusal finishes ``REFUSED`` with empty text; output stopped at
+            the token cap finishes ``LENGTH``, and output stopped by a content
+            filter finishes ``CONTENT_FILTER``, without tool calls.
 
         Raises:
-            UnsupportedCapabilityError: The request uses tools, which this
-                adapter does not support yet, or the output schema uses a
-                construct strict structured output cannot express. Raised
-                before sending.
+            UnsupportedCapabilityError: The output schema or a tool's
+                parameter schema uses a construct strict mode cannot express.
+                Raised before sending.
             IncompleteOutputError: The response stopped early for another reason.
             ProviderError: The call or the response failed. Connection failures,
                 timeouts, rate limits and server errors are transient; rejected
                 credentials, an unknown deployment and invalid requests,
-                including a rejected output schema, are not.
+                including a rejected output or tool schema, are not.
         """
-        if request.uses_tools():
-            raise UnsupportedCapabilityError("FoundryModel does not support tools yet")
         instructions, conversation = _split_instructions(request.messages)
         text = openai.omit if request.output is None else _text_format(request.output)
-        async with _provider_errors(self.deployment, request.output is not None):
+        tools = [_function_tool(spec) for spec in request.tools]
+        # Stateless tool calls lose reasoning between turns unless it comes
+        # back encrypted and is replayed.
+        include = REASONING_INCLUDE if tools and not self.store else openai.omit
+        async with _provider_errors(self.deployment, _rejection_hint(request)):
             response = await self._client.responses.create(
                 model=self.deployment,
                 instructions=instructions,
@@ -163,21 +191,23 @@ class FoundryModel:
                 max_output_tokens=request.settings.max_output_tokens,
                 store=self.store,
                 text=text,
+                tools=tools or openai.omit,
+                include=include,
             )
-        model_response = _model_response(response)
+        model_response = _model_response(response, request.tools)
         if request.output is None:
             return model_response
         return _without_defaulted_nulls(model_response, request.output)
 
     async def capabilities(self) -> ModelCapabilities:
-        """Return the configured context window and structured-output support.
+        """Return the configured context window, structured-output and tool support.
 
         Does no I/O: the API does not report a deployment's capabilities.
-        Tools are not supported yet.
         """
         return ModelCapabilities(
             context_window=self._context_window,
             structured_output=self.structured_output,
+            tools=self.tools,
         )
 
     async def close(self) -> None:
@@ -238,13 +268,66 @@ def _split_instructions(
         leading += 1
     instructions = "\n\n".join(message.content for message in messages[:leading])
     conversation: ResponseInputParam = [
-        EasyInputMessageParam(
-            role=_INPUT_ROLES[message.role],
-            content=message.content,
-        )
-        for message in messages[leading:]
+        item for message in messages[leading:] for item in _input_items(message)
     ]
     return instructions or None, conversation
+
+
+def _input_items(message: Message) -> list[ResponseInputItemParam]:
+    """Return the Responses API input items for one message.
+
+    An assistant message from this adapter is replayed as its original output
+    items, in order, so reasoning items and call IDs reach the model unchanged.
+    """
+    if message.role == "tool":
+        assert message.tool_call_id is not None  # Message requires it for tools.
+        return [
+            FunctionCallOutput(
+                type="function_call_output",
+                call_id=message.tool_call_id,
+                output=message.content,
+            )
+        ]
+    if message.provider_items:
+        return [cast(ResponseInputItemParam, item) for item in message.provider_items]
+    items: list[ResponseInputItemParam] = []
+    if message.content or not message.tool_calls:
+        items.append(
+            EasyInputMessageParam(
+                role=_INPUT_ROLES[message.role], content=message.content
+            )
+        )
+    items.extend(
+        ResponseFunctionToolCallParam(
+            type="function_call",
+            call_id=call.id,
+            name=call.name,
+            arguments=call.arguments,
+        )
+        for call in message.tool_calls
+    )
+    return items
+
+
+def _function_tool(spec: ToolSpec) -> FunctionToolParam:
+    """Return ``spec`` as a strict function tool.
+
+    Raises:
+        UnsupportedCapabilityError: The tool's parameters cannot be made strict.
+    """
+    try:
+        parameters = strict_schema(spec.parameters)
+    except UnsupportedCapabilityError as error:
+        raise UnsupportedCapabilityError(
+            f"Tool '{spec.name}' cannot be offered to Foundry: {error}"
+        ) from None
+    return {
+        "type": "function",
+        "name": spec.name,
+        "description": spec.description,
+        "parameters": parameters,
+        "strict": True,
+    }
 
 
 def _text_format(output: OutputSchema) -> ResponseTextConfigParam:
@@ -281,27 +364,74 @@ def _without_defaulted_nulls(
     """
     if response.finish_reason is not FinishReason.COMPLETED:
         return response
+    return replace(
+        response, text=_drop_nulls_from_json(response.text, output.json_schema)
+    )
+
+
+def _drop_nulls_from_json(text: str, schema: dict[str, Any]) -> str:
+    """Drop the nulls that stand for defaults from JSON ``text``.
+
+    Invalid JSON is returned unchanged for validation to reject.
+    """
     try:
-        value = json.loads(response.text)
+        value = json.loads(text)
     except ValueError:
-        return response
-    text = json.dumps(drop_defaulted_nulls(value, output.json_schema))
-    return replace(response, text=text)
+        return text
+    return json.dumps(drop_defaulted_nulls(value, schema))
 
 
-def _model_response(response: Response) -> ModelResponse:
+def _model_response(response: Response, tools: tuple[ToolSpec, ...]) -> ModelResponse:
     """Map a Responses API result to a ``ModelResponse``, failing on error states."""
     usage = _usage(response.usage)
     if response.status not in ("completed", "incomplete"):
         raise _unfinished_response_error(response, usage)
     if _has_refusal(response):
         return ModelResponse(text="", usage=usage, finish_reason=FinishReason.REFUSED)
-    finish_reason = FinishReason.COMPLETED
     if response.status == "incomplete":
+        # Tool calls in a response cut short are not run: their arguments
+        # may be incomplete.
         finish_reason = _incomplete_finish_reason(response, usage)
+        return ModelResponse(
+            text=response.output_text, usage=usage, finish_reason=finish_reason
+        )
+    tool_calls = _tool_calls(response, tools)
+    if not tool_calls:
+        return ModelResponse(
+            text=response.output_text, usage=usage, finish_reason=FinishReason.COMPLETED
+        )
     return ModelResponse(
-        text=response.output_text, usage=usage, finish_reason=finish_reason
+        text=response.output_text,
+        usage=usage,
+        finish_reason=FinishReason.TOOL_CALLS,
+        tool_calls=tool_calls,
+        provider_items=tuple(item.to_dict(mode="json") for item in response.output),
     )
+
+
+def _tool_calls(
+    response: Response, tools: tuple[ToolSpec, ...]
+) -> tuple[ToolCall, ...]:
+    """Return the response's function calls, without nulls that stand for defaults.
+
+    A call naming an unknown tool keeps its arguments as sent, for the runtime
+    to reject.
+    """
+    schemas = {spec.name: spec.parameters for spec in tools}
+    return tuple(
+        _tool_call(item, schemas.get(item.name))
+        for item in response.output
+        if isinstance(item, ResponseFunctionToolCall)
+    )
+
+
+def _tool_call(
+    item: ResponseFunctionToolCall, schema: dict[str, Any] | None
+) -> ToolCall:
+    arguments = item.arguments
+    if schema is not None:
+        arguments = _drop_nulls_from_json(arguments, schema)
+    return ToolCall(id=item.call_id, name=item.name, arguments=arguments)
 
 
 def _unfinished_response_error(response: Response, usage: Usage) -> ProviderError:
@@ -358,21 +488,32 @@ def _usage(usage: ResponseUsage | None) -> Usage:
     )
 
 
+def _rejection_hint(request: ModelRequest) -> str | None:
+    """Name the optional features a rejected request used, or ``None``."""
+    features = []
+    if request.tools:
+        features.append("tools")
+    if request.output is not None:
+        features.append("structured output")
+    return " or ".join(features) or None
+
+
 @asynccontextmanager
 async def _provider_errors(
-    deployment: str, structured_output: bool
+    deployment: str, features: str | None
 ) -> AsyncIterator[None]:
     """Turn client and credential errors into ``ProviderError`` with a safe message.
 
     The service's own error text is not passed on because it may echo request
-    content back to the caller.
+    content back to the caller. ``features`` names the optional features the
+    request used, such as ``"tools"``, for the message when it is rejected.
     """
     try:
         yield
     except openai.APIConnectionError as error:  # Includes timeouts.
         raise ProviderError("Could not reach Foundry", transient=True) from error
     except openai.APIStatusError as error:
-        raise _status_error(error, deployment, structured_output) from error
+        raise _status_error(error, deployment, features) from error
     except ClientAuthenticationError as error:
         raise ProviderError(
             "Could not get a Microsoft Entra token for Foundry", transient=False
@@ -382,7 +523,7 @@ async def _provider_errors(
 
 
 def _status_error(
-    error: openai.APIStatusError, deployment: str, structured_output: bool
+    error: openai.APIStatusError, deployment: str, features: str | None
 ) -> ProviderError:
     status_code = error.status_code
     if status_code in (401, 403):
@@ -399,10 +540,10 @@ def _status_error(
             transient=True,
             retry_after=_retry_after(error.response.headers),
         )
-    if structured_output:
+    if features:
         return ProviderError(
-            f"Foundry rejected the structured-output request (HTTP {status_code}); "
-            "the deployment may not support structured output or this schema",
+            f"Foundry rejected the request (HTTP {status_code}); the deployment "
+            f"may not support {features}, or these schemas",
             transient=False,
         )
     return ProviderError(
