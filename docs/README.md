@@ -31,7 +31,7 @@ behavior works, and `design/` records rationale and proposed designs.
 
 | Document | Purpose |
 | --- | --- |
-| [Roadmap](roadmap.md) | Product boundaries, architectural rules, defaults, single-agent milestones 0-7, next core multi-agent release M8+ and planned M9 evaluation. |
+| [Roadmap](roadmap.md) | Product boundaries, architectural rules, defaults, single-agent milestones 0-7, next core multi-agent release M8+, planned M9 evaluation and planned M10 model-planned orchestration. |
 | [Repository context](../AGENTS.md) | Durable contributor and coding-agent instructions, including framework independence and scope boundaries. |
 
 ### Guides
@@ -52,6 +52,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [Base classes](design/base-classes.md) | Complete annotation/subclass/composition decision table, interfaces, and small proposed API examples. |
 | [Evaluation](design/evaluation.md) | Planned M9 evaluation harness: typed cases, local and A2A targets, scorers and rubric judge, budgets, private-by-default reports and CI use; decisions confirmed 2026-11-13. |
 | [Discovery](design/discovery.md) | M8+ core registry/directory and remote A2A composition, cross-hop context, local/container deployment direction and acceptance; not a workflow/graph engine. |
+| [Orchestration](design/orchestration.md) | Planned M10: remote skill catalog from Agent Cards, remote skills as model tools, model-made validated execution plans run with existing limits, identity and policy; revisits two M8+ scope cuts; decisions confirmed 2026-11-13. |
 | [MCP skills](design/mcp-skills.md) | Optional allowlisted skill publication, shared A2A/MCP hosting, schema mapping, and protocol boundaries. |
 | [Prompt safeguarding](design/prompt-safeguarding.md) | Shared responsibilities, content-policy hooks, data egress, and prompt-injection limitations. |
 | [Streaming and AG-UI](design/streaming.md) | Future scoped frontend-protocol adapter, primary-source event/transport research, trust/policy boundaries and open delivery contracts. |
