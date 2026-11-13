@@ -1,0 +1,47 @@
+# Checks a built wheel the way a user installs it: from a directory outside the
+# checkout, so src/ can never shadow the installed package. Used by the CI
+# build job and by the release workflow, so a release ships only a wheel that
+# passed the same checks. Expects uv to be installed and exactly one wheel in
+# the workspace's dist/.
+name: Check the built wheel
+description: Import, CLI and examples smoke checks against the installed wheel.
+
+runs:
+  using: composite
+  steps:
+    - name: Import the installed wheel and its A2A server binding
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      run: >-
+        uv run --isolated --no-project --python 3.13
+        --with "${GITHUB_WORKSPACE}"/dist/*.whl
+        python -c "import agentframe, starlette, sse_starlette;
+        from a2a.server.routes import create_jsonrpc_routes;
+        print(agentframe.__version__)"
+    - name: Import the base install without provider extras
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      run: >-
+        uv run --isolated --no-project --python 3.13
+        --with "${GITHUB_WORKSPACE}"/dist/*.whl
+        python -c "import importlib.util, agentframe;
+        assert importlib.util.find_spec('ollama') is None, 'ollama installed';
+        assert importlib.util.find_spec('openai') is None, 'openai installed';
+        assert importlib.util.find_spec('azure') is None, 'azure-identity installed';
+        assert importlib.util.find_spec('jwt') is None, 'PyJWT installed';
+        print('base install imports without provider extras')"
+    - name: Run the agentframe command from the wheel's server extra
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      run: >-
+        uv run --isolated --no-project --python 3.13
+        --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server]"
+        agentframe run --help
+    - name: Smoke-test the examples against the installed wheel
+      shell: bash
+      run: |
+        cp -R examples "${RUNNER_TEMP}/examples"
+        cd "${RUNNER_TEMP}"
+        uv run --isolated --no-project --python 3.13 \
+          --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server]" \
+          python -m examples.smoke

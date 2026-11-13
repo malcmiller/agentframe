@@ -36,36 +36,4 @@ jobs:
         with:
           version: "0.13.1"
       - run: uv build
-      - name: Import the installed wheel and its A2A server binding
-        working-directory: ${{ runner.temp }}
-        run: >-
-          uv run --isolated --no-project --python 3.13
-          --with "${GITHUB_WORKSPACE}"/dist/*.whl
-          python -c "import agentframe, starlette, sse_starlette;
-          from a2a.server.routes import create_jsonrpc_routes;
-          print(agentframe.__version__)"
-      - name: Import the base install without provider extras
-        working-directory: ${{ runner.temp }}
-        run: >-
-          uv run --isolated --no-project --python 3.13
-          --with "${GITHUB_WORKSPACE}"/dist/*.whl
-          python -c "import importlib.util, agentframe;
-          assert importlib.util.find_spec('ollama') is None, 'ollama installed';
-          assert importlib.util.find_spec('openai') is None, 'openai installed';
-          assert importlib.util.find_spec('azure') is None, 'azure-identity installed';
-          assert importlib.util.find_spec('jwt') is None, 'PyJWT installed';
-          print('base install imports without provider extras')"
-      - name: Run the agentframe command from the wheel's server extra
-        working-directory: ${{ runner.temp }}
-        run: >-
-          uv run --isolated --no-project --python 3.13
-          --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server]"
-          agentframe run --help
-      # A copy outside the checkout, so src/ can never shadow the wheel.
-      - name: Smoke-test the examples against the installed wheel
-        run: |
-          cp -R examples "${RUNNER_TEMP}/examples"
-          cd "${RUNNER_TEMP}"
-          uv run --isolated --no-project --python 3.13 \
-            --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server]" \
-            python -m examples.smoke
+      - uses: ./.github/actions/check-wheel
