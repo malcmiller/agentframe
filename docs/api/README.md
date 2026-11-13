@@ -40,7 +40,7 @@ deliberately shows typed dependency use instead of inventing one.
 | [Hosting](hosting.md) | [`AgentApp`](hosting.md#agentapp), [`HostConfig`](hosting.md#hostconfig), [`A2AConfig`](hosting.md#a2aconfig), [`MessageDedupStore`](hosting.md#messagededupstore), [`MCPConfig`](hosting.md#mcpconfig), [`SkillRouter`](hosting.md#skillrouter), [`RoutingContext`](hosting.md#routingcontext); native SDK types. |
 | [`ModelRouter`](hosting.md#modelrouter) | Opt-in built-in router alongside custom routers: two structured model calls select a skill and extract its arguments, or ask (M6 #68); checked by `AgentApp` at construction and startup (#69). |
 | [Future streaming](streaming.md) | [`AGUIConfig`](streaming.md#aguiconfig), optional [AG-UI adapter](streaming.md#optional-ag-ui-adapter) and [runtime event boundary](streaming.md#runtime-streaming-boundary); runtime stream method open. |
-| [Remote authoring](discovery.md#remotename) | [`Remote["name"]`](discovery.md#remotename), [`call`](discovery.md#remotecall), [`ask`](discovery.md#remoteask), [`ClarificationNeededError`](discovery.md#clarificationneedederror), [`AgentDirectory.find`](discovery.md#agentdirectoryfind). |
+| [Remote authoring](discovery.md#remoteliteralname) | [`Remote[Literal["name"]]`](discovery.md#remoteliteralname), [`call`](discovery.md#remotecall), [`ask`](discovery.md#remoteask), [`ClarificationNeededError`](discovery.md#clarificationneedederror), [`AgentDirectory.find`](discovery.md#agentdirectoryfind). |
 | [Development and packaging](../guides/development.md) | M2 `agentframe run module:create_app` (implemented, with localhost-only `--dev`); M8+ `agentframe dev`, `agentframe.yaml`, registry/API-key/log wiring and container templates; not installed tooling. |
 | [Multi-agent release discovery and calls](discovery.md) | Registries implemented (M8+ #83): [`AgentRegistry`](discovery.md#agentregistry), [`get`](discovery.md#agentregistryget), [`list`](discovery.md#agentregistrylist), [`AgentReference`](discovery.md#agentreference), [`AgentQuery`](discovery.md#agentquery), [`EnvironmentAgentRegistry`](discovery.md#environmentagentregistry), [`FileAgentRegistry`](discovery.md#fileagentregistry), [`FoundryAgentRegistry`](discovery.md#foundryagentregistry) and [`card_headers`](discovery.md#agentregistrycard_headers) (#86), directory implemented (#84): [`AgentDirectory`](discovery.md#agentdirectory), [`DiscoveredAgent`](discovery.md#discoveredagent), [`get`](discovery.md#agentdirectoryget), [`refresh`](discovery.md#agentdirectoryrefresh), [`__aenter__`](discovery.md#agentdirectory__aenter__), [`__aexit__`](discovery.md#agentdirectory__aexit__), [`find`](discovery.md#agentdirectoryfind) (#85); [`RemoteAgentClient`](discovery.md#remoteagentclient). |
 
@@ -69,7 +69,7 @@ extension and native data-part JSON arguments, or free-text routing/extraction.
 Descriptive A2A skills alone are not Python-method RPC.
 Optional MCP publishes allowlisted skills as native tools, not internal `@tool`
 functions. `Inject[T]` service parameters are excluded from all caller/card/MCP
-schemas; registered services and M8+ `Remote["name"]` bindings are validated at
+schemas; registered services and M8+ `Remote[Literal["name"]]` bindings are validated at
 startup and remote annotations likewise excluded. No custom REST skill API
 is proposed for the initial slice.
 One server/shared runtime has an endpoint per caller audience, not per skill:

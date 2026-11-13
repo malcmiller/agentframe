@@ -109,7 +109,7 @@ authoritative read must enforce current resource policy.
 
 **Behavior / failures:** every skill accepts `ctx: RunContext`, even model-free
 ones. Business parameters and returns use supported Python/Pydantic annotations;
-context, `Inject[T]` and M8+ `Remote["name"]` parameters are injected, not
+context, `Inject[T]` and M8+ `Remote[Literal["name"]]` parameters are injected, not
 published in caller/card/MCP schemas. Validate configured remote names through
 the app directory at startup. Reject invalid definitions at startup with
 `DefinitionError`, including missing required services,

@@ -488,8 +488,9 @@ automatic delegation or A2A task lifecycle.
 
 Register a shared directory with `Services.add(AgentDirectory, directory)` and
 inject `Inject[AgentDirectory]` into skills; the application opens and closes
-it. `AgentApp(directory=...)` and startup validation of `Remote` bindings are
-#87.
+it. For `Remote` parameters, pass it as `Runtime(directory=...)` or
+`AgentApp(directory=...)` instead (see [`Remote`](#remoteliteralname)); the
+application still opens and closes it.
 
 **Related:** [`get`](#agentdirectoryget), [`refresh`](#agentdirectoryrefresh),
 [`DiscoveredAgent`](#discoveredagent),
@@ -505,7 +506,7 @@ Implemented (#84) as a frozen dataclass.
 | --- | --- | --- |
 | `reference` | `AgentReference` | The source entry the agent was found through. |
 | `card` | `a2a.types.AgentCard` | The validated official SDK card. |
-| `interface_url` | `str` | The card's JSON-RPC A2A 1.0 interface URL, always on the card URL's origin. Remote calls (#87) send only here. |
+| `interface_url` | `str` | The card's JSON-RPC A2A 1.0 interface URL, always on the card URL's origin. `Remote.ask` sends only here. |
 | `stale` | `bool` | `True` only when `allow_stale=True` served an old card after a failed refresh. |
 
 ```python
@@ -686,7 +687,7 @@ references/cards after application selection/authorization. Enables ordinary
 orchestrator skills to call AgentFrame or other frameworks' A2A agents.
 
 **Signature status:** underlying/explicit client construction remains open.
-The decided authoring surface is [`Remote["name"]`](#remotename), with
+The decided authoring surface is [`Remote[Literal["name"]]`](#remoteliteralname), with
 [`call`](#remotecall) and [`ask`](#remoteask), not an invented constructor here.
 
 | Concern | Type | Required/default status | Meaning and constraints |
@@ -724,41 +725,74 @@ No claim of a tested Foundry registry/client integration.
 [structured extension and prompt request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary),
 [multi-agent release acceptance and deployment direction](../design/discovery.md#phasing-and-open-decisions).
 
-## `Remote["name"]`
+## `Remote[Literal["name"]]`
 
-**Purpose / decision:** inject a managed remote-agent binding into a skill,
-resolved by configured name through the app's directory.
+**Purpose / decision:** inject a binding to another A2A agent into a skill,
+looked up by name in the runtime's [`AgentDirectory`](#agentdirectory).
+Implemented (#87) as `class Remote[N: str]`; AgentFrame reads the name from
+the `Literal`. The string form `Remote["name"]` is not used, because
+`mypy --strict` reads a string subscript as a forward reference.
 
-**Signature status:** string-name annotation and `call` / `ask` are decided;
-internal proxy typing, explicit-client construction and per-remote config
-carrier remain open. `Remote[ResearchAgent]` typed proxies are later only.
+**Signature status:** the annotation, [`ask`](#remoteask) and the
+`directory=` parameters are implemented; [`call`](#remotecall) (#88),
+deadline/hop propagation (#89) and outbound identity (#92, #93) are later
+stories. `Remote[ResearchAgent]` typed proxies are later only.
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Name | String literal | Required | Validated against configured directory names at startup; not caller-supplied URL. |
-| Injection | Library-managed binding | Per managed invocation | Excluded from caller/card/MCP schemas, like `Inject[T]`; preserves caller policy/deadline/ledger. |
-| Identity mode | `on_behalf_of` or `service`; config carrier open | OBO for Entra caller, service explicit otherwise | No token forwarding, authority amplification or stronger-identity fallback. |
-| Hop limit | Counter/setting representation open | Maximum 5 remote hops by default | Exceeding depth fails, including recursive loops; no guessed wire field. |
+| Name | One string in a `Literal` | Required | The agent's name in the directory; never a caller-supplied URL. Anything else (bare `Remote`, `Remote[str]`, two names) raises `DefinitionError` when the class is defined. |
+| Injection | Library-managed binding | New per run | Excluded from caller arguments, the Agent Card and every schema, like `Inject[T]`. A caller sending an argument with the parameter's name is rejected as an unknown argument. Tools cannot take `Remote` parameters. |
+| Directory | `Runtime(directory=...)` / `AgentApp(directory=...)` | Required when a skill takes `Remote` | Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. The application opens and closes it. |
+| Card security | Card without `security_schemes`/`security_requirements` | Until outbound identity (#92, #93) | A card that requires credentials fails with `DefinitionError`. Foundry A2A endpoints require an Entra bearer token, so Foundry agents cannot be called until #92. A source's `card_headers` are used only to fetch cards, never to call agents. |
+| Identity mode (later) | `on_behalf_of` or `service`; config carrier open | OBO for Entra caller, service explicit otherwise | No token forwarding, authority amplification or stronger-identity fallback. |
+| Hop limit (later, #89) | Counter/setting representation open | Maximum 5 remote hops by default | Exceeding depth fails, including recursive loops; no guessed wire field. |
+
+Define a `type` alias per remote to keep signatures short:
 
 ```python
+from typing import Literal
+
 from agentframe import Agent, Remote, RunContext, agent, skill
+
+type Research = Remote[Literal["research-agent"]]
 
 
 @agent(name="Planner", description="Requests research.", version="0.1.0")
 class Planner(Agent):
     @skill(id="plan", name="Plan", description="Research a goal.", tags=["planning"])
-    async def plan(
-        self, goal: str, research: Remote["research-agent"], ctx: RunContext,
-    ) -> str:
+    async def plan(self, goal: str, research: Research, ctx: RunContext) -> str:
         return await research.ask("Research " + goal)
 ```
 
-**Behavior / failures:** unresolved configured name fails startup; refresh,
-authentication, permission, deadline and usage failures remain explicit.
-Injection is not delegation authorization. No automatic multi-agent loop or
-clarification conversation.
+Host it with a directory the application opened:
 
-**Related:** [`AgentDirectory`](#agentdirectory),
+```python
+from agentframe import AgentApp, AgentDirectory, AllowAnonymous, HostConfig
+
+
+def planner_app(directory: AgentDirectory) -> AgentApp:
+    return AgentApp(
+        agent=Planner(),
+        # Development placeholder: choose real authentication for a network host.
+        host=HostConfig(public_url="http://127.0.0.1:8000", auth=AllowAnonymous()),
+        directory=directory,
+    )
+```
+
+**Behavior / failures:** a skill with a `Remote` parameter and no directory
+fails with `DefinitionError` when the `AgentApp` is constructed (locally, at
+`Runtime.validate` or the first run). At server startup,
+[`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes) looks up every
+name: an unknown name or a card that requires credentials raises
+`DefinitionError`, a card that cannot be fetched or validated (including an
+interface URL on another origin) raises `RemoteAgentError`, and startup fails.
+Every run also looks its names up at its start, inside the run's deadline, and
+fails the same way before the skill runs. Each run gets a new binding that
+knows the run's deadline, principal and invocation ID. Injection is not
+delegation authorization; no automatic multi-agent loop or clarification
+conversation.
+
+**Related:** [`AgentDirectory`](#agentdirectory), [`Remote.ask`](#remoteask),
 [identity](../guides/authorization.md#cross-agent-identity-propagation-m8).
 
 ## `Remote.call`
@@ -779,8 +813,12 @@ collision handling remain open, not new business-argument envelope syntax.
 | Return | Validated requested output when specified | After task completion | Within remaining caller deadline; native result/part mapping still open. |
 
 ```python
+from typing import Literal
+
 from pydantic import BaseModel
 from agentframe import Remote
+
+type Research = Remote[Literal["research-agent"]]
 
 
 class Source(BaseModel):
@@ -788,7 +826,7 @@ class Source(BaseModel):
     url: str
 
 
-async def sources(research: Remote["research-agent"], goal: str) -> list[Source]:
+async def sources(research: Research, goal: str) -> list[Source]:
     return await research.call(
         "find_sources", topic=goal, output=list[Source], max_total_tokens=20_000,
     )
@@ -807,30 +845,60 @@ once, preserve other-agent usage as unknown. Cancellation is not rollback.
 
 ## `Remote.ask`
 
-**Purpose / decision:** send plain A2A text to any compatible A2A agent,
-without requiring AgentFrame structured selection.
+**Purpose / signature:** send plain A2A text to any compatible A2A 1.0 agent,
+without AgentFrame's structured skill selection. Implemented (#87).
 
-**Decided call:** `await research.ask(text)`; text result mapping is required,
-exact non-text response handling/extra options remain open.
+```python
+async def ask(self, text: str) -> str: ...
+```
 
 | Parameter/result | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Text | `str` | Required | Untrusted prompt, not identity or trusted instructions. |
-| Return | Text (`str`) | After task completion | Subject to output policy; non-text mappings remain open. |
-| Deadline/usage | Shared invocation controls | Automatic | Caller enforces remaining time; AgentFrame extension when supported, otherwise usage unknown. |
+| `text` | `str` | Required | Sent as one native text part. Not identity or trusted instructions for the peer. |
+| Return | `str` | After the task completes | The text parts of the task's artifacts (or of its final message when it has none), joined by newlines. Untrusted remote content. |
 
 ```python
+from typing import Literal
+
 from agentframe import Remote
 
+type Research = Remote[Literal["research-agent"]]
 
-async def notes(research: Remote["research-agent"], goal: str) -> str:
+
+async def notes(research: Research, goal: str) -> str:
     return await research.ask("Summarize recent findings on " + goal)
 ```
 
-**Behavior / failures:** uses native messages/tasks and waits within the caller
-deadline. Input-required raises `ClarificationNeededError`; never auto-converse.
-Identity exchange failure fails even for extension-unaware targets; plain text
-is not permission to forward a bearer token. No implicit structured fallback.
+**Behavior / failures:** sends `SendMessage` with the official SDK's JSON-RPC
+client transport, using the directory's HTTP client, only to the card's
+validated interface URL (same origin as the registry's card URL). The request
+asks to return immediately, so the remote task ID is known at once; an
+unfinished task is then polled with `GetTask` (after 0.25 s, 0.5 s, then every
+1 s). Every request carries `A2A-Version: 1.0` and a timeout of the run's
+remaining time; headers go per request, never into the shared client's
+defaults.
+
+- Completed: the joined text. A result with a non-text part raises
+  `RemoteAgentError`.
+- Input required: raises [`ClarificationNeededError`](#clarificationneedederror)
+  with the question. Nothing answers it automatically.
+- Failed, rejected, cancelled or auth required, a task that disappears, or an
+  unreachable or refusing peer: raises
+  [`RemoteAgentError`](runtime.md#remoteagenterror) with the remote task ID and
+  state when known. The remote status text is never put in the message.
+- The run's deadline passes: the remote task gets a best-effort `CancelTask`,
+  then the run raises `TimeoutLimitExceededError`.
+- The run is cancelled (hosted `CancelTask`, shutdown or local cancellation):
+  the remote task gets a best-effort `CancelTask` and the cancellation goes on.
+  If the peer has not replied with the task ID yet, the send finishes in the
+  background (up to 2 seconds) to learn it. The cancel request is bounded to
+  2 seconds and is still sent if the run is cancelled again.
+
+An uncaught `ClarificationNeededError` in a hosted skill fails the
+orchestrator's own task (`FAILED`) with its safe message; it is not turned into
+the orchestrator's input-required state, and there is no resume. Deadline,
+usage and hop propagation to AgentFrame peers is #89; there is no implicit
+structured fallback.
 
 **Related:** [`Remote.call`](#remotecall), [request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
 
@@ -838,26 +906,27 @@ is not permission to forward a bearer token. No implicit structured fallback.
 
 **Purpose / decision:** surface a remote input-required question to application
 code, without automated back-and-forth or durable workflow resumption.
+Implemented (#87) as an `AgentFrameError` subclass.
 
-**Signature status:** `AgentFrameError` subtype with question, invocation ID and
-safe message; constructor/question accessor and task-reference fields remain open.
-
-| Field | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Question | Remote question; exact representation/accessor open | Required | Untrusted remote content, policy-filtered before user display. |
-| Inherited error contract | Invocation ID, safe message | Required | No private provider payloads or cross-caller task disclosure. |
+| Field | Type | Meaning and constraints |
+| --- | --- | --- |
+| `question` | `str` | The remote agent's question (its text parts, joined by newlines). Untrusted remote content: check it before showing it to anyone. |
+| `task_id` | `str` | The remote task waiting for the answer. |
+| `context_id` | `str` | The remote task's context ID. |
+| `message` | `str` | Safe message naming the agent; never contains the question. |
+| `invocation_id` | `str \| None` | The run that asked the remote agent. |
 
 ```python
 from agentframe import ClarificationNeededError
 
 
-def clarification_correlation(error: ClarificationNeededError) -> object:
-    return error.invocation_id
+def clarification_reference(error: ClarificationNeededError) -> tuple[str, str]:
+    return error.task_id, error.question
 ```
 
-**Behavior / failures:** `call` and `ask` stop on native input-required.
-Application decides subsequent action; native state is not rewritten as remote
-failure merely because the local client raises. Follow-up/task-ID API remains open.
+**Behavior / failures:** [`ask`](#remoteask) raises it on native
+input-required; the application decides what to do next. The remote task is
+left waiting, not cancelled. An API to answer it is deferred.
 
 **Related:** [`AgentFrameError`](runtime.md#agentframeerror),
 [remote calls](../design/discovery.md#planned-remote-calls-and-cross-agent-context).

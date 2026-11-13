@@ -440,7 +440,7 @@ origin as the registry `card_url`; no caller credentials. Remote failures
 raise `RemoteAgentError`; duplicate names across sources `DefinitionError`.
 No construction I/O or background tasks; closes only its own client.
 Compose `AgentDirectory(sources=[...])`, inject via `AgentApp(directory=...)`,
-and validate configured `Remote["name"]` bindings at startup.
+and validate configured `Remote[Literal["name"]]` bindings at startup.
 `directory.find(skill="find_sources")` / `find(tags=["research"])` returns
 matching native cards from bounded validated enrichment, not assumed reference fields.
 Implemented (#85): `find(*, skill=None, tags=())`, at least one filter; skill
@@ -464,11 +464,21 @@ references/cards/source files; enforce application-selected outbound auth and
 destination/redirect policy, bounded reads/deadlines/cancellation and safe
 telemetry. Discovery does not delegate or auto-expose skills as tools. A separate
 `RemoteAgentClient` may remain underlying/explicit client with construction open.
-Author skills use `Remote["name"]` (excluded from external schemas),
+Author skills use `Remote[Literal["name"]]` (excluded from external schemas),
 `call("skill", ..., output=list[Source], max_total_tokens=...)` for structured
 A2A, or `ask(text)` for any compatible peer. Both wait within caller deadline;
 remote input-required raises `ClarificationNeededError` with question, no
-automatic back-and-forth. See `docs/design/discovery.md` and `docs/api/discovery.md`.
+automatic back-and-forth. Implemented (#87): `class Remote[N: str]` read from the
+`Literal` (alias `type Research = Remote[Literal["research-agent"]]`; string form
+fails mypy), `Runtime(directory=)`/`AgentApp(directory=)` (app-owned; no
+directory -> construction `DefinitionError`), `Runtime.validate_remotes` at
+startup, bound per run inside its deadline. `ask` sends via the SDK
+`JsonRpcTransport` with the directory client to `interface_url` only,
+`return_immediately` then `GetTask` polling (0.25 s -> 1 s), per-request
+`A2A-Version`/timeout headers; deadline or cancellation sends best-effort
+`CancelTask`. Cards declaring security are refused until #92/#93.
+`ClarificationNeededError(question, task_id, context_id)` fails a hosted
+orchestrator task. See `docs/design/discovery.md` and `docs/api/discovery.md`.
 
 Plan cross-hop verified identity/delegation without authority amplification,
 permissions, deadlines, remaining token allowance and trace/correlation;

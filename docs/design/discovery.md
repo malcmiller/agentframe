@@ -24,7 +24,7 @@ trusted source -> AgentRegistry -> validated AgentReference
                                       |
                  application selection and authorization
                                       |
-                   injected Remote["name"] (native A2A client)
+                   injected Remote[Literal["name"]] (native A2A client)
 ```
 
 | Surface | Responsibility | Not its responsibility |
@@ -33,7 +33,7 @@ trusted source -> AgentRegistry -> validated AgentReference
 | `AgentReference` | Validated name plus Agent Card URL (`name`, `card_url`). | Credentials, authorization grants, assumed skill metadata or guaranteed live endpoint. |
 | `AgentQuery` | Name filter (`names`, or `None` for every agent). | Skill/tag matching (done on cards by `AgentDirectory.find`) or granting access. |
 | `AgentDirectory` | Multiple sources; internal native-card fetch/validation under a fixed destination rule; cache, stale refresh, card-backed `find` (#85) and resource lifecycle. | Workflow scheduling, remote task lifecycle, or per-backend card-refresh loops in application code. |
-| `Remote["name"]` | Injected remote authoring surface: structured `call`, plain-text `ask`, bounded task waiting. | Automatic clarification conversations, authority grants or per-method RPC. |
+| `Remote[Literal["name"]]` | Injected remote authoring surface: structured `call`, plain-text `ask`, bounded task waiting. | Automatic clarification conversations, authority grants or per-method RPC. |
 | `RemoteAgentClient` | Underlying/explicit native A2A client; construction remains open. | A competing wire protocol or automatic dispatch from discovery. |
 
 A2A defines agent interaction and native Agent Cards, not a registry protocol.
@@ -180,7 +180,7 @@ reads and preserve source/refresh errors; do not silently return an incomplete
 search as complete. Implemented (#85); decisions confirmed 2026-11-12: `skill`
 and `tags` must match on the same advertised skill and tags are all-of; `find`
 returns cards, and dynamic invocation of a found agent is deferred to a later
-story driven by real usage (orchestrators call configured `Remote["name"]`
+story driven by real usage (orchestrators call configured `Remote[Literal["name"]]`
 bindings); no pagination in M8+, since `find` reads every listed agent and is
 meant for small curated sources.
 Restrict eligible discovery candidates using caller policy; matching is never
@@ -281,7 +281,7 @@ This demonstrates discovery only, not a useful card serializer or delegation.
 The application must enforce caller eligibility and scope the directory/cache
 correctly before exposing its dependency. A separate injected
 remote binding can consume discovered references/cards using native A2A
-after selection and current authorization. `Remote["name"]` is the authoring
+after selection and current authorization. `Remote[Literal["name"]]` is the authoring
 annotation; its configured name is validated at startup through the directory.
 Like `Inject[T]`, it is excluded from caller arguments and published schemas.
 Card skills are descriptive, not automatic
@@ -321,7 +321,11 @@ reduce caller permissions.
 
 ### Planned remote calls and cross-agent context
 
-The M8+ authoring surface is `Remote["research-agent"]` with:
+The M8+ authoring surface is a `Remote[Literal["research-agent"]]` skill
+parameter, usually through an alias such as
+`type Research = Remote[Literal["research-agent"]]` (the string form
+`Remote["research-agent"]` fails `mypy --strict`). `ask` is implemented (#87);
+`call` is #88:
 
 - `await research.call("find_sources", topic=goal, output=list[Source])`:
   structured extension selection with JSON arguments and validated returned data.
@@ -370,13 +374,18 @@ Trace/correlation propagation stays independent of optional exporters.
 
 ### Worked composition examples
 
-These are unimplemented approved call forms, with application data models:
+These are approved call forms, with application data models; `ask` is
+implemented (#87), `call` is not yet (#88):
 
 ```python
 import asyncio
+from typing import Literal
 
 from pydantic import BaseModel
 from agentframe import Agent, AgentDirectory, Remote, RunContext, agent, skill
+
+type Research = Remote[Literal["research-agent"]]
+type Review = Remote[Literal["review-agent"]]
 
 
 class Source(BaseModel):
@@ -392,9 +401,7 @@ class Plan(BaseModel):
 @agent(name="Planner", description="Combines research findings.", version="0.1.0")
 class Planner(Agent):
     @skill(id="plan", name="Plan", description="Research a goal.", tags=["planning"])
-    async def plan(
-        self, goal: str, research: Remote["research-agent"], ctx: RunContext,
-    ) -> Plan:
+    async def plan(self, goal: str, research: Research, ctx: RunContext) -> Plan:
         sources = await research.call(
             "find_sources", topic=goal, output=list[Source], max_total_tokens=20_000,
         )
@@ -402,9 +409,7 @@ class Planner(Agent):
         return Plan(sources=sources, notes=notes)
 
 
-async def compare(
-    goal: str, research: Remote["research-agent"], review: Remote["review-agent"],
-) -> tuple[str, str]:
+async def compare(goal: str, research: Research, review: Review) -> tuple[str, str]:
     async with asyncio.TaskGroup() as group:
         findings = group.create_task(research.ask("Research " + goal))
         critique = group.create_task(review.ask("Review " + goal))

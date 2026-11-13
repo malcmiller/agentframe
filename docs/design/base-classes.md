@@ -35,7 +35,7 @@ Configuration and composition are intentional alternatives to inheritance.
 | A2A host | Configured composition | `AgentApp` assembles an agent, host configuration, and SDK components. |
 | Discovery sources (next core release) | Small abstract base and supplied adapters | Extend read-only `AgentRegistry`; validated references and supported queries do not require registration writes. |
 | Card discovery lifecycle (next core release) | Library-managed composition | `AgentDirectory` combines registry/resolver/cache/refresh and owned-resource lifecycle; no per-backend user HTTP loops. |
-| Remote invocation (M8+) | `Remote["name"]` skill annotation | Structured `call`, plain-text `ask`, bounded task waiting; underlying client distinct from discovery. No initial helper/graph engine. |
+| Remote invocation (M8+) | `Remote[Literal["name"]]` skill annotation | Structured `call`, plain-text `ask`, bounded task waiting; underlying client distinct from discovery. No initial helper/graph engine. |
 | Streaming (later) | Optional protocol adapter | Planned AG-UI frontend events, separate from A2A/MCP/OTel; no first-release streaming or UI dependency. |
 
 These are design responsibilities, not a requirement to implement every
@@ -143,7 +143,7 @@ skills compose independently deployed agents, without a workflow/graph engine.
 | `FileAgentRegistry` | `FileAgentRegistry("agents.yaml")`, YAML name+URL list; detailed keys/schema/version open. |
 | `FoundryAgentRegistry` | Chosen Foundry project agents API via `azure-ai-projects` 2.x; A2A-enabled filtering, card mapping, auth/RBAC and pagination remain open. No tested implementation; model deployments are not agent endpoints. |
 | `AgentDirectory` | Implemented (#84): `AgentDirectory(sources=[...], card_ttl_seconds=300, allow_stale=False, allow_http_hosts=(), http_client=None)`; validated native cards cached 300 seconds, refreshed on stale access, failed refresh raises unless `allow_stale=True`; internal fetcher/cache (no public `AgentCardResolver`/`CardCacheConfig`). Card-backed `find(skill=... / tags=...)` is implemented (#85); `AgentApp(directory=...)` validates named remotes at startup (#87). |
-| `Remote["name"]` | Managed `call(skill, ..., output=Type, max_total_tokens=...)` and `ask(text)`; input-required raises `ClarificationNeededError`, no auto-conversation. |
+| `Remote[Literal["name"]]` | Managed `call(skill, ..., output=Type, max_total_tokens=...)` and `ask(text)`; input-required raises `ClarificationNeededError`, no auto-conversation. |
 | `RemoteAgentClient` | Underlying/explicit native A2A client; construction still open, author calls above decided. |
 
 No import/construction I/O or implicit polling. Directory lifecycle is not

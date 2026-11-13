@@ -279,15 +279,11 @@ class AgentDirectory:
         reference: AgentReference,
         previous: _CachedCard | None,
     ) -> DiscoveredAgent:
-        if self._client is None:
-            raise DefinitionError(
-                "Open the AgentDirectory with 'async with' before using it, "
-                "or pass http_client=."
-            )
+        client = self._open_client()
         headers = await source.card_headers(reference)
         try:
             validated = await fetch_card(
-                self._client, reference, self._allow_http_hosts, headers
+                client, reference, self._allow_http_hosts, headers
             )
         except RemoteAgentError as error:
             if previous is None or not self._allow_stale:
@@ -298,6 +294,22 @@ class AgentDirectory:
             return _discovered(reference, previous.validated, stale=True)
         self._cards[reference.card_url] = _CachedCard(validated, monotonic())
         return _discovered(reference, validated)
+
+    def _open_client(self) -> httpx.AsyncClient:
+        """Return the HTTP client the directory fetches cards with.
+
+        Package-internal: remote calls (``Remote.ask``) send their requests
+        with it too. It carries no credentials in its defaults.
+
+        Raises:
+            DefinitionError: The directory needs ``async with`` first.
+        """
+        if self._client is None:
+            raise DefinitionError(
+                "Open the AgentDirectory with 'async with' before using it, "
+                "or pass http_client=."
+            )
+        return self._client
 
     def _is_fresh(self, cached: _CachedCard) -> bool:
         return monotonic() - cached.fetched_at < self._card_ttl_seconds

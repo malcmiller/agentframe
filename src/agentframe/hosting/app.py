@@ -44,6 +44,7 @@ from starlette.types import Receive, Scope, Send
 
 from agentframe.authoring.agent import Agent
 from agentframe.authoring.services import Services
+from agentframe.discovery.directory import AgentDirectory
 from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.hosting.a2a_executor import (
     PRINCIPAL_STATE_KEY,
@@ -100,8 +101,9 @@ class AgentApp:
     the app validates everything that needs no I/O and starts nothing; serve
     it with any ASGI server. Server startup then checks the model's input
     token limits with ``Runtime.validate_model`` and fails if one is unknown,
-    and checks a ``ModelRouter``'s model the same way. The app never closes
-    models; the application owns them.
+    checks a ``ModelRouter``'s model the same way, and checks every
+    ``Remote`` parameter's agent with ``Runtime.validate_remotes``. The app
+    never closes models or the directory; the application owns them.
     Hosted runs and routing use limits capped by ``host.limits_ceiling``.
     At most ``host.max_concurrent_runs`` messages run at once; another
     ``SendMessage`` gets HTTP 503 with ``Retry-After: 1`` and creates no task.
@@ -143,14 +145,19 @@ class AgentApp:
             here and its model is checked at server startup.
         a2a: A2A endpoint settings, such as message deduplication. Defaults
             to ``A2AConfig()``.
+        directory: Where ``Remote[Literal["name"]]`` parameters find their
+            agents, when ``runtime`` is not given. Server startup looks up
+            every name and fails if one is unknown or its card is invalid or
+            requires credentials. The application opens and closes it.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
-            not registered, an agent or skill limit is explicitly set above
+            not registered, a skill takes a ``Remote`` parameter and there
+            is no directory, an agent or skill limit is explicitly set above
             ``host.limits_ceiling``, ``runtime`` is combined with ``services``,
-            ``authorization`` or ``policy``, the authenticator cannot describe its
-            security on the Agent Card, or a ``ModelRouter`` cannot describe a
-            skill's arguments as a JSON schema.
+            ``authorization``, ``policy`` or ``directory``, the authenticator
+            cannot describe its security on the Agent Card, or a
+            ``ModelRouter`` cannot describe a skill's arguments as a JSON schema.
     """
 
     def __init__(
@@ -164,17 +171,25 @@ class AgentApp:
         policy: ExecutionPolicy | None = None,
         router: SkillRouter | None = None,
         a2a: A2AConfig | None = None,
+        directory: AgentDirectory | None = None,
     ) -> None:
         if runtime is not None and (
-            services is not None or authorization is not None or policy is not None
+            services is not None
+            or authorization is not None
+            or policy is not None
+            or directory is not None
         ):
             raise DefinitionError(
-                "Pass services, authorization and policy either to AgentApp or "
-                "to its Runtime, not both; the runtime is the single source of them."
+                "Pass services, authorization, policy and directory either to "
+                "AgentApp or to its Runtime, not both; the runtime is the single "
+                "source of them."
             )
         if runtime is None:
             runtime = Runtime(
-                services=services, authorization=authorization, policy=policy
+                services=services,
+                authorization=authorization,
+                policy=policy,
+                directory=directory,
             )
         runtime.validate(agent)
         _check_limits_within_ceiling(agent, host)
@@ -211,9 +226,10 @@ class AgentApp:
         @asynccontextmanager
         async def lifespan(_app: Starlette) -> AsyncIterator[None]:
             # Fails startup, before any request is served, when a skill or
-            # the built-in router has no input token limit. Custom routers
-            # check their own models.
+            # the built-in router has no input token limit, or a remote agent
+            # cannot be called. Custom routers check their own models.
             await runtime.validate_model(agent, limits_ceiling=host.limits_ceiling)
+            await runtime.validate_remotes(agent)
             if isinstance(router, ModelRouter):
                 await router.validate_model(routing_limits(agent, host.limits_ceiling))
             lifecycle.mark_started()

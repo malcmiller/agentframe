@@ -314,7 +314,7 @@ transient model retries and A2A deduplication never promise exactly-once actions
 **The next core release (M8+) is multi-agent A2A composition**, not an optional
 discovery add-on. Read-first registries and a managed directory provide validated
 references, native card resolution, five-minute caching and stale refresh.
-Skills receive `Remote["name"]` bindings: `call("skill", ..., output=Type)`
+Skills receive `Remote[Literal["name"]]` bindings: `call("skill", ..., output=Type)`
 uses structured A2A, while `ask(text)` uses plain A2A text. Both await completion;
 input-required raises `ClarificationNeededError`, never automatic back-and-forth.
 Orchestrators are ordinary AgentFrame

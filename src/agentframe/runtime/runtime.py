@@ -16,6 +16,8 @@ from agentframe.authoring.agent import Agent
 from agentframe.authoring.context import RunContext
 from agentframe.authoring.definitions import SkillDefinition
 from agentframe.authoring.services import Services
+from agentframe.discovery.directory import AgentDirectory
+from agentframe.discovery.remote import bind_remote, find_remote
 from agentframe.errors import (
     AgentFrameError,
     DefinitionError,
@@ -77,6 +79,9 @@ class Runtime:
         policy: Application content checks on each run's input, every model
             request and the output. They add to authorization, never replace
             it. ``None`` means no content checks.
+        directory: Where ``Remote[Literal["name"]]`` parameters find their
+            agents. The application opens and closes it. ``None`` means
+            skills cannot take ``Remote`` parameters.
     """
 
     def __init__(
@@ -86,11 +91,13 @@ class Runtime:
         authorization: AuthorizationPolicy | None = None,
         tool_authorization: ToolAuthorizationPolicy | None = None,
         policy: ExecutionPolicy | None = None,
+        directory: AgentDirectory | None = None,
     ) -> None:
         self._services = services or Services()
         self._authorization = authorization
         self._tool_authorization = tool_authorization
         self._policy = policy
+        self._directory = directory
 
     def validate(self, agent: Agent) -> None:
         """Check that ``agent`` can run here before accepting any work.
@@ -100,11 +107,13 @@ class Runtime:
 
         Raises:
             DefinitionError: The agent's class is not decorated with ``@agent``,
-                or an ``Inject[T]`` parameter of a skill or registered tool has
-                no registered service.
+                an ``Inject[T]`` parameter of a skill or registered tool has
+                no registered service, or a skill takes a ``Remote``
+                parameter and the runtime has no directory.
         """
         for skill in type(agent).definition().skills.values():
             self._check_services(f"Skill '{skill.id}'", skill.injected)
+            self._check_directory(skill)
         for tool in agent.tools.values():
             self._check_services(f"Tool '{tool.name}'", tool.injected)
 
@@ -153,6 +162,33 @@ class Runtime:
             except DefinitionError as error:
                 raise DefinitionError(f"Skill '{skill.id}': {error.message}") from None
 
+    async def validate_remotes(self, agent: Agent) -> None:
+        """Check that every ``Remote`` parameter's agent can be called.
+
+        Looks each name up in the directory, fetching its card. ``AgentApp``
+        calls this at startup; local runs that skip it fail the same way
+        when a skill with that parameter runs.
+
+        Args:
+            agent: Instance of an ``@agent``-decorated class.
+
+        Raises:
+            DefinitionError: A skill takes a ``Remote`` parameter and the
+                runtime has no directory, the directory is not open, no
+                source lists the name, or the agent's card requires
+                credentials.
+            RemoteAgentError: An agent's card cannot be fetched or is invalid.
+        """
+        skills = type(agent).definition().skills.values()
+        for skill in skills:
+            self._check_directory(skill)
+        names = {name for skill in skills for name in skill.remotes.values()}
+        if not names:
+            return
+        assert self._directory is not None  # _check_directory passed.
+        for name in sorted(names):
+            await find_remote(self._directory, name)
+
     async def invoke(
         self,
         agent: Agent,
@@ -199,8 +235,11 @@ class Runtime:
 
         Raises:
             InputValidationError: Unknown skill or invalid arguments.
-            DefinitionError: Undecorated agent, or a service needed by the
-                skill or a registered tool is not registered.
+            DefinitionError: Undecorated agent, a service needed by the
+                skill or a registered tool is not registered, or a ``Remote``
+                parameter's agent is unknown or requires credentials.
+            RemoteAgentError: A ``Remote`` parameter's agent card cannot be
+                fetched or is invalid.
             PermissionDeniedError: The principal lacks a permission the skill
                 or a tool the model called requires, an authorization policy
                 denied the run or the tool call, or an execution policy check
@@ -296,6 +335,7 @@ class Runtime:
                 f"Agent '{definition.name}' has no skill with the requested id"
             )
         self._check_services(f"Skill '{skill.id}'", skill.injected)
+        self._check_directory(skill)
         for tool in agent.tools.values():
             self._check_services(f"Tool '{tool.name}'", tool.injected)
         _check_permissions(skill, principal)
@@ -339,7 +379,10 @@ class Runtime:
                 )
                 ctx = RunContext(invocation_id, principal, deadline, generation)
                 injected = await services.resolve(skill.injected)
-                result = await method(**validated_arguments, **injected, ctx=ctx)
+                remotes = await self._bind_remotes(skill, ctx)
+                result = await method(
+                    **validated_arguments, **injected, **remotes, ctx=ctx
+                )
         except TimeoutError:
             if not timeout.expired():
                 raise
@@ -381,6 +424,29 @@ class Runtime:
             # requested resource exists.
             raise PermissionDeniedError(
                 f"Skill '{skill.id}' was denied by the authorization policy"
+            )
+
+    async def _bind_remotes(
+        self, skill: SkillDefinition, ctx: RunContext
+    ) -> dict[str, object]:
+        """Create this run's ``Remote`` bindings, within the run's deadline."""
+        bindings: dict[str, object] = {}
+        for parameter_name, name in skill.remotes.items():
+            assert self._directory is not None  # Checked before the run starts.
+            bindings[parameter_name] = await bind_remote(
+                self._directory,
+                name,
+                deadline=ctx.deadline,
+                invocation_id=ctx.invocation_id,
+                principal=ctx.principal,
+            )
+        return bindings
+
+    def _check_directory(self, skill: SkillDefinition) -> None:
+        if skill.remotes and self._directory is None:
+            raise DefinitionError(
+                f"Skill '{skill.id}' takes a Remote parameter, but no directory "
+                "was given; pass directory= to Runtime or AgentApp"
             )
 
     def _check_services(self, where: str, injected: Mapping[str, object]) -> None:
