@@ -55,6 +55,11 @@ from examples.orders import create_app as create_orders_app
 from examples.routed_assistant import create_app as create_routed_app
 from local_server import ServeLocally
 
+# The SDK's own HTTP client times out after httpx's default 5 seconds, too soon
+# for real models. This stays above the agents' 120-second run timeout, so the
+# client never gives up before the server's own deadline.
+A2A_CLIENT_TIMEOUT_SECONDS = 150
+
 # A name no provider has, to prove an unknown model fails clearly.
 MISSING_MODEL = "agentframe-test-missing-model"
 
@@ -188,6 +193,13 @@ async def model(open_model: OpenModel) -> AsyncIterator[Model]:
         yield configured_model
 
 
+@pytest.fixture
+async def http() -> AsyncIterator[httpx.AsyncClient]:
+    """An HTTP client for A2A calls that waits as long as a real model run."""
+    async with httpx.AsyncClient(timeout=A2A_CLIENT_TIMEOUT_SECONDS) as client:
+        yield client
+
+
 # Local runs through Runtime
 
 
@@ -266,16 +278,15 @@ async def test_tiny_output_limit_cuts_structured_output_short(model: Model) -> N
 
 
 async def test_hosted_agent_answers_a_structured_a2a_call(
-    serve: ServeLocally, model: Model
+    serve: ServeLocally, model: Model, http: httpx.AsyncClient
 ) -> None:
     def make_app(public_url: str) -> AgentApp:
         host = HostConfig(public_url=public_url, auth=AllowAnonymous())
         return AgentApp(agent=Assistant(model=model), host=host)
 
     async with serve(make_app) as base_url:
-        async with httpx.AsyncClient() as http:
-            card = await A2ACardResolver(http, base_url).get_agent_card()
-        async with await connect(base_url) as client:
+        card = await A2ACardResolver(http, base_url).get_agent_card()
+        async with await connect(base_url, http=http) as client:
             task = await call_skill(
                 client, "answer", {"question": "Reply with the word: ready"}
             )
@@ -291,13 +302,19 @@ async def test_hosted_agent_answers_a_structured_a2a_call(
 
 
 async def test_example_summarizes_over_a2a(
-    serve: ServeLocally, model: Model, monkeypatch: pytest.MonkeyPatch
+    serve: ServeLocally,
+    model: Model,
+    http: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def make_app(public_url: str) -> AgentApp:
         monkeypatch.setenv("ASSISTANT_PUBLIC_URL", public_url)
         return create_app(model)
 
-    async with serve(make_app) as base_url, await connect(base_url) as client:
+    async with (
+        serve(make_app) as base_url,
+        await connect(base_url, http=http) as client,
+    ):
         task = await call_skill(
             client, "summarize", {"text": "Cats sleep a lot. Cats like fish."}
         )
@@ -338,7 +355,10 @@ async def test_agent_completes_a_tool_round_trip(model: Model) -> None:
 
 
 async def test_order_example_uses_a_tool_over_a2a(
-    serve: ServeLocally, model: Model, monkeypatch: pytest.MonkeyPatch
+    serve: ServeLocally,
+    model: Model,
+    http: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await require_tools(model)
     monkeypatch.setenv("ORDERS_API_KEY", "test-orders-key")
@@ -349,7 +369,7 @@ async def test_order_example_uses_a_tool_over_a2a(
 
     async with (
         serve(make_app) as base_url,
-        await connect(base_url, "test-orders-key") as client,
+        await connect(base_url, "test-orders-key", http=http) as client,
     ):
         task = await call_skill(
             client, "order_help", {"request": "What is the status of order A1?"}
@@ -368,17 +388,20 @@ async def test_order_example_uses_a_tool_over_a2a(
 
 
 async def test_free_text_is_routed_to_the_skill_it_asks_for(
-    serve: ServeLocally, model: Model, monkeypatch: pytest.MonkeyPatch
+    serve: ServeLocally,
+    model: Model,
+    http: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def make_app(public_url: str) -> AgentApp:
         monkeypatch.setenv("ASSISTANT_PUBLIC_URL", public_url)
         return create_routed_app(model)
 
-    async with serve(make_app) as base_url, await connect(base_url) as client:
-        # Two reasoning model calls can take longer than the client's default.
-        task = await say(
-            client, "Convert 25 degrees Celsius to Fahrenheit.", timeout=60
-        )
+    async with (
+        serve(make_app) as base_url,
+        await connect(base_url, http=http) as client,
+    ):
+        task = await say(client, "Convert 25 degrees Celsius to Fahrenheit.")
 
     # Routing is nondeterministic, so only the selected skill and the
     # presence of its argument are checked: only to_fahrenheit returns data.
