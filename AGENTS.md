@@ -87,7 +87,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | Path | Contents |
 | --- | --- |
 | `src/agentframe/__init__.py` | Public API re-exports; every public name is importable from `agentframe`. |
-| `src/agentframe/` (root) | `errors.py`, `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run`). |
+| `src/agentframe/` (root) | `errors.py`, `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run` / `dev`), `project.py` (`agentframe.yaml`), `dev.py` (`dev_settings()`), `dev_server.py` (`agentframe dev` supervisor). |
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
 | `src/agentframe/runtime/` | `Runtime`, generation, `RunLimits`, `RunOptions`, `Usage`. |
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`; `strict_schema.py` (OpenAI strict JSON-schema converter). |
@@ -544,11 +544,21 @@ specialist with propagated context, and non-AgentFrame A2A client/server interop
 Development support starts with running N agents locally, then container
 packaging; Foundry/Kubernetes templates are later. M2 `agentframe run module:create_app`
 serves the app's own configured `AgentApp` (`--dev module:Class` is localhost-only
-anonymous; Uvicorn is the `server` extra). M8+ `agentframe dev` reads agentframe.yaml (names/modules/ports),
-starts localhost agents, writes local registry, configures dev API keys and
-combines logs tagged by agent/invocation. One container per agent; Dockerfile
-template and generated docker-compose example. Exact schema/generation/key
-lifecycle remains open; no actual config files before implementation.
+anonymous; Uvicorn is the `server` extra). Implemented (#95): `agentframe dev`
+reads agentframe.yaml (`agents: {name: {app: module:create_app, port}}`,
+`project.py`), starts each as `python -m agentframe run` on 127.0.0.1 in file
+order after the previous `/ready`, writes `.agentframe/agents.yaml` (name/url
+only, self-gitignored), generates one random key per agent per session (an
+agent calls others with its own key, verified as its name), passes keys only
+via child env (`AGENTFRAME_DEV`, `AGENTFRAME_PUBLIC_URL`,
+`AGENTFRAME_DEV_REGISTRY`, `AGENTFRAME_DEV_API_KEYS`,
+`AGENTFRAME_DEV_REMOTE_KEYS`), never disk/logs; optional
+`AGENTFRAME_DEV_CLIENT_KEY` is caller `developer`. Factories call
+`dev_settings()` (refuses without `AGENTFRAME_DEV=1`; directory has its own
+http client; reads `AGENTFRAME_ALLOW_HTTP_HOSTS`). Output prefixed
+`[agent-name]`, agents log INFO; failures stop all and exit 1; Ctrl+C sends
+one SIGTERM (children in own session), kills after 35 s. One container per
+agent; Dockerfile template and generated docker-compose example (#96) open.
 No hosting platform is implied. See `docs/guides/development.md`.
 
 ### Initial release boundaries

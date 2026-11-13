@@ -7,6 +7,7 @@ from agentframe.authoring.context import RunContext
 from agentframe.authoring.decorators import agent, skill, tool
 from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
 from agentframe.authoring.services import Inject, Services
+from agentframe.dev import DevSettings, dev_settings
 from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
 from agentframe.discovery.identity import (
     APIKeyCredential,
@@ -123,6 +124,7 @@ __all__ = [
     "ClarificationNeededError",
     "DeclaresCardSecurity",
     "DefinitionError",
+    "DevSettings",
     "DiscoveredAgent",
     "EntraAppCredential",
     "EnvironmentAgentRegistry",
@@ -183,6 +185,7 @@ __all__ = [
     "VerifiedCaller",
     "__version__",
     "agent",
+    "dev_settings",
     "skill",
     "tool",
 ]

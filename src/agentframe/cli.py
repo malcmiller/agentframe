@@ -4,6 +4,10 @@ Usage::
 
     agentframe run myapp.hosting:create_app --host 127.0.0.1 --port 8000
     agentframe run myapp.agents:Echo --dev
+    agentframe dev
+
+``agentframe dev`` runs every agent listed in ``agentframe.yaml``; see
+``agentframe.dev_server``.
 
 The first form calls the application's own ``create_app()`` function, which
 returns a fully configured ``AgentApp``; secrets belong in environment
@@ -26,12 +30,16 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from types import ModuleType
 
 from agentframe.authoring.agent import Agent
+from agentframe.dev import DEV_VARIABLE
+from agentframe.dev_server import DEFAULT_STARTUP_TIMEOUT_SECONDS, DevError, run_dev
 from agentframe.errors import AgentFrameError
 from agentframe.hosting.app import AgentApp
 from agentframe.hosting.host import HostConfig, is_loopback_host
+from agentframe.project import PROJECT_FILE
 from agentframe.security.authentication import AllowAnonymous
 
 logger = logging.getLogger("agentframe")
@@ -74,16 +82,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: 0 after a clean shutdown, 1 on a reported error.
     """
     arguments = _parser().parse_args(argv)
-    settings = RunSettings(
-        target=arguments.target,
-        host=arguments.host,
-        port=arguments.port,
-        dev=arguments.dev,
-    )
     _configure_logging()
     try:
-        serve(settings, reload=arguments.reload)
-    except (CommandError, AgentFrameError) as error:
+        if arguments.command == "dev":
+            run_dev(Path(arguments.config), startup_timeout=arguments.startup_timeout)
+        else:
+            settings = RunSettings(
+                target=arguments.target,
+                host=arguments.host,
+                port=arguments.port,
+                dev=arguments.dev,
+            )
+            serve(settings, reload=arguments.reload)
+    except (CommandError, DevError, AgentFrameError) as error:
         print(f"agentframe: error: {error}", file=sys.stderr)
         return 1
     return 0
@@ -110,6 +121,22 @@ def _parser() -> argparse.ArgumentParser:
         "--dev",
         action="store_true",
         help="serve an agent class anonymously on localhost, for development only",
+    )
+    dev = commands.add_parser(
+        "dev",
+        help="run every agent in agentframe.yaml locally, wired together",
+        description=(
+            "Run every agent listed in agentframe.yaml on 127.0.0.1 with "
+            "generated development API keys and a local registry. "
+            "Development only."
+        ),
+    )
+    dev.add_argument("--config", default=PROJECT_FILE, help="the project file to read")
+    dev.add_argument(
+        "--startup-timeout",
+        type=float,
+        default=DEFAULT_STARTUP_TIMEOUT_SECONDS,
+        help="seconds each agent has to become ready",
     )
     return parser
 
@@ -196,6 +223,10 @@ def _app_for_reload() -> AgentApp:
 def _configure_logging() -> None:
     # Match Uvicorn's own log lines so AgentFrame's warnings read the same way.
     logging.basicConfig(format="%(levelname)s:     %(message)s")
+    # Under agentframe dev, show each run's start and end with its
+    # invocation IDs, so the combined log can be followed across agents.
+    if os.environ.get(DEV_VARIABLE) == "1":
+        logger.setLevel(logging.INFO)
 
 
 def _load(target: str) -> object:

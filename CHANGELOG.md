@@ -10,6 +10,18 @@ changelog.
 
 ### Added
 
+- **Multi-agent (M8+):** `agentframe dev` runs every agent listed in
+  `agentframe.yaml` (`agents: {name: {app: module:create_app, port: int}}`)
+  as its own `agentframe run` process on `127.0.0.1`, wired together. It
+  checks ports first, starts agents in file order once each is ready, writes
+  `.agentframe/agents.yaml` with local card URLs, and generates one random
+  API key per agent per session, passed only through the agents'
+  environment, never written or logged. Every agent also accepts an optional
+  `AGENTFRAME_DEV_CLIENT_KEY` as caller `developer`. Output is combined with
+  an `[agent-name]` prefix, with each run's invocation IDs. Failures stop
+  every agent and exit 1; Ctrl+C stops them gracefully. App factories read the
+  wiring with the new `dev_settings()`, which refuses to run without
+  `AGENTFRAME_DEV=1`. `python -m agentframe` now runs the command line.
 - **Multi-agent (M8+):** cross-agent token budgets. `Remote.ask` and
   `Remote.call` take `max_total_tokens=` (default: everything the run has
   left), held atomically against the run's `RunLimits.max_total_tokens`

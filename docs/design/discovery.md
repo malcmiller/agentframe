@@ -473,9 +473,9 @@ discovery lifecycle. Deployment support starts with running N agents locally
 together, then container packaging; Foundry/Kubernetes templates are later.
 These are development/packaging capabilities, not a hosted deployment service.
 The [development/packaging plan](../guides/development.md) defines `agentframe run` (M2),
-`agentframe dev` (M8+), `agentframe.yaml`, generated local discovery/development
-API-key wiring, and one container per agent; remaining configuration details
-are open.
+`agentframe dev` (M8+, implemented in #95), `agentframe.yaml`, generated local
+discovery/development API-key wiring, and one container per agent; container
+generation details are open.
 
 Release acceptance is two or more independently deployed AgentFrame agents,
 with an ordinary orchestrator discovering and invoking a specialist over A2A

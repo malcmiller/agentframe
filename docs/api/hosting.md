@@ -496,35 +496,125 @@ then waits only for what remains of the same grace period before cancelling
 leftover runs. The process exits within about one grace period plus a small
 margin. With `--reload`, Uvicorn's wait is bounded the same way but the app's
 shutdown starts only after it.
-Multi-agent `agentframe.yaml` is M8+ ([`agentframe dev`](#agentframe-dev)).
+Multi-agent `agentframe.yaml` is read by [`agentframe dev`](#agentframe-dev) (M8+).
 
 **Related:** [single-agent development](../guides/development.md#one-agent-m2),
 [`HostConfig`](#hostconfig), [authentication](authorization.md).
 
 ## `agentframe dev`
 
-**Purpose / decision:** in M8+, start all named agents from `agentframe.yaml`
-on localhost with generated development discovery/auth and one combined log.
-Approved command: `agentframe dev`; not implemented tooling.
+**Purpose / decision:** start every named agent from `agentframe.yaml` on
+localhost, wired to find and authenticate to each other, with one combined
+log. Implemented in M8+ (#95); needs the `server` extra like
+`agentframe run`.
 
-| Parameter/concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| `agentframe.yaml` | YAML named-agent/module-path/port list | Default config file | Detailed keys, loading/bootstrap and overrides open; not the registry file schema. |
-| Local registry | Generated YAML name/URL references | Automatic for named discovery | Path/conflict handling open; never overwrite user configuration silently. |
-| Development auth | Managed API-key service identity | Automatic between dev agents | No fabricated OBO identity; key storage/rotation/cleanup open. Never put keys in registry or logs. |
-| Combined log | Agent and invocation ID tags | Decided output | Preserve redaction/content-capture defaults; not durable workflow state. |
-
-```shell
-agentframe dev
+```text
+agentframe dev [--config FILE] [--startup-timeout SECONDS]
 ```
 
-**Behavior / failures:** report invalid config, port conflicts and partial
-startup; bound cleanup of owned processes/resources. Development keys are not
-production defaults. Container packaging is one container per agent; Kubernetes/
-Foundry templates later, not infrastructure deployment management.
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `--config` | path | Default `agentframe.yaml` | The project file. Agents run in its directory, so their modules import from there. |
+| `--startup-timeout` | float | Default `30` | Seconds each agent has to answer `/ready`. |
 
-**Related:** [configuration and packaging examples](../guides/development.md),
+`agentframe.yaml` is a mapping with one key, `agents`, of
+`name: {app: module:function, port: int}` entries. Names use lowercase
+letters, digits and hyphens; `app` uses the same target syntax as
+[`agentframe run`](#agentframe-run) (class targets are not supported); ports
+are 1-65535 and unique. Any other key is refused.
+
+```yaml
+agents:
+  research-agent:
+    app: myapp.research:create_app
+    port: 8001
+  planner:
+    app: myapp.planner:create_app
+    port: 8002
+```
+
+Each agent runs as `python -m agentframe run APP --host 127.0.0.1 --port PORT`
+in its own process, in file order, each started after the previous one is
+ready. `dev` writes `.agentframe/agents.yaml` (a list of `name` / `url`
+entries with local card URLs, read by
+[`FileAgentRegistry`](discovery.md#fileagentregistry)) and a `.gitignore`
+that ignores the folder. It generates one random API key per agent per
+session: each agent calls the others with its own key, verified as its name.
+Each agent's process gets this environment:
+
+| Variable | Value |
+| --- | --- |
+| `AGENTFRAME_DEV` | `1` |
+| `AGENTFRAME_PUBLIC_URL` | `http://127.0.0.1:PORT` |
+| `AGENTFRAME_DEV_REGISTRY` | The absolute path of `.agentframe/agents.yaml`. |
+| `AGENTFRAME_DEV_API_KEYS` | The keys it accepts: comma-separated `caller=key` pairs, one per other agent, plus `developer` (below). |
+| `AGENTFRAME_DEV_REMOTE_KEYS` | Its own key, to call each other agent with: `name=key` pairs. |
+
+`AGENTFRAME_DEV_CLIENT_KEY`, when set in the environment `dev` runs in, is
+accepted by every agent as caller `developer`, so a person, script or test can
+call them; it is not passed on under its own name. Unset, only the agents can
+call each other. Keys are never written to disk, printed or logged.
+
+**Behavior / failures:** an invalid project file, a port in use (checked
+before anything starts), an agent that exits (for example on an import
+error) or is not ready within `--startup-timeout`, or an agent exiting later
+stops every agent already started and exits with code 1 and one
+`agentframe: error: ...` line. Each agent's output is printed with an
+`[agent-name]` prefix; agents log at `INFO` under `dev`, so every hosted run's
+`Run started` / `Run completed` lines show its invocation and root invocation
+IDs. Ctrl+C or SIGTERM sends SIGTERM to every agent once (agents run in their
+own process group, so a terminal's Ctrl+C does not reach them twice), waits
+up to 35 seconds for their graceful shutdown, kills any still running and
+exits 0. Development keys are not production defaults; this is not
+infrastructure management. Container packaging (#96) is separate.
+
+**Related:** [`dev_settings()`](#dev_settings),
+[multiple agents](../guides/development.md#multiple-agents-m8),
 [`AgentDirectory`](discovery.md#agentdirectory).
+
+## `dev_settings()`
+
+**Purpose / decision:** turn the environment `agentframe dev` gives an agent
+into its configuration, so app factories stay plain Python. Implemented in
+M8+ (#95).
+
+```text
+dev_settings() -> DevSettings
+```
+
+`DevSettings` is a frozen dataclass whose `repr` never shows a key:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `public_url` | `str` | `AGENTFRAME_PUBLIC_URL`, for `HostConfig(public_url=...)`. Required. |
+| `auth` | `APIKeyAuth` | Accepts `AGENTFRAME_DEV_API_KEYS`, each verified as its caller name. At least one key is required. |
+| `directory` | `AgentDirectory \| None` | A `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY`, or `None` when unset. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It has its own `httpx.AsyncClient` (no redirects) open for the life of the process, because a factory has no `async with` to open it in. |
+| `remotes` | `Mapping[str, Service]` | `Service(credential=APIKeyCredential(key))` per `AGENTFRAME_DEV_REMOTE_KEYS` entry, sent in the default `X-API-Key` header. |
+
+```python
+from agentframe import AgentApp, HostConfig, dev_settings
+
+from myapp.agents import Planner
+
+
+def create_app() -> AgentApp:
+    dev = dev_settings()
+    return AgentApp(
+        agent=Planner(),
+        host=HostConfig(public_url=dev.public_url, auth=dev.auth),
+        directory=dev.directory,
+        remotes=dev.remotes,
+    )
+```
+
+**Behavior / failures:** raises `DefinitionError` unless `AGENTFRAME_DEV=1`,
+when `AGENTFRAME_PUBLIC_URL` is missing, when no key is accepted, or when a
+pair variable is malformed (missing `=`, an empty side or a repeated name).
+Messages never contain keys. Development only: it never configures
+production authentication.
+
+**Related:** [`agentframe dev`](#agentframe-dev), [`HostConfig`](#hostconfig),
+[outbound identity](authorization.md#service).
 
 ## `HostConfig`
 

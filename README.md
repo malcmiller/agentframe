@@ -328,9 +328,9 @@ No orchestration helpers in the first multi-agent release: use plain Python
 Typed `Remote[ResearchAgent]` proxies are a later option, not proprietary RPC.
 
 M2 adds `agentframe run module:create_app` (and `module:Class --dev` for
-local anonymous development); M8+ adds `agentframe dev` reading
-`agentframe.yaml`, local registry/development API-key wiring and tagged combined
-logs. Package one container per agent, with a Dockerfile template and generated
+local anonymous development); M8+ adds `agentframe dev` (implemented, #95)
+reading `agentframe.yaml`, local registry/development API-key wiring and tagged
+combined logs. Package one container per agent, with a Dockerfile template and generated
 Compose example; Foundry/Kubernetes templates are later. See the
 [development plan](docs/guides/development.md). AgentFrame does not become a
 hosting platform. Discovery itself does not deploy agents, grant authority or
