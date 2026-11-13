@@ -39,6 +39,7 @@ from agentframe.errors import (
     describe_validation_error,
 )
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, ModelSettings
+from agentframe.runtime.correlation import RunCorrelation, root_run
 from agentframe.runtime.generation import (
     GenerationState,
     RunAccounting,
@@ -302,6 +303,7 @@ class Runtime:
         limits_ceiling: RunLimits | None = None,
         hops: int = 0,
         user_token: UserToken | None = None,
+        correlation: RunCorrelation | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
@@ -311,11 +313,15 @@ class Runtime:
         routing the request counts against the skill's timeout, its own
         ``accounting`` so it can report usage when the run fails or is
         cancelled, its ``limits_ceiling``, which caps the merged limits (and
-        carries the caller's deadline), the request's ``hops``, and the
-        signed-in caller's ``user_token`` for ``OnBehalfOf`` remotes.
+        carries the caller's deadline), the request's ``hops``, the
+        signed-in caller's ``user_token`` for ``OnBehalfOf`` remotes and the
+        request's ``correlation`` with the agents before it. ``None`` makes
+        the run a root run.
         """
         started = time.perf_counter()
         accounting = accounting or RunAccounting()
+        if correlation is None:
+            correlation = root_run(type(agent).definition().name, invocation_id)
         try:
             value = await self._run(
                 invocation_id,
@@ -329,6 +335,7 @@ class Runtime:
                 limits_ceiling,
                 hops,
                 user_token,
+                correlation,
             )
         except AgentFrameError as error:
             error.invocation_id = invocation_id
@@ -356,6 +363,7 @@ class Runtime:
         limits_ceiling: RunLimits | None,
         hops: int,
         user_token: UserToken | None,
+        correlation: RunCorrelation,
     ) -> Any:
         """Run the skill and return its validated value."""
         definition = type(agent).definition()
@@ -413,7 +421,7 @@ class Runtime:
                 )
                 injected = await services.resolve(skill.injected)
                 remotes = await self._bind_remotes(
-                    skill, ctx, limits, accounting, stack, user_token
+                    skill, ctx, limits, accounting, stack, user_token, correlation
                 )
                 result = await method(
                     **validated_arguments, **injected, **remotes, ctx=ctx
@@ -469,12 +477,14 @@ class Runtime:
         accounting: RunAccounting,
         stack: AsyncExitStack,
         user_token: UserToken | None,
+        correlation: RunCorrelation,
     ) -> dict[str, object]:
         """Create this run's ``Remote`` bindings, within the run's deadline.
 
         Their calls are held against, and charged to, the run's
         ``accounting``. All ``OnBehalfOf`` remotes of a run share one
-        on-behalf-of credential, closed when the run ends.
+        on-behalf-of credential, closed when the run ends. The bindings pass
+        ``correlation`` on to the agents they call.
         """
         max_hops, max_total_tokens = limits.max_remote_hops, limits.max_total_tokens
         assert max_hops is not None and max_total_tokens is not None  # Defaults.
@@ -495,7 +505,7 @@ class Runtime:
                 self._directory,
                 name,
                 deadline=ctx.deadline,
-                invocation_id=ctx.invocation_id,
+                correlation=correlation,
                 principal=ctx.principal,
                 identity=identity,
                 credential=credential,

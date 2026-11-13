@@ -45,6 +45,7 @@ from agentframe import (
     skill,
 )
 from agentframe.discovery.remote import bind_remote
+from agentframe.runtime.correlation import root_run
 from agentframe.runtime.generation import RunAccounting
 from local_server import ServeLocally, lifespan_startup
 
@@ -267,7 +268,7 @@ async def bound(directory: AgentDirectory) -> Research:
         directory,
         "research-agent",
         deadline=deadline,
-        invocation_id="run-1",
+        correlation=root_run("planner", "run-1"),
         principal=None,
         identity=None,
         hops=0,

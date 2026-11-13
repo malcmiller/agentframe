@@ -55,6 +55,7 @@ from agentframe.discovery.identity import (
 from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.hosting.a2a_executor import (
     PRINCIPAL_STATE_KEY,
+    TRACE_STATE_KEY,
     USER_TOKEN_STATE_KEY,
     RuntimeExecutor,
     incoming_context,
@@ -75,6 +76,11 @@ from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.request_size import read_body_within, with_body
 from agentframe.hosting.routing import SkillRouter, routing_limits
+from agentframe.runtime.correlation import (
+    TRACEPARENT_HEADER,
+    TRACESTATE_HEADER,
+    read_trace_context,
+)
 from agentframe.runtime.limits import RunLimits, check_within_ceiling
 from agentframe.runtime.options import merge_settings
 from agentframe.runtime.runtime import Runtime
@@ -645,7 +651,8 @@ class _RequestHandler(DefaultRequestHandler):
 
 
 class _CallerContextBuilder(DefaultServerCallContextBuilder):
-    """Add the caller, any run slot and any dedup outcome to the call context."""
+    """Add the caller, any run slot, any dedup outcome and any valid W3C trace
+    context to the call context."""
 
     def build(self, request: Request) -> ServerCallContext:
         context = super().build(request)
@@ -659,6 +666,12 @@ class _CallerContextBuilder(DefaultServerCallContextBuilder):
         }
         context.state[PRINCIPAL_STATE_KEY] = request.state.principal
         context.state[USER_TOKEN_STATE_KEY] = request.state.user_token
+        trace = read_trace_context(
+            request.headers.getlist(TRACEPARENT_HEADER),
+            request.headers.getlist(TRACESTATE_HEADER),
+        )
+        if trace is not None:
+            context.state[TRACE_STATE_KEY] = trace
         slot: RunSlot | None = getattr(request.state, "run_slot", None)
         if slot is not None:
             context.state[RUN_SLOT_STATE_KEY] = slot

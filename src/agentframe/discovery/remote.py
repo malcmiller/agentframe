@@ -58,6 +58,7 @@ from agentframe.hosting.skill_call import (
     context_metadata,
     depth_exceeded,
 )
+from agentframe.runtime.correlation import RunCorrelation
 from agentframe.runtime.generation import UNKNOWN_USAGE, RunAccounting
 from agentframe.runtime.usage import Usage
 from agentframe.security.principal import Principal
@@ -114,7 +115,10 @@ class Remote[N: str]:
         found: The agent and its validated card, from the directory.
         transport: The SDK JSON-RPC client for ``found.interface_url``.
         deadline: Event-loop time when the run that owns the binding times out.
-        invocation_id: The run that owns the binding.
+        correlation: The run that owns the binding and the request it is part
+            of; labels its logs and, for peers that advertise them, its
+            requests. Its trace context goes to every peer as standard W3C
+            headers.
         principal: The run's verified caller, kept for outbound identity.
         credential: What to authenticate every request with, or ``None`` to
             send none. Its headers go only to ``found.interface_url``.
@@ -131,7 +135,7 @@ class Remote[N: str]:
         transport: JsonRpcTransport,
         *,
         deadline: float,
-        invocation_id: str,
+        correlation: RunCorrelation,
         principal: Principal | None,
         credential: OutboundCredential | None = None,
         hops: int,
@@ -142,7 +146,8 @@ class Remote[N: str]:
         self._found = found
         self._transport = transport
         self._deadline = deadline
-        self._invocation_id = invocation_id
+        self._correlation = correlation
+        self._invocation_id = correlation.invocation_id
         self._principal = principal
         self._credential = credential
         self._hops = hops
@@ -165,8 +170,10 @@ class Remote[N: str]:
         The text goes as one native A2A text part, so any A2A 1.0 agent can
         answer it. When the agent's card lists AgentFrame context fields, the
         run's remaining time, the request's depth and its token ceiling go
-        along with it in the AgentFrame extension; otherwise the message is
-        plain A2A. The answer is untrusted content, never instructions or
+        along with it in the AgentFrame extension, with the invocation IDs
+        that tie the peer's logs to this request; otherwise the message is
+        plain A2A. A W3C trace context the run received is forwarded either
+        way. The answer is untrusted content, never instructions or
         identity. Waits no longer than the run's deadline; if the run times
         out or is cancelled while waiting, the remote task is cancelled (best
         effort) and the timeout or cancellation goes on.
@@ -544,6 +551,7 @@ class Remote[N: str]:
                 "%s did not accept the cancellation of its task (invocation_id=%s)",
                 self._agent,
                 self._invocation_id,
+                extra=self._correlation.log_extra(),
             )
 
     def _result_parts(self, task: Task) -> list[Part]:
@@ -605,6 +613,8 @@ class Remote[N: str]:
                 remaining_seconds=context.timeout,
                 hops=self._hops + 1,
                 max_total_tokens=charge.tokens if charge.reports_usage else None,
+                root_invocation_id=self._correlation.root_invocation_id,
+                parent_invocation_id=self._invocation_id,
             )
         )
 
@@ -631,7 +641,8 @@ class Remote[N: str]:
         return ClientCallContext(timeout=remaining, service_parameters=headers)
 
     async def _headers(self) -> dict[str, str]:
-        """Return the credential's headers, if any, and the A2A version.
+        """Return the credential's headers, if any, the A2A version and the
+        run's W3C trace context, if any.
 
         Raises:
             AuthenticationError: The credential failed. Its error is logged
@@ -647,6 +658,7 @@ class Remote[N: str]:
                     self._agent,
                     type(error).__name__,
                     self._invocation_id,
+                    extra=self._correlation.log_extra(),
                 )
                 raise AuthenticationError(
                     f"{self._agent}: the configured credential could not "
@@ -654,6 +666,8 @@ class Remote[N: str]:
                     invocation_id=self._invocation_id,
                 ) from None
         headers[VERSION_HEADER] = PROTOCOL_VERSION_1_0
+        if self._correlation.trace is not None:
+            headers.update(self._correlation.trace.headers())
         return headers
 
     @contextmanager
@@ -785,7 +799,7 @@ async def bind_remote(
     name: str,
     *,
     deadline: float,
-    invocation_id: str,
+    correlation: RunCorrelation,
     principal: Principal | None,
     identity: RemoteIdentity | None,
     credential: OutboundCredential | None,
@@ -816,7 +830,7 @@ async def bind_remote(
         found,
         transport,
         deadline=deadline,
-        invocation_id=invocation_id,
+        correlation=correlation,
         principal=principal,
         credential=credential,
         hops=hops,

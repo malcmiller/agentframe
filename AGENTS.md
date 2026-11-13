@@ -266,6 +266,13 @@ listed fields (0.1.0 lists none).
 Receiver timeout = min(own, `agentframe.deadline_ms`); `RunContext.hops`;
 `RunLimits.max_remote_hops=5`: caller fails before sending, deeper request
 REJECTED with base `LimitExceededError` message; depth is cooperative.
+Implemented (#91): context fields `root_invocation_id`/`parent_invocation_id`
+(lowercase UUID strings; invalid -> ignored, new root, never echoed or an
+error). Hosted runs log `Run started`/`Run completed` (INFO) with `extra`
+`agent`, `invocation_id`, `root_invocation_id`, `parent_invocation_id`; no
+log format set; root not exposed on `RunContext`. Valid W3C `traceparent`
+(version 00) plus valid `tracestate` forwarded unchanged as headers to every
+peer, invalid dropped; no spans or trace IDs created. Never authentication.
 Free-text/extension-unaware callers use custom or opt-in model routing plus
 validated extraction. Ambiguity/missing arguments asks back through
 `TASK_STATE_INPUT_REQUIRED`, never guesses; the caller answers in the same task,

@@ -48,8 +48,14 @@ A cancelled task reports the usage its run had reached when it was cancelled.
 The usage includes what the run's own remote calls reported (M8 #90), so a
 caller charging it counts every hop below once.
 
-Every run that ends ``FAILED`` is logged as a warning with its invocation ID
-and safe message; skill and router exceptions are logged with their traceback.
+Every run is logged at ``INFO`` when it starts and when it completes, and
+every run that ends ``FAILED`` as a warning with its invocation ID and safe
+message; skill exceptions are logged with their traceback. These records
+carry ``agent``, ``invocation_id``, ``root_invocation_id`` and
+``parent_invocation_id`` in ``logging`` ``extra`` (see
+``runtime.correlation``); AgentFrame sets no log format. The root is the
+caller's valid ``agentframe.root_invocation_id``, else the run's own ID.
+Router exceptions are logged with their traceback and invocation ID.
 Arguments, prompts and results are never logged.
 """
 
@@ -96,6 +102,7 @@ from agentframe.hosting.skill_call import (
     depth_exceeded,
     read_caller_context,
 )
+from agentframe.runtime.correlation import RunCorrelation, TraceContext
 from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
@@ -107,6 +114,10 @@ PRINCIPAL_STATE_KEY = "agentframe.principal"
 
 USER_TOKEN_STATE_KEY = "agentframe.user_token"
 """``ServerCallContext.state`` key holding the caller's ``UserToken``, if any."""
+
+TRACE_STATE_KEY = "agentframe.trace"
+"""``ServerCallContext.state`` key holding the request's valid W3C trace
+context, when it has one."""
 
 SKILL_FAILED_MESSAGE = "The skill failed."
 """What callers see when a skill raises an exception that is not AgentFrame's."""
@@ -305,6 +316,14 @@ class RuntimeExecutor(AgentExecutor):
         assert message is not None
         # The request handler has already refused malformed context.
         caller = incoming_context(context.requested_extensions, message)
+        trace: TraceContext | None = context.call_context.state.get(TRACE_STATE_KEY)
+        correlation = RunCorrelation(
+            type(self._agent).definition().name,
+            invocation_id,
+            root_invocation_id=caller.root_invocation_id or invocation_id,
+            parent_invocation_id=caller.parent_invocation_id,
+            trace=trace,
+        )
         ceiling = _with_caller_limits(self._limits_ceiling, caller)
         max_hops = routing_limits(self._agent, ceiling).max_remote_hops
         assert max_hops is not None  # DEFAULT_LIMITS sets every field.
@@ -316,6 +335,12 @@ class RuntimeExecutor(AgentExecutor):
                 TaskState.TASK_STATE_REJECTED,
             )
             return
+        logger.info(
+            "Run started (invocation_id=%s, root_invocation_id=%s)",
+            invocation_id,
+            correlation.root_invocation_id,
+            extra=correlation.log_extra(),
+        )
         # noinspection PyBroadException
         try:
             call = await self._choose_skill(
@@ -344,11 +369,12 @@ class RuntimeExecutor(AgentExecutor):
                 ceiling,
                 caller.hops,
                 user_token,
+                correlation,
             )
             part = result_part(result.value, invocation_id, self._max_response_bytes)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
-            _log_failed_run(error)
+            _log_failed_run(error, correlation)
             await publish_failure(task, error, accounting)
             return
         except Exception:
@@ -356,10 +382,19 @@ class RuntimeExecutor(AgentExecutor):
             # caller gets a generic message and only the log keeps the details,
             # under the run's ID that the caller can quote.
             failure = AgentFrameError(SKILL_FAILED_MESSAGE, invocation_id=invocation_id)
-            logger.exception("Skill failed (invocation_id=%s)", invocation_id)
+            logger.exception(
+                "Skill failed (invocation_id=%s)",
+                invocation_id,
+                extra=correlation.log_extra(),
+            )
             await publish_failure(task, failure, accounting)
             return
         await publish_result(task, part, invocation_id, accounting)
+        logger.info(
+            "Run completed (invocation_id=%s)",
+            invocation_id,
+            extra=correlation.log_extra(),
+        )
 
     async def _choose_skill(
         self,
@@ -612,7 +647,7 @@ def _earlier_messages(task: Task | None) -> list[Message]:
     return earlier
 
 
-def _log_failed_run(error: AgentFrameError) -> None:
+def _log_failed_run(error: AgentFrameError, correlation: RunCorrelation) -> None:
     """Log a run that ends ``FAILED``, so operators can find it by its ID.
 
     Only the error's class and safe message are logged: never its cause,
@@ -629,6 +664,7 @@ def _log_failed_run(error: AgentFrameError) -> None:
         error.invocation_id,
         type(error).__name__,
         error.message,
+        extra=correlation.log_extra(),
     )
 
 

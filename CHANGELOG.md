@@ -30,6 +30,18 @@ changelog.
   exchanges with `AuthenticationError`, never falling back to `Service`. The
   `entra` extra now pins `azure-identity==1.27.0` and `aiohttp==3.14.5`.
 
+- **Multi-agent (M8+):** cross-agent correlation. Hosted runs log `Run
+  started` / `Run completed` at `INFO`, and their log records carry `agent`,
+  `invocation_id`, `root_invocation_id` and `parent_invocation_id` in
+  `logging` `extra` (AgentFrame sets no format). `Remote.ask` and `call` send
+  `agentframe.root_invocation_id` and `agentframe.parent_invocation_id` to
+  peers whose card lists them in `params.context`, so every agent of one
+  request logs the same root. Values that are not lowercase UUID strings are
+  ignored (the run becomes a new root), never echoed or trusted. A valid W3C
+  `traceparent` (and valid `tracestate`) is forwarded unchanged to every peer;
+  invalid ones are dropped. None of it authenticates or grants access, and
+  task metadata is unchanged.
+
 - **Multi-agent (M8+):** `Remote.ask` sends the run's remaining time
   (`agentframe.deadline_ms`) and depth (`agentframe.hops`) to peers whose card
   lists them in the skill-call extension's new `params.context`; others get

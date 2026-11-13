@@ -73,12 +73,18 @@ async def send(
     *,
     skill_call: bool,
     return_immediately: bool = False,
+    headers: Mapping[str, str] | None = None,
 ) -> Task:
-    """Send one message and return the task; ``skill_call`` activates the extension."""
-    context = ClientCallContext()
+    """Send one message and return the task; ``skill_call`` activates the extension.
+
+    ``headers`` are extra HTTP headers for this request, such as ``traceparent``.
+    """
+    context = ClientCallContext(service_parameters=dict(headers or {}))
     if skill_call:
         extensions = with_a2a_extensions([SKILL_CALL_EXTENSION_URI])
-        context.service_parameters = ServiceParametersFactory.create([extensions])
+        context.service_parameters = ServiceParametersFactory.create_from(
+            context.service_parameters, [extensions]
+        )
     request = SendMessageRequest(
         message=message,
         configuration=SendMessageConfiguration(return_immediately=return_immediately),
@@ -93,6 +99,7 @@ async def call_skill(
     arguments: Mapping[str, object] | None = None,
     *,
     return_immediately: bool = False,
+    headers: Mapping[str, str] | None = None,
 ) -> Task:
     """Call a skill by ID with JSON arguments through the skill-call extension."""
     message = Message(
@@ -102,7 +109,11 @@ async def call_skill(
         metadata={"agentframe.skill": skill_id},
     )
     return await send(
-        client, message, skill_call=True, return_immediately=return_immediately
+        client,
+        message,
+        skill_call=True,
+        return_immediately=return_immediately,
+        headers=headers,
     )
 
 

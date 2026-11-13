@@ -132,6 +132,29 @@ reconciliation, not arbitrary local internals. Dev combined logs are tagged by
 agent and invocation ID while preserving redaction/content-capture defaults.
 A correlation reference does not grant trace-backend access.
 
+### Implemented cross-agent correlation (M8 #91)
+
+Without any tracing backend, every hosted run's log records carry `agent`,
+`invocation_id`, `root_invocation_id` and `parent_invocation_id` through
+`logging` `extra`; AgentFrame sets no log format. `Remote` sends
+`agentframe.root_invocation_id` (the request's first run) and
+`agentframe.parent_invocation_id` (the calling run) as
+[caller context](../api/hosting.md#structured-skill-call-wire-format), only to
+peers whose card lists those fields, so an older AgentFrame peer never sees
+unknown metadata. A root request uses its own invocation ID as root. Receivers
+accept only lowercase UUID strings and use them only for logs: invalid values
+are ignored (the run becomes a new root), never echoed, trusted or turned into
+errors, and ordinary task metadata stays the invocation ID and usage. The root
+is not exposed to skills.
+
+A request's single valid version-00 W3C `traceparent` header, and its
+`tracestate` when valid (at most 512 characters and 32 list members), is
+forwarded unchanged on every outbound remote request of the run, to any A2A
+peer. Invalid values are dropped; a later trace-context version is dropped
+because it cannot be validated. AgentFrame never invents trace IDs or creates
+spans; the optional OpenTelemetry adapter (#18) will create real spans later.
+None of these values authenticate, authorize or grant task access.
+
 Authentication failures should be diagnosable without disclosing skill details.
 Telemetry export failure must not become an agent success/failure substitute:
 report exporter health through the observability infrastructure, keep execution

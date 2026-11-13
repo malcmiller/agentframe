@@ -230,6 +230,22 @@ Every other outcome follows this table:
   authors must not put secrets in exception messages. Rejections and cancels
   are not logged. `tests/integration/test_hardening.py` checks that no
   argument values, prompts or credentials reach callers or logs.
+- Run correlation (M8 #91): every run that starts (after the depth check) logs
+  `Run started` at `INFO`, and `Run completed` when it completes. These
+  records, the failure warning and the skill-exception record carry `agent`
+  (the agent's name), `invocation_id`, `root_invocation_id` and
+  `parent_invocation_id` in `logging` `extra`. AgentFrame sets no log format;
+  a formatter such as `%(agent)s %(root_invocation_id)s %(message)s` shows
+  them. The root is the caller's valid
+  [`agentframe.root_invocation_id`](#structured-skill-call-wire-format), else
+  the run's own ID, so every agent of one request logs the same root. Router
+  traceback records carry only the invocation ID in their message.
+- W3C trace context (M8 #91): a request with exactly one valid version-00
+  `traceparent` header has it, and its `tracestate` when that is valid too,
+  forwarded unchanged on every request its run's [`Remote`](discovery.md#remoteask)
+  bindings send, to any A2A peer. Invalid values are dropped. AgentFrame
+  creates no spans or trace IDs; trace headers and correlation IDs never
+  authenticate, authorize or grant task access.
 - Since M3 #36 every task status also carries a safe `usage` snapshot next to
   `invocation_id`, on success, failure, input-required and cancel:
 
@@ -265,11 +281,12 @@ runtime validates and runs exactly that skill. A router is never consulted.
 
 | Element | Wire format |
 | --- | --- |
-| Extension | `https://github.com/malcmiller/agentframe/extensions/skill-call/v1`, declared on the Agent Card with `required: false`. Its `params.skills` maps each skill ID to the JSON Schema of its arguments; requests are validated against the same schema. Its `params.context` lists the caller-context fields the agent reads: `["deadline_ms", "hops", "max_total_tokens"]` (`max_total_tokens` since M8 #90; `["deadline_ms", "hops"]` on #89 cards; absent on 0.1.0 cards). |
+| Extension | `https://github.com/malcmiller/agentframe/extensions/skill-call/v1`, declared on the Agent Card with `required: false`. Its `params.skills` maps each skill ID to the JSON Schema of its arguments; requests are validated against the same schema. Its `params.context` lists the caller-context fields the agent reads: `["deadline_ms", "hops", "max_total_tokens", "root_invocation_id", "parent_invocation_id"]` (`max_total_tokens` since M8 #90, the invocation IDs since #91; `["deadline_ms", "hops"]` on #89 cards; absent on 0.1.0 cards). |
 | Activation | The caller lists the URI in the `A2A-Extensions` HTTP request header (comma-separated with any others). Activation is per request. |
 | Acknowledgement | The response to every authenticated request that activated it carries `A2A-Extensions: <uri>`. Other requested URIs are not supported and are ignored. |
 | Skill ID | Message metadata key `agentframe.skill`: a non-empty string. With the extension activated, a message is a skill call only when it carries this key; otherwise it is free text (M8 #89 relaxed M2's `InvalidParams` rule). |
 | Caller context (M8 #89) | Optional metadata, read only with the extension activated, on skill calls and free text alike: `agentframe.deadline_ms`, the caller's remaining time as a whole number of milliseconds (at least 1), `agentframe.hops`, the request's depth (a whole number, at least 0; missing means 0), and `agentframe.max_total_tokens` (M8 #90), the most tokens the caller lets the request use (a whole number, at least 1). Callers send only the fields the receiver's card lists: earlier receivers refuse unknown `agentframe.` fields. |
+| Correlation (M8 #91) | Optional metadata, read only with the extension activated: `agentframe.root_invocation_id`, the run that started the whole request, and `agentframe.parent_invocation_id`, the calling run. Each must be a lowercase UUID string. They only label logs: an invalid value is ignored, never an error, echoed or trusted, and an invalid or missing root makes the run its own root (its parent is then ignored too). Task metadata stays `invocation_id` and `usage` only. |
 | Arguments | Exactly one message part, a data part holding a JSON object (`{}` for a skill without arguments). |
 | Other metadata | Other `agentframe.`-prefixed metadata keys are unknown fields. Keys outside that namespace belong to other extensions and are ignored. |
 | Run limits (M8 #89, #90) | The run's timeout is the smaller of its own (after host ceilings) and `deadline_ms`, and its `max_total_tokens` the smaller of its own and the incoming one, for routing and the skill; the task's usage snapshot reports what it used, including its own remote calls; a request whose `hops` exceeds `RunLimits.max_remote_hops` (agent level, capped by the host ceiling) ends `REJECTED` with "Maximum remote call depth of N exceeded" before routing or the skill. |
