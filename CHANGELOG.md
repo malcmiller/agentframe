@@ -10,6 +10,12 @@ changelog.
 
 ### Added
 
+- **Multi-agent (M8+):** `examples/multi_agent`, a planner orchestrator and a
+  research agent with an `agentframe.yaml`. The planner finds the research
+  agent with `directory.find`, then fans out a structured `call` and a
+  free-text `ask` per topic in one `asyncio.TaskGroup`, each with its own
+  `max_total_tokens`. The release acceptance test runs both as separate
+  `agentframe run` processes; the examples smoke runner checks the example.
 - **Multi-agent (M8+):** `agentframe compose` writes a development
   `compose.yaml`, one container per agent of `agentframe.yaml`, and, if
   missing, a `Dockerfile` template (`python:3.13-slim` pinned by digest,
@@ -121,6 +127,9 @@ changelog.
 
 ### Fixed
 
+- `agentframe dev` no longer passes an exported `AGENTFRAME_AGENTS` to its
+  agents, which made `dev_settings()` list every agent twice and fail startup
+  with a duplicate-name `DefinitionError`.
 - URLs with a non-numeric or out-of-range port are refused as
   `HostConfig.public_url` and registry card URLs.
 - `FileAgentRegistry` strips whitespace around names and URLs, like

@@ -137,7 +137,10 @@ USER 10001:10001
 ```
 
 Your wheel must depend on `agentframe-py[server]`; build it into `dist/`
-first (for example `uv build`). Update the digest deliberately, after testing.
+first (for example `uv build`). Update the digest deliberately, after testing:
+`docker pull python:3.13-slim`, then
+`docker image inspect --format '{{index .RepoDigests 0}}' python:3.13-slim`
+prints the new `python@sha256:...` digest to put after `python:3.13-slim@`.
 
 Each agent becomes one service named after it. It runs
 `agentframe run APP --host 0.0.0.0 --port PORT` (all interfaces inside its
@@ -202,6 +205,10 @@ refuses the Compose URLs without the development opt-in
 (`tests/unit/test_compose.py`); the opt-in `docker` test
 (`tests/integration/test_compose_containers.py`, `AGENTFRAME_TEST_DOCKER=1`)
 builds and starts both containers and has the planner call the researcher.
+#97 proves the release criteria with independently started `agentframe run`
+processes (`tests/integration/test_multi_agent_release.py`); its example,
+[`examples/multi_agent`](../../examples/multi_agent), runs with
+`agentframe dev` from that directory.
 
 See [milestones](../roadmap.md#delivery-milestones),
 [discovery](../design/discovery.md) and [hosting reference](../api/hosting.md).

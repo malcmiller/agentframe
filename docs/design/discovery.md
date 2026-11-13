@@ -481,7 +481,10 @@ Release acceptance is two or more independently deployed AgentFrame agents,
 with an ordinary orchestrator discovering and invoking a specialist over A2A
 and carrying identity/delegation, budget and trace/correlation across hops.
 Also prove a non-AgentFrame A2A client and server interoperate; do not rely only
-on AgentFrame peers. See the [core release plan](../roadmap.md#next-core-release-multi-agent-a2a-composition-m8).
+on AgentFrame peers. `tests/integration/test_multi_agent_release.py` (#97)
+proves this with [`examples/multi_agent`](../../examples/multi_agent) in
+separate `agentframe run` processes; the Foundry and on-behalf-of opt-in tests
+await runs against real resources. See the [core release plan](../roadmap.md#next-core-release-multi-agent-a2a-composition-m8).
 Future [AG-UI streaming](streaming.md) is another scoped direction; it does not
 move multi-agent composition into M7 or add frontend tools or built-in approval
 pause/resume here. Revisit durable workflows after this release based on real
