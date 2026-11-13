@@ -373,7 +373,10 @@ accounting caveats, and protocol boundaries.
   with input, model-request and output checks, each an async
   `(skill, principal, content) -> bool`; only `True` allows; model-request
   checks run once per logical request in the generation layer (routing gets
-  `skill=None`). Tool checks are #78.
+  `skill=None`). Tool checks (M7 #78) are async
+  `(skill, principal, tool_name, arguments) -> bool`, run after tool
+  authorization (#62) and before the tool; denial fails the run, never fed
+  back to the model.
 - Whole-output checks may require buffering or disabling streaming. Output
   rejection cannot undo previously executed actions or released content.
 

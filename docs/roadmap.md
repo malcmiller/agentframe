@@ -515,8 +515,8 @@ belongs to that release even though telemetry exporters/integration stay optiona
 - Pinned MCP/telemetry versions, authorization hooks, schema/result mappings,
   and transport-specific correlation metadata.
 - Principal construction and OBO/service configuration/claims/consent, custom
-  authenticator/resource-policy methods, tool content checks (#78) and
-  API-key entry format.
+  authenticator/resource-policy methods and API-key entry format.
+  `ExecutionPolicy` tool checks are implemented (M7 #78).
   `auth`, built-in authenticators, `role_permissions` and explicit
   `AllowAnonymous()` are decided; `EntraIDAuth` maps roles and scopes into one
   `role_permissions` namespace (M7 #76).

@@ -177,10 +177,12 @@ bypass Python methods; AgentFrame is not a sandbox against that application.
 6. Validate and apply output policy before returning information.
 
 [`ExecutionPolicy`](../api/authorization.md#executionpolicy) content checks
-(M7 #77) slot into this pipeline without replacing any step: input checks
-after step 4, model-request checks before every model request (including
-routing in step 2, with `skill=None`, and each tool-loop continuation), and
-output checks after output validation in step 6. Each fails closed.
+(M7 #77, #78) slot into this pipeline without replacing any step: input
+checks after step 4, model-request checks before every model request
+(including routing in step 2, with `skill=None`, and each tool-loop
+continuation), tool checks after each tool call's authorization in step 5 and
+before the tool runs, and output checks after output validation in step 6.
+Each fails closed.
 
 `documents:publish` is necessary but does not mean "publish all documents."
 Policy must consider the actual resource, tenant, ownership, approval state,
