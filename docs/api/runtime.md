@@ -78,6 +78,7 @@ accepting any work. [`AgentApp`](hosting.md#agentapp) calls it on construction.
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `agent` | `Agent` instance | Required | Instance of an `@agent`-decorated class. |
+| `limits_ceiling` | `RunLimits \| None` | Optional; `None` caps nothing | A host ceiling that caps the resolved limits, including the capabilities-read timeout. `AgentApp` passes `HostConfig.limits_ceiling`; local callers normally omit it. |
 
 ```python
 from agentframe import Agent, Runtime, Services
@@ -100,11 +101,13 @@ model-backed agent knows its input token limit, so an unknown context size is
 never guessed. [`AgentApp`](hosting.md#agentapp) calls it at server startup.
 
 **Signature status:** implemented in M3 (#36) as
-`async Runtime.validate_model(agent: Agent) -> None`.
+`async Runtime.validate_model(agent: Agent, *, limits_ceiling: RunLimits | None = None) -> None`;
+`limits_ceiling` added in M7 (#71).
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `agent` | `Agent` instance | Required | Instance of an `@agent`-decorated class. |
+| `limits_ceiling` | `RunLimits \| None` | Optional; `None` caps nothing | A host ceiling that caps the resolved limits, including the capabilities-read timeout. `AgentApp` passes `HostConfig.limits_ceiling`; local callers normally omit it. |
 
 ```python
 from agentframe import Agent, Runtime
@@ -117,7 +120,7 @@ async def check_model(agent: Agent) -> None:
 **Behavior / failures:** agents without a model pass. Otherwise it reads
 `agent.model.capabilities()` (which may do I/O, so it is bounded by the agent's
 timeout) and, for each skill, resolves the effective `RunLimits` (library →
-agent → skill). A skill whose `max_input_tokens` is unset while the model
+agent → skill), capped by `limits_ceiling` when given. A skill whose `max_input_tokens` is unset while the model
 reports no context window raises `DefinitionError` naming the skill. Local runs
 that skip this check fail the same way before their first model call.
 `ProviderError` propagates when capabilities cannot be read; reading them past

@@ -450,9 +450,10 @@ is implemented (M2 #2, #3): `public_url` must be an absolute http(s) URL without
 credentials, query or fragment; `auth` must not be `None`; and each
 `role_permissions` value must be a list of permission names, not a bare string.
 Any violation raises `DefinitionError`. `role_permissions` defaults to no roles
-and is stored read-only.
+and is stored read-only. `limits_ceiling` is implemented (M7 #71): an optional
+`RunLimits` that caps every hosted run, described in the table below.
 
-**Not yet available (M7):** `limits_ceiling`, `max_concurrent_runs`,
+**Not yet available (M7):** `max_concurrent_runs`,
 `max_request_bytes`, `max_response_bytes`, `shutdown_grace_seconds` and the
 `/health` and `/ready` probes. Existing URL/ceiling composition is illustrative
 where not specified.
@@ -460,7 +461,7 @@ where not specified.
 ```text
 HostConfig(
     *, public_url: str, auth: Authenticator, role_permissions = ...,
-    limits_ceiling: RunLimits = ...,
+    limits_ceiling: RunLimits | None = None,
     max_concurrent_runs: int = 32, max_request_bytes: int = 1048576,
     max_response_bytes: int = 4194304, shutdown_grace_seconds: ... = 30,
 )
@@ -471,14 +472,13 @@ HostConfig(
 | `public_url` | `str` | Explicit in current shape | Advertised origin/endpoint configuration, not server binding or TLS setup. Do not derive it from untrusted forwarded headers. |
 | `auth` | `Authenticator` | Required for remote hosting; no default | Built-in Entra/API key/explicit anonymous or custom; omitted choice refuses startup. |
 | `role_permissions` | `Mapping[str, Iterable[str]]` | Optional; default no roles (implemented) | Maps verified roles, e.g. `{"Editor": ["documents:write"]}`; never trusts roles from skill arguments. Permissions are the union over the caller's verified roles; unknown roles grant nothing. Entra scope details remain open. |
-| `limits_ceiling` | `RunLimits` | Independent host constraint; omission/default values open | Non-overridable ceilings, not agent defaults. Validate configured agent allowances before accepting work. |
+| `limits_ceiling` | `RunLimits \| None` | Optional; default `None` caps nothing (implemented) | Independent host constraint, not another default layer. Each field it sets caps that limit after library -> agent -> skill -> per-run merging; unset fields cap nothing. A library default above the ceiling is lowered to it; an agent or skill limit explicitly set above it fails `AgentApp` construction with `DefinitionError` naming the skill and field. Hosted runs, free-text routing (deadline and budget) and startup model checks use the capped limits; a `max_input_tokens` ceiling stands in for an unknown or larger context window. A `max_total_tokens` ceiling also bounds `ModelSettings.max_output_tokens`: a call whose output cap does not fit fails with `TokenLimitExceededError`, never silently shrunk. Local `Runtime` takes no ceiling. |
 | `max_concurrent_runs` | `int` | `32`, configurable | Excess is rejected immediately with a standard busy error, not indefinitely queued; exact binding error mapping open. |
 | `max_request_bytes` | `int` | `1048576` (1 MiB), configurable | Bound ingress before work; protocol/encoding measurement details open. |
 | `max_response_bytes` | `int` | `4194304` (4 MiB), configurable | Bound outgoing content; no silent truncation into successful output. Exact error mapping open. |
 | `shutdown_grace_seconds` | Numeric seconds; exact type open | `30`, configurable | Stop accepting, drain up to grace, then cancel remaining runs and clean up scoped services. |
 
 ```python
-# Not yet available: limits_ceiling arrives in M7.
 from agentframe import Authenticator, HostConfig, RunLimits
 
 
@@ -921,7 +921,7 @@ serving. Custom routers skip these checks.
 | When | Check | Failure |
 | --- | --- | --- |
 | `AgentApp(...)` construction | Build the `Selection` schema and every skill's `Extraction` schema once. | `DefinitionError` naming the skill whose arguments have no JSON schema (such as a `Callable` argument). |
-| Server startup (ASGI lifespan), after [`Runtime.validate_model`](runtime.md#runtimevalidate_model) | Read the router model's capabilities, bounded by the agent's `timeout_seconds`. The model must support structured output and have a known input limit: the agent's `RunLimits.max_input_tokens`, else the model's context window. | `DefinitionError` (no request is served); `ProviderError` if the capabilities cannot be read in time. |
+| Server startup (ASGI lifespan), after [`Runtime.validate_model`](runtime.md#runtimevalidate_model) | Read the router model's capabilities, bounded by the agent's `timeout_seconds` capped by any host ceiling. The model must support structured output and have a known input limit: the agent's `RunLimits.max_input_tokens` (capped by any host ceiling), else the model's context window. | `DefinitionError` (no request is served); `ProviderError` if the capabilities cannot be read in time. |
 
 Whether a model's adapter accepts each schema (for example Foundry strict
 mode and a `dict` argument) is only known at the first routing call, which

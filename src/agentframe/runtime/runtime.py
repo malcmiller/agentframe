@@ -33,7 +33,7 @@ from agentframe.runtime.generation import (
     RunAccounting,
     input_token_limit,
 )
-from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits
+from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.security.authorization import (
@@ -102,7 +102,9 @@ class Runtime:
         for tool in agent.tools.values():
             self._check_services(f"Tool '{tool.name}'", tool.injected)
 
-    async def validate_model(self, agent: Agent) -> None:
+    async def validate_model(
+        self, agent: Agent, *, limits_ceiling: RunLimits | None = None
+    ) -> None:
         """Check that every skill knows its input token limit before any runs.
 
         A skill's input limit is its effective ``RunLimits.max_input_tokens``,
@@ -116,6 +118,9 @@ class Runtime:
 
         Args:
             agent: Instance of an ``@agent``-decorated class.
+            limits_ceiling: A host's ceiling that caps every limit, as
+                ``AgentApp`` passes ``HostConfig.limits_ceiling``. ``None``
+                (local use) caps nothing.
 
         Raises:
             DefinitionError: The model reports no context window and a skill
@@ -125,7 +130,9 @@ class Runtime:
         """
         if agent.model is None:
             return
-        agent_limits = merge_settings(DEFAULT_LIMITS, agent.limits)
+        agent_limits = cap_limits(
+            merge_settings(DEFAULT_LIMITS, agent.limits), limits_ceiling
+        )
         try:
             async with asyncio.timeout(agent_limits.timeout_seconds):
                 capabilities = await agent.model.capabilities()
@@ -134,7 +141,7 @@ class Runtime:
                 "Reading the model's capabilities timed out", transient=True
             ) from None
         for skill in type(agent).definition().skills.values():
-            limits, _ = _effective_settings(agent, skill, RunOptions())
+            limits, _ = _effective_settings(agent, skill, RunOptions(), limits_ceiling)
             try:
                 input_token_limit(limits, capabilities)
             except DefinitionError as error:
@@ -222,14 +229,16 @@ class Runtime:
         options: RunOptions,
         started_at: float | None = None,
         accounting: RunAccounting | None = None,
+        limits_ceiling: RunLimits | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
         Package-internal: the A2A host allocates the ID itself so it can report
         the run's ID for skill exceptions, which propagate without one. It
         passes ``started_at``, the event-loop time its run began, so time spent
-        routing the request counts against the skill's timeout, and its own
-        ``accounting`` so it can report usage when the run fails or is cancelled.
+        routing the request counts against the skill's timeout, its own
+        ``accounting`` so it can report usage when the run fails or is
+        cancelled, and its ``limits_ceiling``, which caps the merged limits.
         """
         started = time.perf_counter()
         accounting = accounting or RunAccounting()
@@ -243,6 +252,7 @@ class Runtime:
                 options,
                 started_at,
                 accounting,
+                limits_ceiling,
             )
         except AgentFrameError as error:
             error.invocation_id = invocation_id
@@ -267,6 +277,7 @@ class Runtime:
         options: RunOptions,
         started_at: float | None,
         accounting: RunAccounting,
+        limits_ceiling: RunLimits | None,
     ) -> Any:
         """Run the skill and return its validated value."""
         definition = type(agent).definition()
@@ -282,7 +293,9 @@ class Runtime:
         _check_permissions(skill, principal)
         validated_arguments = _validate_arguments(skill, arguments)
 
-        limits, model_settings = _effective_settings(agent, skill, options)
+        limits, model_settings = _effective_settings(
+            agent, skill, options, limits_ceiling
+        )
         timeout_seconds = limits.timeout_seconds
         assert timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
         method = getattr(agent, skill.method_name)
@@ -356,10 +369,19 @@ class Runtime:
 
 
 def _effective_settings(
-    agent: Agent, skill: SkillDefinition, options: RunOptions
+    agent: Agent,
+    skill: SkillDefinition,
+    options: RunOptions,
+    limits_ceiling: RunLimits | None,
 ) -> tuple[RunLimits, ModelSettings]:
-    """Merge library defaults, agent, skill and run settings, field by field."""
-    limits = merge_settings(DEFAULT_LIMITS, agent.limits, skill.limits, options.limits)
+    """Merge library defaults, agent, skill and run settings, field by field.
+
+    The merged limits are then capped by the host's ceiling, if any.
+    """
+    limits = cap_limits(
+        merge_settings(DEFAULT_LIMITS, agent.limits, skill.limits, options.limits),
+        limits_ceiling,
+    )
     model_settings = merge_settings(
         DEFAULT_MODEL_SETTINGS,
         agent.model_settings,
