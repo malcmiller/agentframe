@@ -266,22 +266,39 @@ still go only to the card's validated interface origin, never across
 redirects.
 
 The default credential is sent to every registered agent whose card asks for
-its scheme, so each of them receives a token for the default's audience and
-could replay it there. Configure a default only when every registered agent is
-trusted with that audience; give agents with other audiences their own
-`remotes=` entries.
+its scheme. With an Entra default, each of them receives a token for the
+default's audience and could replay it there; with an `APIKeyCredential`
+default, each receives the same key and could use it against any other agent
+that accepts it. Configure a default only when every registered agent is
+trusted with that token audience or key; give other agents their own
+`remotes=` entries. An `OnBehalfOf` default on a host without `EntraIDAuth`
+(with a client credential) fails startup with `DefinitionError`, as for
+`remotes=` entries (#93).
+
+The orchestrator never appears in its own catalog: an agent whose validated
+interface URL equals the host's advertised URL (`HostConfig`) is left out
+without a warning. A local `Runtime` has no advertised URL, so nothing is
+excluded there; a registry that lists the orchestrator under another URL is
+still bounded by `max_remote_hops`.
 
 ### Untrusted card text
 
 Card names, descriptions, tags and schemas come from other parties. The catalog:
 
 - cuts descriptions to 500 characters, keeps at most 10 tags, removes control
-  characters and does not copy card `examples`;
+  characters and does not copy card `examples`; `description` strings inside
+  argument schemas are cut to 500 characters too;
 - holds at most 20 entries ([catalog size](#catalog-size)) and skips, with a
   warning, an agent whose schema is over 8 KiB, keeping tool-selection accuracy
   and prompt cost bounded;
-- is shown to the model only as quoted data in the user message or as tool
-  definitions, never inside trusted system instructions.
+- never appears in trusted system instructions: for plans it is quoted data in
+  the user message; for remote skills as tools it becomes the tool
+  definitions.
+
+Worst case, 20 entries with 8 KiB schemas add about 160 KiB of catalog text to
+every model call of the run (each tool-loop turn, or the one planning call).
+It counts toward `max_input_tokens` and the token budget like any input, so
+narrow the catalog for cost as well as accuracy.
 
 Bounding text reduces, but cannot remove, injection through descriptions; the
 catalog's real protection is that the model can only choose among agents the
@@ -295,7 +312,7 @@ The first usable step ([#167](https://github.com/malcmiller/agentframe/issues/16
 `@tool` functions. Each entry becomes one model tool with a provider-safe name,
 its bounded description and its argument schema (`{"text": string}` for `ask`).
 
-- A tool call runs `Remote.call` or `Remote.ask` on the binding, so deadline,
+- A tool call runs `Remote.call` or `Remote.ask` on the catalog's per-run binding (declared remote or registry agent), so deadline,
   depth, identity, correlation and token reconciliation are unchanged. Calls
   stay sequential as in M5, each counts toward `max_tool_calls`, and none is
   retried automatically: remote side effects are unknown.
@@ -447,8 +464,12 @@ bounded by `max_model_calls` like any other.
 - **Per-entry permissions** ([#168](https://github.com/malcmiller/agentframe/issues/168)):
   `remote_skills(..., permissions={"billing-agent.refund": {"refunds:write"}})`.
   Entries the caller lacks are hidden from the model and refused if named.
-- **Per-call checks:** existing `ExecutionPolicy.tool_checks` run before every
-  remote call with `tool_name` set to the entry name, for tools and plan steps.
+- **Per-call checks:** before every remote call, for tools and for every plan
+  step, the entry's permissions are re-checked and the existing
+  `ExecutionPolicy.tool_checks` run with `tool_name` set to the entry name and
+  the arguments about to be sent: for plan steps, after `$ref` and placeholder
+  substitution. This is the data-exfiltration gate: a check sees exactly which
+  data goes to which agent.
 - **Plan checks** ([#174](https://github.com/malcmiller/agentframe/issues/174)):
   new `ExecutionPolicy.plan_checks`, async `(skill, principal, plan) -> bool`,
   run before the first step with the usual fail-closed rules. They see every
@@ -459,6 +480,12 @@ bounded by `max_model_calls` like any other.
   calls `ctx.run_plan`. A caller-supplied plan is untrusted input and is checked
   against the catalog and the caller's permissions again. There is no built-in
   pause/resume.
+- **The execute skill can become an open proxy.** It runs caller-supplied plans
+  with the orchestrator's outbound identity, so with `Service` identity any
+  caller who reaches it can call any catalog entry as the orchestrator. Give
+  the execute skill `requires_permissions`, run it over a narrowed catalog
+  (`agents=`, `skill=`, `tags=` or declared remotes), and prefer `OnBehalfOf`
+  so each agent sees the real user.
 - **Remote agents still decide.** Each agent authenticates and authorizes the
   request itself. With `OnBehalfOf` it sees the user; with `Service` it sees the
   orchestrator, which is why consequential entries need `permissions=`.
@@ -466,7 +493,9 @@ bounded by `max_model_calls` like any other.
 ### Prompt injection and data flow
 
 - The model chooses only among catalog entries; plan validation enforces that.
-- Card text and the goal are data in the user message, never instructions.
+- Card text never appears in trusted system instructions: for plans it is
+  data in the user message, for tool calls it becomes tool definitions. The
+  goal is always user-message data.
 - In plans, no model reads results between steps, so injected content in one
   agent's answer can change the data a later step receives but not which steps
   run (plan-then-execute). Remote skills as tools do not have this property.
@@ -540,7 +569,8 @@ each story of the [M10 overview](https://github.com/malcmiller/agentframe/issues
 15. **Untrusted card text.** **Decision:** 500-character descriptions, 10 tags,
     no examples, at most 20 entries (over the cap fails with `DefinitionError`
     after narrowing, never truncated), 8 KiB per schema (larger skipped), card
-    text only in the user message.
+    text never in trusted system instructions (user-message data for plans,
+    tool definitions for tool calls).
 16. **Planning errors.** **Decision:** reuse `InputValidationError` and
     `OutputValidationError`, no repair.
 17. **Package placement.** **Decision:** main wheel, public names from
