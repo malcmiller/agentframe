@@ -941,6 +941,19 @@ Hosted outcomes of a free-text message:
 | Routing limit, refusal, provider error, unsupported capability, invalid model reply or timeout | Task `FAILED` with the error's safe message. |
 | Structured skill-call extension request | Bypasses the router: no routing calls and no routing cost. |
 
+**Example and proof (M6 #70):** [`examples/routed_assistant.py`](../../examples/routed_assistant.py)
+serves two skills with `router=ModelRouter(model)`, sharing the agent's model.
+`tests/integration/test_routing_example.py` drives it offline with the
+official A2A client: routed completion with routing plus skill usage, a
+clarification answered in the same task, a structured call with no router
+model call, a model-call limit failing routing before the skill runs, and a
+custom `SkillRouter` on another app. The opt-in Ollama and Foundry tests in
+`tests/integration/test_providers.py` route one unambiguous request and check
+only the selected skill and that its argument is present. With `FoundryModel`,
+a skill whose argument schema strict mode rejects fails each routed task
+(`FAILED`, `UnsupportedCapabilityError`) before its extraction call is
+sent, not at startup; call each routed skill once against the deployment before serving.
+
 **Related:** [`SkillRouter`](#skillrouter), [`RoutingContext`](#routingcontext),
 [routing and extraction](../guides/annotations.md#skill-registration-versus-request-routing),
 [A2A request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).

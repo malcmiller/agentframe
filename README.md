@@ -37,6 +37,11 @@ M5 bounded tool calling is complete: registered `@tool` functions selected by
 `max_tool_calls`, with every call authorized before it runs and no tool ever
 replayed by a model retry (see
 [`examples/orders.py`](examples/orders.py)).
+M6 built-in opt-in model routing is complete: with
+`AgentApp(router=ModelRouter(model))`, free-text A2A messages are routed to a
+skill with validated arguments, or the caller is asked a question in the same
+task; the routing calls count toward the run's limits (see
+[`examples/routed_assistant.py`](examples/routed_assistant.py)).
 There is no published release yet, and the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
 interfaces remain open. Examples beyond the M1 surface are design proposals.
@@ -159,7 +164,8 @@ The Agent Card is served at `/.well-known/agent-card.json` and the JSON-RPC
 endpoint at `/a2a`; callers send the key in the `X-API-Key` header. Callers can
 name a skill with JSON arguments through the
 [skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format),
-or send free text to a custom [`SkillRouter`](docs/api/hosting.md#skillrouter).
+or send free text to the built-in [`ModelRouter`](docs/api/hosting.md#modelrouter)
+or a custom [`SkillRouter`](docs/api/hosting.md#skillrouter).
 `tests/integration/test_interoperability.py` drives every case with the official A2A client.
 
 The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
@@ -281,8 +287,8 @@ A2A hosting, model adapters, text generation, typed structured outputs, and boun
 explicitly registered tools with generation continuations. It returns complete
 validated results, not streamed partial output. Multi-skill A2A supports a
 built-in opt-in model-based router plus custom routers; injecting a model alone
-never enables model routing. Router construction/extraction contracts remain open;
-the generation calls are decided: `ctx.generate(text)` for text,
+never enables model routing (`AgentApp(router=ModelRouter(model))` opts in).
+The generation calls are decided: `ctx.generate(text)` for text,
 `ctx.generate(text, output=Summary)` for validated Pydantic output and
 `ctx.generate(text, tools=[registered_tool])` for bounded continuations.
 One server/shared runtime serves audience-specific endpoints, not per-skill
