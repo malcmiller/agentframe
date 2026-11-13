@@ -12,7 +12,8 @@ release (M8+), not an optional add-on or a hosting platform.
 
 This repository contains the M0 development tooling, M1 model-free
 authoring/local `Runtime`, M2 native A2A hosting, M3 Ollama/Foundry text
-generation and M4 typed structured outputs alongside design documentation. There
+generation, M4 typed structured outputs and M5 bounded tool calling alongside
+design documentation. There
 is no published package or stable API, and later-milestone features are not
 implemented. Keep design API examples beyond the implemented surface labeled
 as unimplemented; explicitly approved names/defaults
@@ -110,9 +111,10 @@ server and a real Foundry deployment: text generation with usage, a tiny
 `max_output_tokens` raising `IncompleteOutputError` (text and structured), a
 clear error for an unknown model/deployment, a hosted structured call through
 the official A2A client, a validated typed `output=` result and the example's
-`summarize` skill returning a typed data part over A2A, an Ollama one-tool
-round trip (skipped if the model lacks tool support) and a Foundry one-tool
-round trip that replays encrypted reasoning items. They are marked
+`summarize` skill returning a typed data part over A2A, a one-tool round trip
+run locally and through `examples/orders.py` over A2A (skipped if the model
+lacks tool support) and a Foundry one-tool round trip that replays encrypted
+reasoning items. They are marked
 `ollama` / `foundry` and skipped unless enabled, so
 default `uv run pytest` and CI never call a provider (no secrets in CI for M3;
 revisit a manual Foundry workflow at M7). Endpoints and model names come only
@@ -461,7 +463,7 @@ Errors derive from `AgentFrameError`: `DefinitionError`, `InputValidationError`,
 `PolicyUnavailableError`, `ModelError` (`UnsupportedCapabilityError`,
 `ModelRefusalError`, `IncompleteOutputError`, `ProviderError`),
 `LimitExceededError` (`TokenLimitExceededError`, `ModelCallLimitExceededError`,
-`TimeoutLimitExceededError`; tool subtype name open) and AgentFrame
+`TimeoutLimitExceededError`, `ToolCallLimitExceededError`) and AgentFrame
 `CancelledError` distinct from `asyncio.CancelledError`. Every error carries
 invocation ID and safe message; constructor/startup-ID/transport details open.
 A2A failures use safe failed/rejected states as appropriate; no raw provider

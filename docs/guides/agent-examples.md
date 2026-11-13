@@ -311,8 +311,8 @@ skills require explicit composition, not automatic orchestration.
 ## Typed structured output and bounded tools
 
 Both capabilities belong in the first usable release, while each agent may
-still be model-free or omit tools. Structured output is implemented (M4 #53);
-the tool example remains a proposal (M5). Both return complete validated
+still be model-free or omit tools. Structured output (M4 #53) and bounded
+tool calling (M5) are implemented. Both return complete validated
 results; streaming is later.
 
 The decided author API uses one `ctx.generate` method: omit `output` for text,
@@ -397,6 +397,11 @@ tools never auto-retry; idempotent declarations are not retry grants.
 Application approval workflows are separate; first
 release has no built-in human pause/resume. These internal tools are not
 automatic A2A skills, MCP publication or future AG-UI frontend tools.
+
+[`examples/orders.py`](../../examples/orders.py) is a runnable hosted version:
+a read-only `lookup_order` tool, a side-effecting `cancel_order` tool that needs
+the `orders.cancel` permission, and a development tool policy that lets callers
+touch only their own orders.
 
 `Runtime.invoke` returns the complete validated value. For local metadata:
 

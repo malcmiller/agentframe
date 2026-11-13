@@ -32,6 +32,11 @@ M4 typed structured output is complete: `ctx.generate(text, output=Summary)`
 returns a validated Pydantic instance with either provider, and hosted skills
 return it as an A2A data part; invalid output, refusal and truncation fail
 with typed errors, never fake success.
+M5 bounded tool calling is complete: registered `@tool` functions selected by
+`ctx.generate(text, tools=[...])` run until the model answers, within
+`max_tool_calls`, with every call authorized before it runs and no tool ever
+replayed by a model retry (see
+[`examples/orders.py`](examples/orders.py)).
 There is no published release yet, and the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
 interfaces remain open. Examples beyond the M1 surface are design proposals.
