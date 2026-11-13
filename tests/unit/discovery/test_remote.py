@@ -43,6 +43,7 @@ from agentframe import (
     Runtime,
     Service,
     TimeoutLimitExceededError,
+    TokenLimitExceededError,
     agent,
     skill,
     tool,
@@ -50,6 +51,7 @@ from agentframe import (
 from agentframe.discovery import remote
 from agentframe.discovery.remote import bind_remote, remote_name
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.runtime.generation import RunAccounting
 from local_server import lifespan_startup
 
 ORIGIN = "https://research.example.com"
@@ -395,7 +397,9 @@ async def test_a_non_text_result_raises_remote_agent_error() -> None:
 # Calling a skill
 
 
-async def research(peer: Peer, hops: int = 0) -> Research:
+async def research(
+    peer: Peer, hops: int = 0, accounting: RunAccounting | None = None
+) -> Research:
     deadline = asyncio.get_running_loop().time() + 10
     return await bind_remote(
         peer.directory(),
@@ -407,6 +411,8 @@ async def research(peer: Peer, hops: int = 0) -> Research:
         hops=hops,
         max_hops=5,
         credential=None,
+        accounting=accounting or RunAccounting(),
+        max_total_tokens=10_000,
     )
 
 
@@ -492,15 +498,6 @@ async def test_a_card_without_the_extension_or_skill_fails_before_sending(
     assert peer.methods() == []
 
 
-async def test_max_total_tokens_is_reserved_and_never_sent() -> None:
-    peer = Peer(card=skill_call_card("s"))
-
-    with pytest.raises(DefinitionError, match="reserved"):
-        await (await research(peer)).call("s", max_total_tokens=100)
-
-    assert peer.methods() == []
-
-
 async def test_a_rejected_call_raises_remote_agent_error_with_the_state() -> None:
     rejected = task(TaskState.TASK_STATE_REJECTED)
     peer = Peer(rejected, card=skill_call_card("find_sources"))
@@ -518,6 +515,180 @@ async def test_a_result_that_is_not_a_skill_result_raises_remote_agent_error() -
 
     with pytest.raises(RemoteAgentError, match="did not answer with a skill result"):
         await (await research(peer)).call("s")
+
+
+# Token budgets
+
+
+def budget_card(*fields: str) -> dict[str, Any]:
+    """A skill-call card for skill ``s`` that lists the given context fields."""
+    card = skill_call_card("s")
+    card["capabilities"]["extensions"][0]["params"] = {"context": list(fields)}
+    return card
+
+
+def with_usage(finished: Task, total: int | None, estimated: bool = False) -> Task:
+    """``finished`` with the usage snapshot an AgentFrame host reports."""
+    finished.metadata.update(
+        {
+            "usage": {
+                "input_tokens": None if total is None else total - 10,
+                "output_tokens": None if total is None else 10,
+                "total_tokens": total,
+                "estimated": estimated,
+                "model_calls": 1,
+                "tool_calls": 0,
+            }
+        }
+    )
+    return finished
+
+
+def sent_metadata(peer: Peer) -> dict[str, Any]:
+    metadata: dict[str, Any] = json.loads(peer.requests[-1].content)["params"][
+        "message"
+    ]["metadata"]
+    return metadata
+
+
+async def test_a_call_sends_what_the_run_has_left_and_charges_the_reported_usage() -> (
+    None
+):
+    accounting = RunAccounting(committed_tokens=1_000)
+    peer = Peer(with_usage(result(1), 700), card=budget_card("max_total_tokens"))
+
+    await (await research(peer, accounting=accounting)).call("s")
+
+    assert sent_metadata(peer)["agentframe.max_total_tokens"] == 9_000
+    assert accounting.usage.total_tokens == 700
+    assert accounting.usage.input_tokens == 690
+    assert accounting.committed_tokens == 1_700
+    assert accounting.reserved_tokens == 0
+    # Remote agents' model calls are theirs, not this run's.
+    assert accounting.model_calls == 0
+
+
+async def test_an_explicit_ceiling_is_sent_and_usage_above_it_is_charged() -> None:
+    accounting = RunAccounting()
+    peer = Peer(with_usage(result(1), 600, True), card=budget_card("max_total_tokens"))
+
+    await (await research(peer, accounting=accounting)).call("s", max_total_tokens=500)
+
+    assert sent_metadata(peer)["agentframe.max_total_tokens"] == 500
+    assert accounting.usage.total_tokens == 600
+    assert accounting.usage.estimated
+    assert accounting.committed_tokens == 600
+
+
+async def test_a_ceiling_over_what_is_left_fails_before_sending() -> None:
+    accounting = RunAccounting(committed_tokens=9_500)
+    peer = Peer(card=budget_card("max_total_tokens"))
+    remote_agent = await research(peer, accounting=accounting)
+
+    with pytest.raises(TokenLimitExceededError) as raised:
+        await remote_agent.call("s", max_total_tokens=501)
+
+    assert raised.value.message == (
+        "Agent 'research-agent': the call needs up to 501 tokens, but only 500 "
+        "of the run's 10000 remain"
+    )
+    assert raised.value.invocation_id == "run-1"
+    assert peer.methods() == []
+    assert accounting.reserved_tokens == 0
+
+
+async def test_with_nothing_left_the_default_ceiling_says_to_pass_one_per_call() -> (
+    None
+):
+    accounting = RunAccounting(reserved_tokens=10_000)
+    peer = Peer(card=budget_card("max_total_tokens"))
+
+    with pytest.raises(TokenLimitExceededError, match="pass max_total_tokens to each"):
+        await (await research(peer, accounting=accounting)).ask("tides")
+
+    assert peer.methods() == []
+
+
+@pytest.mark.parametrize("ceiling", [0, -5])
+async def test_a_ceiling_below_1_is_a_definition_error(ceiling: int) -> None:
+    peer = Peer(card=budget_card("max_total_tokens"))
+
+    with pytest.raises(DefinitionError, match="greater than 0"):
+        await (await research(peer)).call("s", max_total_tokens=ceiling)
+
+    assert peer.methods() == []
+
+
+@pytest.mark.parametrize(
+    "card",
+    [
+        pytest.param(budget_card("deadline_ms", "hops"), id="agentframe-m8-#89"),
+        pytest.param(skill_call_card("s"), id="agentframe-0.1.0"),
+    ],
+)
+async def test_a_peer_without_the_field_gets_no_ceiling_and_unknown_usage(
+    card: dict[str, Any],
+) -> None:
+    accounting = RunAccounting()
+    # It reports usage, but never promised to stay within a ceiling.
+    peer = Peer(with_usage(result(1), 700), card=card)
+
+    await (await research(peer, accounting=accounting)).call("s", max_total_tokens=500)
+
+    assert "agentframe.max_total_tokens" not in sent_metadata(peer)
+    assert accounting.usage.total_tokens is None
+    assert accounting.committed_tokens == 0
+    assert accounting.reserved_tokens == 0
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param({"total_tokens": None, "estimated": False}, id="unknown"),
+        pytest.param({"total_tokens": -1, "estimated": False}, id="negative"),
+        pytest.param({"total_tokens": True, "estimated": False}, id="bool"),
+        pytest.param({"total_tokens": 5}, id="no-estimated-flag"),
+    ],
+)
+async def test_unreported_usage_keeps_the_hold_and_makes_usage_unknown(
+    usage: dict[str, Any] | None,
+) -> None:
+    finished = result(1)
+    if usage is not None:
+        finished.metadata.update({"usage": usage})
+    accounting = RunAccounting()
+    peer = Peer(finished, card=budget_card("max_total_tokens"))
+
+    await (await research(peer, accounting=accounting)).call("s", max_total_tokens=800)
+
+    assert accounting.usage.total_tokens is None
+    assert accounting.committed_tokens == 800
+    assert accounting.reserved_tokens == 0
+
+
+async def test_a_failed_task_is_charged_its_reported_usage() -> None:
+    failed = with_usage(task(TaskState.TASK_STATE_FAILED), 300)
+    accounting = RunAccounting()
+    peer = Peer(failed, card=budget_card("max_total_tokens"))
+
+    with pytest.raises(RemoteAgentError):
+        await (await research(peer, accounting=accounting)).call("s")
+
+    assert accounting.usage.total_tokens == 300
+    assert accounting.committed_tokens == 300
+
+
+async def test_a_request_lost_in_transit_keeps_its_hold() -> None:
+    accounting = RunAccounting()
+    lost = {"error": {"code": -32603, "message": "internal"}}
+    peer = Peer(lost, card=budget_card("max_total_tokens"))
+
+    with pytest.raises(RemoteAgentError):
+        await (await research(peer, accounting=accounting)).call("s")
+
+    assert accounting.usage.total_tokens is None
+    assert accounting.committed_tokens == 10_000
 
 
 # Outbound identity
@@ -590,6 +761,8 @@ async def test_call_sends_the_credential_with_the_extension_header() -> None:
         hops=0,
         max_hops=5,
         credential=remotes["research-agent"].credential,
+        accounting=RunAccounting(),
+        max_total_tokens=100_000,
     )
 
     await binding.call("find_sources", topic=Topic(name="tides"))
@@ -613,6 +786,8 @@ async def test_ask_sends_the_credential_and_context_under_one_extension() -> Non
         credential=APIKeyCredential("planner-key"),
         hops=2,
         max_hops=5,
+        accounting=RunAccounting(),
+        max_total_tokens=100_000,
     )
 
     await binding.ask("tides")
@@ -743,6 +918,34 @@ async def test_a_failing_credential_raises_a_safe_authentication_error() -> None
     assert "secret" not in raised.value.message
     assert raised.value.__cause__ is None
     assert peer.methods() == []
+
+
+async def test_a_request_the_credential_stopped_releases_its_token_hold() -> None:
+    card = budget_card("max_total_tokens")
+    card["securitySchemes"] = API_KEY_SCHEMES
+    peer = Peer(card=card)
+    accounting = RunAccounting()
+    failing = FailingCredential()
+    binding = await bind_remote(
+        peer.directory(),
+        "research-agent",
+        deadline=asyncio.get_running_loop().time() + 10,
+        invocation_id="run-1",
+        principal=None,
+        identity=Service(credential=failing),
+        credential=failing,
+        hops=0,
+        max_hops=5,
+        accounting=accounting,
+        max_total_tokens=10_000,
+    )
+
+    with pytest.raises(AuthenticationError):
+        await binding.call("s")
+
+    assert peer.methods() == []
+    assert accounting.reserved_tokens == accounting.committed_tokens == 0
+    assert accounting.usage.total_tokens == 0
 
 
 async def test_an_open_card_is_called_with_the_configured_credential() -> None:

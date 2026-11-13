@@ -412,9 +412,8 @@ class Runtime:
                     invocation_id, principal, deadline, generation, hops=hops
                 )
                 injected = await services.resolve(skill.injected)
-                assert limits.max_remote_hops is not None  # Set by DEFAULT_LIMITS.
                 remotes = await self._bind_remotes(
-                    skill, ctx, limits.max_remote_hops, stack, user_token
+                    skill, ctx, limits, accounting, stack, user_token
                 )
                 result = await method(
                     **validated_arguments, **injected, **remotes, ctx=ctx
@@ -466,16 +465,19 @@ class Runtime:
         self,
         skill: SkillDefinition,
         ctx: RunContext,
-        max_hops: int,
+        limits: RunLimits,
+        accounting: RunAccounting,
         stack: AsyncExitStack,
         user_token: UserToken | None,
     ) -> dict[str, object]:
         """Create this run's ``Remote`` bindings, within the run's deadline.
 
-        ``max_hops`` is the run's ``RunLimits.max_remote_hops``. All
-        ``OnBehalfOf`` remotes of a run share one on-behalf-of credential,
-        closed when the run ends.
+        Their calls are held against, and charged to, the run's
+        ``accounting``. All ``OnBehalfOf`` remotes of a run share one
+        on-behalf-of credential, closed when the run ends.
         """
+        max_hops, max_total_tokens = limits.max_remote_hops, limits.max_total_tokens
+        assert max_hops is not None and max_total_tokens is not None  # Defaults.
         bindings: dict[str, object] = {}
         on_behalf_of: UserTokenCredential | None = None
         for parameter_name, name in skill.remotes.items():
@@ -499,6 +501,8 @@ class Runtime:
                 credential=credential,
                 hops=ctx.hops,
                 max_hops=max_hops,
+                accounting=accounting,
+                max_total_tokens=max_total_tokens,
             )
         return bindings
 

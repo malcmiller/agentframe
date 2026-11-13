@@ -45,6 +45,7 @@ from agentframe import (
     skill,
 )
 from agentframe.discovery.remote import bind_remote
+from agentframe.runtime.generation import RunAccounting
 from local_server import ServeLocally, lifespan_startup
 
 type Research = Remote[Literal["research-agent"]]
@@ -272,6 +273,8 @@ async def bound(directory: AgentDirectory) -> Research:
         hops=0,
         max_hops=5,
         credential=None,
+        accounting=RunAccounting(),
+        max_total_tokens=100_000,
     )
 
 

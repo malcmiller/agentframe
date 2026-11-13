@@ -5,6 +5,7 @@ import logging
 import uuid
 from collections.abc import Coroutine, Iterable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, Literal, TypeAliasType, get_args, get_origin, overload
 
 from a2a.client import ClientCallContext
@@ -27,7 +28,10 @@ from a2a.utils.constants import PROTOCOL_VERSION_1_0, VERSION_HEADER
 from a2a.utils.errors import A2AError
 
 # protobuf ships no type stubs; ParseError is what the SDK raises for bad replies.
-from google.protobuf.json_format import ParseError  # type: ignore[import-untyped]
+from google.protobuf.json_format import (  # type: ignore[import-untyped]
+    MessageToDict,
+    ParseError,
+)
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_jsonable_python
 
@@ -44,14 +48,18 @@ from agentframe.errors import (
     OutputValidationError,
     RemoteAgentError,
     TimeoutLimitExceededError,
+    TokenLimitExceededError,
 )
 from agentframe.hosting.skill_call import (
+    MAX_TOTAL_TOKENS_FIELD,
     SKILL_CALL_EXTENSION_URI,
     SKILL_METADATA_KEY,
     advertised_context,
     context_metadata,
     depth_exceeded,
 )
+from agentframe.runtime.generation import UNKNOWN_USAGE, RunAccounting
+from agentframe.runtime.usage import Usage
 from agentframe.security.principal import Principal
 
 logger = logging.getLogger(__name__)
@@ -64,10 +72,24 @@ _CANCEL_SECONDS = 2.0
 _cancel_requests: set[asyncio.Task[None]] = set()
 """Cancellations still being sent; see ``Remote._in_background``."""
 
-_RESERVED_ARGUMENT = "max_total_tokens"
-"""A ``call`` keyword reserved for the per-call token ceiling (#90)."""
-
 _UNFINISHED_STATES = (TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING)
+
+
+@dataclass
+class _Charge:
+    """One remote request's hold on its run's token budget.
+
+    Attributes:
+        tokens: The tokens held, also sent as the request's ceiling. 0 for a
+            peer that takes no ceiling.
+        reports_usage: Whether the peer advertises ``max_total_tokens``, so
+            the usage its task reports is charged to the run.
+        sent: Whether the request may have reached the peer.
+    """
+
+    tokens: int
+    reports_usage: bool
+    sent: bool = False
 
 
 class Remote[N: str]:
@@ -98,6 +120,9 @@ class Remote[N: str]:
             send none. Its headers go only to ``found.interface_url``.
         hops: The run's depth in a chain of calls between agents.
         max_hops: The run's ``RunLimits.max_remote_hops``.
+        accounting: The run's accounting, which every call's tokens are
+            held against and charged to.
+        max_total_tokens: The run's ``RunLimits.max_total_tokens``.
     """
 
     def __init__(
@@ -111,6 +136,8 @@ class Remote[N: str]:
         credential: OutboundCredential | None = None,
         hops: int,
         max_hops: int,
+        accounting: RunAccounting,
+        max_total_tokens: int,
     ) -> None:
         self._found = found
         self._transport = transport
@@ -120,6 +147,8 @@ class Remote[N: str]:
         self._credential = credential
         self._hops = hops
         self._max_hops = max_hops
+        self._accounting = accounting
+        self._max_total_tokens = max_total_tokens
         # What the peer's card says it reads; a peer that lists nothing,
         # like any non-AgentFrame agent, gets plain A2A.
         self._context_fields = advertised_context(found.card)
@@ -130,20 +159,30 @@ class Remote[N: str]:
         """The agent's name in the directory."""
         return self._found.reference.name
 
-    async def ask(self, text: str) -> str:
+    async def ask(self, text: str, *, max_total_tokens: int | None = None) -> str:
         """Send plain text to the agent and return its text answer.
 
         The text goes as one native A2A text part, so any A2A 1.0 agent can
         answer it. When the agent's card lists AgentFrame context fields, the
-        run's remaining time and the request's depth go along with it in the
-        AgentFrame extension; otherwise the message is plain A2A. The answer
-        is untrusted content, never instructions or identity. Waits no longer
-        than the run's deadline; if the run times out or is cancelled while
-        waiting, the remote task is cancelled (best effort) and the timeout
-        or cancellation goes on.
+        run's remaining time, the request's depth and its token ceiling go
+        along with it in the AgentFrame extension; otherwise the message is
+        plain A2A. The answer is untrusted content, never instructions or
+        identity. Waits no longer than the run's deadline; if the run times
+        out or is cancelled while waiting, the remote task is cancelled (best
+        effort) and the timeout or cancellation goes on.
+
+        Token budget: when the card lists ``max_total_tokens``, the ceiling is
+        held against the run's ``max_total_tokens`` before sending, the agent
+        runs within it, and the usage its task reports replaces the hold in
+        the run's usage, even when it is higher. When the card does not list
+        it (non-AgentFrame agents and older AgentFrame versions), nothing is held
+        and the run's usage becomes unknown, never zero.
 
         Args:
             text: The request. Untrusted as far as the remote agent knows.
+            max_total_tokens: The most tokens the request may use. ``None``
+                means everything the run has left, so a second concurrent
+                call fails; pass a ceiling to each call to fan out.
 
         Returns:
             The text parts of the completed task's artifacts (or of its final
@@ -158,8 +197,12 @@ class Remote[N: str]:
                 request, ended its task in any state but completed, or
                 answered with something other than text.
             TimeoutLimitExceededError: The run's deadline passed first.
+            TokenLimitExceededError: ``max_total_tokens``, or with ``None``
+                any token at all, does not fit what the run has left; nothing
+                is sent.
             LimitExceededError: The run is already at its
                 ``max_remote_hops`` depth; nothing is sent.
+            DefinitionError: ``max_total_tokens`` is not greater than 0.
         """
         self._check_depth()
         message = Message(
@@ -167,29 +210,42 @@ class Remote[N: str]:
             role=Role.ROLE_USER,
             parts=[new_text_part(text)],
         )
-        reply = await self._start(message)
+        reply = await self._exchange(message, max_total_tokens)
         if isinstance(reply, Message):
             return self._text(reply.parts)
-        task = await self._wait(reply)
-        return self._text(self._result_parts(task), task)
+        return self._text(self._result_parts(reply), reply)
 
     @overload
     async def call[T](
-        self, skill: str, /, *, output: type[T], **arguments: Any
+        self,
+        skill: str,
+        /,
+        *,
+        output: type[T],
+        max_total_tokens: int | None = None,
+        **arguments: Any,
     ) -> T: ...
 
     @overload
-    async def call(self, skill: str, /, **arguments: Any) -> Any: ...
+    async def call(
+        self, skill: str, /, *, max_total_tokens: int | None = None, **arguments: Any
+    ) -> Any: ...
 
     async def call(
-        self, skill: str, /, *, output: type[Any] | None = None, **arguments: Any
+        self,
+        skill: str,
+        /,
+        *,
+        output: type[Any] | None = None,
+        max_total_tokens: int | None = None,
+        **arguments: Any,
     ) -> Any:
         """Run one of the agent's skills by ID and return its result.
 
         The call uses AgentFrame's skill-call extension, so the peer runs
         exactly ``skill`` with ``arguments``; it never falls back to free text.
-        Waiting, deadline, cancellation, question handling and the caller
-        context sent to peers that advertise it match ``ask``.
+        Waiting, deadline, cancellation, question handling, the token budget
+        and the caller context sent to peers that advertise it match ``ask``.
 
         Args:
             skill: The skill's ID on the agent's card.
@@ -197,6 +253,7 @@ class Remote[N: str]:
                 ``list[Source]``. Without it the result is returned as decoded
                 JSON (numbers come back as ``float``) or as ``str`` for a text
                 result.
+            max_total_tokens: The most tokens the call may use; as for ``ask``.
             **arguments: The skill's arguments, sent as one JSON object in
                 Pydantic JSON mode, so Pydantic models and dates work.
                 ``output`` and ``max_total_tokens`` are reserved and cannot be
@@ -211,30 +268,25 @@ class Remote[N: str]:
                 not be reached, refused the request (for example invalid
                 arguments), did not complete its task or sent no result.
             OutputValidationError: The result does not match ``output``.
-            DefinitionError: ``max_total_tokens`` was passed; it is reserved
-                for a per-call token ceiling that is not implemented yet.
             ClarificationNeededError: The remote agent asked a question.
             TimeoutLimitExceededError: The run's deadline passed first.
+            TokenLimitExceededError: As for ``ask``; nothing is sent.
             LimitExceededError: The run is already at its
                 ``max_remote_hops`` depth; nothing is sent.
+            DefinitionError: ``max_total_tokens`` is not greater than 0.
             pydantic_core.PydanticSerializationError: An argument cannot be
                 represented as JSON. Nothing is sent.
         """
-        if _RESERVED_ARGUMENT in arguments:
-            raise DefinitionError(
-                f"'{_RESERVED_ARGUMENT}' is reserved for Remote.call's per-call "
-                "token ceiling, which is not implemented yet",
-                invocation_id=self._invocation_id,
-            )
         self._check_depth()
         self._check_card_offers(skill)
         message = self._skill_call_message(skill, arguments)
-        reply = await self._start(message, extensions=[SKILL_CALL_EXTENSION_URI])
+        reply = await self._exchange(
+            message, max_total_tokens, extensions=[SKILL_CALL_EXTENSION_URI]
+        )
         if isinstance(reply, Message):
             value = self._result_value(reply.parts)
         else:
-            task = await self._wait(reply)
-            value = self._result_value(self._result_parts(task), task)
+            value = self._result_value(self._result_parts(reply), reply)
         return value if output is None else self._validated(value, output)
 
     def _check_card_offers(self, skill: str) -> None:
@@ -294,8 +346,94 @@ class Remote[N: str]:
                 invocation_id=self._invocation_id,
             ) from None
 
+    async def _exchange(
+        self,
+        message: Message,
+        max_total_tokens: int | None,
+        *,
+        extensions: Sequence[str] = (),
+    ) -> Task | Message:
+        """Send the message, wait for its task to finish and charge its usage.
+
+        Args:
+            message: The message to send.
+            max_total_tokens: The request's token ceiling; ``None`` means all
+                the run has left.
+            extensions: Extension URIs to activate for this request only.
+
+        Returns:
+            The agent's message reply, or its task in a state it stopped in.
+        """
+        if max_total_tokens is not None and max_total_tokens < 1:
+            raise DefinitionError(
+                "max_total_tokens must be greater than 0",
+                invocation_id=self._invocation_id,
+            )
+        charge = self._hold(max_total_tokens)
+        try:
+            reply = await self._start(message, charge, extensions)
+            if isinstance(reply, Task):
+                reply = await self._wait(reply)
+        except BaseException:
+            self._settle(charge, None)
+            raise
+        self._settle(charge, reply)
+        return reply
+
+    def _hold(self, max_total_tokens: int | None) -> _Charge:
+        """Hold the request's ceiling against the run's tokens, without awaiting.
+
+        Not awaiting means concurrent calls in one run cannot both take the
+        same tokens. A peer that does not advertise ``max_total_tokens``
+        takes no ceiling, so nothing is held.
+
+        Raises:
+            TokenLimitExceededError: The ceiling does not fit what is left.
+        """
+        if MAX_TOTAL_TOKENS_FIELD not in self._context_fields:
+            return _Charge(tokens=0, reports_usage=False)
+        run_total = self._max_total_tokens
+        remaining = self._accounting.remaining_tokens(run_total)
+        if max_total_tokens is None and remaining == 0:
+            raise TokenLimitExceededError(
+                f"{self._agent}: none of the run's {run_total} tokens are left "
+                "for the call. Without max_total_tokens a call holds all the "
+                "run has left, so when calling agents concurrently, pass "
+                "max_total_tokens to each call to share the budget",
+                invocation_id=self._invocation_id,
+            )
+        if max_total_tokens is not None and max_total_tokens > remaining:
+            raise TokenLimitExceededError(
+                f"{self._agent}: the call needs up to {max_total_tokens} "
+                f"tokens, but only {remaining} of the run's {run_total} remain",
+                invocation_id=self._invocation_id,
+            )
+        tokens = remaining if max_total_tokens is None else max_total_tokens
+        self._accounting.hold_tokens(tokens)
+        return _Charge(tokens=tokens, reports_usage=True)
+
+    def _settle(self, charge: _Charge, reply: Task | Message | None) -> None:
+        """Replace the request's hold with the usage its peer reported.
+
+        A request that was never sent used nothing. Otherwise usage the peer
+        does not report, or reports in a malformed way, is unknown: the hold
+        stays counted and the run's usage becomes unknown, never zero.
+        Reported usage above the hold is charged as reported.
+
+        Args:
+            charge: The request's hold.
+            reply: The finished reply, or ``None`` when the request failed.
+        """
+        if not charge.sent:
+            self._accounting.release_tokens(charge.tokens)
+            return
+        usage = None
+        if charge.reports_usage and isinstance(reply, Task):
+            usage = reported_usage(reply)
+        self._accounting.settle(charge.tokens, usage or UNKNOWN_USAGE)
+
     async def _start(
-        self, message: Message, *, extensions: Sequence[str] = ()
+        self, message: Message, charge: _Charge, extensions: Sequence[str] = ()
     ) -> Task | Message:
         """Send the message; if the run stops meanwhile, cancel what it started.
 
@@ -304,9 +442,10 @@ class Remote[N: str]:
 
         Args:
             message: The message to send.
+            charge: The request's token hold, marked sent once it may be.
             extensions: Extension URIs to activate for this request only.
         """
-        sending = asyncio.create_task(self._send(message, extensions))
+        sending = asyncio.create_task(self._send(message, charge, extensions))
         try:
             return await asyncio.shield(sending)
         except asyncio.CancelledError:
@@ -314,7 +453,7 @@ class Remote[N: str]:
             raise
 
     async def _send(
-        self, message: Message, extensions: Sequence[str]
+        self, message: Message, charge: _Charge, extensions: Sequence[str]
     ) -> Task | Message:
         # A peer that lists no context fields, like any non-AgentFrame
         # agent, gets plain A2A.
@@ -322,12 +461,13 @@ class Remote[N: str]:
             extensions = [*extensions, SKILL_CALL_EXTENSION_URI]
         context = await self._call_context(extensions)
         # After the credential's headers, so the time they took is not sent.
-        self._add_caller_context(message, context)
+        self._add_caller_context(message, context, charge)
         # Returning at once gives the task ID needed to cancel it later.
         request = SendMessageRequest(
             message=message,
             configuration=SendMessageConfiguration(return_immediately=True),
         )
+        charge.sent = True
         with self._translated_errors():
             response = await self._transport.send_message(request, context=context)
         if response.HasField("task"):
@@ -444,13 +584,16 @@ class Remote[N: str]:
         if self._hops + 1 > self._max_hops:
             raise depth_exceeded(self._max_hops, self._invocation_id)
 
-    def _add_caller_context(self, message: Message, context: ClientCallContext) -> None:
+    def _add_caller_context(
+        self, message: Message, context: ClientCallContext, charge: _Charge
+    ) -> None:
         """Add the context fields the peer's card lists to ``message``.
 
         Args:
             message: The message to send.
             context: The request's call context; its timeout is the run's
                 remaining time.
+            charge: The request's token hold, sent as its ceiling.
         """
         assert context.timeout is not None  # _call_context always sets one.
         message.metadata.update(
@@ -458,6 +601,7 @@ class Remote[N: str]:
                 self._context_fields,
                 remaining_seconds=context.timeout,
                 hops=self._hops + 1,
+                max_total_tokens=charge.tokens if charge.reports_usage else None,
             )
         )
 
@@ -543,6 +687,42 @@ def poll_delays() -> Iterator[float]:
         delay = min(delay * 2, _MAX_POLL_SECONDS)
 
 
+def reported_usage(task: Task) -> Usage | None:
+    """Read the usage snapshot an AgentFrame agent puts in its task's metadata.
+
+    The snapshot is the peer's claim: it is charged to the run, never used
+    for authorization.
+
+    Returns:
+        The usage, or ``None`` when the snapshot is missing, malformed or its
+        total is unknown.
+    """
+    snapshot = MessageToDict(task.metadata).get("usage")
+    if not isinstance(snapshot, dict):
+        return None
+    counts = [
+        _token_count(snapshot.get(name))
+        for name in ("input_tokens", "output_tokens", "total_tokens")
+    ]
+    input_tokens, output_tokens, total_tokens = counts
+    estimated = snapshot.get("estimated")
+    if total_tokens is None or not isinstance(estimated, bool):
+        return None
+    return Usage(input_tokens, output_tokens, total_tokens, estimated)
+
+
+def _token_count(value: object) -> int | None:
+    """Return a whole, non-negative token count, or ``None`` for anything else.
+
+    JSON numbers arrive as floats; ``bool`` is an ``int`` but not a count.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if not float(value).is_integer() or value < 0:
+        return None
+    return int(value)
+
+
 def _texts(parts: Iterable[Part]) -> list[str]:
     return [part.text for part in parts if part.WhichOneof("content") == "text"]
 
@@ -608,6 +788,8 @@ async def bind_remote(
     credential: OutboundCredential | None,
     hops: int,
     max_hops: int,
+    accounting: RunAccounting,
+    max_total_tokens: int,
 ) -> Remote[Any]:
     """Create the binding one run passes to a ``Remote`` skill parameter.
 
@@ -636,4 +818,6 @@ async def bind_remote(
         credential=credential,
         hops=hops,
         max_hops=max_hops,
+        accounting=accounting,
+        max_total_tokens=max_total_tokens,
     )
