@@ -43,6 +43,10 @@ class DiscoveredAgent:
     stale: bool = False
 
 
+# An agent reference and the source that listed it.
+type _Listed = tuple[AgentRegistry, AgentReference]
+
+
 @dataclass(frozen=True)
 class _CachedCard:
     validated: ValidatedCard
@@ -57,9 +61,11 @@ class AgentDirectory:
     ``get`` after that. Nothing is read or fetched when the directory is
     constructed, and nothing runs in the background.
 
-    Cards are fetched without credentials and never with the current caller's
-    identity, so every caller sees the same cached card. Card URLs must use
-    https, except to loopback hosts or hosts listed in ``allow_http_hosts``.
+    Cards are never fetched with the current caller's identity, so every
+    caller sees the same cached card. The only credentials sent are a
+    source's own ``card_headers`` (for example ``FoundryAgentRegistry``'s
+    bearer token), and only to that card's URL. Card URLs must use https,
+    except to loopback hosts or hosts listed in ``allow_http_hosts``.
 
     Use it as an async context manager::
 
@@ -143,11 +149,12 @@ class AgentDirectory:
 
         Raises:
             DefinitionError: No source lists the agent, more than one does, a
-                source cannot be read, or the directory needs ``async with``.
+                source cannot be read or provide its card headers, or the
+                directory needs ``async with``.
             RemoteAgentError: The card cannot be fetched or is invalid or
                 refused, and no stale card may be served.
         """
-        return await self._resolve(await self._find_reference(name))
+        return await self._resolve(*await self._find_reference(name))
 
     async def find(
         self, *, skill: str | None = None, tags: Collection[str] = ()
@@ -204,38 +211,40 @@ class AgentDirectory:
             DefinitionError: As for ``get``.
             RemoteAgentError: The card cannot be fetched or is invalid or refused.
         """
-        reference = await self._find_reference(name)
+        source, reference = await self._find_reference(name)
         async with self._lock(reference.card_url):
-            return await self._fetch(reference, previous=None)
+            return await self._fetch(source, reference, previous=None)
 
-    async def _resolve(self, reference: AgentReference) -> DiscoveredAgent:
+    async def _resolve(
+        self, source: AgentRegistry, reference: AgentReference
+    ) -> DiscoveredAgent:
         async with self._lock(reference.card_url):
             cached = self._cards.get(reference.card_url)
             if cached is not None and self._is_fresh(cached):
                 return _discovered(reference, cached.validated)
-            return await self._fetch(reference, cached)
+            return await self._fetch(source, reference, cached)
 
-    async def _resolve_all(
-        self, references: Sequence[AgentReference]
-    ) -> list[DiscoveredAgent]:
+    async def _resolve_all(self, listed: Sequence[_Listed]) -> list[DiscoveredAgent]:
         slots = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
 
-        async def resolve(reference: AgentReference) -> DiscoveredAgent:
+        async def resolve(
+            source: AgentRegistry, reference: AgentReference
+        ) -> DiscoveredAgent:
             async with slots:
-                return await self._resolve(reference)
+                return await self._resolve(source, reference)
 
         try:
             async with asyncio.TaskGroup() as group:
-                tasks = [group.create_task(resolve(ref)) for ref in references]
+                tasks = [group.create_task(resolve(*entry)) for entry in listed]
         except ExceptionGroup as failures:
             # Callers expect the same single errors as get(); the task group
             # cancels the remaining fetches once one fails.
             raise failures.exceptions[0] from None
         return [task.result() for task in tasks]
 
-    async def _list_references(self) -> list[AgentReference]:
+    async def _list_references(self) -> list[_Listed]:
         listed: dict[str, AgentRegistry] = {}
-        references: list[AgentReference] = []
+        references: list[_Listed] = []
         for source in self._sources:
             for reference in await source.list(AgentQuery()):
                 if reference.name in listed:
@@ -244,14 +253,14 @@ class AgentDirectory:
                         f"source: {listed[reference.name]!r} and {source!r}."
                     )
                 listed[reference.name] = source
-                references.append(reference)
+                references.append((source, reference))
         return references
 
-    async def _find_reference(self, name: str) -> AgentReference:
+    async def _find_reference(self, name: str) -> _Listed:
         # Listing by name tells "not listed" (empty) apart from a source
         # failure (raises), which a registry's get cannot.
         query = AgentQuery(names=[name])
-        found: list[tuple[AgentRegistry, AgentReference]] = []
+        found: list[_Listed] = []
         for source in self._sources:
             found += [(source, reference) for reference in await source.list(query)]
         if not found:
@@ -262,19 +271,23 @@ class AgentDirectory:
                 f"Agent '{name}' is listed by more than one source: "
                 f"{first!r} and {second!r}."
             )
-        return found[0][1]
+        return found[0]
 
     async def _fetch(
-        self, reference: AgentReference, previous: _CachedCard | None
+        self,
+        source: AgentRegistry,
+        reference: AgentReference,
+        previous: _CachedCard | None,
     ) -> DiscoveredAgent:
         if self._client is None:
             raise DefinitionError(
                 "Open the AgentDirectory with 'async with' before using it, "
                 "or pass http_client=."
             )
+        headers = await source.card_headers(reference)
         try:
             validated = await fetch_card(
-                self._client, reference, self._allow_http_hosts
+                self._client, reference, self._allow_http_hosts, headers
             )
         except RemoteAgentError as error:
             if previous is None or not self._allow_stale:

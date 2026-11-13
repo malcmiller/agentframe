@@ -34,6 +34,7 @@ ollama = [
 ]
 foundry = [
     "aiohttp==3.14.5",
+    "azure-ai-projects==2.11.0",
     "azure-identity==1.27.0",
     "openai==3.49.0",
 ]
@@ -99,6 +100,6 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 markers = [
     "ollama: calls a real Ollama server; runs only with AGENTFRAME_TEST_OLLAMA=1",
-    "foundry: calls a real Foundry deployment; runs only with AGENTFRAME_TEST_FOUNDRY=1",
+    "foundry: calls real Foundry; runs only with AGENTFRAME_TEST_FOUNDRY=1 (models) or AGENTFRAME_TEST_FOUNDRY_AGENTS=1 (agents registry)",
     "entra: uses a real Microsoft Entra token; runs only with AGENTFRAME_TEST_ENTRA=1",
 ]

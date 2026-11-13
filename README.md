@@ -441,7 +441,9 @@ before a release. It runs only from **Actions > Foundry provider tests > Run
 workflow**, never on push or pull request, and waits for a reviewer to approve
 the `foundry` environment. It signs in to Azure with OpenID Connect, so the
 repository stores no secret; Foundry calls cost money, so run it sparingly.
-There is no Ollama job, since the model download is large.
+There is no Ollama job, since the model download is large. The
+`FoundryAgentRegistry` test needs its own variables (below in AGENTS.md), so
+the workflow skips it.
 
 One-time setup, by a maintainer with rights to create an app registration and
 assign roles on the Foundry resource (`<resource>` and `<resource-group>` are

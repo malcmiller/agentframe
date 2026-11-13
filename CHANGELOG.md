@@ -23,6 +23,12 @@ changelog.
   Agent Cards of listed agents with a skill matching the ID and every tag,
   in source order. It fetches at most eight cards at a time through the cache
   and raises on any source or card failure instead of returning fewer cards.
+- **Discovery (M8+):** `FoundryAgentRegistry(project_endpoint=...,
+  credential=...)` lists a Foundry project's A2A-enabled agents, mapped to
+  their A2A 1.0 Agent Card URLs. New optional `AgentRegistry.card_headers`
+  lets a source send its own credentials with its card requests; Foundry
+  sends a bearer token from its credential. The `foundry` extra now pins
+  `azure-ai-projects==2.11.0`.
 
 ### Fixed
 

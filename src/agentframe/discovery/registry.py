@@ -4,7 +4,7 @@ import asyncio
 import builtins
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -115,6 +115,26 @@ class AgentRegistry(ABC):
         Raises:
             DefinitionError: The source cannot be read or is invalid.
         """
+
+    async def card_headers(self, reference: AgentReference) -> Mapping[str, str]:
+        """Return extra headers to send when fetching ``reference``'s Agent Card.
+
+        Override it for sources whose cards need the source's own credentials,
+        such as a bearer token. ``AgentDirectory`` sends these headers only on
+        the request for this card URL, never on redirects, other requests or
+        A2A calls, and never adds the current caller's identity. The default
+        returns no headers.
+
+        Args:
+            reference: An agent this registry listed.
+
+        Returns:
+            The header names and values to add to the card request.
+
+        Raises:
+            DefinitionError: The source's credentials cannot provide them.
+        """
+        return {}
 
 
 class FileAgentRegistry(AgentRegistry):
