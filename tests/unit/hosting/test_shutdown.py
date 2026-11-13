@@ -8,12 +8,10 @@ calls it on the signal.
 """
 
 import asyncio
-import contextlib
 import math
 import signal
-import time
 import uuid
-from collections.abc import AsyncIterator, Mapping, MutableMapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 import httpx
@@ -22,7 +20,6 @@ import pytest
 from agentframe import (
     Agent,
     AgentApp,
-    AgentFrameError,
     APIKey,
     APIKeyAuth,
     DefinitionError,
@@ -37,6 +34,7 @@ from agentframe import (
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.hosting.draining_server import DrainingServer
 from agentframe.testing import ScriptedModel
+from local_server import Lifespan
 
 # Test-only value; real applications load keys from the environment.
 API_KEY = "test-key"
@@ -86,40 +84,6 @@ def make_app(worker: Worker, grace_seconds: float = 30) -> AgentApp:
         shutdown_grace_seconds=grace_seconds,
     )
     return AgentApp(agent=worker, host=host, services=services)
-
-
-class Lifespan:
-    """Sends an app the ASGI lifespan events a server would."""
-
-    def __init__(self, app: AgentApp) -> None:
-        self._app = app
-        self._events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-        self._replies: asyncio.Queue[MutableMapping[str, Any]] = asyncio.Queue()
-        self._running: asyncio.Task[None] | None = None
-
-    async def startup(self) -> str:
-        """Start the app and return the reply's type."""
-        scope = {"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}
-        self._running = asyncio.create_task(
-            self._app(scope, self._events.get, self._replies.put)
-        )
-        await self._events.put({"type": "lifespan.startup"})
-        reply_type: str = (await self._replies.get())["type"]
-        if reply_type == "lifespan.startup.failed":
-            # Starlette re-raises the startup error after reporting it.
-            with contextlib.suppress(AgentFrameError):
-                await self._running
-        return reply_type
-
-    async def shutdown(self) -> float:
-        """Shut the app down and return how many seconds it took."""
-        assert self._running is not None
-        started_at = time.monotonic()
-        await self._events.put({"type": "lifespan.shutdown"})
-        reply = await self._replies.get()
-        await self._running
-        assert reply["type"] == "lifespan.shutdown.complete"
-        return time.monotonic() - started_at
 
 
 @pytest.fixture

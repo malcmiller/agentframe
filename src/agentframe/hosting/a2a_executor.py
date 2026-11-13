@@ -38,6 +38,10 @@ snapshot in its metadata: ``input_tokens``, ``output_tokens``,
 ``total_tokens`` (``null`` when unknown), ``estimated``, ``model_calls``
 and ``tool_calls``.
 A cancelled task reports the usage its run had reached when it was cancelled.
+
+Every run that ends ``FAILED`` is logged as a warning with its invocation ID
+and safe message; skill and router exceptions are logged with their traceback.
+Arguments, prompts and results are never logged.
 """
 
 import asyncio
@@ -302,6 +306,7 @@ class RuntimeExecutor(AgentExecutor):
             part = result_part(result.value, invocation_id, self._max_response_bytes)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
+            _log_failed_run(error)
             await publish_failure(task, error, accounting)
             return
         except Exception:
@@ -527,6 +532,26 @@ def _earlier_messages(task: Task | None) -> list[Message]:
     if task.status.HasField("message"):
         earlier.append(task.status.message)
     return earlier
+
+
+def _log_failed_run(error: AgentFrameError) -> None:
+    """Log a run that ends ``FAILED``, so operators can find it by its ID.
+
+    Only the error's class and safe message are logged: never its cause,
+    which may hold arguments, prompts or provider payloads. Rejections are
+    the caller's doing and are not logged; definition errors are logged by
+    ``_safe_message``.
+    """
+    if isinstance(error, DefinitionError) or failure_state(error) != (
+        TaskState.TASK_STATE_FAILED
+    ):
+        return
+    logger.warning(
+        "Run failed (invocation_id=%s): %s: %s",
+        error.invocation_id,
+        type(error).__name__,
+        error.message,
+    )
 
 
 def _safe_message(error: AgentFrameError) -> str:

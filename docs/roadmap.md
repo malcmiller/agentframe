@@ -260,7 +260,7 @@ context is not identity. See [tracing](design/tracing.md).
 `Runtime.invoke` returns the validated value. `Runtime.run` returns `RunResult`
 with value, invocation ID, token usage (complete/estimated; unknown never zero),
 model/tool calls, duration and finish reason even with tracing off. A2A returns
-only invocation ID execution metadata, not internal counters/provider details;
+the invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts), never `RunResult` internals or provider details;
 the negotiated M8+ extension separately reports downstream accounting usage.
 
 ## Delivery milestones
@@ -279,7 +279,7 @@ development tooling; M1 adds model-free authoring and local execution.
 | 4 | Typed structured outputs (complete) | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
 | 5 | Bounded tool calling (complete) | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
 | 6 | Built-in opt-in model router (complete) | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
-| 7 | Hardening and first usable release | Prove decided defaults/precedence within ceilings, deadlines/cancellation, DI startup/scoped cleanup, `RunResult` without telemetry, safe correlated errors and identity/resource/policy failures. Prove host admission/byte/shutdown limits, health/readiness and A2A deduplication/caller isolation without exactly-once claims; installed-wheel examples return complete validated results. No built-in approval pause/resume. |
+| 7 | Hardening and first usable release (complete; PyPI release #82 pending) | Prove decided defaults/precedence within ceilings, deadlines/cancellation, DI startup/scoped cleanup, `RunResult` without telemetry, safe correlated errors and identity/resource/policy failures. Prove host admission/byte/shutdown limits, health/readiness and A2A deduplication/caller isolation without exactly-once claims; installed-wheel examples return complete validated results. No built-in approval pause/resume. |
 
 M0 acceptance was verified on **2026-11-11**: all four checks passed locally on
 Python 3.13.16, 3.14.8 and 3.15.0; fresh-clone `uv sync`, pre-commit, sdist/wheel
@@ -401,6 +401,32 @@ in `examples/` cover a model-free agent behind a development API key
 with the official A2A client and checks a complete, validated result; CI's
 `build` job runs it against the installed wheel with the `server` extra on
 Python 3.13, with no network beyond localhost (#80).
+
+M7 hardening acceptance was proven on **2026-11-12** (#79): host ceilings
+(#71), admission (#72), size limits (#73), graceful shutdown and probes (#74),
+deduplication (#75), `EntraIDAuth` (#76) and `ExecutionPolicy` (#77, #78) are
+merged, and `tests/integration/test_hardening.py` drives every M7 guarantee
+offline in CI, through the official A2A client where hosting is involved:
+library -> agent -> skill -> run limits capped by `limits_ceiling`; policy
+checks, scoped service setup, routing, model calls and retry waits spending
+one deadline; local `asyncio` cancellation re-raised unchanged and hosted
+`CancelTask`/shutdown ending tasks `CANCELED`, with per-run services closed on
+success, failure, timeout and cancel; missing services failing startup;
+`RunResult` metadata without tracing; every hosted failure carrying an
+invocation ID and safe message, with a log-capture check that no argument
+values, prompts or credentials reach callers or logs; API-key, permission,
+resource-policy, execution-policy and Entra failures; and admission, byte
+limits, probes, drain, deduplication and caller isolation. It added one
+fix: every `FAILED` hosted run now logs its invocation ID, error class and safe
+message. Local runs never convert `asyncio.CancelledError`; AgentFrame
+`CancelledError` only reports a cancelled hosted task (later a remote call).
+Skill tracebacks stay in operator logs. A shutdown race it found, harmless with
+the in-memory task store, is tracked in #128. With installed-wheel
+examples (#80) merged, the M7 build stories are complete. Two checks wait on
+the maintainer's own setup: the opt-in real-token Entra test (#76) needs an app
+registration, and the first manual Foundry workflow run (#81) needs its
+one-time setup. Publishing the first release to PyPI (#82) is still pending
+and is done by the maintainer; no release has been published.
 
 ### Resolved M0 platform and API decisions
 

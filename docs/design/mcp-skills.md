@@ -117,8 +117,8 @@ structured extension, whose schema also carries remaining deadline/token
 allowance, reported peer usage and default max-5-hop depth. `ask` works with
 extension-unaware peers, with local time bounds and unknown usage, never zero.
 Input-required raises local `ClarificationNeededError`, not automatic dialogue.
-Ordinary A2A correlation still exposes only invocation ID; negotiated usage
-exchange is not internal `RunResult` disclosure. See [remote contracts](../api/discovery.md#remotecall).
+Ordinary A2A still exposes only the invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts);
+negotiated usage exchange is not internal `RunResult` disclosure. See [remote contracts](../api/discovery.md#remotecall).
 
 ## Proposed server composition
 
