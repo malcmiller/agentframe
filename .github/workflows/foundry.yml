@@ -1,0 +1,47 @@
+# Runs the opt-in Foundry tests against a real deployment, on demand only.
+# Foundry calls cost money, so this never runs on push or pull request. The
+# `foundry` environment requires reviewer approval and holds the Azure IDs and
+# endpoint as variables; sign-in uses OpenID Connect, so there is no secret.
+# One-time setup: README.md, "Real-provider tests".
+name: Foundry provider tests
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundry
+  cancel-in-progress: false
+
+jobs:
+  foundry:
+    # Forks have no access to the environment; skip instead of failing.
+    if: github.repository == 'malcmiller/agentframe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: foundry
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.1"
+          python-version: "3.13"
+      - run: uv sync --locked --all-extras
+      # The tests use AzureCliCredential, which reads this CLI sign-in.
+      - uses: azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - run: uv run pytest -m foundry
+        env:
+          AGENTFRAME_TEST_FOUNDRY: "1"
+          AGENTFRAME_FOUNDRY_ENDPOINT: ${{ vars.AGENTFRAME_FOUNDRY_ENDPOINT }}
+          AGENTFRAME_FOUNDRY_DEPLOYMENT: ${{ vars.AGENTFRAME_FOUNDRY_DEPLOYMENT }}

@@ -118,9 +118,11 @@ reasoning items and one unambiguous free-text request routed by
 `examples/routed_assistant.py` over A2A (checking only the selected skill and
 that its argument is present, since routing is nondeterministic). They are marked
 `ollama` / `foundry` and skipped unless enabled, so
-default `uv run pytest` and CI never call a provider (no secrets in CI for M3;
-revisit a manual Foundry workflow at M7). Endpoints and model names come only
-from environment variables:
+default `uv run pytest` and CI never call a provider. The manually triggered
+`.github/workflows/foundry.yml` runs the `foundry` tests from GitHub behind the
+reviewer-approved `foundry` environment, signing in with OpenID Connect (no
+secrets); its one-time setup is in README.md "Real-provider tests" (M7 #81).
+Endpoints and model names come only from environment variables:
 
 | Variable | Needed | Meaning |
 | --- | --- | --- |

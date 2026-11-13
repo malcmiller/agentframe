@@ -448,6 +448,74 @@ All four checks must pass before committing: `uv run ruff format --check`,
 and mypy; tests run in CI, not on every commit. See
 [code quality and readability](AGENTS.md#code-quality-and-readability) for the
 contributor rules, local matrix commands and PyCharm setup.
+
+### Real-provider tests
+
+Tests against a real Ollama server or Foundry deployment are opt-in and never
+run in normal CI; [AGENTS.md](AGENTS.md#real-provider-tests-opt-in-local-only)
+lists the environment variables for running them locally. The manually triggered
+`.github/workflows/foundry.yml` runs the `foundry` tests from GitHub, for example
+before a release. It runs only from **Actions > Foundry provider tests > Run
+workflow**, never on push or pull request, and waits for a reviewer to approve
+the `foundry` environment. It signs in to Azure with OpenID Connect, so the
+repository stores no secret; Foundry calls cost money, so run it sparingly.
+There is no Ollama job, since the model download is large.
+
+One-time setup, by a maintainer with rights to create an app registration and
+assign roles on the Foundry resource (`<resource>` and `<resource-group>` are
+your Foundry resource and its resource group):
+
+1. Create an app registration and its service principal for the workflow:
+
+   ```bash
+   APP_ID=$(az ad app create --display-name agentframe-foundry-tests \
+       --query appId -o tsv)
+   SP_ID=$(az ad sp create --id "$APP_ID" --query id -o tsv)
+   ```
+
+2. Trust only this repository's `foundry` environment through a federated
+   credential (no client secret):
+
+   ```bash
+   az ad app federated-credential create --id "$APP_ID" --parameters '{
+     "name": "agentframe-foundry-environment",
+     "issuer": "https://token.actions.githubusercontent.com",
+     "subject": "repo:malcmiller/agentframe:environment:foundry",
+     "audiences": ["api://AzureADTokenExchange"]
+   }'
+   ```
+
+3. Grant inference only, on the one Foundry resource. **Cognitive Services
+   OpenAI User** allows calling deployments (including the Responses API) but
+   not managing them; do not use broader roles such as Foundry User or
+   Contributor:
+
+   ```bash
+   RESOURCE_ID=$(az cognitiveservices account show --name <resource> \
+       --resource-group <resource-group> --query id -o tsv)
+   az role assignment create --assignee-object-id "$SP_ID" \
+       --assignee-principal-type ServicePrincipal \
+       --role "Cognitive Services OpenAI User" --scope "$RESOURCE_ID"
+   ```
+
+4. In the GitHub repository, open **Settings > Environments**, create an
+   environment named `foundry`, enable **Required reviewers** (add yourself)
+   and limit **Deployment branches and tags** to `main`.
+5. Add these **environment variables** (not secrets; they are identifiers) to
+   `foundry`:
+
+   | Variable | Value |
+   | --- | --- |
+   | `AZURE_CLIENT_ID` | `$APP_ID` from step 1. |
+   | `AZURE_TENANT_ID` | `az account show --query tenantId -o tsv` |
+   | `AZURE_SUBSCRIPTION_ID` | The subscription containing the Foundry resource. |
+   | `AGENTFRAME_FOUNDRY_ENDPOINT` | OpenAI v1 base URL, `https://<resource>.openai.azure.com/openai/v1/`. |
+   | `AGENTFRAME_FOUNDRY_DEPLOYMENT` | Deployment name. |
+
+   For example, `gh variable set AZURE_CLIENT_ID --env foundry --body "$APP_ID"`.
+
+Then start the workflow on `main` and approve the pending `foundry` deployment.
+A missing variable makes the tests fail rather than skip.
 The [approved platform/API decisions](docs/roadmap.md#resolved-m0-platform-and-api-decisions)
 (2026-11-11) are Python **3.13+**, testing through **3.15** (Python has no LTS);
 A2A protocol **1.0** through official `a2a-sdk` (1.3.0 observed, specification
