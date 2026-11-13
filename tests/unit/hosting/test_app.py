@@ -5,6 +5,7 @@ Requests travel over real localhost HTTP to an ``AgentApp`` served by Uvicorn.
 
 import asyncio
 import socket
+import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar
@@ -150,7 +151,7 @@ def send_skill(
 ) -> dict[str, Any]:
     """Build a skill-call extension request: skill id in metadata, one data part."""
     message = {
-        "messageId": "m-1",
+        "messageId": str(uuid.uuid4()),
         "role": "ROLE_USER",
         "parts": [{"data": dict(arguments or {})}],
         "metadata": {"agentframe.skill": skill_id},

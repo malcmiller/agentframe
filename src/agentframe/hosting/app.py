@@ -8,6 +8,7 @@ from typing import Any
 
 from a2a.auth.user import UnauthenticatedUser, User
 from a2a.extensions.common import HTTP_EXTENSION_HEADER, get_requested_extensions
+from a2a.server.agent_execution import RequestContext, SimpleRequestContextBuilder
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
@@ -27,7 +28,14 @@ from a2a.types import (
     Task,
     TaskState,
 )
-from a2a.utils.errors import TaskNotFoundError, UnsupportedOperationError
+from a2a.utils.errors import (
+    InvalidParamsError,
+    TaskNotFoundError,
+    UnsupportedOperationError,
+)
+
+# protobuf ships no type stubs; ParseDict is the parser the A2A SDK itself uses.
+from google.protobuf.json_format import ParseDict  # type: ignore[import-untyped]
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -45,7 +53,14 @@ from agentframe.hosting.a2a_executor import (
 )
 from agentframe.hosting.admission import RUN_SLOT_STATE_KEY, RunAdmission, RunSlot
 from agentframe.hosting.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
-from agentframe.hosting.host import HostConfig
+from agentframe.hosting.dedup import (
+    DEDUP_STATE_KEY,
+    DedupOutcome,
+    FindTask,
+    InMemoryMessageDedupStore,
+    MessageDeduplicator,
+)
+from agentframe.hosting.host import A2AConfig, HostConfig
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.request_size import read_body_within, with_body
@@ -94,6 +109,11 @@ class AgentApp:
     A request body over ``host.max_request_bytes`` gets HTTP 413 before
     authentication and creates no task; a result or question over
     ``host.max_response_bytes`` fails its task instead of being sent.
+    A message that repeats one the same verified caller sent with the same
+    ``messageId`` within ``a2a.dedup_window_seconds`` gets the original task
+    back, whatever its state, and takes no run slot. Reusing a ``messageId``
+    for a different message is refused with ``InvalidParams``. Anonymous
+    callers are not deduplicated. This is not exactly-once execution.
 
     ``/health`` (liveness) and ``/ready`` (readiness) need no credentials and
     say nothing about the agent. ``/ready`` answers 200 only after startup
@@ -121,6 +141,8 @@ class AgentApp:
             question. ``None`` refuses free text with a protocol error, even
             when the agent has a model. A ``ModelRouter``'s schemas are built
             here and its model is checked at server startup.
+        a2a: A2A endpoint settings, such as message deduplication. Defaults
+            to ``A2AConfig()``.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
@@ -141,6 +163,7 @@ class AgentApp:
         authorization: AuthorizationPolicy | None = None,
         policy: ExecutionPolicy | None = None,
         router: SkillRouter | None = None,
+        a2a: A2AConfig | None = None,
     ) -> None:
         if runtime is not None and (
             services is not None or authorization is not None or policy is not None
@@ -170,13 +193,19 @@ class AgentApp:
             ),
             task_store=InMemoryTaskStore(),
             agent_card=card,
+            request_context_builder=_ClaimedTaskIdBuilder(),
         )
         self._host = host
         admission = RunAdmission(host.max_concurrent_runs)
         lifecycle = Lifecycle(host.shutdown_grace_seconds)
         self._lifecycle = lifecycle
+        a2a = a2a or A2AConfig()
+        deduplicator = MessageDeduplicator(
+            a2a.dedup_window_seconds, a2a.dedup_store or InMemoryMessageDedupStore()
+        )
+        context_builder = _CallerContextBuilder()
         [a2a_route] = create_jsonrpc_routes(
-            handler, rpc_url=A2A_PATH, context_builder=_CallerContextBuilder()
+            handler, rpc_url=A2A_PATH, context_builder=context_builder
         )
 
         @asynccontextmanager
@@ -205,6 +234,8 @@ class AgentApp:
                         _acknowledge_skill_call_extension(a2a_route.endpoint),
                         host,
                         card,
+                        deduplicator,
+                        _task_finder(handler, context_builder),
                         admission,
                         lifecycle,
                     ),
@@ -256,6 +287,8 @@ def _guard_a2a_endpoint(
     sdk_endpoint: Endpoint,
     host: HostConfig,
     card: AgentCard,
+    deduplicator: MessageDeduplicator,
+    task_finder: Callable[[Request], FindTask],
     admission: RunAdmission,
     lifecycle: Lifecycle,
 ) -> Endpoint:
@@ -264,12 +297,12 @@ def _guard_a2a_endpoint(
     1. Size: the body must fit ``host.max_request_bytes``. It is read here,
        before anything parses it, so an oversized body is never held in full.
     2. Authentication: every request needs a caller the host verifies.
-    3. Admission: a ``SendMessage`` needs a free run slot and a host that
-       is not shutting down.
+    3. Deduplication: a ``SendMessage`` that repeats one the caller already
+       sent goes to the SDK for its original task, taking no run slot.
+    4. Admission: any other ``SendMessage`` needs a free run slot and a host
+       that is not shutting down.
 
     Every refusal happens before the SDK sees the request, so no task exists.
-    Deduplication belongs between authentication and admission, so a
-    repeated message takes no slot.
     """
     challenge = www_authenticate(card.security_schemes)
     challenge_headers = {"WWW-Authenticate": challenge} if challenge else None
@@ -293,6 +326,20 @@ def _guard_a2a_endpoint(
 
         if not await _is_send_message(request):
             return await sdk_endpoint(request)
+        principal: Principal | None = request.state.principal
+        message = await _read_message(request)
+        # Anonymous callers share one namespace, so a guessable messageId
+        # would hand one of them another's task.
+        if principal is None or message is None or not message.message_id:
+            return await admit_and_send(request)
+        find_task = task_finder(request)
+        async with deduplicator.check(principal.id, message, find_task) as outcome:
+            request.state.dedup = outcome
+            if outcome.is_repeat:
+                return await sdk_endpoint(request)
+            return await admit_and_send(request)
+
+    async def admit_and_send(request: Request) -> Response:
         if lifecycle.shutting_down:
             return _unavailable("The agent is shutting down; retry later.")
         slot = admission.try_admit()
@@ -329,6 +376,34 @@ async def _is_send_message(request: Request) -> bool:
     except ValueError:
         return False
     return isinstance(body, dict) and body.get("method") == "SendMessage"
+
+
+async def _read_message(request: Request) -> Message | None:
+    """Return a ``SendMessage`` request's message, parsed as the SDK parses it.
+
+    The JSON body was already read and parsed by ``_is_send_message``; this
+    reads no more of the request. Malformed parameters give ``None`` and are
+    left for the SDK to report.
+    """
+    params = (await request.json()).get("params", {})
+    try:
+        send = ParseDict(params, SendMessageRequest(), ignore_unknown_fields=True)
+    except Exception:  # The SDK reports the same parse failure.
+        return None
+    message: Message = send.message
+    return message
+
+
+def _task_finder(
+    handler: "_RequestHandler", context_builder: "_CallerContextBuilder"
+) -> Callable[[Request], FindTask]:
+    """Return a function that looks up tasks as the request's caller."""
+
+    def for_request(request: Request) -> FindTask:
+        context = context_builder.build(request)
+        return lambda task_id: handler.find_task(task_id, context)
+
+    return for_request
 
 
 def _acknowledge_skill_call_extension(endpoint: Endpoint) -> Endpoint:
@@ -419,6 +494,13 @@ class _RequestHandler(DefaultRequestHandler):
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext
     ) -> Message | Task:
+        dedup: DedupOutcome | None = context.state.get(DEDUP_STATE_KEY)
+        if dedup is not None and dedup.conflict:
+            raise InvalidParamsError(
+                "messageId was already used for a different message"
+            )
+        if dedup is not None and dedup.original is not None:
+            return dedup.original
         if is_skill_call(context.requested_extensions):
             read_skill_call(params.message)
         elif self._router is None:
@@ -459,6 +541,14 @@ class _RequestHandler(DefaultRequestHandler):
         if not message.context_id:
             message.context_id = task.context_id
 
+    async def find_task(self, task_id: str, context: ServerCallContext) -> Task | None:
+        """Return the caller's task ``task_id``, or ``None`` if they have none."""
+        try:
+            task: Task = await self.on_get_task(GetTaskRequest(id=task_id), context)
+        except TaskNotFoundError:
+            return None
+        return task
+
     async def on_list_tasks(
         self, params: ListTasksRequest, context: ServerCallContext
     ) -> ListTasksResponse:
@@ -471,7 +561,7 @@ class _RequestHandler(DefaultRequestHandler):
 
 
 class _CallerContextBuilder(DefaultServerCallContextBuilder):
-    """Add the caller and any run slot to the SDK's per-request call context."""
+    """Add the caller, any run slot and any dedup outcome to the call context."""
 
     def build(self, request: Request) -> ServerCallContext:
         context = super().build(request)
@@ -479,6 +569,9 @@ class _CallerContextBuilder(DefaultServerCallContextBuilder):
         slot: RunSlot | None = getattr(request.state, "run_slot", None)
         if slot is not None:
             context.state[RUN_SLOT_STATE_KEY] = slot
+        dedup: DedupOutcome | None = getattr(request.state, "dedup", None)
+        if dedup is not None:
+            context.state[DEDUP_STATE_KEY] = dedup
         return context
 
     def build_user(self, request: Request) -> User:
@@ -501,3 +594,24 @@ class _Caller(User):
     @property
     def user_name(self) -> str:
         return self._principal.id
+
+
+class _ClaimedTaskIdBuilder(SimpleRequestContextBuilder):
+    """Run a new message in the task ID that deduplication claimed for it.
+
+    The SDK would otherwise generate a fresh ID, and a retry of a message
+    whose first copy never ran would not find its claimed task.
+    """
+
+    async def build(
+        self,
+        context: ServerCallContext,
+        params: SendMessageRequest | None = None,
+        task_id: str | None = None,
+        context_id: str | None = None,
+        task: Task | None = None,
+    ) -> RequestContext:
+        dedup: DedupOutcome | None = context.state.get(DEDUP_STATE_KEY)
+        if task_id is None and dedup is not None:
+            task_id = dedup.task_id
+        return await super().build(context, params, task_id, context_id, task)

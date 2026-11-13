@@ -28,7 +28,8 @@ from agentframe.errors import (
     UnsupportedCapabilityError,
 )
 from agentframe.hosting.app import AgentApp
-from agentframe.hosting.host import HostConfig
+from agentframe.hosting.dedup import MessageDedupStore
+from agentframe.hosting.host import A2AConfig, HostConfig
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.routing import (
     Clarification,
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
 __version__ = "0.1.0.dev0"
 
 __all__ = [
+    "A2AConfig",
     "APIKey",
     "APIKeyAuth",
     "Agent",
@@ -103,6 +105,7 @@ __all__ = [
     "InputValidationError",
     "LimitExceededError",
     "Message",
+    "MessageDedupStore",
     "Model",
     "ModelCallLimitExceededError",
     "ModelCapabilities",
