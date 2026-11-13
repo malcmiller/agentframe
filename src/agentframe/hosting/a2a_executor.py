@@ -70,6 +70,7 @@ from agentframe.hosting.routing import (
     route,
 )
 from agentframe.runtime.generation import RunAccounting
+from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
 from agentframe.runtime.runtime import Runtime
 from agentframe.security.principal import Principal
@@ -161,14 +162,21 @@ class RuntimeExecutor(AgentExecutor):
         runtime: The runtime that validates, authorizes and limits every run.
         router: Selects the skill for free-text messages. ``None`` means the
             request handler refuses free text before it reaches the executor.
+        limits_ceiling: The host's ceiling, which caps the limits of every
+            run and of routing. ``None`` caps nothing.
     """
 
     def __init__(
-        self, agent: Agent, runtime: Runtime, router: SkillRouter | None = None
+        self,
+        agent: Agent,
+        runtime: Runtime,
+        router: SkillRouter | None = None,
+        limits_ceiling: RunLimits | None = None,
     ) -> None:
         self._agent = agent
         self._runtime = runtime
         self._router = router
+        self._limits_ceiling = limits_ceiling
         # Accounting of each running task, so a cancel can report its usage.
         self._running: dict[str, RunAccounting] = {}
 
@@ -239,6 +247,7 @@ class RuntimeExecutor(AgentExecutor):
                 RunOptions(),
                 started_at,
                 accounting,
+                self._limits_ceiling,
             )
             part = result_part(result.value, invocation_id)
         except AgentFrameError as error:
@@ -274,7 +283,12 @@ class RuntimeExecutor(AgentExecutor):
         conversation = [*_earlier_messages(context.current_task), message]
         definition = type(self._agent).definition()
         ctx = new_routing_context(
-            self._agent, invocation_id, principal, started_at, accounting
+            self._agent,
+            invocation_id,
+            principal,
+            started_at,
+            accounting,
+            self._limits_ceiling,
         )
         return await route(
             self._router, conversation, eligible_skills(definition, principal), ctx

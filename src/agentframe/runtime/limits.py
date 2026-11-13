@@ -1,6 +1,6 @@
 """Execution limits for a run."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 
 from agentframe.errors import DefinitionError
 
@@ -71,3 +71,54 @@ DEFAULT_LIMITS = RunLimits(
 ``max_input_tokens`` is left unset because its default is the model's own
 context window, known only at run time.
 """
+
+
+def check_within_ceiling(explicit: RunLimits, ceiling: RunLimits, where: str) -> None:
+    """Check that explicitly set limits do not exceed a host's ceiling.
+
+    Only explicit values are checked: library defaults are not requests, and
+    ``cap_limits`` lowers them to the ceiling instead.
+
+    Args:
+        explicit: Limits set explicitly, for example an agent's merged with a
+            skill's, without the library defaults.
+        ceiling: The host's ceiling. Its unset fields cap nothing.
+        where: Names the checked definition in the error, for example
+            ``"Skill 'summarize'"``.
+
+    Raises:
+        DefinitionError: A set field is above the ceiling's value.
+    """
+    for field in fields(RunLimits):
+        value = getattr(explicit, field.name)
+        maximum = getattr(ceiling, field.name)
+        if value is not None and maximum is not None and value > maximum:
+            raise DefinitionError(
+                f"{where}: RunLimits.{field.name} of {value} exceeds the host "
+                f"ceiling of {maximum}"
+            )
+
+
+def cap_limits(limits: RunLimits, ceiling: RunLimits | None) -> RunLimits:
+    """Lower each limit to the host's ceiling for that field.
+
+    A field the ceiling sets is capped; a field it leaves unset is unchanged.
+    An unset ``max_input_tokens`` (the model's context window) becomes the
+    ceiling's value; the context window still bounds each call as well.
+
+    Args:
+        limits: Merged limits for one run.
+        ceiling: The host's ceiling, or ``None`` for no ceiling.
+
+    Returns:
+        The capped limits.
+    """
+    if ceiling is None:
+        return limits
+    capped = {}
+    for field in fields(RunLimits):
+        value = getattr(limits, field.name)
+        maximum = getattr(ceiling, field.name)
+        if maximum is not None and (value is None or value > maximum):
+            capped[field.name] = maximum
+    return replace(limits, **capped)

@@ -6,6 +6,7 @@ from types import MappingProxyType
 from urllib.parse import urlsplit
 
 from agentframe.errors import DefinitionError
+from agentframe.runtime.limits import RunLimits
 from agentframe.security.authentication import Authenticator
 
 
@@ -13,7 +14,7 @@ from agentframe.security.authentication import Authenticator
 class HostConfig:
     """Deployment settings for a remotely hosted agent.
 
-    Resource ceilings, admission limits and shutdown settings come later (M7).
+    Admission limits and shutdown settings come later (M7).
 
     Args:
         public_url: The origin callers use to reach the agent, for example
@@ -25,6 +26,14 @@ class HostConfig:
             for example ``{"Editor": ["documents:write"]}``. A caller's
             permissions are the union over its roles; unknown roles grant
             nothing. Stored read-only.
+        limits_ceiling: Hard per-host maximums for every hosted run. Each field
+            it sets caps that limit; unset fields cap nothing. A library
+            default above a ceiling is lowered to it, while an agent or skill
+            limit set explicitly above it fails ``AgentApp`` construction.
+            A ``max_total_tokens`` ceiling also bounds
+            ``ModelSettings.max_output_tokens``: a call whose output cap does
+            not fit the remaining budget fails with ``TokenLimitExceededError``.
+            ``None`` (the default) caps nothing.
 
     Raises:
         DefinitionError: ``auth`` is ``None``; ``public_url`` is not an
@@ -36,6 +45,7 @@ class HostConfig:
     public_url: str
     auth: Authenticator
     role_permissions: Mapping[str, Iterable[str]] = field(default_factory=dict)
+    limits_ceiling: RunLimits | None = None
 
     def __post_init__(self) -> None:
         _check_public_url(self.public_url)

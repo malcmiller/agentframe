@@ -44,6 +44,8 @@ from agentframe.hosting.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_ag
 from agentframe.hosting.host import HostConfig
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.routing import SkillRouter, routing_limits
+from agentframe.runtime.limits import RunLimits, check_within_ceiling
+from agentframe.runtime.options import merge_settings
 from agentframe.runtime.runtime import Runtime
 from agentframe.security.authentication import authenticate_request, www_authenticate
 from agentframe.security.authorization import AuthorizationPolicy
@@ -67,6 +69,7 @@ class AgentApp:
     token limits with ``Runtime.validate_model`` and fails if one is unknown,
     and checks a ``ModelRouter``'s model the same way. The app never closes
     models; the application owns them.
+    Hosted runs and routing use limits capped by ``host.limits_ceiling``.
 
     Args:
         agent: Instance of an ``@agent``-decorated class.
@@ -85,8 +88,9 @@ class AgentApp:
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
-            not registered, ``runtime`` is combined with ``services`` or
-            ``authorization``, the authenticator cannot describe its
+            not registered, an agent or skill limit is explicitly set above
+            ``host.limits_ceiling``, ``runtime`` is combined with ``services``
+            or ``authorization``, the authenticator cannot describe its
             security on the Agent Card, or a ``ModelRouter`` cannot describe a
             skill's arguments as a JSON schema.
     """
@@ -109,13 +113,14 @@ class AgentApp:
         if runtime is None:
             runtime = Runtime(services=services, authorization=authorization)
         runtime.validate(agent)
+        _check_limits_within_ceiling(agent, host)
         definition = type(agent).definition()
         if isinstance(router, ModelRouter):
             router.validate_skills(definition.skills.values())
         card = build_agent_card(definition, host)
         handler = _RequestHandler(
             router=router,
-            agent_executor=RuntimeExecutor(agent, runtime, router),
+            agent_executor=RuntimeExecutor(agent, runtime, router, host.limits_ceiling),
             task_store=InMemoryTaskStore(),
             agent_card=card,
         )
@@ -128,9 +133,9 @@ class AgentApp:
             # Fails startup, before any request is served, when a skill or
             # the built-in router has no input token limit. Custom routers
             # check their own models.
-            await runtime.validate_model(agent)
+            await runtime.validate_model(agent, limits_ceiling=host.limits_ceiling)
             if isinstance(router, ModelRouter):
-                await router.validate_model(routing_limits(agent))
+                await router.validate_model(routing_limits(agent, host.limits_ceiling))
             yield
             # Models are application-owned, so they are never closed here.
             await handler.aclose()
@@ -154,6 +159,15 @@ class AgentApp:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Handle one ASGI connection."""
         await self._app(scope, receive, send)
+
+
+def _check_limits_within_ceiling(agent: Agent, host: HostConfig) -> None:
+    """Fail when an agent or skill explicitly sets a limit above the ceiling."""
+    if host.limits_ceiling is None:
+        return
+    for skill in type(agent).definition().skills.values():
+        explicit = merge_settings(RunLimits(), agent.limits, skill.limits)
+        check_within_ceiling(explicit, host.limits_ceiling, f"Skill '{skill.id}'")
 
 
 def _require_authentication(

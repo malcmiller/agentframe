@@ -23,7 +23,7 @@ from agentframe.errors import (
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, Model, ModelSettings
 from agentframe.models.base import Message as ModelMessage
 from agentframe.runtime.generation import GenerationState, RunAccounting
-from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits
+from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import merge_settings
 from agentframe.security.principal import Principal
 
@@ -169,13 +169,13 @@ def _check_conversation(conversation: Sequence[ModelMessage]) -> None:
             )
 
 
-def routing_limits(agent: Agent) -> RunLimits:
-    """Return the limits routing runs under: the library's, then the agent's.
+def routing_limits(agent: Agent, limits_ceiling: RunLimits | None = None) -> RunLimits:
+    """Return the limits routing runs under: the library's, then the agent's,
+    capped by the host's ceiling.
 
     No skill is selected yet, so skill limits do not apply.
     """
-    # Host limit ceilings (#71) will cap these limits, and so the deadline.
-    return merge_settings(DEFAULT_LIMITS, agent.limits)
+    return cap_limits(merge_settings(DEFAULT_LIMITS, agent.limits), limits_ceiling)
 
 
 def new_routing_context(
@@ -184,11 +184,13 @@ def new_routing_context(
     principal: Principal | None,
     started_at: float,
     accounting: RunAccounting,
+    limits_ceiling: RunLimits | None = None,
 ) -> RoutingContext:
     """Return the context for routing one message of a run.
 
     The skill is not known yet, so routing uses the library defaults merged
-    with the agent's limits and model settings. Its deadline is the agent's
+    with the agent's limits and model settings, and the limits are capped by
+    the host's ceiling. Its deadline is the agent's
     timeout from ``started_at``; the selected skill's deadline counts from
     the same start, and its model calls share ``accounting``.
 
@@ -198,8 +200,9 @@ def new_routing_context(
         principal: Verified caller identity, or ``None``.
         started_at: Event-loop time when the run started.
         accounting: The run's accounting, shared with the selected skill.
+        limits_ceiling: The host's ceiling, or ``None`` for no ceiling.
     """
-    limits = routing_limits(agent)
+    limits = routing_limits(agent, limits_ceiling)
     assert limits.timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
     generation = GenerationState(
         model=None,
