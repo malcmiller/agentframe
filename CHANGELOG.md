@@ -10,6 +10,18 @@ changelog.
 
 ### Added
 
+- **Multi-agent (M8+):** `agentframe compose` writes a development
+  `compose.yaml`, one container per agent of `agentframe.yaml`, and, if
+  missing, a `Dockerfile` template (`python:3.13-slim` pinned by digest,
+  non-root, installs the project's wheels from `dist/`). Services bind
+  `0.0.0.0` inside their container, publish on `127.0.0.1` only, check
+  `/ready` and get the `agentframe dev` environment with service-name URLs
+  and the explicit `AGENTFRAME_DEV=1` / `AGENTFRAME_ALLOW_HTTP_HOSTS` opt-in.
+  Keys appear only as `${VAR}` references to a `.env` file the user creates.
+  Existing files are never overwritten without `--force`, and a `Dockerfile`
+  never. `dev_settings()` now also reads an `AGENTFRAME_AGENTS` registry, and
+  `agentframe dev` refuses an `AGENTFRAME_DEV_CLIENT_KEY` containing `,` or
+  `=` without showing it.
 - **Multi-agent (M8+):** `agentframe dev` runs every agent listed in
   `agentframe.yaml` (`agents: {name: {app: module:create_app, port: int}}`)
   as its own `agentframe run` process on `127.0.0.1`, wired together. It
