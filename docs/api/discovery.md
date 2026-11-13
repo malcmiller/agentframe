@@ -743,7 +743,7 @@ stories. `Remote[ResearchAgent]` typed proxies are later only.
 | Name | One string in a `Literal` | Required | The agent's name in the directory; never a caller-supplied URL. Anything else (bare `Remote`, `Remote[str]`, two names) raises `DefinitionError` when the class is defined. |
 | Injection | Library-managed binding | New per run | Excluded from caller arguments, the Agent Card and every schema, like `Inject[T]`. A caller sending an argument with the parameter's name is rejected as an unknown argument. Tools cannot take `Remote` parameters. |
 | Directory | `Runtime(directory=...)` / `AgentApp(directory=...)` | Required when a skill takes `Remote` | Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. The application opens and closes it. |
-| Card security | Card without `security_schemes`/`security_requirements` | Until outbound identity (#92, #93) | A card that requires credentials fails with `DefinitionError`. |
+| Card security | Card without `security_schemes`/`security_requirements` | Until outbound identity (#92, #93) | A card that requires credentials fails with `DefinitionError`. Foundry A2A endpoints require an Entra bearer token, so Foundry agents cannot be called until #92. A source's `card_headers` are used only to fetch cards, never to call agents. |
 | Identity mode (later) | `on_behalf_of` or `service`; config carrier open | OBO for Entra caller, service explicit otherwise | No token forwarding, authority amplification or stronger-identity fallback. |
 | Hop limit (later, #89) | Counter/setting representation open | Maximum 5 remote hops by default | Exceeding depth fails, including recursive loops; no guessed wire field. |
 
