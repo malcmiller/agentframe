@@ -321,7 +321,8 @@ two retries with backoff; disable SDK retries. Side-effecting tools declare
 blanket replay grant. A2A deduplicates same caller/message ID for 10 minutes
 in memory by default, with a pluggable multi-instance store, not exactly-once.
 Retry/store configuration syntax, atomicity details, normalized usage layouts,
-A2A typed-part mappings and router extraction/clarification remain open.
+A2A typed-part mappings remain open; router extraction and clarification are
+implemented (M6 `ModelRouter`).
 Applications own human
 approval workflows; required authorization/action checks still fail closed.
 No built-in first-release approval suspension/resumption or implicit replay.

@@ -74,7 +74,8 @@ The [audience/request-style design](design/mcp-skills.md#a2a-request-styles-and-
 uses one server/shared runtime, not per-skill routes: preferred structured A2A
 selection via a declared/activated extension, free-text routing with
 input-required clarification, optional allowlisted MCP and AG-UI later.
-Extension wire schema/URI and router/clarification details remain open.
+The extension wire format (M2) and the built-in `ModelRouter` with
+input-required clarification (M6) are implemented.
 Additional confirmed contracts are the single `ctx.generate` text/`output=`/
 `tools=` surface, AgentFrame-owned normalized model types, annotated service
 injection with singleton/scoped ownership, `Runtime.run` / `RunResult`, typed
@@ -87,8 +88,8 @@ role mapping. Factory/error wire layouts and other unspecified details remain op
 The [milestone plan](roadmap.md#delivery-milestones) starts with M0
 development setup and M1 model-free proof; M2 proves A2A with custom routing only,
 and M3 meets the README's Foundry/Llama configuration-switching success criterion.
-M4 adds typed structured outputs and M5 bounded tools (both complete); M6 built-in
-opt-in model routing (after M3/M4), and M7 hardening complete the first usable single-agent release.
+M4 adds typed structured outputs, M5 bounded tools and M6 built-in opt-in model
+routing (all complete); M7 hardening completes the first usable single-agent release.
 M8+ then delivers 1 to N independently deployable specialists and ordinary
 orchestrator skills cooperating over A2A, including with other frameworks'
 A2A agents. Discovery/native calls and identity/budget/trace propagation are

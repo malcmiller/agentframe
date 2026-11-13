@@ -8,7 +8,6 @@ and nothing leaves localhost.
 """
 
 import asyncio
-import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Annotated
 
@@ -19,7 +18,6 @@ from a2a.helpers import (
     get_artifact_text,
     get_data_parts,
     get_message_text,
-    new_text_part,
 )
 from a2a.types import (
     CancelTaskRequest,
@@ -33,7 +31,7 @@ from a2a.types import (
 from a2a.utils.errors import TaskNotFoundError
 from pydantic import BaseModel, Field
 
-from a2a_client import call_skill, connect, send
+from a2a_client import call_skill, connect, say
 from agentframe import (
     Agent,
     AgentApp,
@@ -163,17 +161,6 @@ def receptionist_app(receptionist: Receptionist, public_url: str) -> AgentApp:
 
 
 # The caller: the official A2A SDK client (see a2a_client.py)
-
-
-async def say(client: Client, text: str, task_id: str = "") -> Task:
-    """Send free text, optionally answering a question in an existing task."""
-    message = Message(
-        message_id=str(uuid.uuid4()),
-        role=Role.ROLE_USER,
-        parts=[new_text_part(text)],
-        task_id=task_id,
-    )
-    return await send(client, message, skill_call=False)
 
 
 async def get_task(client: Client, task_id: str) -> Task:

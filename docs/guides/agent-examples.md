@@ -249,6 +249,71 @@ runtime for application invocation. Runtime construction performs no model calls
 
 ## A2A hosting and selection
 
+The built-in router (M6) is opt-in: pass `router=ModelRouter(model)` to
+`AgentApp`. This is [`examples/routed_assistant.py`](../../examples/routed_assistant.py),
+shortened:
+
+```python
+from pydantic import BaseModel
+
+from agentframe import (
+    Agent,
+    AgentApp,
+    AllowAnonymous,
+    HostConfig,
+    ModelRouter,
+    OllamaModel,
+    RunContext,
+    agent,
+    skill,
+)
+
+
+class Temperature(BaseModel):
+    celsius: float
+    fahrenheit: float
+
+
+@agent(version="1.0.0")
+class RoutedAssistant(Agent):
+    """Answers general questions and converts temperatures."""
+
+    @skill("answer", tags=["questions"])
+    async def answer(self, question: str, ctx: RunContext) -> str:
+        """Answer a general knowledge question briefly."""
+        return await ctx.generate(question)
+
+    @skill("to_fahrenheit", tags=["units"])
+    async def to_fahrenheit(self, celsius: float, ctx: RunContext) -> Temperature:
+        """Convert a temperature from degrees Celsius to degrees Fahrenheit."""
+        return Temperature(celsius=celsius, fahrenheit=celsius * 9 / 5 + 32)
+
+
+model = OllamaModel(model="llama3.2:3b", context_window=8192)
+app = AgentApp(
+    agent=RoutedAssistant(model=model),
+    host=HostConfig(public_url="http://127.0.0.1:8000", auth=AllowAnonymous()),
+    router=ModelRouter(model),
+)
+```
+
+A free-text message such as "Convert 25 degrees Celsius to Fahrenheit." takes
+two routing model calls (select `to_fahrenheit`, then extract `celsius=25`) and
+completes with the skill's typed result; the usage snapshot counts both
+routing calls plus any the skill makes. "Convert a temperature to Fahrenheit."
+leaves the task `INPUT_REQUIRED` with the router's question; the caller
+answers in the same task and the whole conversation is routed again. A
+structured skill-call request for `to_fahrenheit` skips the router and its
+model calls. The router shares the agent's model only because it is passed
+explicitly; any model with structured output works. `AllowAnonymous()` is a
+development placeholder for a loopback server only. See
+[`ModelRouter`](../api/hosting.md#modelrouter) for every outcome, including
+Foundry strict-schema rejections of a skill's arguments, which surface at the
+first routing call as `UnsupportedCapabilityError`.
+
+A custom router composes the same way, with the application's runtime and
+authentication:
+
 ```python
 from agentframe import APIKeyAuth, AgentApp, HostConfig, Runtime
 
@@ -263,12 +328,11 @@ app = AgentApp(
 )
 ```
 
-`application_router` is an application-supplied dependency placeholder, not a
-finalized router interface. AgentFrame will also supply a built-in opt-in
-model-based router; its public name/construction are not settled, so this
-example does not fabricate them. `development_keys` is securely supplied
-application configuration (its entry schema is still open), not literal secrets.
-`development_authorization_policy` is application resource policy. API-key
+`application_router` is any object with the
+[`SkillRouter`](../api/hosting.md#skillrouter) `route` method.
+`development_keys` is securely supplied application configuration (its entry
+schema is still open), not literal secrets. `development_authorization_policy` is application resource
+policy. API-key
 auth is an explicit development choice, not a production-safe default;
 omitting `auth` refuses startup and anonymous access requires `AllowAnonymous()`.
 The snippet illustrates
@@ -287,9 +351,9 @@ validation, authorization, limits, accounting or tracing. The skill itself
 may still call a model. Unknown skill/invalid arguments fail explicitly.
 
 Free-text callers use the configured custom router (M2) or opt-in built-in
-model router (M6) for selection and argument extraction. Ambiguity or missing
-arguments asks back through `TASK_STATE_INPUT_REQUIRED`, not a guessed skill.
-Clarification messages/follow-up handling remain open and are not an approval
+`ModelRouter` (M6) for selection and argument extraction. Ambiguity or missing
+arguments asks back through `TASK_STATE_INPUT_REQUIRED`, not a guessed skill;
+the answer continues the same task. A clarification is not an approval
 workflow or a successful completed result.
 
 Local `skill="word-count"` is not a base A2A wire field. Over A2A the caller

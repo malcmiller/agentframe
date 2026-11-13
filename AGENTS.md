@@ -12,8 +12,8 @@ release (M8+), not an optional add-on or a hosting platform.
 
 This repository contains the M0 development tooling, M1 model-free
 authoring/local `Runtime`, M2 native A2A hosting, M3 Ollama/Foundry text
-generation, M4 typed structured outputs and M5 bounded tool calling alongside
-design documentation. There
+generation, M4 typed structured outputs, M5 bounded tool calling and M6 built-in
+opt-in model routing alongside design documentation. There
 is no published package or stable API, and later-milestone features are not
 implemented. Keep design API examples beyond the implemented surface labeled
 as unimplemented; explicitly approved names/defaults
@@ -113,8 +113,10 @@ clear error for an unknown model/deployment, a hosted structured call through
 the official A2A client, a validated typed `output=` result and the example's
 `summarize` skill returning a typed data part over A2A, a one-tool round trip
 run locally and through `examples/orders.py` over A2A (skipped if the model
-lacks tool support) and a Foundry one-tool round trip that replays encrypted
-reasoning items. They are marked
+lacks tool support), a Foundry one-tool round trip that replays encrypted
+reasoning items and one unambiguous free-text request routed by
+`examples/routed_assistant.py` over A2A (checking only the selected skill and
+that its argument is present, since routing is nondeterministic). They are marked
 `ollama` / `foundry` and skipped unless enabled, so
 default `uv run pytest` and CI never call a provider (no secrets in CI for M3;
 revisit a manual Foundry workflow at M7). Endpoints and model names come only
@@ -238,15 +240,17 @@ metadata `agentframe.skill`, exactly one JSON-object data part; malformed ->
 JSON-RPC InvalidParams, no task. Not a standard A2A `skill` field.
 Free-text/extension-unaware callers use custom or opt-in model routing plus
 validated extraction. Ambiguity/missing arguments asks back through
-`TASK_STATE_INPUT_REQUIRED`, never guesses; question/follow-up contract is open.
+`TASK_STATE_INPUT_REQUIRED`, never guesses; the caller answers in the same task,
+which is routed again with the whole conversation (M6).
 This is not human approval or durable workflow resumption. Sources are in
 `docs/design/mcp-skills.md#a2a-request-styles-and-extension-boundary`.
 Multiple-skill orchestration is not automatically enabled.
-Provide a built-in opt-in model-based A2A router plus custom-router support;
-the built-in public name/constructor, validated argument-extraction decisions
-and clarification contract remain open. The built-in capability is M6
-first-release scope, not an M2 prerequisite or a post-release deferral; do not
-enable it simply from agent model injection.
+Built-in opt-in model routing is implemented (M6): `AgentApp(router=
+ModelRouter(model))` selects an eligible skill, then extracts and validates its
+arguments, or asks a question; routing calls are charged to the run before the
+skill runs. Custom `SkillRouter`s implement `route(conversation, skills, ctx)`.
+Never enable routing from agent model injection
+(`examples/routed_assistant.py`).
 
 An A2A skill is descriptive metadata, not a Python-method RPC endpoint. Messages,
 tasks, artifacts, and actual endpoint capabilities follow the selected official

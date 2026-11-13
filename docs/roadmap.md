@@ -273,7 +273,7 @@ development tooling; M1 adds model-free authoring and local execution.
 | 3 | Text generation through the shared `Model` contract (complete) | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
 | 4 | Typed structured outputs (complete) | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
 | 5 | Bounded tool calling (complete) | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
-| 6 | Built-in opt-in model router | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
+| 6 | Built-in opt-in model router (complete) | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
 | 7 | Hardening and first usable release | Prove decided defaults/precedence within ceilings, deadlines/cancellation, DI startup/scoped cleanup, `RunResult` without telemetry, safe correlated errors and identity/resource/policy failures. Prove host admission/byte/shutdown limits, health/readiness and A2A deduplication/caller isolation without exactly-once claims; installed-wheel examples return complete validated results. No built-in approval pause/resume. |
 
 M0 acceptance was verified on **2026-11-11**: all four checks passed locally on
@@ -352,11 +352,30 @@ and a transient model error after `cancel_order` that does not run it again.
 The opt-in `tests/integration/test_providers.py` runs a one-tool round trip,
 locally and hosted, against real Ollama and Foundry.
 
+M6 built-in opt-in model routing was completed on **2026-11-12**: its stories
+(#67-#70) are merged. Router model calls go through `RoutingContext.generate`,
+charged to the same run as the selected skill, so routing counts toward the
+agent's token and model-call limits before the skill runs and the skill gets
+what remains (#67). `ModelRouter(model)` selects one of the caller's eligible
+skills, then extracts and validates its arguments, or asks a question instead
+of guessing (#68). It is enabled only by `AgentApp(router=ModelRouter(model))`,
+never by an agent model; the app builds its schemas at construction and checks
+its model at startup (#69). `examples/routed_assistant.py` serves two skills
+with the built-in router, and `tests/integration/test_routing_example.py`
+calls it with the official A2A client offline in CI: free text routed to the
+right skill with routing plus skill calls in the usage snapshot, a missing
+argument asked for (`INPUT_REQUIRED`) and answered in the same task
+(`COMPLETED`), a structured call that never calls the router model, a
+model-call limit that fails routing before the skill runs, and a custom
+`SkillRouter` on another app. The opt-in `tests/integration/test_providers.py`
+routes one unambiguous free-text request against real Ollama and Foundry,
+checking only the selected skill and that its argument is present (#70).
+
 M1 is the first proof: a model-free agent. M2 adds independent native A2A
 interoperability; M3 meets the [README success criterion](../README.md#first-success-criterion)
 with interchangeable Foundry/Ollama configuration; M4 adds typed structured
-output; M5 adds bounded tool calling. Built-in opt-in model routing remains required
-before the M7 first usable release, not a prerequisite for M2.
+output; M5 adds bounded tool calling; M6 adds built-in opt-in model routing.
+M7 hardening completes the first usable release.
 
 ### Resolved M0 platform and API decisions
 
@@ -487,11 +506,11 @@ belongs to that release even though telemetry exporters/integration stay optiona
   authenticator/resource-policy/content-check methods, API-key entry format,
   Entra scope mapping and permission merge rules. `auth`, built-in authenticators,
   `role_permissions` and explicit `AllowAnonymous()` are decided.
-- Exact built-in/custom router interfaces, validated argument extraction and
-  input-required clarification/follow-up contract. Structured requests and
-  native A2A extension use are decided, not a standardized base skill field. Built-in
-  opt-in model routing, custom routers, multiple skill methods and no mandatory
-  `handle()` are decisions, not open questions.
+- Free-text routing beyond one task's clarification: durable or cross-task
+  follow-ups and multi-skill orchestration. The `SkillRouter` protocol,
+  `ModelRouter`, validated argument extraction and the `INPUT_REQUIRED`
+  clarification contract are implemented (M6 #67-#69); structured requests use
+  the native A2A extension, not a standardized base skill field.
 - YAML name/URL schema details, environment encoding, source conflict/order,
   card enrichment bounds, find filter combinations/pagination, resolver
   auth/destination interfaces, source reconciliation, cache isolation/stale-age

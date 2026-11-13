@@ -20,7 +20,7 @@ from a2a.client.service_parameters import (
     ServiceParametersFactory,
     with_a2a_extensions,
 )
-from a2a.helpers import new_data_part
+from a2a.helpers import new_data_part, new_text_part
 from a2a.types import (
     Message,
     Role,
@@ -60,14 +60,17 @@ async def send(
     *,
     skill_call: bool,
     return_immediately: bool = False,
+    timeout: float | None = None,
 ) -> Task:
-    """Send one message and return the task; ``skill_call`` activates the extension."""
-    context = None
+    """Send one message and return the task; ``skill_call`` activates the extension.
+
+    ``timeout`` overrides the client's request timeout (5 seconds by default)
+    in seconds, for runs with several real model calls.
+    """
+    context = ClientCallContext(timeout=timeout)
     if skill_call:
         extensions = with_a2a_extensions([SKILL_CALL_EXTENSION_URI])
-        context = ClientCallContext(
-            service_parameters=ServiceParametersFactory.create([extensions])
-        )
+        context.service_parameters = ServiceParametersFactory.create([extensions])
     request = SendMessageRequest(
         message=message,
         configuration=SendMessageConfiguration(return_immediately=return_immediately),
@@ -93,3 +96,16 @@ async def call_skill(
     return await send(
         client, message, skill_call=True, return_immediately=return_immediately
     )
+
+
+async def say(
+    client: Client, text: str, task_id: str = "", *, timeout: float | None = None
+) -> Task:
+    """Send free text, optionally answering a question in an existing task."""
+    message = Message(
+        message_id=str(uuid.uuid4()),
+        role=Role.ROLE_USER,
+        parts=[new_text_part(text)],
+        task_id=task_id,
+    )
+    return await send(client, message, skill_call=False, timeout=timeout)
