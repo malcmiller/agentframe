@@ -166,6 +166,32 @@ class CancelledError(AgentFrameError):
     """
 
 
+class RemoteAgentError(AgentFrameError):
+    """Another agent failed: it is unreachable, its card is invalid or refused.
+
+    Raised for failures caused by a remote agent rather than by local
+    configuration, which raises ``DefinitionError`` instead.
+
+    Args:
+        message: Safe, human-readable description of the failure.
+        task_id: The remote A2A task's ID, when the failure concerns one.
+        task_state: The remote task's final state, when known.
+        invocation_id: Identifier of the run that failed, when known.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        task_id: str | None = None,
+        task_state: str | None = None,
+        invocation_id: str | None = None,
+    ) -> None:
+        super().__init__(message, invocation_id=invocation_id)
+        self.task_id = task_id
+        self.task_state = task_state
+
+
 def describe_validation_error(
     error: ValidationError, field_names: Collection[str] | None = None
 ) -> str:

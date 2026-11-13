@@ -7,6 +7,7 @@ from agentframe.authoring.context import RunContext
 from agentframe.authoring.decorators import agent, skill, tool
 from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
 from agentframe.authoring.services import Inject, Services
+from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
 from agentframe.discovery.registry import (
     AgentQuery,
     AgentReference,
@@ -29,6 +30,7 @@ from agentframe.errors import (
     PermissionDeniedError,
     PolicyUnavailableError,
     ProviderError,
+    RemoteAgentError,
     TimeoutLimitExceededError,
     TokenLimitExceededError,
     ToolCallLimitExceededError,
@@ -94,6 +96,7 @@ __all__ = [
     "APIKeyAuth",
     "Agent",
     "AgentApp",
+    "AgentDirectory",
     "AgentFrameError",
     "AgentQuery",
     "AgentReference",
@@ -106,6 +109,7 @@ __all__ = [
     "Clarification",
     "DeclaresCardSecurity",
     "DefinitionError",
+    "DiscoveredAgent",
     "EnvironmentAgentRegistry",
     "ExecutionPolicy",
     "FileAgentRegistry",
@@ -135,6 +139,7 @@ __all__ = [
     "PolicyUnavailableError",
     "Principal",
     "ProviderError",
+    "RemoteAgentError",
     "Role",
     "RoutingContext",
     "RunContext",

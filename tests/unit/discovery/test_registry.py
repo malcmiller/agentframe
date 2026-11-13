@@ -47,6 +47,8 @@ def test_reference_keeps_name_and_card_url() -> None:
         "https://research.example.com/card.json?key=secret",
         "https://research.example.com/card.json#card",
         "http://[::1",
+        "http://research.example.com:abc/card.json",
+        "http://research.example.com:99999/card.json",
     ],
 )
 def test_reference_refuses_unsafe_card_urls_without_echoing_them(url: str) -> None:
@@ -88,6 +90,18 @@ async def test_file_registry_filters_by_name(tmp_path: Path) -> None:
     found = await registry.list(AgentQuery(names=["review-agent", "missing"]))
 
     assert found == [AgentReference("review-agent", REVIEW_CARD)]
+
+
+async def test_file_registry_strips_whitespace_like_the_environment_registry(
+    tmp_path: Path,
+) -> None:
+    registry = write_registry(
+        tmp_path, f"- name: ' research-agent '\n  url: ' {RESEARCH_CARD} '\n"
+    )
+
+    assert await registry.get("research-agent") == AgentReference(
+        "research-agent", RESEARCH_CARD
+    )
 
 
 async def test_file_registry_reads_the_file_again_on_each_call(

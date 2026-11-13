@@ -19,7 +19,6 @@ after Uvicorn has waited for open requests, bounded by the same grace period.
 import argparse
 import contextlib
 import importlib
-import ipaddress
 import json
 import logging
 import math
@@ -32,7 +31,7 @@ from types import ModuleType
 from agentframe.authoring.agent import Agent
 from agentframe.errors import AgentFrameError
 from agentframe.hosting.app import AgentApp
-from agentframe.hosting.host import HostConfig
+from agentframe.hosting.host import HostConfig, is_loopback_host
 from agentframe.security.authentication import AllowAnonymous
 
 logger = logging.getLogger("agentframe")
@@ -241,7 +240,7 @@ def _app_from_factory(factory: object, target: str) -> AgentApp:
 def _development_app(agent_class: object, settings: RunSettings) -> AgentApp:
     if not (isinstance(agent_class, type) and issubclass(agent_class, Agent)):
         raise CommandError(f"--dev needs an Agent class; '{settings.target}' is not.")
-    if not _is_localhost(settings.host):
+    if not is_loopback_host(settings.host):
         raise CommandError(
             f"--dev serves anonymously, so it only binds to localhost, not "
             f"'{settings.host}'. Use a create_app() factory with real "
@@ -267,15 +266,6 @@ def _development_app(agent_class: object, settings: RunSettings) -> AgentApp:
         agent_class.__name__,
     )
     return app
-
-
-def _is_localhost(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def _url_host(host: str) -> str:
