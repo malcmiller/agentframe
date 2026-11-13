@@ -42,6 +42,7 @@ from agentframe import (
     Runtime,
     agent,
     skill,
+    tool,
 )
 from agentframe.models.ollama import DEFAULT_ENDPOINT
 from examples.assistant import Summary, create_app
@@ -87,6 +88,26 @@ class Geographer(Agent):
     async def capital(self, country: str, ctx: RunContext) -> Capital:
         """Name a country's capital city."""
         return await ctx.generate(f"The capital of {country}?", output=Capital)
+
+
+@tool(description="Look up the delivery status of an order by its ID.")
+def lookup_order(order_id: str) -> dict[str, str]:
+    # Small local models use a structured result more reliably than prose.
+    return {"order_id": order_id, "status": "delivered", "delivery_day": "Tuesday"}
+
+
+@agent(version="1.0.0")
+class OrderDesk(Agent):
+    """Answers questions about orders with a lookup tool."""
+
+    instructions = "Answer in one short sentence."
+    model_settings = ModelSettings(max_output_tokens=64)
+    limits = RunLimits(max_input_tokens=1000, max_tool_calls=2)
+
+    @skill("status", tags=["orders"])
+    async def status(self, question: str, ctx: RunContext) -> str:
+        """Answer a question about an order."""
+        return await ctx.generate(question, tools=[lookup_order])
 
 
 # The providers, configured only through environment variables
@@ -283,3 +304,27 @@ async def test_example_summarizes_over_a2a(
     assert usage["total_tokens"]
     assert usage["model_calls"] == 1
     assert not usage["estimated"]
+
+
+# Tool calling (Ollama; Foundry tool calling is #64)
+
+
+@pytest.mark.ollama
+@pytest.mark.skipif(
+    os.environ.get("AGENTFRAME_TEST_OLLAMA") != "1",
+    reason="set AGENTFRAME_TEST_OLLAMA=1",
+)
+async def test_ollama_agent_completes_a_tool_round_trip() -> None:
+    async with ollama_model() as model:
+        if not (await model.capabilities()).tools:
+            pytest.skip("the configured Ollama model does not support tools")
+        result = await Runtime().run(
+            OrderDesk(model=model, tools=[lookup_order]),
+            skill="status",
+            arguments={"question": "On which day was order A1 delivered?"},
+        )
+
+    assert result.tool_calls == 1
+    assert "tuesday" in result.value.lower()
+    assert result.model_calls == 2
+    assert result.usage.total_tokens
