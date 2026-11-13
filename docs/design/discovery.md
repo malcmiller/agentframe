@@ -89,24 +89,44 @@ protocol configuration, after which Foundry publishes a card and accepts A2A
 requests. New integrations target GA A2A 1.0; the provider's 0.3 preview is not
 AgentFrame's target. Explicitly select 1.0 rather than relying on a provider default.
 
-The documented v1.0 card path ends in
-`/agents/{agent}/endpoint/protocols/a2a/agentCard/v1.0`. Still open: exact mapping
-from listed agents to card URLs and stable references, filtering to A2A-enabled
-agents only, authentication/RBAC and pagination. The guide requires Foundry User
-or higher to enable incoming A2A; card/invocation access requires Entra ID and
-Foundry Agent Consumer or another role granting endpoint access. Registry read
-permissions and credential scoping must be verified separately. Anonymous/API-key
-access to those A2A endpoints is not implied by model API-key support.
+Implemented (#86), proven offline against a fake of the agents API; the
+opt-in real-project test awaits a project with an A2A-enabled agent:
+
+- `azure-ai-projects==2.11.0` is exactly pinned in the `foundry` extra. Each
+  call creates and closes its own async `AIProjectClient`, so the registry
+  holds no connections and has nothing to close.
+- `list` follows every page of `agents.list()` (100 per page) and `get` uses
+  the single-agent call. Any failed page or credential failure raises
+  `DefinitionError`; a partial first page is never returned.
+- An agent is A2A-enabled when `agent_endpoint.protocol_configuration.a2a` is
+  set (decision 1). In `azure-ai-projects` 2.11.0 that configuration has no
+  version field: Foundry serves GA 1.0 and the 0.3 preview from the same
+  setting, so the registry always maps to the v1.0 card,
+  `{project_endpoint}/agents/{name}/endpoint/protocols/a2a/agentCard/v1.0`,
+  and the directory still requires the card's JSON-RPC 1.0 interface. 0.3 is
+  never selected. Preview hosted-agent A2A passthrough (`protocol_versions` on
+  hosted definitions) is not considered.
+- `AgentRegistry.card_headers(reference)` (decision 2, default empty) lets a
+  source add headers to its own card requests. `FoundryAgentRegistry` returns
+  a bearer token for `https://ai.azure.com/.default` from its credential, only
+  for card URLs inside its project.
+- Roles (decision 3): listing needs the data action
+  `Microsoft.CognitiveServices/accounts/AIServices/agents/read`, which
+  **Foundry Agent Consumer** lacks (it has only `.../endpoints/interact/action`).
+  **Foundry User** is the least-privileged built-in role with both, so it is
+  the expected registry identity role; a custom role with just those two data
+  actions is narrower. The opt-in test is how to verify this; it has not yet
+  run against a real A2A-enabled agent.
+
+Anonymous/API-key access to those A2A endpoints is not implied by model
+API-key support.
 
 Foundry [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
 may be an additional source of references; this is an option, not a decided
 adapter behavior. The registry remains read-only M8+ scope and does not enable
 A2A, publish agents or deploy AgentFrame agents to Foundry. A model deployment
 is not an agent endpoint; this is distinct from `FoundryModel`'s OpenAI v1
-Responses path. The constructor fields `project_endpoint` and `credential` are
-now decided; precise credential typing, pins and tested compatibility remain
-open. The adapter returns A2A-enabled agents only; exact filtering/card mapping
-still needs implementation proof.
+Responses path. The credential is an `azure-core` `AsyncTokenCredential`.
 
 ## Extending the read base
 
@@ -209,9 +229,10 @@ next call tries again. `refresh(name)` forces a refetch and always raises on
 failure. A source failure raises and leaves cached cards in place: it is not
 evidence of removal.
 
-Cards are fetched only with the source's own credential (none today;
-`card_headers` arrives with the Foundry source in #86), never with the current
-caller's identity, so one card variant is shared by every caller. Per-caller
+Cards are fetched only with the source's own credential (its
+`card_headers`, sent only on that card request; empty for the file and
+environment sources, a bearer token for `FoundryAgentRegistry`, #86), never
+with the current caller's identity, so one card variant is shared by every caller. Per-caller
 and authenticated extended cards are out of scope. Fetches are bounded to 10
 seconds and 1 MiB and never follow redirects; a run's deadline also cancels
 them. The registry's `card_url` is the only trusted origin: the card's JSON-RPC

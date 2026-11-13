@@ -117,8 +117,10 @@ As part of the next core multi-agent release (M8+) after M7, a read-only
 `AgentReference(name, card_url)` / `AgentQuery(names=...)` and explicit
 `EnvironmentAgentRegistry` (comma-separated `name=url`) and `FileAgentRegistry`
 (YAML `name`/`url` list, PyYAML core dependency) sources is implemented (#83).
-The chosen Foundry project agents API source, with A2A-enabled filtering/card
-mapping still to prove, is not. This is agent discovery, not a process-global
+`FoundryAgentRegistry(project_endpoint=..., credential=...)` lists a Foundry
+project's A2A-enabled agents and maps each to its v1.0 card, fetched with the
+source's own Entra token through `AgentRegistry.card_headers` (#86; proven
+offline, real-project opt-in test pending). This is agent discovery, not a process-global
 plugin registry; model deployments are not agent endpoints.
 
 Implemented (#84): `AgentDirectory(sources=[...])` fetches/validates native
@@ -472,14 +474,16 @@ and `RUF`. See [development commands](../README.md#development-and-contributions
 | Development tooling | Ruff formatter/linter instead of Black/flake8/isort, PEP 8 conventions with 88-character lines; strict mypy on `agentframe` and tests; pytest with pytest-asyncio auto mode. | Configured in `pyproject.toml`, CI and pre-commit. All four checks must pass before committing; tests run in CI rather than on every commit. Avoid rules that contort readable code. |
 | A2A | Target protocol **1.0**, using the official `a2a-sdk` Python package. [Latest specification release observed: v1.0.1](https://github.com/a2aproject/A2A/releases/tag/v1.0.1), published 2026-05-28; [SDK observed: 1.3.0, Python >=3.10](https://pypi.org/project/a2a-sdk/1.3.0/). Do not advertise 0.3 support. **M2 (2026-11-12):** pinned `a2a-sdk[http-server]==1.3.0` as a core dependency (hosting is the default interface; the optional `agentframe-py[server]` extra only adds uvicorn for `agentframe run`, M2 #9); the `http-server` extra explicitly supplies Starlette/SSE. Selected binding: **JSON-RPC over HTTP** (`JSONRPC`, protocol version `1.0`), the most widely supported 1.0 binding. The SDK's 0.3 compatibility mode stays disabled, so requests without `A2A-Version: 1.0` are rejected; gRPC and HTTP+JSON/REST are not offered. `tests/unit/hosting/test_a2a_binding.py` and the CI wheel check prove the supported install. Native type mappings and independent official-client interoperability with AgentFrame hosting are proven end to end in `tests/integration/test_interoperability.py` (M2 #10). | Upgrade the SDK only deliberately, with the binding tests. Selecting JSON-RPC does not select every optional capability. |
 | Foundry model inference | Use OpenAI v1 **Responses API**, base URL `https://<resource>.openai.azure.com/openai/v1/`, via official `openai`. Inject either an API key or Microsoft Entra ID token provider (`azure-identity` `get_bearer_token_provider`, scope `https://ai.azure.com/.default`). The [Azure AI Inference SDK is retired](https://learn.microsoft.com/en-us/azure/foundry/how-to/model-inference-to-openai-migration); do not use it. | Keep `openai`/`azure-identity` optional provider extras; pin compatible dependencies and prove M3 deployment/capability/auth and client-lifecycle behavior. AgentFrame constructor/credential wrapping remains proposed. |
-| Foundry discovery (M8+) | Choose the project agents API through `azure-ai-projects` **2.x** ([2.10.0 observed](https://pypi.org/project/azure-ai-projects/2.10.0/)), project endpoint `https://{account}.services.ai.azure.com/api/projects/{project}`. [Incoming A2A documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint) shows prompt agents enabling A2A with `agent_card` and protocol configuration, publishing cards and accepting A2A requests. Select GA protocol 1.0 explicitly. | Prove listed-agent to card-URL mapping, filter to A2A-enabled agents, settle authentication/RBAC and pagination. This is read discovery of existing agents, not deployment of AgentFrame agents to Foundry. |
+| Foundry discovery (M8+) | Choose the project agents API through `azure-ai-projects` **2.x** ([2.10.0 observed](https://pypi.org/project/azure-ai-projects/2.10.0/)), project endpoint `https://{account}.services.ai.azure.com/api/projects/{project}`. [Incoming A2A documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint) shows prompt agents enabling A2A with `agent_card` and protocol configuration, publishing cards and accepting A2A requests. Select GA protocol 1.0 explicitly. | Implemented (#86) with `azure-ai-projects==2.11.0` in the `foundry` extra: every page is read, `agent_endpoint.protocol_configuration.a2a` marks A2A-enabled agents, each maps to its v1.0 card. This is read discovery of existing agents, not deployment of AgentFrame agents to Foundry. |
 
 Foundry's documented card route for enabled agents ends in
 `/agents/{agent}/endpoint/protocols/a2a/agentCard/v1.0`; its existence is not a
 substitute for validating each listed agent's enabled endpoint. Enabling incoming
 A2A requires Foundry User or higher; authenticated card/invocation access uses
-Foundry Agent Consumer or another role granting endpoint access. Registry read
-permissions and role mapping remain to be verified. Foundry's
+Foundry Agent Consumer or another role granting endpoint access. Listing agents
+needs the `agents/read` data action, which Foundry Agent Consumer lacks;
+Foundry User is the least-privileged built-in role for the registry identity,
+to be verified with the opt-in test. Foundry's
 [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
 are a possible additional reference source, not a selected registry contract.
 

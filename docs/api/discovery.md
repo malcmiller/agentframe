@@ -4,8 +4,10 @@
 ([`AgentRegistry`](#agentregistry) through [`FileAgentRegistry`](#fileagentregistry))
 are implemented (M8+ #83), and [`AgentDirectory`](#agentdirectory) with
 [`get`](#agentdirectoryget), [`refresh`](#agentdirectoryrefresh), its async
-context manager and [`DiscoveredAgent`](#discoveredagent) (#84) and
-[`find`](#agentdirectoryfind) (#85); every other API
+context manager and [`DiscoveredAgent`](#discoveredagent) (#84),
+[`find`](#agentdirectoryfind) (#85), and
+[`FoundryAgentRegistry`](#foundryagentregistry) with
+[`AgentRegistry.card_headers`](#agentregistrycard_headers) (#86); every other API
 here is unimplemented, and its
 confirmed names/defaults are decisions while unspecified signatures remain
 illustrative. Discovery/registry and remote A2A invocation are core
@@ -24,12 +26,15 @@ registry.
 
 **Signature status:** implemented in M8+ #83. The base takes no constructor
 parameters. Subclasses implement async [`get`](#agentregistryget) and
-[`list`](#agentregistrylist); no write or lifecycle methods exist.
+[`list`](#agentregistrylist) and may override
+[`card_headers`](#agentregistrycard_headers) (#86); no write or lifecycle
+methods exist.
 
 | Contract | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `get` implementation | `async (agent_id: str) -> AgentReference` | Required abstract method | Return one agent's reference; raise when the source fails or does not list it. Do not fetch or cache cards. |
 | `list` implementation | `async (query: AgentQuery) -> list[AgentReference]` | Required abstract method | Return matching references; empty only when the source authoritatively lists none. |
+| `card_headers` override | `async (reference: AgentReference) -> Mapping[str, str]` | Optional; default returns `{}` | Headers, such as the source's own bearer token, to send with that agent's card request. |
 
 ```python
 from agentframe import AgentQuery, AgentReference, AgentRegistry, DefinitionError
@@ -114,10 +119,53 @@ order; names in the query that the source does not list are ignored. An
 authoritative empty result is valid; a source failure raises instead. Skill and
 tag matching happens on cards in the directory
 ([`find`](#agentdirectoryfind)), not here. Matching is not access permission.
-Pagination for large sources (such as Foundry) remains open.
+A paged source such as [`FoundryAgentRegistry`](#foundryagentregistry) reads
+every page and raises if any page fails, so a result is never a partial first
+page. `AgentDirectory.get` lists with `AgentQuery(names=[name])` on every call,
+so `list` must honor `names`.
 
 **Related:** [`AgentQuery`](#agentquery),
 [query placement](../design/discovery.md#query-matching-and-card-enrichment).
+
+## `AgentRegistry.card_headers`
+
+**Purpose / decision:** let a source send its own credentials when the
+directory fetches one of its agents' cards. Implemented (#86; decision
+confirmed 2026-11-12). Not abstract: the default returns no headers.
+
+```python
+async def card_headers(self, reference: AgentReference) -> Mapping[str, str]: ...
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `reference` | `AgentReference` | Required | An agent this registry listed. |
+
+```python
+from collections.abc import Mapping
+
+from agentframe import AgentReference, FileAgentRegistry
+
+
+class TokenFileRegistry(FileAgentRegistry):
+    def __init__(self, path: str, token: str) -> None:
+        super().__init__(path)
+        self._token = token  # application-supplied placeholder
+
+    async def card_headers(self, reference: AgentReference) -> Mapping[str, str]:
+        return {"Authorization": f"Bearer {self._token}"}
+```
+
+**Behavior / failures:** [`AgentDirectory`](#agentdirectory) calls it only when
+it fetches a card, and sends the headers only on that one request to the
+registry's `card_url`: never on redirects (which are refused), other agents'
+cards, later A2A calls or the client's defaults. The current caller's identity
+is never added, so the cached card is the same for every caller. A raised
+`DefinitionError` propagates from `get`/`refresh`. Keep the headers to your own
+source's origin; `FoundryAgentRegistry` refuses card URLs outside its project.
+
+**Related:** [`AgentDirectory`](#agentdirectory),
+[`FoundryAgentRegistry`](#foundryagentregistry).
 
 ## `AgentReference`
 
@@ -179,7 +227,7 @@ only_research = AgentQuery(names=["research-agent"])
 
 **Behavior / failures:** there are no skill or tag fields; those match on cards
 through [`AgentDirectory.find`](#agentdirectoryfind). Query matching cannot
-grant access. Ordering and pagination for paginated sources remain open.
+grant access. Paged sources read every page; result ordering follows the source.
 
 **Related:** [`AgentRegistry.list`](#agentregistrylist),
 [enrichment boundary](../design/discovery.md#query-matching-and-card-enrichment).
@@ -268,55 +316,103 @@ dependency.
 
 ## `FoundryAgentRegistry`
 
-**Purpose / decision:** read references through the chosen Foundry project agents
-API using official `azure-ai-projects` 2.x. Source selection is confirmed;
-the M8+ adapter is not implemented or compatibility-tested.
+**Purpose / decision:** the agents in a Microsoft Foundry project that have
+incoming A2A enabled, read through the Foundry project agents API with the
+official `azure-ai-projects` package. Implemented (#86) and proven offline
+against a fake of the API; the opt-in real-project test is below. Read-only:
+it never enables A2A, publishes or deploys. Needs the `foundry` extra
+(`pip install 'agentframe-py[foundry]'`, which pins `azure-ai-projects==2.11.0`);
+imported lazily, so `import agentframe` works without it.
 
-**Decided constructor fields:** `FoundryAgentRegistry(project_endpoint=..., credential=...)`.
-Project API/SDK family is selected; exact compatible dependency pins await
-implementation (2.10.0 observed on 2026-11-11).
-
-| Concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| `project_endpoint` | `str` | Required | Trusted configured Foundry project endpoint, not model inference URL. |
-| `credential` | Injected Entra credential; exact accepted type open | Required | Registry-read access verified separately; never load credentials from source references. |
-| API/source selection | Foundry project agents API, `azure-ai-projects` 2.x | Chosen; observed 2.10.0 is not a pin | Project endpoint `https://{account}.services.ai.azure.com/api/projects/{project}`. Model deployments are not agent endpoints; not `FoundryModel` inference. |
-| A2A eligibility/card mapping | Listed agent to validated reference/native card; mapping open | Only A2A-enabled agents eligible | Foundry prompt agents can expose incoming A2A with `agent_card` plus protocol configuration. Target GA 1.0, not 0.3 preview; prove mapping to the documented v1.0 card route. |
-| Authentication/RBAC | Application-injected Entra identity; exact interface open | Required for protected project/A2A access | Foundry User or higher enables incoming A2A; endpoint callers need Foundry Agent Consumer or another endpoint-access role. Verify registry-read permissions separately. |
-| Pagination | SDK page/source to registry query/results; contract open | Required for correct enumeration | Preserve explicit failures and result completeness; do not silently return a first page as all agents. |
-
-```python
-from azure.core.credentials_async import AsyncTokenCredential
-from agentframe import FoundryAgentRegistry
-
-
-def foundry_source(
-    project_endpoint: str, credential: AsyncTokenCredential,
-) -> FoundryAgentRegistry:
-    return FoundryAgentRegistry(
-        project_endpoint=project_endpoint, credential=credential,
-    )
+```text
+FoundryAgentRegistry(
+    *,
+    project_endpoint: str,
+    credential: AsyncTokenCredential,
+    transport: AsyncHttpTransport | None = None,
+)
 ```
 
-**Behavior / failures:** the credential type above is illustrative, not finalized
-adapter typing. This is not implemented support or an
-executable setup guide. Foundry's
-[incoming A2A guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint)
-documents published cards and incoming requests for enabled prompt agents.
-Its v1.0 card route ends in
-`/agents/{agent}/endpoint/protocols/a2a/agentCard/v1.0`; resolve each eligible
-listed agent's endpoint rather than assuming every project agent exposes A2A.
-Use Entra ID for card/invocation access, not model API-key credentials.
-Unsupported API/non-invocable endpoints, source
-outages and auth failures must be explicit, not disguised as working A2A
-references or empty results. No deployment/provisioning or A2A-enabling writes.
-Foundry's [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
-are a possible additional reference source, not a chosen contract.
-See [observed SDK metadata](https://pypi.org/project/azure-ai-projects/2.10.0/);
-this does not mean AgentFrame agents deploy to Foundry.
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `project_endpoint` | `str` | Required | `https://{account}.services.ai.azure.com/api/projects/{project}`. Absolute https without credentials, query or fragment; a trailing `/` is ignored. Not a model inference URL. |
+| `credential` | `azure.core.credentials_async.AsyncTokenCredential` | Required | Entra credential for listing agents and fetching their cards, for example `azure.identity.aio.DefaultAzureCredential()`. Stays yours: never closed by the registry. |
+| `transport` | `azure.core.pipeline.transport.AsyncHttpTransport \| None` | Optional; default `azure-core`'s aiohttp transport | For a test double or an outbound proxy. |
+
+```python
+from azure.identity.aio import DefaultAzureCredential
+
+from agentframe import AgentDirectory, FoundryAgentRegistry
+
+
+async def foundry_card_name(agent_name: str) -> str:
+    async with DefaultAzureCredential() as credential:
+        source = FoundryAgentRegistry(
+            project_endpoint=(
+                "https://contoso.services.ai.azure.com/api/projects/research"
+            ),
+            credential=credential,
+        )
+        async with AgentDirectory(sources=[source]) as agents:
+            return (await agents.get(agent_name)).card.name
+```
+
+**Behavior / failures:**
+
+- Construction does no I/O. Each `get`/`list` creates and closes its own async
+  `AIProjectClient`, so there is nothing to close.
+- `list` follows every page of the project's agents (100 per page) and keeps
+  agents whose `agent_endpoint.protocol_configuration.a2a` is set, the setting
+  Foundry's [incoming A2A guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint)
+  enables. `get` uses the single-agent call and raises `DefinitionError` for an
+  unknown agent or one without incoming A2A.
+- Each agent maps to `AgentReference(name, card_url)` with
+  `card_url = {project_endpoint}/agents/{name}/endpoint/protocols/a2a/agentCard/v1.0`,
+  Foundry's GA A2A 1.0 card. In `azure-ai-projects` 2.11.0 the A2A
+  configuration has no version field: Foundry serves 1.0 and the 0.3 preview
+  from the same setting, and the registry never selects 0.3. The card's
+  interface (`.../endpoint/protocols/a2a`) has a different path but the same
+  origin, which the directory requires.
+- Any failed page, HTTP error or credential failure raises `DefinitionError`
+  with only the project, status or error class, never a partial list or `[]`.
+- [`card_headers`](#agentregistrycard_headers) returns
+  `Authorization: Bearer <token>` for `https://ai.azure.com/.default` from
+  `credential`, only for card URLs inside this project. Foundry cards require
+  Entra ID (no anonymous access), so the directory sends this source identity's
+  token, never the caller's; every caller sees the same card. Remote calls get
+  their own identity handling (#92, #93).
+- Preview hosted-agent A2A passthrough and Foundry's
+  [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
+  are not read. A model deployment is not an agent endpoint; see
+  [`FoundryModel`](models.md#foundrymodel) for inference.
+
+**Roles** (from Microsoft's [Foundry RBAC](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry)
+documentation and built-in role definitions, checked 2026-11-13):
+
+| Who | Needs | Role |
+| --- | --- | --- |
+| Whoever enables incoming A2A on an agent | Agent update on the project | **Foundry User** or higher. AgentFrame never does this. |
+| The registry's `credential`, to list agents | Data action `Microsoft.CognitiveServices/accounts/AIServices/agents/read` | **Foundry User** on the project: the least-privileged built-in role with it. Foundry Agent Consumer does not have it. A custom role with only this data action and the one below is narrower. |
+| The registry's `credential`, to fetch cards | Data action `Microsoft.CognitiveServices/accounts/AIServices/endpoints/interact/action` | **Foundry Agent Consumer** (or Foundry User) on the project or agent. |
+| Identities that later call the agent over A2A | Endpoint access | **Foundry Agent Consumer** or another endpoint-access role. |
+
+The registry-read role is the expected one from the documented role
+definitions; verify it with the opt-in test below before relying on it.
+
+**Opt-in test** (`tests/integration/test_foundry_agents.py`, marked `foundry`,
+skipped unless enabled). It only reads. One-time setup, outside AgentFrame:
+create a prompt agent in a Foundry project, enable incoming A2A as the guide
+shows, and give your `az login` identity Foundry User on the project (or the
+custom role above). Then:
+
+```bash
+AGENTFRAME_TEST_FOUNDRY_AGENTS=1 \
+  AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project> \
+  AGENTFRAME_FOUNDRY_A2A_AGENT=<agent-name> uv run pytest -m foundry
+```
 
 **Related:** [chosen source and mapping boundaries](../design/discovery.md#sources-and-reference-format),
-[`FoundryModel`](models.md#foundrymodel).
+[`AgentDirectory`](#agentdirectory).
 
 ## `AgentDirectory`
 
@@ -367,9 +463,11 @@ cards are cached per card URL. Every card fetch:
 
 - goes only to `https`, except loopback hosts (`localhost`, `127.0.0.0/8`,
   `::1`) and `allow_http_hosts`; refused before any request is sent;
-- carries no credentials: the client's `auth` is disabled and nothing about the
-  current caller is added, so every caller sees the same cached card (one card
-  variant; per-caller or authenticated extended cards are out of scope);
+- carries only the source's own [`card_headers`](#agentregistrycard_headers)
+  (none for file and environment sources): the client's `auth` is disabled and
+  nothing about the current caller is added, so every caller sees the same
+  cached card (one card variant; per-caller or authenticated extended cards
+  are out of scope);
 - is bounded to 10 seconds (and never past the caller's deadline, since a run's
   deadline cancels it), reads at most 1 MiB and does not follow redirects;
 - is parsed by the official SDK into `a2a.types.AgentCard`, which must have a
