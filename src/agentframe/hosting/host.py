@@ -111,17 +111,36 @@ class A2AConfig:
             raise DefinitionError("A2AConfig dedup_window_seconds must be positive")
 
 
+def is_plain_http_url(url: str) -> bool:
+    """Return whether ``url`` is an absolute http(s) URL with nothing secret in it.
+
+    Credentials, a query or a fragment are refused because such URLs are
+    published (on an Agent Card) or shared (in a registry source).
+
+    Args:
+        url: The URL to check.
+
+    Returns:
+        ``True`` for an absolute http or https URL with a host and without
+        credentials, query or fragment; otherwise ``False``.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return (
+        parts.scheme in ("http", "https")
+        and bool(parts.hostname)
+        and "@" not in parts.netloc
+        and not parts.query
+        and not parts.fragment
+    )
+
+
 def _check_public_url(public_url: str) -> None:
     # The URL is published on the public card, so credentials in it would
     # leak; the error message does not echo it for the same reason.
-    parts = urlsplit(public_url)
-    if (
-        parts.scheme not in ("http", "https")
-        or not parts.hostname
-        or "@" in parts.netloc
-        or parts.query
-        or parts.fragment
-    ):
+    if not is_plain_http_url(public_url):
         raise DefinitionError(
             "HostConfig public_url must be an absolute http(s) URL without "
             "credentials, query or fragment."
