@@ -477,6 +477,12 @@ startup, bound per run inside its deadline. `ask` sends via the SDK
 `return_immediately` then `GetTask` polling (0.25 s -> 1 s), per-request
 `A2A-Version`/timeout headers; deadline or cancellation sends best-effort
 `CancelTask`. Cards declaring security are refused until #92/#93.
+Implemented (#88): `call(skill, /, *, output=None, **arguments)` checks the
+card declares the skill-call extension and skill (else `RemoteAgentError`, no
+send, no `ask` fallback), sends the M2 wire format with per-request
+`A2A-Extensions`, reuses `ask`'s wait/cancel, decodes text or `{"value": ...}`
+and validates `output` (`OutputValidationError`, no remote data); `output` and
+`max_total_tokens` are reserved (the latter raises `DefinitionError` until #90).
 `ClarificationNeededError(question, task_id, context_id)` fails a hosted
 orchestrator task. See `docs/design/discovery.md` and `docs/api/discovery.md`.
 
