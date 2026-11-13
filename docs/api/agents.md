@@ -115,7 +115,7 @@ accessors remain open.
 
 Next-core-release discovery can inject an appropriately scoped `AgentDirectory`
 through an `Inject[AgentDirectory]` parameter backed by `Services`.
-`Remote["name"]` injects managed remote bindings resolved by
+`Remote[Literal["name"]]` injects managed remote bindings resolved by
 `AgentApp(directory=...)`, with configured names validated at startup and excluded
 from caller/card/MCP schemas. No new `Agent` base class is implied. A singleton directory's
 lifespan is application-owned, not invocation cleanup. See

@@ -98,7 +98,7 @@ core to this release, not optional follow-ups. MCP, telemetry integration and
 streaming/AG-UI remain optional follow-ups. Local N-agent development precedes
 container packaging; Foundry/Kubernetes templates are later. No workflow/graph
 engine or hosting platform is included.
-The confirmed M8+ surface is `Remote["name"].call` / `ask`, input-required as
+The confirmed M8+ surface is `Remote[Literal["name"]].call` / `ask`, input-required as
 `ClarificationNeededError`, directory `sources` and card-backed `find`, YAML
 file sources and a 300-second cache with automatic stale refresh. Per-target OBO/
 service modes, shared remaining budget/deadline and maximum 5 hops constrain

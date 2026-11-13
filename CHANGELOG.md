@@ -29,6 +29,15 @@ changelog.
   lets a source send its own credentials with its card requests; Foundry
   sends a bearer token from its credential. The `foundry` extra now pins
   `azure-ai-projects==2.11.0`.
+- **Remote agents (M8+):** skills declare another A2A agent as a
+  `Remote[Literal["name"]]` parameter (excluded from arguments, the Agent Card
+  and schemas), found through `Runtime(directory=...)` or
+  `AgentApp(directory=...)`; server startup checks every name with
+  `Runtime.validate_remotes`. `await remote.ask(text)` sends plain A2A text and
+  returns the text answer within the run's deadline, cancelling the remote
+  task on deadline or cancellation. New `ClarificationNeededError` when the
+  remote agent asks a question. Agents whose card requires credentials,
+  including Foundry agents, cannot be called yet.
 
 ### Fixed
 

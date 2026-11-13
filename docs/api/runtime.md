@@ -10,7 +10,8 @@ adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
 `Runtime.validate_model`, token/model-call accounting in `RunResult` and the
 `TokenLimitExceededError`, `ModelCallLimitExceededError` and
 `TimeoutLimitExceededError` subtypes. M5 #61 adds `ToolCallLimitExceededError`
-and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`; M8+ #84 adds `RemoteAgentError`.
+and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`; M8+ #84 adds `RemoteAgentError` and #87 adds
+`Runtime(directory=...)`, `Runtime.validate_remotes` and `ClarificationNeededError`.
 The remaining parameters and errors
 arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
@@ -27,6 +28,7 @@ Runtime(
     *, authorization: AuthorizationPolicy = ...,
     tool_authorization: ToolAuthorizationPolicy = ...,
     policy: ExecutionPolicy = ..., tracing: TracingConfig = ..., services: Services = ...,
+    directory: AgentDirectory = ...,
 )
 ```
 
@@ -37,6 +39,7 @@ Runtime(
 | `policy` | [`ExecutionPolicy`](authorization.md#executionpolicy) | Optional; default `None` runs no content checks | Input, model-request, tool and output checks (M7 #77, #78). They run after authorization and cannot waive it; every configured check runs and fails closed. Hosted apps pass it as `AgentApp(policy=...)` or through `runtime=`. |
 | `tracing` | `TracingConfig` | Optional; tracing disabled unless configured | Application owns provider/exporters/sampling; accounting and invocation IDs do not depend on export. |
 | `services` | `Services` | Explicit when skills need registered dependencies | Resolve `Inject[T]` parameters; missing registration is a startup `DefinitionError`. Same service container contract as `AgentApp`. |
+| `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; required when a skill takes a [`Remote`](discovery.md#remoteliteralname) parameter (M8+ #87) | Where `Remote[Literal["name"]]` parameters find their agents; each run binds them at its start, within its deadline. The application opens and closes it. |
 
 ```python
 from agentframe import Runtime
@@ -50,7 +53,8 @@ telemetry integration. It does not declare any remote access policy. M2
 implements `Runtime(*, services: Services | None = None, authorization:
 AuthorizationPolicy | None = None)`; omitting `authorization` means no resource
 checks. M5 #62 adds `tool_authorization: ToolAuthorizationPolicy | None = None`
-and M7 #77 adds `policy: ExecutionPolicy | None = None`.
+and M7 #77 adds `policy: ExecutionPolicy | None = None`. M8+ #87 adds
+`directory: AgentDirectory | None = None`.
 
 **Behavior / failures:** no inference on construction. Validate definitions and
 configuration; create invocation-scoped context, enforce policy/limits, validate
@@ -91,8 +95,9 @@ def check(agent: Agent, services: Services) -> None:
 ```
 
 **Behavior / failures:** raises `DefinitionError` when the agent's class is not
-decorated with `@agent` or any skill's `Inject[T]` parameter has no registered
-service. It runs no skill code and creates no scoped services.
+decorated with `@agent`, any skill's `Inject[T]` parameter has no registered
+service, or a skill takes a `Remote` parameter and the runtime has no
+directory. It runs no skill code, creates no scoped services and does no I/O.
 
 **Related:** [`Runtime`](#runtime), [`Services`](agents.md#services).
 
@@ -130,6 +135,39 @@ the agent's timeout raises a transient `ProviderError`.
 
 **Related:** [`RunLimits`](configuration.md#runlimits),
 [`ModelCapabilities`](models.md#modelcapabilities).
+
+## `Runtime.validate_remotes`
+
+**Purpose / decision:** check, before serving any work, that every
+[`Remote`](discovery.md#remoteliteralname) parameter's agent can be called.
+[`AgentApp`](hosting.md#agentapp) calls it at server startup.
+
+**Signature status:** implemented in M8+ (#87) as
+`async Runtime.validate_remotes(agent: Agent) -> None`.
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `agent` | `Agent` instance | Required | Instance of an `@agent`-decorated class. |
+
+```python
+from agentframe import Agent, AgentDirectory, Runtime
+
+
+async def check_remotes(agent: Agent, directory: AgentDirectory) -> None:
+    async with directory:
+        await Runtime(directory=directory).validate_remotes(agent)
+```
+
+**Behavior / failures:** looks every distinct name up in the directory,
+fetching its card. Agents without `Remote` parameters pass without I/O.
+Raises `DefinitionError` when a skill takes a `Remote` parameter and there is
+no directory, the directory is not open, no source lists a name, or a card
+requires credentials (outbound identity is #92, #93); raises
+[`RemoteAgentError`](#remoteagenterror) when a card cannot be fetched or is
+invalid. Local runs that skip it fail the same way when the skill runs.
+
+**Related:** [`Remote`](discovery.md#remoteliteralname),
+[`AgentDirectory`](discovery.md#agentdirectory).
 
 ## `Runtime.invoke`
 
@@ -730,15 +768,16 @@ do not swallow Python task cancellation or present it as success. Native A2A
 cancellation retains protocol semantics.
 **Related:** [`AgentFrameError`](#agentframeerror), [cancellation](../guides/limits.md#accounting-and-enforcement).
 
-M8+ also adds [`ClarificationNeededError`](discovery.md#clarificationneedederror),
-an `AgentFrameError` carrying a remote input-required question; no automatic
-back-and-forth. Native task state stays input-required, not a failed remote task.
+M8+ #87 also adds [`ClarificationNeededError`](discovery.md#clarificationneedederror),
+an `AgentFrameError` carrying a remote input-required question with the remote
+task and context IDs; no automatic back-and-forth. The remote task stays
+input-required; it is not reported as a failed remote task.
 
 ## `RemoteAgentError`
 
 **Purpose / decision:** a failure caused by another agent rather than by local
-configuration: an unreachable agent, an invalid or refused Agent Card, and
-later (#87) a failed or rejected remote task.
+configuration: an unreachable agent, an invalid or refused Agent Card, or a
+remote task that did not complete ([`Remote.ask`](discovery.md#remoteask), #87).
 **Signature status:** implemented in M8+ #84 as a direct `AgentFrameError`
 subclass:
 `RemoteAgentError(message: str, *, task_id: str | None = None, task_state: str | None = None, invocation_id: str | None = None)`.
@@ -759,7 +798,8 @@ def remote_task(error: RemoteAgentError) -> str | None:
 
 **Behavior / failures:** configuration mistakes (an unknown agent name, the same
 name in two sources, an unreadable source) stay `DefinitionError`.
-`ClarificationNeededError` (M8+) stays a separate error.
+A remote task's own status text is never put in the message.
+`ClarificationNeededError` stays a separate error.
 **Related:** [`AgentDirectory`](discovery.md#agentdirectory),
 [`AgentFrameError`](#agentframeerror).
 

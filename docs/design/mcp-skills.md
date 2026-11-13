@@ -111,7 +111,7 @@ release (M8+), but remains a separate concern: finding a remote card never
 publishes its skills through MCP or
 registers them as internal model tools. Discovery itself does not delegate;
 remote invocation uses a separately authorized native A2A client.
-M8+ skills use `Remote["name"].call(...)` or `.ask(text)`; remote annotations
+M8+ skills use `Remote[Literal["name"]].call(...)` or `.ask(text)`; remote annotations
 are excluded from schemas just like `Inject[T]`. `call` activates the same
 structured extension, whose schema also carries remaining deadline/token
 allowance, reported peer usage and default max-5-hop depth. `ask` works with

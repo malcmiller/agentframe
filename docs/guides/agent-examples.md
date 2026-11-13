@@ -470,7 +470,7 @@ The [discovery guide](../design/discovery.md#agent-injection-and-separate-invoca
 shows trusted `Inject[AgentDirectory]` parameters registered in `Services`.
 Its [lifecycle example](../design/discovery.md#managed-directory-lifecycle) keeps card
 fetch/cache/refresh and owned-resource cleanup in the library. Named
-`Remote["research-agent"]` skill parameters resolve via `AgentApp(directory=...)`.
+`Remote[Literal["research-agent"]]` skill parameters resolve via `AgentApp(directory=...)`.
 Use `research.call("find_sources", topic=goal, output=list[Source])` for structured
 A2A, or `research.ask(text)` for any compatible A2A agent. Await task completion
 within caller deadline; input-required raises `ClarificationNeededError`, not an
