@@ -33,7 +33,7 @@ http-server = [
 
 [[package]]
 name = "agentframe"
-version = "0.1.0.dev0"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk", extra = ["http-server"] },

@@ -1,0 +1,234 @@
+# Publishes agentframe to TestPyPI, then PyPI, when the maintainer publishes a
+# GitHub release for a v* tag on main. The distributions are built once, checked,
+# and the same files are uploaded to both indexes. Uploads use PyPI trusted
+# publishing (OpenID Connect), so no API token is stored anywhere; the PyPI
+# upload also waits for approval in the `pypi` environment.
+# One-time setup and the release steps: docs/guides/releasing.md.
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check the release commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the tag to point at a commit on main
+        run: git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.1"
+          python-version: "3.13"
+      - run: uv sync --locked --all-extras
+      - run: uv run ruff format --check
+      - run: uv run ruff check
+      - run: uv run mypy
+      - run: uv run pytest
+
+  build:
+    name: Build and check the distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      checksums: ${{ steps.checksums.outputs.checksums }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.1"
+      - name: Require the tag to equal v + the project version
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(uv run --no-project --python 3.13 python -c \
+            'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "${TAG}" != "v${version}" ]; then
+            echo "::error::Release tag ${TAG} does not equal v${version} from pyproject.toml"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      # A version on PyPI or TestPyPI can never be uploaded again.
+      - name: Refuse a version that is already on PyPI or TestPyPI
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for index in https://pypi.org https://test.pypi.org; do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              "${index}/pypi/agentframe/${VERSION}/json")"
+            if [ "${status}" != "404" ]; then
+              echo "::error::agentframe ${VERSION} exists on ${index} or it is unreachable (HTTP ${status})"
+              exit 1
+            fi
+          done
+      - run: uv build
+      - name: Require exactly the expected wheel and sdist
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          files=(dist/*)
+          printf '%s\n' "${files[@]}"
+          test "${#files[@]}" -eq 2
+          test -f "dist/agentframe-${VERSION}-py3-none-any.whl"
+          test -f "dist/agentframe-${VERSION}.tar.gz"
+      - uses: ./.github/actions/check-wheel
+      # Passed to the upload jobs as a job output, separately from the
+      # artifact, so they can confirm they upload exactly these files.
+      - name: Record the distribution checksums
+        id: checksums
+        run: |
+          {
+            echo "checksums<<EOF"
+            (cd dist && sha256sum -- *)
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [check, build]
+    # Forks have no trusted publisher or environments; skip instead of failing.
+    if: github.repository == 'malcmiller/agentframe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/agentframe/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Confirm these are the files that were built and checked
+        env:
+          CHECKSUMS: ${{ needs.build.outputs.checksums }}
+        run: cd dist && sha256sum --check --strict <<< "${CHECKSUMS}"
+      # Pinned to a commit because this action handles the upload credential.
+      # It also uploads PEP 740 attestations (signed provenance) by default.
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  verify-testpypi:
+    name: Install from TestPyPI and run the examples
+    needs: [build, publish-testpypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.1"
+      - name: Create a clean Python 3.13 environment
+        working-directory: ${{ runner.temp }}
+        run: uv venv --seed --python 3.13 venv
+      # Only agentframe comes from TestPyPI, so look-alike packages there can
+      # never replace its dependencies. Retried while the index catches up.
+      - name: Install agentframe from TestPyPI
+        working-directory: ${{ runner.temp }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if venv/bin/pip install --no-deps \
+              --index-url https://test.pypi.org/simple/ "agentframe==${VERSION}"; then
+              exit 0
+            fi
+            echo "Not installable yet (attempt ${attempt}); retrying in 30 seconds"
+            sleep 30
+          done
+          exit 1
+      - name: Install its dependencies from PyPI
+        working-directory: ${{ runner.temp }}
+        run: venv/bin/pip install "agentframe[server]==${VERSION}"
+      # A copy outside the checkout, so src/ can never shadow the install.
+      - name: Smoke-test the examples against the TestPyPI install
+        run: |
+          cp -R examples "${RUNNER_TEMP}/examples"
+          cd "${RUNNER_TEMP}"
+          venv/bin/python -m examples.smoke
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, verify-testpypi]
+    if: github.repository == 'malcmiller/agentframe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/agentframe/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Confirm these are the files that were built and checked
+        env:
+          CHECKSUMS: ${{ needs.build.outputs.checksums }}
+        run: cd dist && sha256sum --check --strict <<< "${CHECKSUMS}"
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  verify-pypi:
+    name: Install from PyPI on Python ${{ matrix.python-version }}
+    needs: [build, publish-pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14", "3.15"]
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.1"
+      - name: Create a clean Python ${{ matrix.python-version }} environment
+        working-directory: ${{ runner.temp }}
+        run: uv venv --seed --python "${{ matrix.python-version }}" venv
+      - name: pip install agentframe from PyPI
+        working-directory: ${{ runner.temp }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if venv/bin/pip install "agentframe[server]==${VERSION}"; then
+              exit 0
+            fi
+            echo "Not installable yet (attempt ${attempt}); retrying in 30 seconds"
+            sleep 30
+          done
+          exit 1
+      - name: Smoke-test the examples against the PyPI install
+        run: |
+          cp -R examples "${RUNNER_TEMP}/examples"
+          cd "${RUNNER_TEMP}"
+          venv/bin/python -m examples.smoke

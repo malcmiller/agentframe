@@ -2,7 +2,7 @@
 
 **Define agents with Python. Communicate through A2A. Choose your model host.**
 
-AgentFrame is a proposed Python library for creating agents through classes,
+AgentFrame is a Python library for creating agents through classes,
 decorators, and type annotations. Agent-to-Agent (A2A) interoperability and
 Agent Cards are core contracts, not optional exports.
 The goal is a default authoring path for building one to many agents:
@@ -16,8 +16,8 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 
 ## Status
 
-Early development; M1 model-free authoring is available from source. You can
-define agents with `@agent` / `@skill`, inject services, and run skills locally
+Milestones M0 to M7 are implemented: 0.1.0 is the first usable single-agent
+release. You can define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
 permission checks and a timeout. M2 native A2A hosting is complete: `AgentApp`
 serves an agent as an ASGI application with its Agent Card and an authenticated
@@ -46,9 +46,33 @@ M7 hardening is in place: host limit ceilings, run admission, request and
 response size limits, graceful shutdown with `/health` and `/ready`, A2A
 message deduplication, `EntraIDAuth` and `ExecutionPolicy` checks, proven end
 to end by `tests/integration/test_hardening.py`.
-There is no published release yet, and the API is not stable. Reviewed capability and contract decisions are recorded below and in
-the reference. Approved names/defaults are design decisions; unspecified
-interfaces remain open. Examples beyond the M1 surface are design proposals.
+Multi-agent discovery and remote A2A composition (M8+), MCP, telemetry and
+streaming are not implemented yet; their documentation and examples are design
+proposals and are labeled as such. Reviewed capability and contract decisions
+are recorded below and in the reference. Approved names/defaults are design
+decisions; unspecified interfaces remain open.
+
+## Installation
+
+From version 0.1.0, AgentFrame is installed from PyPI (Python 3.13 or later):
+
+```shell
+pip install agentframe
+```
+
+Optional extras add what a deployment needs:
+
+| Extra | Adds |
+| --- | --- |
+| `server` | Uvicorn, for the `agentframe run` command. |
+| `ollama` | `OllamaModel`, for local Llama through Ollama. |
+| `foundry` | `FoundryModel`, for Microsoft Foundry GPT deployments. |
+| `entra` | `EntraIDAuth`, for Microsoft Entra ID caller authentication. |
+
+For example, `pip install "agentframe[server,ollama]"`.
+
+**Stability:** Pre-1.0: public APIs may change in minor releases; changes are
+listed in the [changelog](CHANGELOG.md).
 
 ## Goals
 
@@ -369,7 +393,7 @@ run it yourself from the repository root with `uv run python -m examples.smoke`.
 
 ## Development and contributions
 
-M1 model-free authoring and local execution are installable from source. Proposals
+To work on AgentFrame itself, install it from source as below. Proposals
 should connect to the first success criterion and identify interoperability,
 safety, and authoring tradeoffs.
 Human readability is a top-priority contribution rule: prefer simple,
@@ -401,6 +425,8 @@ All four checks must pass before committing: `uv run ruff format --check`,
 and mypy; tests run in CI, not on every commit. See
 [code quality and readability](AGENTS.md#code-quality-and-readability) for the
 contributor rules, local matrix commands and PyCharm setup.
+Releases are published to PyPI by a workflow; see
+[releasing](docs/guides/releasing.md).
 
 ### Real-provider tests
 

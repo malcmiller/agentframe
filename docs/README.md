@@ -43,6 +43,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [Development and packaging](guides/development.md) | M2 `run`, M8+ `dev`, `agentframe.yaml`, local registry/auth/logging and one-container-per-agent packaging. |
 | [Limits](guides/limits.md) | Per-request output/input limits, invocation budgets, host ceilings, and honest accounting guarantees. |
 | [Authorization](guides/authorization.md) | Skill permission requirements, verified principals, application role/resource policy, and fail-closed execution. |
+| [Releasing](guides/releasing.md) | Maintainer one-time PyPI trusted-publisher and environment setup, and the steps to publish a release. |
 
 ### Design
 
