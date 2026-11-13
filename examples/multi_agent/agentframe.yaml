@@ -1,0 +1,10 @@
+# Run both agents locally from this directory: agentframe dev
+# The research agent is listed first, since the planner checks at startup
+# that it can reach it.
+agents:
+  research-agent:
+    app: research:create_app
+    port: 8001
+  planner:
+    app: planner:create_app
+    port: 8002

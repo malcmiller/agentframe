@@ -464,27 +464,80 @@ See [limits](limits.md), [tracing](../design/tracing.md), and the
 [combined A2A/MCP server example](../design/mcp-skills.md). All three use the same validated
 runtime pipeline; the custom REST skill API is deferred.
 
-## Next-release multi-agent dependencies
+## Multi-agent composition
 
-The [discovery guide](../design/discovery.md#agent-injection-and-separate-invocation)
-shows trusted `Inject[AgentDirectory]` parameters registered in `Services`.
-Its [lifecycle example](../design/discovery.md#managed-directory-lifecycle) keeps card
-fetch/cache/refresh and owned-resource cleanup in the library. Named
-`Remote[Literal["research-agent"]]` skill parameters resolve via `AgentApp(directory=...)`.
-Use `research.call("find_sources", topic=goal, output=list[Source])` for structured
-A2A, or `research.ask(text)` for any compatible A2A agent. Await task completion
-within caller deadline; input-required raises `ClarificationNeededError`, not an
-automatic conversation. See the [worked delegation, TaskGroup fan-out and search examples](../design/discovery.md#worked-composition-examples).
-No orchestration helper library in the first multi-agent release.
-Discovery and remote invocation
-are core to the next multi-agent release (M8+) after M7; they do not change
-the skill authoring contract. An orchestrator is an ordinary AgentFrame agent
-whose skills call independently deployed specialists over A2A. Cross-hop
-identity/permissions, deadlines, remaining token allowance and trace/correlation
-use per-target OBO/service identity, remaining deadline/token allowance and
-maximum 5 hops; detailed wire/configuration remains open. Remote services enforce
-their own policy/limits. `directory.find(skill=...)` / `find(tags=...)` returns
-matching cards, not invocation permission. See [local dev/containers](development.md).
+[`examples/multi_agent`](../../examples/multi_agent) is two independently
+deployed agents. The research agent is an ordinary agent with a structured
+skill (`find_sources`) and a model-backed one (`brief`) that free text is
+routed to. The planner is an ordinary agent too: its skill finds the research
+agent's card with `directory.find(skill="find_sources")`, then researches
+every topic at once in one `asyncio.TaskGroup`, a structured `call` and a
+free-text `ask` per topic:
+
+```python
+type Research = Remote[Literal["research-agent"]]
+
+
+@agent(name="Planner", version="0.1.0")
+class Planner(Agent):
+    """Plans a goal with help from a research agent."""
+
+    @skill(id="plan", tags=["planning"])
+    async def plan(
+        self,
+        goal: str,
+        topics: list[str],
+        research: Research,
+        directory: Inject[AgentDirectory],
+        ctx: RunContext,
+    ) -> Plan:
+        """Research every topic of a goal at once: sources and a short brief."""
+        researchers = await directory.find(skill="find_sources")
+        async with asyncio.TaskGroup() as group:
+            sources = {
+                topic: group.create_task(
+                    research.call(
+                        "find_sources",
+                        topic=topic,
+                        output=list[Source],
+                        max_total_tokens=SOURCES_TOKENS,
+                    )
+                )
+                for topic in topics
+            }
+            briefs = {...}  # research.ask(..., max_total_tokens=BRIEF_TOKENS)
+        ...
+```
+
+The planner never imports the research agent's code: it validates the result
+against its own `Source` model. Its `create_app()` wires the directory, its
+API key for `research-agent` (`Service(APIKeyCredential(...))`) and its own
+authentication from `dev_settings()`; replace those with real sources and
+authentication outside development. Run both with `agentframe dev` from the
+example's directory (see its `agentframe.yaml` and
+[local development](development.md#multiple-agents-m8)).
+
+Each remote call carries the caller's remaining deadline, its token ceiling,
+the hop count (at most 5 by default), the root invocation ID and any W3C trace
+context; the peer's reported usage is charged to the caller's run once. Good
+to know:
+
+- Give each concurrent call an explicit `max_total_tokens`. A call with the
+  default ceiling holds everything the run has left until it answers, so the
+  next concurrent call, and the run's own model calls, cannot use those tokens.
+- A configured remote's credential is always sent, even to a peer whose card
+  declares no security.
+- A receiver checks incoming hops against its agent-level
+  `RunLimits.max_remote_hops`; a skill-level value limits only that skill's
+  outbound calls.
+- The `a2a` SDK's DEBUG logs include request bodies, so keep its loggers at
+  INFO or above where messages may hold sensitive data.
+
+An orchestrator is ordinary Python: no orchestration helpers or workflow
+engine. Remote services authenticate callers and enforce their own policy and
+limits; a found card is not permission to call an agent. See
+[discovery](../design/discovery.md), its
+[reference](../api/discovery.md) and [local dev/containers](development.md).
 
 ## Future streaming and AG-UI
 

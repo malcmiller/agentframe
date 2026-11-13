@@ -32,6 +32,7 @@ from agentframe import AgentApp, ModelCapabilities, ToolCall
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.testing import ScriptedModel
 from examples import assistant, echo, orders, routed_assistant
+from examples.multi_agent import planner, research
 
 STRUCTURED = ModelCapabilities(context_window=8192, structured_output=True)
 TOOLS = ModelCapabilities(context_window=8192, tools=True)
@@ -206,10 +207,53 @@ async def check_routed_assistant() -> None:
         expect(temperature, routed_assistant.Temperature(celsius=100, fahrenheit=212))
 
 
+async def check_multi_agent() -> None:
+    """Two agents: the planner calls the research agent over A2A."""
+    model = ScriptedModel(["Check the tide table."] * 2)
+    os.environ["AGENTFRAME_DEV"] = "1"
+
+    def create_research(base_url: str) -> AgentApp:
+        os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
+        os.environ["AGENTFRAME_DEV_API_KEYS"] = "planner=smoke-planner-key"
+        return research.create_app(model)
+
+    async with serve(create_research) as research_url:
+
+        def create_planner(base_url: str) -> AgentApp:
+            os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
+            os.environ["AGENTFRAME_DEV_API_KEYS"] = "developer=smoke-client-key"
+            os.environ["AGENTFRAME_DEV_REMOTE_KEYS"] = (
+                "research-agent=smoke-planner-key"
+            )
+            os.environ["AGENTFRAME_AGENTS"] = (
+                f"research-agent={research_url}/.well-known/agent-card.json"
+            )
+            return planner.create_app()
+
+        async with (
+            serve(create_planner) as planner_url,
+            connect(planner_url, "smoke-client-key") as a2a,
+        ):
+            arguments = {"goal": "A beach day", "topics": ["tides", "waves"]}
+            task = await call_skill(a2a, "plan", arguments)
+            plan = planner.Plan.model_validate(data_result(task))
+            expect(
+                [topic.brief for topic in plan.topics], ["Check the tide table."] * 2
+            )
+            expect(plan.topics[1].sources[0].title, "Wind and waves")
+
+
 async def main() -> None:
     """Check every example in turn; raise ``AssertionError`` on the first failure."""
     print(f"agentframe {agentframe.__version__} from {agentframe.__file__}")
-    for check in (check_echo, check_assistant, check_orders, check_routed_assistant):
+    checks = (
+        check_echo,
+        check_assistant,
+        check_orders,
+        check_routed_assistant,
+        check_multi_agent,
+    )
+    for check in checks:
         await check()
         print(f"ok  {check.__doc__}")
     print("All examples returned complete, validated results.")

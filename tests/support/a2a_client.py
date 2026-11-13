@@ -100,13 +100,17 @@ async def call_skill(
     *,
     return_immediately: bool = False,
     headers: Mapping[str, str] | None = None,
+    metadata: Mapping[str, object] | None = None,
 ) -> Task:
-    """Call a skill by ID with JSON arguments through the skill-call extension."""
+    """Call a skill by ID with JSON arguments through the skill-call extension.
+
+    ``metadata`` adds message metadata, such as ``agentframe.deadline_ms``.
+    """
     message = Message(
         message_id=str(uuid.uuid4()),
         role=Role.ROLE_USER,
         parts=[new_data_part(dict(arguments or {}))],
-        metadata={"agentframe.skill": skill_id},
+        metadata={**(metadata or {}), "agentframe.skill": skill_id},
     )
     return await send(
         client,

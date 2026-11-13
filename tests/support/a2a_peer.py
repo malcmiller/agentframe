@@ -45,6 +45,8 @@ class ReceivedRequest:
     extensions: set[str]
     metadata: dict[str, object]
     message: Message
+    # The request's HTTP headers, with lowercase names.
+    headers: dict[str, str]
 
 
 class PeerExecutor(AgentExecutor):
@@ -63,6 +65,7 @@ class PeerExecutor(AgentExecutor):
                 extensions=set(context.requested_extensions),
                 metadata=dict(message.metadata.items()),
                 message=message,
+                headers=dict(context.call_context.state["headers"]),
             )
         )
         await event_queue.enqueue_event(

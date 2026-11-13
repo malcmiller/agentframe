@@ -15,8 +15,9 @@ authoring/local `Runtime`, M2 native A2A hosting, M3 Ollama/Foundry text
 generation, M4 typed structured outputs, M5 bounded tool calling, M6 built-in
 opt-in model routing and M7 hardening alongside design documentation. Version
 0.1.0, the first usable single-agent release, is published on PyPI as
-`agentframe-py` (import `agentframe`). Pre-1.0 there is no stable API, and
-M8+ and later features are not implemented. Keep design API examples beyond
+`agentframe-py` (import `agentframe`). Pre-1.0 there is no stable API. The
+M8+ multi-agent stories (#83-#97) are built on `main` but not yet released;
+later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
@@ -602,7 +603,9 @@ A2A failures use safe failed/rejected states as appropriate; no raw provider
 exception, stack trace or secret goes to callers. Log diagnostics with redaction:
 failed runs log ID, class and safe message; skill/tool/router tracebacks stay in
 operator logs with the ID, so authors keep secrets out of exception messages.
-`tests/integration/test_hardening.py` is the M7 end-to-end acceptance suite.
+`tests/integration/test_hardening.py` is the M7 end-to-end acceptance suite;
+`tests/integration/test_multi_agent_release.py` is M8+'s, running
+`examples/multi_agent` as separate `agentframe run` processes.
 Network host examples must include clearly labeled application-supplied
 development authentication/authorization placeholders where appropriate;
 loopback/omission is not access policy or a production-safe default.

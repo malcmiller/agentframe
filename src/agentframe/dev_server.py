@@ -40,6 +40,7 @@ import yaml
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 
 from agentframe.dev import (
+    AGENTS_VARIABLE,
     API_KEYS_VARIABLE,
     DEV_VARIABLE,
     PUBLIC_URL_VARIABLE,
@@ -134,8 +135,11 @@ def child_environment(
     accepted = {other.name: keys[other.name] for other in others}
     if client_key is not None:
         accepted[CLIENT_CALLER] = client_key
+    # The generated registry replaces any exported AGENTFRAME_AGENTS, which
+    # would otherwise list the same names twice.
+    not_passed_on = {CLIENT_KEY_VARIABLE, AGENTS_VARIABLE}
     environment = {
-        name: value for name, value in os.environ.items() if name != CLIENT_KEY_VARIABLE
+        name: value for name, value in os.environ.items() if name not in not_passed_on
     }
     environment.update(
         {

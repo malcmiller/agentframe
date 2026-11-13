@@ -46,11 +46,14 @@ M7 hardening is in place: host limit ceilings, run admission, request and
 response size limits, graceful shutdown with `/health` and `/ready`, A2A
 message deduplication, `EntraIDAuth` and `ExecutionPolicy` checks, proven end
 to end by `tests/integration/test_hardening.py`.
-M8+ multi-agent composition has started: read-only agent registries
-(`FileAgentRegistry` for a YAML list, `EnvironmentAgentRegistry` for
-`name=url` pairs) are available; the managed directory and remote A2A calls,
-MCP, telemetry and streaming are not implemented yet; documentation for them is labeled as planned
-design, and their unspecified interfaces remain open.
+M8+ multi-agent composition is built on `main` but not yet released (0.1.0
+remains the latest release): registries and a managed `AgentDirectory`,
+`Remote[Literal["name"]]` bindings with `call` and `ask`, deadline, token,
+hop-depth and correlation propagation, service and Entra on-behalf-of
+identity, `agentframe dev` and `agentframe compose` (see
+[multi-agent composition](#multi-agent-composition)). MCP, telemetry and
+streaming are not implemented yet; documentation for them is labeled as
+planned design, and their unspecified interfaces remain open.
 
 ## Installation
 
@@ -183,6 +186,55 @@ composition and advanced extension points.
 
 Llama is a model family; Ollama is the initial local model host. Foundry model
 inference is distinct from deploying an agent to Foundry Agent Service.
+
+## Multi-agent composition
+
+An orchestrator is an ordinary agent whose skill calls other agents over A2A.
+It names each one with a `Remote[Literal["name"]]` parameter, found by name in
+its `AgentDirectory`, and calls it with `call` (a structured skill call with a
+validated result) or `ask` (free text, for any A2A agent). Fan out with plain
+`asyncio.TaskGroup`, giving each concurrent call its own token ceiling:
+
+```python
+import asyncio
+from typing import Literal
+
+from agentframe import Agent, Remote, RunContext, agent, skill
+
+type Research = Remote[Literal["research-agent"]]
+
+
+@agent(name="Planner", version="0.1.0")
+class Planner(Agent):
+    """Plans a goal with help from a research agent."""
+
+    @skill(id="plan", tags=["planning"])
+    async def plan(
+        self, goal: str, topics: list[str], research: Research, ctx: RunContext
+    ) -> list[str]:
+        """Brief every topic of a goal at once."""
+        async with asyncio.TaskGroup() as group:
+            briefs = [
+                group.create_task(
+                    research.ask(f"Brief me on {topic} for {goal}", max_total_tokens=2_000)
+                )
+                for topic in topics
+            ]
+        return [brief.result() for brief in briefs]
+```
+
+Each call carries the remaining deadline, the token ceiling, the hop count (at
+most 5), the root invocation ID and any W3C trace context, and the peer's
+reported usage is charged to the caller once. The caller authenticates as
+itself (`remotes={"research-agent": Service(credential=...)}`) or, with Entra
+ID, on behalf of the signed-in user (`OnBehalfOf(scope=...)`).
+[`examples/multi_agent`](examples/multi_agent) is a complete planner and
+research agent; run both with `agentframe dev` from that directory.
+`tests/integration/test_multi_agent_release.py` proves the release criteria
+with each agent in its own `agentframe run` process. See the
+[agent examples](docs/guides/agent-examples.md#multi-agent-composition),
+[local development](docs/guides/development.md) and the
+[discovery reference](docs/api/discovery.md).
 
 ## First success criterion
 
@@ -369,6 +421,7 @@ Ollama or Foundry from `AGENTFRAME_MODEL_PROVIDER` (see the
 | [`examples/assistant.py`](examples/assistant.py) | Text generation, a typed structured output and a model-free skill on one agent. |
 | [`examples/orders.py`](examples/orders.py) | Tool calling with permissions and a tool policy, behind a development API key. |
 | [`examples/routed_assistant.py`](examples/routed_assistant.py) | Free text routed to a skill by the built-in `ModelRouter`. |
+| [`examples/multi_agent`](examples/multi_agent) | A planner that fans out structured calls and free-text asks to a research agent over A2A. |
 
 [`examples/smoke.py`](examples/smoke.py) serves every example in-process with
 a scripted model and calls it with the official A2A client, checking each
