@@ -6,6 +6,15 @@ All notable changes to AgentFrame are listed here. The format follows
 Pre-1.0: public APIs may change in minor releases; changes are listed in the
 changelog.
 
+## [Unreleased]
+
+### Added
+
+- **Discovery (M8+):** read-only `AgentRegistry` base with `AgentReference`
+  (agent name and Agent Card URL) and `AgentQuery` (name filter), plus
+  `FileAgentRegistry` (YAML `name`/`url` list) and `EnvironmentAgentRegistry`
+  (comma-separated `name=url` pairs). PyYAML is a new core dependency.
+
 ## [0.1.0] - 2026-11-13
 
 The first usable single-agent release, distributed on PyPI as `agentframe-py`

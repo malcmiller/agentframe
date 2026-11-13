@@ -1,8 +1,10 @@
 # Registries and managed discovery
 
-[Reference status conventions](README.md). Every API here is unimplemented;
-confirmed names/defaults are decisions, unspecified signatures remain illustrative.
-Discovery/registry and remote A2A invocation are core
+[Reference status conventions](README.md). The registry entries
+([`AgentRegistry`](#agentregistry) through [`FileAgentRegistry`](#fileagentregistry))
+are implemented (M8+ #83); every other API here is unimplemented, and its
+confirmed names/defaults are decisions while unspecified signatures remain
+illustrative. Discovery/registry and remote A2A invocation are core
 scope for the next multi-agent release (M8+), after the M7 single-agent release,
 not optional add-ons. Orchestrators are ordinary AgentFrame skills that call
 independently deployed specialists over A2A, not a workflow/graph engine.
@@ -11,55 +13,53 @@ See the [design and lifecycle guide](../design/discovery.md) for composition exa
 
 ## `AgentRegistry`
 
-**Purpose / decision:** small abstract base users extend for source reads.
-Unlike optional structural dependencies elsewhere, this extension point
-explicitly uses inheritance. It is not a global plugin registry.
+**Purpose / decision:** small read-only abstract base users extend for their own
+source of agent references. Unlike optional structural dependencies elsewhere,
+this extension point explicitly uses inheritance. It is not a global plugin
+registry.
 
-**Signature status:** no base constructor parameters settled. Implement async
-[`get`](#agentregistryget) and [`list`](#agentregistrylist); no write or lifecycle
-methods are required by the read base.
+**Signature status:** implemented in M8+ #83. The base takes no constructor
+parameters. Subclasses implement async [`get`](#agentregistryget) and
+[`list`](#agentregistrylist); no write or lifecycle methods exist.
 
 | Contract | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `get` implementation | Async ID lookup returning `AgentReference` | Required abstract operation | Read validated source reference; do not fetch/cache cards per backend. |
-| `list` implementation | Async query returning `list[AgentReference]` in initial shape | Required abstract operation | Supported filtering; pagination/completeness unresolved. |
+| `get` implementation | `async (agent_id: str) -> AgentReference` | Required abstract method | Return one agent's reference; raise when the source fails or does not list it. Do not fetch or cache cards. |
+| `list` implementation | `async (query: AgentQuery) -> list[AgentReference]` | Required abstract method | Return matching references; empty only when the source authoritatively lists none. |
 
 ```python
-from collections.abc import Awaitable, Callable
-from agentframe import AgentQuery, AgentReference, AgentRegistry
+from agentframe import AgentQuery, AgentReference, AgentRegistry, DefinitionError
 
 
-class ApplicationAgentRegistry(AgentRegistry):
-    def __init__(
-        self,
-        read_one: Callable[[str], Awaitable[AgentReference]],
-        read_matching: Callable[[AgentQuery], Awaitable[list[AgentReference]]],
-    ) -> None:
-        self._read_one = read_one
-        self._read_matching = read_matching
+class InMemoryAgentRegistry(AgentRegistry):
+    def __init__(self, references: list[AgentReference]) -> None:
+        self._references = references
 
     async def get(self, agent_id: str) -> AgentReference:
-        return await self._read_one(agent_id)
+        for reference in self._references:
+            if reference.name == agent_id:
+                return reference
+        raise DefinitionError(f"No agent named '{agent_id}'.")
 
     async def list(self, query: AgentQuery) -> list[AgentReference]:
-        return await self._read_matching(query)
+        if query.names is None:
+            return list(self._references)
+        return [ref for ref in self._references if ref.name in query.names]
 ```
 
-The supplied source functions validate references, implement supported filters,
-and raise on source/unsupported-query failures. This example does not prescribe
-application constructor parameters for all registries.
-
-**Behavior / failures:** no I/O at import/construction. Missing source,
-malformed references and unsupported queries are explicit failures, not empty
-results. Exact abstract-base implementation and errors remain open. No required
-`register`, deployment, HTTP, polling, or card-refresh loop.
+**Behavior / failures:** do no I/O at import or construction. A missing or
+unreadable source, malformed references and an unknown agent are explicit
+failures, never empty results. The supplied registries raise `DefinitionError`
+naming the source and agent; custom registries should do the same for
+configuration problems. A subclass missing either method cannot be instantiated
+(`TypeError`). No `register`, deployment, HTTP, polling or card refresh.
 
 **Related:** [extension guide](../design/discovery.md#extending-the-read-base),
 [`AgentDirectory`](#agentdirectory).
 
 ## `AgentRegistry.get`
 
-**Purpose / proposed signature:** read one reference by stable source identity.
+**Purpose / signature:** read one agent's reference by name. Implemented (#83).
 
 ```python
 async def get(self, agent_id: str) -> AgentReference: ...
@@ -67,7 +67,7 @@ async def get(self, agent_id: str) -> AgentReference: ...
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `agent_id` | `str` | Required | Validated stable registry ID, not arbitrary caller-supplied URL or proof of authorization. |
+| `agent_id` | `str` | Required | The agent's name in this registry; not a URL and not proof of authorization. |
 
 ```python
 from agentframe import AgentReference, AgentRegistry
@@ -77,17 +77,17 @@ async def lookup(registry: AgentRegistry) -> AgentReference:
     return await registry.get("research-agent")
 ```
 
-**Behavior / failures:** return a validated reference, not a card or invocation.
-Distinguish confirmed absence from read outage/invalid data; missing-ID exception
-type remains open. ID format, namespaces and source consistency need design.
+**Behavior / failures:** returns a validated reference, not a card or an
+invocation. An unknown name raises `DefinitionError` naming the source and the
+agent, for example `Environment variable AGENTFRAME_AGENTS does not list an
+agent named 'writer'.`; a source read failure raises before any lookup.
 
 **Related:** [`AgentReference`](#agentreference),
 [failure boundaries](../design/discovery.md#failure-trust-and-isolation-boundaries).
 
 ## `AgentRegistry.list`
 
-**Purpose / proposed signature:** read source references matching supported
-query criteria.
+**Purpose / signature:** read the references matching a query. Implemented (#83).
 
 ```python
 async def list(self, query: AgentQuery) -> list[AgentReference]: ...
@@ -95,140 +95,169 @@ async def list(self, query: AgentQuery) -> list[AgentReference]: ...
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `query` | `AgentQuery` | Required in illustrative signature | Only supported filters with explicit matching/enrichment placement. Pagination, ordering, limits and result completeness unresolved before stabilization. |
+| `query` | `AgentQuery` | Required | `AgentQuery()` returns every agent in the source; `AgentQuery(names=[...])` keeps only those names. |
 
 ```python
 from agentframe import AgentQuery, AgentReference, AgentRegistry
 
 
-async def candidates(
-    registry: AgentRegistry, query: AgentQuery,
-) -> list[AgentReference]:
-    return await registry.list(query)
+async def reviewers(registry: AgentRegistry) -> list[AgentReference]:
+    return await registry.list(AgentQuery(names=["review-agent"]))
 ```
 
-**Behavior / failures:** an authoritative empty match is valid; source failure
-is not. Reject unsupported filters rather than silently ignoring them. Do not
-query skill/tag fields absent from references without an explicit source
-metadata/enrichment contract; matching is not access permission.
+**Behavior / failures:** the supplied registries return references in source
+order; names in the query that the source does not list are ignored. An
+authoritative empty result is valid; a source failure raises instead. Skill and
+tag matching happens on cards in the directory
+([`find`](#agentdirectoryfind)), not here. Matching is not access permission.
+Pagination for large sources (such as Foundry) remains open.
 
 **Related:** [`AgentQuery`](#agentquery),
 [query placement](../design/discovery.md#query-matching-and-card-enrichment).
 
 ## `AgentReference`
 
-**Purpose / decision:** validated stable identity and non-secret connection/
-discovery information returned by a registry.
+**Purpose / decision:** one agent a registry lists: its name and where its Agent
+Card is. Implemented (#83) as a frozen dataclass.
 
-**Signature status:** constructor and canonical Python fields open. YAML source
-information is a name plus URL; reference internals below remain illustrative.
+```python
+@dataclass(frozen=True)
+class AgentReference:
+    name: str
+    card_url: str
+```
 
-| Information | Type | Required/default status | Meaning and constraints |
+| Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Stable identity (`agent_id` candidate) | `str`; validation rules open | Identity required | Registry namespace/uniqueness rules need specification; not authorization. |
-| Endpoint/discovery location (`discovery_url` candidate) | Validated location representation open | Needed to resolve/connect; alternatives open | Explicit card location in candidate format; validate destinations and card-advertised endpoints. |
-| Transport (`transport` candidate) | Supported transport identifier; type/values open | Transport information needed; encoding open | Must match verified client/binding support, not imply every endpoint supports A2A. |
-| Non-secret metadata (`connection_metadata` candidate) | Restricted structured metadata; schema open | Optional proposed information | No credential/token/private key, executable configuration, or implicit permission grant. |
+| `name` | `str` | Required | Non-empty; unique within a source. Not an authorization grant. |
+| `card_url` | `str` | Required | Absolute `http` or `https` URL of the agent's **Agent Card** (not its A2A endpoint), without credentials, query or fragment. |
 
 ```python
 from agentframe import AgentReference
 
-
-def describe_reference(reference: AgentReference) -> str:
-    return type(reference).__name__
+research = AgentReference(
+    "research-agent", "https://research.example.com/.well-known/agent-card.json"
+)
 ```
 
-**Behavior / failures:** reject malformed/duplicate identities, invalid
-locations, unsupported transports and secret-bearing configuration according
-to the eventual validation contract. A schema-valid reference is not trusted,
-healthy, authorized, or guaranteed invocable. Skills/tags are not assumed
-members of this minimal type.
+**Behavior / failures:** construction raises `DefinitionError` for an empty name
+or an unsafe URL; the message names the agent but never echoes the URL. The
+check is the one `HostConfig.public_url` uses. The registry accepts plain
+`http`; the directory (#84) refuses it except for loopback hosts or an explicit
+`allow_http_hosts` opt-in. A valid reference is not trusted, healthy,
+authorized or guaranteed invocable. It holds no secrets, transport, skills or
+tags.
 
-**Related:** [candidate source format](../design/discovery.md#sources-and-reference-format),
-[`AgentCardResolver`](#agentcardresolver).
+**Related:** [source format](../design/discovery.md#sources-and-reference-format),
+[`AgentDirectory`](#agentdirectory).
 
 ## `AgentQuery`
 
-**Purpose / decision:** express supported discovery filters, distinct from
-caller eligibility and invocation authorization.
-
-**Signature status:** constructor/field names and matching semantics open;
-no definite `ids=`, `skills=` or `tags=` constructor is promised.
-
-| Filter concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Agent IDs | Collection of stable IDs; representation open | Optional supported criterion; default open | Can match validated reference identity. |
-| Skills/tags | Collection of identifiers/tags; representation open | Only supported where metadata exists; default open | Requires source metadata or explicit card enrichment; layer and all/any semantics unresolved. |
+**Purpose / decision:** which agents to list from a registry. Implemented (#83)
+as a frozen keyword-only dataclass.
 
 ```python
-from agentframe import AgentQuery, AgentRegistry
-
-
-async def count_matches(registry: AgentRegistry, query: AgentQuery) -> int:
-    return len(await registry.list(query))
+@dataclass(frozen=True, kw_only=True)
+class AgentQuery:
+    names: Collection[str] | None = None
 ```
 
-This counts only returned matches, not a guaranteed global count; pagination
-has not been settled.
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `names` | `Collection[str] \| None` | Optional; default `None` | `None` means every agent in the source; otherwise only the named agents. Stored as a `frozenset`; a single string raises `DefinitionError`. |
 
-**Behavior / failures:** reject unsupported filters; do not silently broaden
-queries. Query matching cannot grant access. Ordering, pagination, bounds and
-search combination semantics remain open. Directory card search is now decided
-as [`find(skill=...)` / `find(tags=...)`](#agentdirectoryfind).
+```python
+from agentframe import AgentQuery
+
+everyone = AgentQuery()
+only_research = AgentQuery(names=["research-agent"])
+```
+
+**Behavior / failures:** there are no skill or tag fields; those match on cards
+through [`AgentDirectory.find`](#agentdirectoryfind). Query matching cannot
+grant access. Ordering and pagination for paginated sources remain open.
 
 **Related:** [`AgentRegistry.list`](#agentregistrylist),
 [enrichment boundary](../design/discovery.md#query-matching-and-card-enrichment).
 
 ## `EnvironmentAgentRegistry`
 
-**Purpose / direction:** supplied read adapter for an explicitly selected
-environment variable, sharing structured validation with the file adapter.
+**Purpose / decision:** agents listed in an explicitly named environment
+variable. Implemented (#83).
 
-**Decided call:** `EnvironmentAgentRegistry("AGENTFRAME_AGENTS")`;
-payload format and keyword spelling remain open.
+```text
+EnvironmentAgentRegistry(variable: str)
+```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Variable name | `str` | Required explicit selection | Names the source variable; payload encoding still open. No implicit search, executable expression or secret credential. |
+| `variable` | `str` | Required | The variable's name, for example `"AGENTFRAME_AGENTS"`. No implicit search. |
 
-```python
-from agentframe import EnvironmentAgentRegistry
+The value is comma-separated `name=url` pairs, where each URL is an Agent Card
+URL; whitespace around entries is ignored and an empty value lists no agents:
 
-
-registry = EnvironmentAgentRegistry("AGENTFRAME_AGENTS")
+```shell
+AGENTFRAME_AGENTS="research-agent=https://research.example.com/.well-known/agent-card.json,review-agent=http://127.0.0.1:8002/.well-known/agent-card.json"
 ```
 
-**Behavior / failures:** inherits async `get`/`list`; construction does not read
-the variable. Document the payload schema/version before implementation.
-Missing variable, malformed references, duplicate IDs and unsupported
-queries fail explicitly. Empty authoritative source differs from missing or
-failed source. No card fetching or background polling in this adapter.
+```python
+from agentframe import AgentQuery, EnvironmentAgentRegistry
+
+
+async def main() -> None:
+    registry = EnvironmentAgentRegistry("AGENTFRAME_AGENTS")
+    print(await registry.list(AgentQuery()))
+```
+
+**Behavior / failures:** construction does not read the variable; every `get`
+and `list` reads it again. An unset variable, an entry without `=`, an empty
+name, an unsafe URL and a duplicate name each raise `DefinitionError` naming
+the variable (and the agent where there is one). No card fetching or polling.
 
 **Related:** [source formats](../design/discovery.md#sources-and-reference-format),
 [`AgentRegistry`](#agentregistry).
 
 ## `FileAgentRegistry`
 
-**Purpose / decision:** supplied read adapter for a YAML name-and-URL list.
+**Purpose / decision:** agents listed in a YAML file of names and Agent Card
+URLs. Implemented (#83).
 
-**Decided call:** `FileAgentRegistry("agents.yaml")`; keyword/path-like details open.
+```text
+FileAgentRegistry(path: str | os.PathLike[str])
+```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| Path | `str`; path-like support open | Explicit selection; documented default format YAML | Name+URL list; final keys/schema/version and endpoint-versus-card URL semantics open. No executable tags or automatic search. |
+| `path` | `str \| os.PathLike[str]` | Required | The YAML file. No automatic search. |
+
+The file is a list of entries with exactly the keys `name` and `url` (an Agent
+Card URL); `[]` lists no agents:
+
+```yaml
+- name: research-agent
+  url: https://research.example.com/.well-known/agent-card.json
+- name: review-agent
+  url: http://127.0.0.1:8002/.well-known/agent-card.json
+```
 
 ```python
 from agentframe import FileAgentRegistry
 
 
-registry = FileAgentRegistry("agents.yaml")
+async def research_card_url() -> str:
+    registry = FileAgentRegistry("agents.yaml")
+    return (await registry.get("research-agent")).card_url
 ```
 
-**Behavior / failures:** inherits async `get`/`list`; no construction-time file
-read. Missing/unreadable file, malformed/oversized data, duplicate IDs and
-unsupported queries fail, not return empty matches. Bounded reads, source
-reconciliation and concurrent-update consistency require specification.
-The example does not create `agents.yaml` or finalize its schema.
+**Behavior / failures:** construction does not touch the file. Every `get` and
+`list` reads it again in a worker thread (`asyncio.to_thread`), so edits apply
+without a restart; the directory caches cards, not files. Reads are capped at
+1 MiB and parsed with `yaml.safe_load`, so executable YAML tags are refused.
+A missing or unreadable file, a file over 1 MiB, non-UTF-8 text, malformed YAML
+(only the line number is reported), a top level that is not a list, an entry
+without exactly `name` and `url` strings, an empty name, an unsafe URL and a
+duplicate name each raise `DefinitionError` naming the file. PyYAML is a core
+dependency.
 
 **Related:** [source format](../design/discovery.md#sources-and-reference-format),
 [`AgentDirectory`](#agentdirectory).
