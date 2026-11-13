@@ -368,9 +368,8 @@ first failure; the run fails closed.
   request is never sent and reserves no tokens; a denied output is never
   returned. Over A2A a denial ends the task `REJECTED`.
 - A check that raises, or is still running at the run's deadline, raises
-  `PolicyUnavailableError` (A2A task `FAILED`). A model-request check runs
-  inside the skill's own timeout, so one still running at the deadline ends
-  the run with `TimeoutLimitExceededError` instead; either way nothing is sent.
+  `PolicyUnavailableError` (A2A task `FAILED`); a blocked model request is
+  never sent.
 - Check time counts against the run's timeout. Messages name only the skill,
   never the checked content, and AgentFrame never logs that content.
 - With no policy, runs are unchanged.

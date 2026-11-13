@@ -34,7 +34,6 @@ from agentframe import (
     RunLimits,
     Runtime,
     SkillDefinition,
-    TimeoutLimitExceededError,
     ToolCall,
     agent,
     skill,
@@ -309,9 +308,7 @@ async def test_a_model_request_check_past_the_deadline_never_sends() -> None:
     model = ScriptedModel(["never sent"])
     runtime = Runtime(policy=ExecutionPolicy(model_request_checks=[hangs]))
 
-    # The check runs inside the skill, whose own timeout expires at the same
-    # moment, so the run reports that timeout. Either way it fails closed.
-    with pytest.raises(TimeoutLimitExceededError):
+    with pytest.raises(PolicyUnavailableError):
         await asyncio.wait_for(
             runtime.invoke(Writer(model), skill="write", arguments={"text": "Hi"}), 3
         )

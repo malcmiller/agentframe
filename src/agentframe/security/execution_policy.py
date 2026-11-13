@@ -140,17 +140,24 @@ async def enforce_checks[S: "SkillDefinition | None", C](
             ``deadline``.
     """
     subject = "The request" if skill is None else f"Skill '{skill.id}'"
+    unavailable = (
+        f"{subject} could not be checked: an execution policy check is unavailable"
+    )
     for check in checks:
         try:
             # Checks share the run's deadline; running out of time while one
             # is deciding is an outage, never permission.
             async with asyncio.timeout_at(deadline):
                 allowed = await check(skill, principal, content)
+        except asyncio.CancelledError:
+            # Inside a skill, the run's own timeout cancels the check at the
+            # same deadline. That is still a policy outage, not a skill
+            # timeout. A cancellation before the deadline is a real one.
+            if asyncio.get_running_loop().time() < deadline:
+                raise
+            raise PolicyUnavailableError(unavailable) from None
         except Exception as error:
-            raise PolicyUnavailableError(
-                f"{subject} could not be checked: an execution policy check "
-                "is unavailable"
-            ) from error
+            raise PolicyUnavailableError(unavailable) from error
         # Fail closed: only an explicit True allows, not any truthy value.
         # noinspection PySimplifyBooleanCheck
         if allowed is not True:
