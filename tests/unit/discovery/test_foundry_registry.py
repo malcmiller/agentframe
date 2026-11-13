@@ -327,6 +327,23 @@ async def test_card_fetches_send_only_the_source_token_to_the_card_url(
     assert ("https://ai.azure.com/.default",) in credential.scopes
 
 
+async def test_find_fetches_foundry_cards_with_the_source_token() -> None:
+    host = CardHost()
+    agents = AgentDirectory(
+        sources=[registry(FakeFoundry(*TWO_PAGES.pages))], http_client=host.client()
+    )
+
+    assert await agents.find(skill="general-qa") == []
+
+    assert sorted(str(r.url) for r in host.requests) == [
+        card_url("research-agent"),
+        card_url("review-agent"),
+    ]
+    assert all(
+        r.headers["Authorization"] == f"Bearer {SOURCE_TOKEN}" for r in host.requests
+    )
+
+
 async def test_a_redirected_card_request_never_carries_the_token_onward() -> None:
     host = CardHost()
     host.redirect_to = "https://attacker.example.com/card.json"
