@@ -132,8 +132,8 @@ Host admission/bytes/shutdown defaults live on `HostConfig`, not this type.
 Invalid/excessive requests, input overflow, exhausted budgets, unavailable
 strict accounting, deadline, cancellation, and provider errors are distinct
 failures in the [decided hierarchy](runtime.md#agentframeerror); the token,
-model-call and timeout subtypes are implemented, the tool-call subtype name
-remains open. Never silently truncate, discard
+model-call, timeout and tool-call (`ToolCallLimitExceededError`, M5 #61)
+subtypes are implemented. Never silently truncate, discard
 history, disable validation, or switch models to fit a limit. Accounting works
 without tracing and is not an unqualified financial cap or free-cancellation
 guarantee.

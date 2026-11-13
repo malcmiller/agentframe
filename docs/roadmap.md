@@ -272,7 +272,7 @@ development tooling; M1 adds model-free authoring and local execution.
 | 2 | Native A2A hosting with structured requests and custom routing only (complete) | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Add `agentframe run module:create_app` serving the application's configured `AgentApp`, plus a localhost-only anonymous `module:Class --dev` mode. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
 | 3 | Text generation through the shared `Model` contract (complete) | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
 | 4 | Typed structured outputs (complete) | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
-| 5 | Bounded tool calling | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
+| 5 | Bounded tool calling (complete) | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
 | 6 | Built-in opt-in model router | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
 | 7 | Hardening and first usable release | Prove decided defaults/precedence within ceilings, deadlines/cancellation, DI startup/scoped cleanup, `RunResult` without telemetry, safe correlated errors and identity/resource/policy failures. Prove host admission/byte/shutdown limits, health/readiness and A2A deduplication/caller isolation without exactly-once claims; installed-wheel examples return complete validated results. No built-in approval pause/resume. |
 
@@ -333,11 +333,30 @@ and safe `FAILED` tasks for every failure. The opt-in
 `tests/integration/test_providers.py` proves structured calls, structured
 truncation and the hosted example against real Ollama and Foundry.
 
+M5 bounded tool calling was completed on **2026-11-12**: its stories (#58-#66)
+are merged. `@tool` functions are registered on the agent and selected per
+`ctx.generate(..., tools=[...])` call (#58, #60); messages, tool calls and
+results are normalized (#59); the bounded loop runs tool calls until the model
+answers, within `max_tool_calls` (#61); every call is checked against
+`requires_permissions` and an optional `ToolAuthorizationPolicy` (#62); model
+retries never replay a tool and no tool is auto-retried (#63); and
+`FoundryModel` (#64) and `OllamaModel` (#65) map tools natively.
+`examples/orders.py` serves an order desk with a read-only `lookup_order` and a
+side-effecting, permission-gated `cancel_order` tool, and
+`tests/integration/test_tools_example.py` calls it with the official A2A client
+offline in CI: a tool round trip with model and tool calls in the usage
+snapshot, no tools on the served card, safe failures for tool-call limit
+exhaustion (`FAILED`), a denied call (`REJECTED`), a policy outage, a failing
+tool (generic message, details only in logs) and a model without tool support,
+and a transient model error after `cancel_order` that does not run it again.
+The opt-in `tests/integration/test_providers.py` runs a one-tool round trip,
+locally and hosted, against real Ollama and Foundry.
+
 M1 is the first proof: a model-free agent. M2 adds independent native A2A
 interoperability; M3 meets the [README success criterion](../README.md#first-success-criterion)
 with interchangeable Foundry/Ollama configuration; M4 adds typed structured
-output. Bounded tool continuations and built-in opt-in model routing remain required
-before the M7 first usable release, not prerequisites for M2.
+output; M5 adds bounded tool calling. Built-in opt-in model routing remains required
+before the M7 first usable release, not a prerequisite for M2.
 
 ### Resolved M0 platform and API decisions
 

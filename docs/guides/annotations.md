@@ -172,7 +172,10 @@ Registration is explicit; decoration alone does not grant model access or
 execution permission. This callable is not automatically an advertised A2A skill.
 `@tool` and `ToolDefinition` are implemented (M5 #58), as are registration with
 `Agent(tools=[...])` and per-call selection with `ctx.generate(..., tools=[...])`
-(M5 #60); tool execution is not yet.
+(M5 #60). Tool execution is implemented too: `ctx.generate` runs the model's
+tool calls until it answers, within `max_tool_calls` (#61), authorizes each call
+before it runs (#62) and never replays or auto-retries a tool (#63); see
+[`examples/orders.py`](../../examples/orders.py).
 
 ```python
 from agentframe import tool
