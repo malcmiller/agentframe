@@ -13,6 +13,11 @@ metadata may carry context about the caller's own run:
   request use. The receiver's run uses the smaller of it and its own
   ``RunLimits.max_total_tokens``; the task's usage snapshot reports what it
   actually used.
+- ``agentframe.root_invocation_id`` and ``agentframe.parent_invocation_id``:
+  the invocation IDs of the run that started the whole request and of the
+  calling run, for logs only. A value that is not a lowercase UUID string is
+  ignored, and an invalid or missing root makes the request a new root; they
+  never fail a request, since they authenticate nothing.
 
 A receiver lists the context fields it supports in its card's extension
 ``params["context"]``; a sender sends only the fields its peer lists. An agent
@@ -30,6 +35,7 @@ from a2a.types import AgentCard, Message
 from a2a.utils.errors import InvalidParamsError
 
 from agentframe.errors import LimitExceededError
+from agentframe.runtime.correlation import is_invocation_id
 
 SKILL_CALL_EXTENSION_URI = (
     "https://github.com/malcmiller/agentframe/extensions/skill-call/v1"
@@ -49,8 +55,16 @@ CONTEXT_PARAM = "context"
 DEADLINE_FIELD = "deadline_ms"
 HOPS_FIELD = "hops"
 MAX_TOTAL_TOKENS_FIELD = "max_total_tokens"
+ROOT_INVOCATION_FIELD = "root_invocation_id"
+PARENT_INVOCATION_FIELD = "parent_invocation_id"
 
-CONTEXT_FIELDS = (DEADLINE_FIELD, HOPS_FIELD, MAX_TOTAL_TOKENS_FIELD)
+CONTEXT_FIELDS = (
+    DEADLINE_FIELD,
+    HOPS_FIELD,
+    MAX_TOTAL_TOKENS_FIELD,
+    ROOT_INVOCATION_FIELD,
+    PARENT_INVOCATION_FIELD,
+)
 """The context fields this version reads and advertises on its card."""
 
 KNOWN_METADATA_KEYS = frozenset(
@@ -68,11 +82,17 @@ class CallerContext:
         hops: The request's remote-call depth; 0 for a root request.
         max_total_tokens: The most tokens the caller lets the request use,
             or ``None`` when it sent no ceiling.
+        root_invocation_id: The run that started the whole request, or
+            ``None`` for a root request.
+        parent_invocation_id: The calling run, or ``None`` when the caller
+            sent no valid root or parent.
     """
 
     deadline_seconds: float | None = None
     hops: int = 0
     max_total_tokens: int | None = None
+    root_invocation_id: str | None = None
+    parent_invocation_id: str | None = None
 
 
 def read_caller_context(message: Message) -> CallerContext:
@@ -82,7 +102,8 @@ def read_caller_context(message: Message) -> CallerContext:
         message: The caller's message.
 
     Returns:
-        The caller's context; fields it did not send keep their defaults.
+        The caller's context; fields it did not send, and invalid invocation
+        IDs, keep their defaults.
 
     Raises:
         InvalidParamsError: The message carries an unknown ``agentframe.``
@@ -101,11 +122,23 @@ def read_caller_context(message: Message) -> CallerContext:
             f"Unknown AgentFrame metadata fields: {', '.join(unknown)}."
         )
     deadline_ms = _whole_number(metadata, DEADLINE_FIELD, 1)
+    root = _invocation_id(metadata, ROOT_INVOCATION_FIELD)
+    # A parent means nothing without the root it belongs to.
+    parent = _invocation_id(metadata, PARENT_INVOCATION_FIELD) if root else None
     return CallerContext(
         deadline_seconds=None if deadline_ms is None else deadline_ms / 1000,
         hops=_whole_number(metadata, HOPS_FIELD, 0) or 0,
         max_total_tokens=_whole_number(metadata, MAX_TOTAL_TOKENS_FIELD, 1),
+        root_invocation_id=root,
+        parent_invocation_id=parent,
     )
+
+
+def _invocation_id(metadata: dict[str, object], field: str) -> str | None:
+    """Return a context field's invocation ID, or ``None`` when it was not
+    sent or is not one. Never an error: these only label logs."""
+    value = metadata.get(METADATA_NAMESPACE + field)
+    return value if is_invocation_id(value) else None
 
 
 def _whole_number(metadata: dict[str, object], field: str, minimum: int) -> int | None:
@@ -151,7 +184,9 @@ def context_metadata(
     remaining_seconds: float,
     hops: int,
     max_total_tokens: int | None = None,
-) -> dict[str, int]:
+    root_invocation_id: str | None = None,
+    parent_invocation_id: str | None = None,
+) -> dict[str, int | str]:
     """Return the message metadata that passes the caller's context on.
 
     Args:
@@ -159,13 +194,18 @@ def context_metadata(
         remaining_seconds: The time the caller's run has left.
         hops: The depth of the request being sent.
         max_total_tokens: The request's token ceiling, or ``None`` to send none.
+        root_invocation_id: The run that started the whole request, or
+            ``None`` to send none.
+        parent_invocation_id: The calling run, or ``None`` to send none.
     """
-    values = {
+    values: dict[str, int | str | None] = {
         # Rounded down, so the peer never gets more time than there is; at
         # least 1, the smallest valid value.
         DEADLINE_FIELD: max(1, int(remaining_seconds * 1000)),
         HOPS_FIELD: hops,
         MAX_TOTAL_TOKENS_FIELD: max_total_tokens,
+        ROOT_INVOCATION_FIELD: root_invocation_id,
+        PARENT_INVOCATION_FIELD: parent_invocation_id,
     }
     return {
         METADATA_NAMESPACE + name: value

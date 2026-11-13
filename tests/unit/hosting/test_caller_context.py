@@ -1,9 +1,11 @@
-"""Tests for the caller context an A2A request carries: deadline, depth, tokens.
+"""Tests for the caller context an A2A request carries: deadline, depth, tokens
+and correlation.
 
 Requests travel over real localhost HTTP to an ``AgentApp`` served by Uvicorn.
 """
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
@@ -35,6 +37,8 @@ from agentframe.hosting.skill_call import (
 from local_server import ServeLocally
 
 INVALID_PARAMS = -32602
+ROOT = "6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e"
+PARENT = "0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d"
 
 
 @agent(version="1.0.0")
@@ -275,6 +279,100 @@ async def test_malformed_context_is_a_protocol_error_without_a_task(
     assert problem in response["error"]["message"]
 
 
+# Receiving correlation: only labels the run's logs
+
+
+def run_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.getMessage().startswith("Run ")]
+
+
+async def test_a_valid_root_and_parent_label_every_log_record_of_the_run(
+    http: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe")
+    metadata = {
+        "agentframe.root_invocation_id": ROOT,
+        "agentframe.parent_invocation_id": PARENT,
+    }
+
+    response = await send(http, metadata)
+
+    invocation_id = response["result"]["task"]["metadata"]["invocation_id"]
+    records = run_records(caplog)
+    assert [r.getMessage().split(" (")[0] for r in records] == [
+        "Run started",
+        "Run completed",
+    ]
+    for record in records:
+        assert record.__dict__["agent"] == "Sleeper"
+        assert record.__dict__["invocation_id"] == invocation_id
+        assert record.__dict__["root_invocation_id"] == ROOT
+        assert record.__dict__["parent_invocation_id"] == PARENT
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        pytest.param("not-a-uuid\nERROR forged log line", id="newline"),
+        pytest.param(ROOT.upper(), id="uppercase"),
+        pytest.param("{" + ROOT + "}", id="braces"),
+        pytest.param(ROOT + "x" * 1000, id="too-long"),
+        pytest.param(12345, id="number"),
+        pytest.param(None, id="null"),
+    ],
+)
+async def test_an_invalid_root_is_ignored_and_the_run_is_its_own_root(
+    http: httpx.AsyncClient, caplog: pytest.LogCaptureFixture, root: object
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="agentframe")
+    metadata = {
+        "agentframe.root_invocation_id": root,
+        "agentframe.parent_invocation_id": PARENT,
+    }
+
+    response = await send(http, metadata)
+
+    assert state(response) == "TASK_STATE_COMPLETED"
+    task_metadata = response["result"]["task"]["metadata"]
+    assert task_metadata.keys() == {"invocation_id", "usage"}
+    for record in run_records(caplog):
+        assert record.__dict__["root_invocation_id"] == task_metadata["invocation_id"]
+        # A parent without a valid root is dropped too.
+        assert record.__dict__["parent_invocation_id"] is None
+    # Never echoed into any log record.
+    assert str(root) not in caplog.text
+    assert PARENT not in caplog.text
+
+
+async def test_an_invalid_parent_is_ignored_but_a_valid_root_kept(
+    http: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe")
+    metadata = {
+        "agentframe.root_invocation_id": ROOT,
+        "agentframe.parent_invocation_id": "evil\r\nparent",
+    }
+
+    response = await send(http, metadata)
+
+    assert state(response) == "TASK_STATE_COMPLETED"
+    [started, _] = run_records(caplog)
+    assert started.__dict__["root_invocation_id"] == ROOT
+    assert started.__dict__["parent_invocation_id"] is None
+
+
+async def test_correlation_is_ignored_unless_the_extension_is_activated(
+    http: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe")
+
+    response = await send(http, {"agentframe.root_invocation_id": ROOT}, activate=False)
+
+    invocation_id = response["result"]["task"]["metadata"]["invocation_id"]
+    [started, _] = run_records(caplog)
+    assert started.__dict__["root_invocation_id"] == invocation_id
+
+
 # Sending: what a card advertises decides what is sent
 
 
@@ -321,11 +419,23 @@ def test_a_card_without_context_fields_advertises_none(card: AgentCard) -> None:
     assert advertised_context(card) == frozenset()
 
 
+def sent(fields: set[str], *, remaining_seconds: float = 2, hops: int = 3) -> Any:
+    return context_metadata(
+        fields,
+        remaining_seconds=remaining_seconds,
+        hops=hops,
+        root_invocation_id=ROOT,
+        parent_invocation_id=PARENT,
+    )
+
+
 def test_only_advertised_fields_are_sent() -> None:
-    assert context_metadata({"hops"}, remaining_seconds=2, hops=3) == {
-        "agentframe.hops": 3
+    assert sent({"hops"}) == {"agentframe.hops": 3}
+    assert sent(set()) == {}
+    assert sent({"root_invocation_id", "parent_invocation_id"}) == {
+        "agentframe.root_invocation_id": ROOT,
+        "agentframe.parent_invocation_id": PARENT,
     }
-    assert context_metadata(set(), remaining_seconds=2, hops=3) == {}
 
 
 def test_a_token_ceiling_is_sent_only_when_advertised_and_given() -> None:
@@ -340,8 +450,9 @@ def test_a_token_ceiling_is_sent_only_when_advertised_and_given() -> None:
 
 
 def test_the_deadline_is_sent_as_whole_milliseconds_rounded_down() -> None:
-    sent = context_metadata({"deadline_ms"}, remaining_seconds=1.9999, hops=1)
-    tiny = context_metadata({"deadline_ms"}, remaining_seconds=0.0001, hops=1)
-
-    assert sent == {"agentframe.deadline_ms": 1999}
-    assert tiny == {"agentframe.deadline_ms": 1}
+    assert sent({"deadline_ms"}, remaining_seconds=1.9999) == {
+        "agentframe.deadline_ms": 1999
+    }
+    assert sent({"deadline_ms"}, remaining_seconds=0.0001) == {
+        "agentframe.deadline_ms": 1
+    }

@@ -51,6 +51,12 @@ from agentframe import (
 from agentframe.discovery import remote
 from agentframe.discovery.remote import bind_remote, remote_name
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.runtime.correlation import (
+    RunCorrelation,
+    TraceContext,
+    is_invocation_id,
+    root_run,
+)
 from agentframe.runtime.generation import RunAccounting
 from local_server import lifespan_startup
 
@@ -336,6 +342,87 @@ async def test_ask_sends_only_the_fields_the_card_advertises() -> None:
     assert body["params"]["message"]["metadata"] == {"agentframe.hops": 1}
 
 
+ROOT = "6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e"
+TRACE = TraceContext(
+    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", "congo=t61"
+)
+
+
+async def bound_with(peer: Peer, correlation: RunCorrelation) -> Research:
+    return await bind_remote(
+        peer.directory(),
+        "research-agent",
+        deadline=asyncio.get_running_loop().time() + 10,
+        correlation=correlation,
+        principal=None,
+        identity=None,
+        credential=None,
+        hops=0,
+        max_hops=5,
+        accounting=RunAccounting(),
+        max_total_tokens=10_000,
+    )
+
+
+async def test_ask_sends_the_root_and_the_calling_run_as_parent() -> None:
+    peer = Peer(
+        task(TaskState.TASK_STATE_COMPLETED, "Findings"),
+        card=context_card("root_invocation_id", "parent_invocation_id"),
+    )
+    correlation = RunCorrelation("Planner", "run-1", root_invocation_id=ROOT)
+
+    await (await bound_with(peer, correlation)).ask("tides")
+
+    body = json.loads(peer.requests[-1].content)
+    assert body["params"]["message"]["metadata"] == {
+        "agentframe.root_invocation_id": ROOT,
+        "agentframe.parent_invocation_id": "run-1",
+    }
+
+
+async def test_a_local_run_is_the_root_of_the_requests_it_sends() -> None:
+    peer = Peer(
+        task(TaskState.TASK_STATE_COMPLETED, "Findings"),
+        card=context_card("root_invocation_id", "parent_invocation_id"),
+    )
+
+    await ask(peer)
+
+    metadata = json.loads(peer.requests[-1].content)["params"]["message"]["metadata"]
+    root = metadata["agentframe.root_invocation_id"]
+    assert root == metadata["agentframe.parent_invocation_id"]
+    assert is_invocation_id(root)
+
+
+async def test_the_trace_context_goes_with_every_request_to_any_peer() -> None:
+    # The card lists no context fields, so the message itself stays plain A2A.
+    peer = Peer(
+        task(TaskState.TASK_STATE_WORKING),
+        task(TaskState.TASK_STATE_COMPLETED, "Findings"),
+    )
+    correlation = RunCorrelation("Planner", "run-1", ROOT, trace=TRACE)
+
+    await (await bound_with(peer, correlation)).ask("tides")
+
+    calls = [r for r in peer.requests if r.method == "POST"]
+    assert peer.methods() == ["SendMessage", "GetTask"]
+    for sent in calls:
+        assert sent.headers["traceparent"] == TRACE.traceparent
+        assert sent.headers["tracestate"] == "congo=t61"
+    assert "metadata" not in json.loads(calls[0].content)["params"]["message"]
+    card_fetch = peer.requests[0]
+    assert "traceparent" not in card_fetch.headers
+
+
+async def test_without_a_trace_context_no_trace_headers_are_sent() -> None:
+    peer = Peer(task(TaskState.TASK_STATE_COMPLETED, "Findings"))
+
+    await ask(peer)
+
+    assert "traceparent" not in peer.requests[-1].headers
+    assert "tracestate" not in peer.requests[-1].headers
+
+
 async def test_a_run_at_the_depth_limit_fails_before_sending() -> None:
     peer = Peer(card=context_card("deadline_ms", "hops"))
     remote_agent = await research(peer, hops=5)
@@ -405,7 +492,7 @@ async def research(
         peer.directory(),
         "research-agent",
         deadline=deadline,
-        invocation_id="run-1",
+        correlation=root_run("planner", "run-1"),
         principal=None,
         identity=None,
         hops=hops,
@@ -755,7 +842,7 @@ async def test_call_sends_the_credential_with_the_extension_header() -> None:
         peer.directory(),
         "research-agent",
         deadline=asyncio.get_running_loop().time() + 10,
-        invocation_id="run-1",
+        correlation=root_run("planner", "run-1"),
         principal=None,
         identity=remotes["research-agent"],
         hops=0,
@@ -780,7 +867,7 @@ async def test_ask_sends_the_credential_and_context_under_one_extension() -> Non
         peer.directory(),
         "research-agent",
         deadline=asyncio.get_running_loop().time() + 10,
-        invocation_id="run-1",
+        correlation=root_run("planner", "run-1"),
         principal=None,
         identity=with_key()["research-agent"],
         credential=APIKeyCredential("planner-key"),
@@ -930,7 +1017,7 @@ async def test_a_request_the_credential_stopped_releases_its_token_hold() -> Non
         peer.directory(),
         "research-agent",
         deadline=asyncio.get_running_loop().time() + 10,
-        invocation_id="run-1",
+        correlation=root_run("planner", "run-1"),
         principal=None,
         identity=Service(credential=failing),
         credential=failing,
