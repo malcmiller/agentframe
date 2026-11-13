@@ -697,7 +697,7 @@ The decided authoring surface is [`Remote[Literal["name"]]`](#remoteliteralname)
 | --- | --- | --- | --- |
 | Discovered destination/card | Validated reference/native card; client interface open | Needed for selected interaction | Re-check destinations, trust, binding and current authorization, not just cache freshness. |
 | Outbound identity | `remotes={name: Service(credential=...)}` (#92) or `OnBehalfOf(scope=...)` (#93) | OBO recommended for Entra ingress; service explicit | Exchange target-scoped tokens; never forward incoming token or fall back on exchange failure. API-key/anonymous ingress supports only service. See [`Service`](authorization.md#service) and [`OnBehalfOf`](authorization.md#onbehalfof). |
-| Deadline/budget/depth | Shared AgentFrame extension; deadline and depth implemented (#89, [wire format](hosting.md#structured-skill-call-wire-format)), budget open | Remaining deadline/budget, default max 5 hops | Receiver lowers ceilings, reports actual usage; caller enforces locally. Other peers' usage unknown, never zero. No hard billing promise. |
+| Deadline/budget/depth | Shared AgentFrame extension; deadline and depth (#89) and token budgets (#90) implemented ([wire format](hosting.md#structured-skill-call-wire-format)) | Remaining deadline/budget, default max 5 hops | Receiver lowers ceilings, reports actual usage; caller enforces locally. Other peers' usage unknown, never zero. No hard billing promise. |
 | Typed proxy | Later optional `Remote[ResearchAgent]` | Not first multi-agent release | Method syntax could use same structured request; no proprietary RPC. |
 
 ```python
@@ -739,8 +739,9 @@ the `Literal`. The string form `Remote["name"]` is not used, because
 **Signature status:** the annotation, [`ask`](#remoteask), [`call`](#remotecall)
 (#88), the `directory=` parameters, service-mode outbound identity
 ([`remotes=`](authorization.md#service), #92) and deadline/hop propagation
-(#89) and Entra on-behalf-of ([`OnBehalfOf`](authorization.md#onbehalfof),
-#93) are implemented; token budgets (#90) are a later story. `Remote[ResearchAgent]` typed proxies are later only.
+(#89), Entra on-behalf-of ([`OnBehalfOf`](authorization.md#onbehalfof), #93)
+and per-call token budgets (#90) are implemented. `Remote[ResearchAgent]`
+typed proxies are later only.
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -750,6 +751,7 @@ the `Literal`. The string form `Remote["name"]` is not used, because
 | Card security | The card's `security_schemes`/`security_requirements` | Checked at startup and each run | A card that declares no security is called without credentials. One that declares security needs a `remotes=` entry whose credential satisfies one of its requirements, otherwise `DefinitionError` naming the remote. Foundry A2A agents need [`EntraAppCredential`](authorization.md#entraappcredential) with `https://ai.azure.com/.default`. A source's `card_headers` are used only to fetch cards, never to call agents. |
 | Identity mode | [`Service(credential=...)`](authorization.md#service) (#92) or [`OnBehalfOf(scope=...)`](authorization.md#onbehalfof) (#93) in `remotes=` | Per remote; no implicit mode | No token forwarding, authority amplification or stronger-identity fallback. |
 | Hop limit (#89) | [`RunLimits.max_remote_hops`](configuration.md#runlimits) | `5` | A run at that depth cannot call another agent: `ask` and `call` raise `LimitExceededError` before sending. The depth (`RunContext.hops`) and remaining time go to peers that advertise them; see [`Remote.ask`](#remoteask). |
+| Token budget (#90) | `max_total_tokens=` on `ask` and `call` | Default: all the run has left | Held against the run's `RunLimits.max_total_tokens` before sending and charged with the usage the peer reports; see [token budget](#remoteask). |
 
 Define a `type` alias per remote to keep signatures short:
 
@@ -808,17 +810,27 @@ validate its result. Implemented (#88).
 
 ```python
 @overload
-async def call[T](self, skill: str, /, *, output: type[T], **arguments: Any) -> T: ...
+async def call[T](
+    self,
+    skill: str,
+    /,
+    *,
+    output: type[T],
+    max_total_tokens: int | None = None,
+    **arguments: Any,
+) -> T: ...
 @overload
-async def call(self, skill: str, /, **arguments: Any) -> Any: ...
+async def call(
+    self, skill: str, /, *, max_total_tokens: int | None = None, **arguments: Any
+) -> Any: ...
 ```
 
 | Parameter/result | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `skill` | `str` | Required, positional only | A skill ID listed on the peer's card. |
-| `**arguments` | Keyword values | As the remote skill requires | Sent as one JSON object data part in Pydantic JSON mode, so Pydantic models, dates and enums work. The peer validates them. `output` and `max_total_tokens` are reserved and cannot be remote argument names. |
+| `**arguments` | Keyword values | As the remote skill requires | Sent as one JSON object data part in Pydantic JSON mode, so Pydantic models, dates and enums work. The peer validates them. `output` and `max_total_tokens` are `call`'s own parameters, so they cannot be remote argument names. |
 | `output` | A type such as `list[Source]` or `Summary` | Optional | Validates the result with Pydantic's `TypeAdapter`. Without it the result is returned as decoded JSON (numbers come back as `float`), or as `str` for a text result. |
-| `max_total_tokens` | `int` | Not implemented yet (#90) | Reserved for a per-call token ceiling; passing it raises `DefinitionError` and sends nothing. |
+| `max_total_tokens` | `int \| None` | Optional; default `None` means all the run has left (#90) | The most tokens the call may use, held against the run's budget before sending. Must be greater than 0 (`DefinitionError`). Pass one per call when calling agents concurrently; see [token budget](#remoteask). |
 | Return | `T`, or the JSON value | After the task completes | The skill's result. Untrusted remote data until validated. |
 
 ```python
@@ -873,8 +885,42 @@ cancellation and question handling are those of [`ask`](#remoteask).
   `PydanticSerializationError` before anything is sent.
 
 `call` sends the same [caller context](#remoteask) as `ask` (#89), in the
-same message and under the same activated extension, and fails before
-sending at the `max_remote_hops` depth. Usage propagation is #90.
+same message and under the same activated extension, fails before sending at
+the `max_remote_hops` depth, and holds and charges tokens as `ask` does
+(#90). Fanning out, give each call its own ceiling:
+
+```python
+import asyncio
+from typing import Literal
+
+from pydantic import BaseModel
+
+from agentframe import Remote
+
+type Research = Remote[Literal["research-agent"]]
+
+
+class Source(BaseModel):
+    title: str
+    url: str
+
+
+async def compare(research: Research, a: str, b: str) -> list[list[Source]]:
+    # Without max_total_tokens, the first call would hold everything the run
+    # has left and the second would fail before sending.
+    async with asyncio.TaskGroup() as group:
+        first = group.create_task(
+            research.call(
+                "find_sources", topic=a, output=list[Source], max_total_tokens=20_000
+            )
+        )
+        second = group.create_task(
+            research.call(
+                "find_sources", topic=b, output=list[Source], max_total_tokens=20_000
+            )
+        )
+    return [first.result(), second.result()]
+```
 
 **Related:** [`ClarificationNeededError`](#clarificationneedederror),
 [request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary),
@@ -886,12 +932,13 @@ sending at the `max_remote_hops` depth. Usage propagation is #90.
 without AgentFrame's structured skill selection. Implemented (#87).
 
 ```python
-async def ask(self, text: str) -> str: ...
+async def ask(self, text: str, *, max_total_tokens: int | None = None) -> str: ...
 ```
 
 | Parameter/result | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `text` | `str` | Required | Sent as one native text part. Not identity or trusted instructions for the peer. |
+| `max_total_tokens` | `int \| None` | Optional; default `None` means all the run has left (#90) | The most tokens the request may use; see token budget below. Must be greater than 0 (`DefinitionError`). |
 | Return | `str` | After the task completes | The text parts of the task's artifacts (or of its final message when it has none), joined by newlines. Untrusted remote content. |
 
 ```python
@@ -952,6 +999,32 @@ non-AgentFrame agent, gets plain A2A without the extension, and the caller
 still stops waiting at its own deadline. See the
 [wire format](hosting.md#structured-skill-call-wire-format) and
 [cross-agent depth](../guides/limits.md#cross-agent-budgets-and-depth-m8).
+
+**Token budget (#90):** when the peer's card lists `max_total_tokens` in
+`params.context`, the request's ceiling (`max_total_tokens=`, or everything
+the run has left) is held against the run's `RunLimits.max_total_tokens`
+before anything is sent, atomically, so concurrent calls in an
+`asyncio.TaskGroup` cannot both take the same tokens, and goes to the peer as
+`agentframe.max_total_tokens`. The peer's run uses the smaller of that and its
+own limit. When the task ends, the hold is replaced by the `total_tokens` the
+peer's [usage snapshot](hosting.md#result-and-failure-mapping) reports (it
+includes the peer's own remote calls), even when that is higher than the
+ceiling, so `RunResult.usage` counts every hop once; `model_calls` and
+`tool_calls` stay local.
+
+- A ceiling over what the run has left raises `TokenLimitExceededError`
+  before sending. With the default ceiling, a second concurrent call finds
+  nothing left and fails with a message saying to pass `max_total_tokens`
+  to each call.
+- A peer that lists no `max_total_tokens` (AgentFrame 0.1.0, #89-era agents
+  and non-AgentFrame agents) gets no ceiling and holds nothing; its usage is
+  unknown, so the run's token counts become `None`, never zero.
+- A peer that advertises the field but reports no valid usage, or a request
+  that fails in transit or is cancelled, keeps its hold counted and makes the
+  run's usage unknown. A request never sent (for example a failing
+  credential) releases its hold.
+- Reported usage is the peer's claim, used only for accounting, never for
+  authorization. It is not a hard billing guarantee.
 
 **Related:** [`Remote.call`](#remotecall), [request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
 

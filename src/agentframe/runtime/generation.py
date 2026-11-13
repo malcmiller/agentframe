@@ -85,6 +85,8 @@ class RunAccounting:
     the tokens actually used, or keeps the hold when they are unknown, so a
     failed call is never treated as free. Neither method awaits, so
     concurrent calls in one run cannot both take the same remaining tokens.
+    Remote agent calls hold tokens the same way with ``hold_tokens``, without
+    counting a model call, and settle with the usage the agent reports.
 
     Attributes:
         usage: Tokens used by finished calls, as reported or estimated.
@@ -126,11 +128,11 @@ class RunAccounting:
             raise ModelCallLimitExceededError(
                 f"The run reached its limit of {max_calls} model calls"
             )
-        remaining = max_total - self.committed_tokens - self.reserved_tokens
+        remaining = self.remaining_tokens(max_total)
         if tokens > remaining:
             raise TokenLimitExceededError(
                 f"The model call needs up to {tokens} tokens, but only "
-                f"{max(remaining, 0)} of the run's {max_total} remain"
+                f"{remaining} of the run's {max_total} remain"
             )
         self.model_calls += 1
         self.reserved_tokens += tokens
@@ -138,6 +140,18 @@ class RunAccounting:
     def release(self, tokens: int) -> None:
         """Undo a reservation for a call that was never sent."""
         self.model_calls -= 1
+        self.reserved_tokens -= tokens
+
+    def remaining_tokens(self, max_total: int) -> int:
+        """Return the tokens of ``max_total`` that nothing holds or has used."""
+        return max(max_total - self.committed_tokens - self.reserved_tokens, 0)
+
+    def hold_tokens(self, tokens: int) -> None:
+        """Hold ``tokens`` for a remote call; the caller checked that they fit."""
+        self.reserved_tokens += tokens
+
+    def release_tokens(self, tokens: int) -> None:
+        """Undo ``hold_tokens`` for a remote call that was never sent."""
         self.reserved_tokens -= tokens
 
     def count_tool_call(self, limits: RunLimits) -> None:

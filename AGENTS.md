@@ -261,7 +261,8 @@ metadata `agentframe.skill`, exactly one JSON-object data part; malformed ->
 JSON-RPC InvalidParams, no task. Not a standard A2A `skill` field.
 Implemented (#89): the same URI carries caller context; an activated message
 without `agentframe.skill` is free text. Cards list `params.context`
-(`deadline_ms`, `hops`); senders send only listed fields (0.1.0 lists none).
+(`deadline_ms`, `hops`, `max_total_tokens` since #90); senders send only
+listed fields (0.1.0 lists none).
 Receiver timeout = min(own, `agentframe.deadline_ms`); `RunContext.hops`;
 `RunLimits.max_remote_hops=5`: caller fails before sending, deeper request
 REJECTED with base `LimitExceededError` message; depth is cooperative.
@@ -487,8 +488,15 @@ Implemented (#88): `call(skill, /, *, output=None, **arguments)` checks the
 card declares the skill-call extension and skill (else `RemoteAgentError`, no
 send, no `ask` fallback), sends the M2 wire format with per-request
 `A2A-Extensions`, reuses `ask`'s wait/cancel, decodes text or `{"value": ...}`
-and validates `output` (`OutputValidationError`, no remote data); `output` and
-`max_total_tokens` are reserved (the latter raises `DefinitionError` until #90).
+and validates `output` (`OutputValidationError`, no remote data).
+Implemented (#90): `ask`/`call` take `max_total_tokens=` (default: all the run
+has left), held atomically in the run's `RunAccounting` before sending and sent
+as `agentframe.max_total_tokens` only to peers listing it in `params.context`
+(older receivers reject unknown keys). Receiver uses min(own, incoming). The
+task's usage snapshot `total_tokens` replaces the hold, even if higher;
+non-advertising peers hold nothing and make usage unknown (`None`). Over the
+remaining budget -> `TokenLimitExceededError` before sending (default-ceiling
+message says to pass `max_total_tokens` per call for fan-out).
 Implemented (#92): `remotes={name: Service(credential=...)}` on
 `Runtime`/`AgentApp` (same rule as `services=`); `OutboundCredential` protocol
 `async headers()` + `satisfies(scheme)`, built-ins `APIKeyCredential(key,

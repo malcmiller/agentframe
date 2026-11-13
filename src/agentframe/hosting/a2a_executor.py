@@ -13,8 +13,9 @@ Outcomes map to native A2A results as follows:
   and creates no task (the app's request handler checks it before the SDK
   creates one).
 - With the extension activated, the metadata may also carry the caller's
-  remaining time and the request's depth (see ``hosting.skill_call``). The run's
-  timeout is capped by that remaining time; a request deeper than
+  remaining time, its token cap and the request's depth (see
+  ``hosting.skill_call``). The run's timeout and ``max_total_tokens`` are
+  capped by them; a request deeper than
   ``RunLimits.max_remote_hops`` ends in ``REJECTED`` before routing or the
   skill. Malformed values are ``InvalidParams`` errors, like malformed calls.
 - Any other message is free text, including one that activates the
@@ -44,6 +45,8 @@ snapshot in its metadata: ``input_tokens``, ``output_tokens``,
 ``total_tokens`` (``null`` when unknown), ``estimated``, ``model_calls``
 and ``tool_calls``.
 A cancelled task reports the usage its run had reached when it was cancelled.
+The usage includes what the run's own remote calls reported (M8 #90), so a
+caller charging it counts every hop below once.
 
 Every run that ends ``FAILED`` is logged as a warning with its invocation ID
 and safe message; skill and router exceptions are logged with their traceback.
@@ -302,7 +305,7 @@ class RuntimeExecutor(AgentExecutor):
         assert message is not None
         # The request handler has already refused malformed context.
         caller = incoming_context(context.requested_extensions, message)
-        ceiling = _with_caller_deadline(self._limits_ceiling, caller)
+        ceiling = _with_caller_limits(self._limits_ceiling, caller)
         max_hops = routing_limits(self._agent, ceiling).max_remote_hops
         assert max_hops is not None  # DEFAULT_LIMITS sets every field.
         if caller.hops > max_hops:
@@ -567,21 +570,32 @@ def run_metadata(invocation_id: str, accounting: RunAccounting) -> dict[str, Any
     }
 
 
-def _with_caller_deadline(
+def _with_caller_limits(
     ceiling: RunLimits | None, caller: CallerContext
 ) -> RunLimits | None:
-    """Lower the host's timeout ceiling to the time the caller has left.
+    """Lower the host's ceiling to the caller's remaining time and token cap.
 
     The run's timeout then counts from when it started, as usual, so a
-    caller's deadline can shorten the run but never extend it.
+    caller's deadline can shorten the run but never extend it; likewise its
+    token cap can lower the run's ``max_total_tokens`` but never raise it.
     """
-    if caller.deadline_seconds is None:
+    if caller.deadline_seconds is None and caller.max_total_tokens is None:
         return ceiling
     ceiling = ceiling or RunLimits()
-    timeout = caller.deadline_seconds
-    if ceiling.timeout_seconds is not None:
-        timeout = min(timeout, ceiling.timeout_seconds)
-    return replace(ceiling, timeout_seconds=timeout)
+    return replace(
+        ceiling,
+        timeout_seconds=_lower(ceiling.timeout_seconds, caller.deadline_seconds),
+        max_total_tokens=_lower(ceiling.max_total_tokens, caller.max_total_tokens),
+    )
+
+
+def _lower[T: (int, float)](own: T | None, caller: T | None) -> T | None:
+    """Return the smaller of two limits, where ``None`` sets no limit."""
+    if own is None:
+        return caller
+    if caller is None:
+        return own
+    return min(own, caller)
 
 
 def _earlier_messages(task: Task | None) -> list[Message]:

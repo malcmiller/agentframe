@@ -1,4 +1,4 @@
-"""Tests for the caller context an A2A request carries: deadline and depth.
+"""Tests for the caller context an A2A request carries: deadline, depth, tokens.
 
 Requests travel over real localhost HTTP to an ``AgentApp`` served by Uvicorn.
 """
@@ -253,6 +253,16 @@ async def test_context_is_ignored_unless_the_extension_is_activated(
             "agentframe.deadline_ms",
             id="deadline-null",
         ),
+        pytest.param(
+            {"agentframe.max_total_tokens": 0},
+            "agentframe.max_total_tokens",
+            id="tokens-zero",
+        ),
+        pytest.param(
+            {"agentframe.max_total_tokens": 10.5},
+            "agentframe.max_total_tokens",
+            id="tokens-fraction",
+        ),
         pytest.param({"agentframe.budget": 1}, "agentframe.budget", id="unknown-field"),
     ],
 )
@@ -316,6 +326,17 @@ def test_only_advertised_fields_are_sent() -> None:
         "agentframe.hops": 3
     }
     assert context_metadata(set(), remaining_seconds=2, hops=3) == {}
+
+
+def test_a_token_ceiling_is_sent_only_when_advertised_and_given() -> None:
+    fields = {"max_total_tokens"}
+
+    sent = context_metadata(fields, remaining_seconds=2, hops=1, max_total_tokens=500)
+    none = context_metadata(fields, remaining_seconds=2, hops=1)
+    unlisted = context_metadata(set(), remaining_seconds=2, hops=1, max_total_tokens=5)
+
+    assert sent == {"agentframe.max_total_tokens": 500}
+    assert none == unlisted == {}
 
 
 def test_the_deadline_is_sent_as_whole_milliseconds_rounded_down() -> None:

@@ -144,7 +144,8 @@ Future [AG-UI streaming](streaming.md) must preserve these limits during
 buffering/backpressure and distinguish disconnect/cancellation. Safe local
 execution/usage metadata uses `Runtime.run` / `RunResult`, independent of tracing.
 M8+ propagates remaining deadlines and depth (implemented #89, with
-`max_remote_hops` above) and later token ceilings (#90). See
+`max_remote_hops` above) and per-call token ceilings held against
+`max_total_tokens`, with peers' reported usage charged back (implemented #90). See
 [cross-agent budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8).
 
 **Related:** [`ModelSettings.max_output_tokens`](models.md#modelsettings),
