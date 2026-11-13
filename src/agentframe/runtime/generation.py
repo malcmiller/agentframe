@@ -7,7 +7,7 @@ import asyncio
 import json
 import math
 import random
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -196,7 +196,7 @@ class GenerationState:
     async def generate_text(
         self,
         ctx: "RunContext",
-        text: str,
+        text: str | Sequence[Message],
         instructions: str | None,
         tools: Iterable[Callable[..., Any]] = (),
     ) -> str:
@@ -207,7 +207,8 @@ class GenerationState:
 
         Args:
             ctx: The run's context: its deadline, and what tools receive.
-            text: Untrusted content, sent as a ``user`` message.
+            text: Untrusted content, sent as a ``user`` message, or untrusted
+                ``user`` and ``assistant`` messages sent in order.
             instructions: Trusted call-specific instructions, sent after the
                 agent's own instructions as a separate ``system`` message.
             tools: Registered ``@tool`` functions to offer the model.
@@ -242,7 +243,7 @@ class GenerationState:
     async def generate_output[T: BaseModel](
         self,
         ctx: "RunContext",
-        text: str,
+        text: str | Sequence[Message],
         instructions: str | None,
         output: type[T],
         tools: Iterable[Callable[..., Any]] = (),
@@ -256,7 +257,8 @@ class GenerationState:
 
         Args:
             ctx: The run's context (see ``generate_text``).
-            text: Untrusted content, sent as a ``user`` message.
+            text: Untrusted content, sent as a ``user`` message, or untrusted
+                ``user`` and ``assistant`` messages sent in order.
             instructions: Trusted call-specific instructions (see
                 ``generate_text``).
             output: The Pydantic model class the reply must validate as.
@@ -277,7 +279,7 @@ class GenerationState:
     async def _generate(
         self,
         ctx: "RunContext",
-        text: str,
+        text: str | Sequence[Message],
         instructions: str | None,
         output: OutputSchema | None,
         tools: Iterable[Callable[..., Any]],
@@ -576,19 +578,26 @@ def with_estimates(reported: Usage, input_estimate: int, output_estimate: int) -
 
 
 def build_messages(
-    agent_instructions: str | None, call_instructions: str | None, text: str
+    agent_instructions: str | None,
+    call_instructions: str | None,
+    text: str | Sequence[Message],
 ) -> tuple[Message, ...]:
-    """Put trusted instructions in ``system`` messages and ``text`` in a ``user`` one.
+    """Put trusted instructions in ``system`` messages, then the untrusted ``text``.
 
-    Untrusted text is never merged into instructions. This keeps the roles
-    separate; it does not guarantee resistance to prompt injection.
+    ``text`` is one ``user`` message, or a conversation of messages sent as
+    given after the instructions. Untrusted text is never merged into
+    instructions. This keeps the roles separate; it does not guarantee
+    resistance to prompt injection.
     """
     messages = [
         Message(role="system", content=instructions)
         for instructions in (agent_instructions, call_instructions)
         if instructions
     ]
-    messages.append(Message(role="user", content=text))
+    if isinstance(text, str):
+        messages.append(Message(role="user", content=text))
+    else:
+        messages.extend(text)
     return tuple(messages)
 
 

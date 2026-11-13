@@ -16,10 +16,12 @@ from agentframe.authoring.definitions import AgentDefinition, SkillDefinition
 from agentframe.authoring.services import Services
 from agentframe.errors import (
     AgentFrameError,
+    DefinitionError,
     InputValidationError,
     TimeoutLimitExceededError,
 )
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, Model, ModelSettings
+from agentframe.models.base import Message as ModelMessage
 from agentframe.runtime.generation import GenerationState, RunAccounting
 from agentframe.runtime.limits import DEFAULT_LIMITS
 from agentframe.runtime.options import merge_settings
@@ -82,7 +84,7 @@ class RoutingContext:
     async def generate(
         self,
         model: Model,
-        text: str,
+        text: str | Sequence[ModelMessage],
         *,
         instructions: str | None = None,
         model_settings: ModelSettings | None = None,
@@ -92,7 +94,7 @@ class RoutingContext:
     async def generate[T: BaseModel](
         self,
         model: Model,
-        text: str,
+        text: str | Sequence[ModelMessage],
         *,
         instructions: str | None = None,
         output: type[T],
@@ -102,7 +104,7 @@ class RoutingContext:
     async def generate(
         self,
         model: Model,
-        text: str,
+        text: str | Sequence[ModelMessage],
         *,
         instructions: str | None = None,
         output: type[BaseModel] | None = None,
@@ -112,14 +114,16 @@ class RoutingContext:
 
         Follows the same rules as ``RunContext.generate``, without tools:
         ``instructions`` is sent as a trusted ``system`` message and ``text``
-        as a separate ``user`` message. The agent's own instructions are not
-        sent; they are for its skills. The call is checked against and
-        charged to the run's limits.
+        after it as a separate ``user`` message, or as the given conversation.
+        The agent's own instructions are not sent; they are for its skills.
+        The call is checked against and charged to the run's limits.
 
         Args:
             model: The router's model. The agent's model is never used
                 implicitly.
-            text: Untrusted content, such as the caller's messages.
+            text: Untrusted content: the caller's text, or the conversation
+                as ``user`` messages (the caller) and ``assistant`` messages
+                (the agent's earlier questions), oldest first.
             instructions: Trusted routing instructions. Never put untrusted
                 content here.
             output: A Pydantic ``BaseModel`` subclass to validate the reply as.
@@ -130,10 +134,14 @@ class RoutingContext:
             The model's complete answer, or an ``output`` instance.
 
         Raises:
+            DefinitionError: The conversation has a message that is not a
+                plain ``user`` or ``assistant`` message.
             AgentFrameError: The same errors as ``RunContext.generate``, such
                 as ``ModelCallLimitExceededError`` or ``ModelRefusalError``.
                 They reach the caller with their own safe messages.
         """
+        if not isinstance(text, str):
+            _check_conversation(text)
         generation = replace(
             self._generation,
             model=model,
@@ -147,8 +155,18 @@ class RoutingContext:
             self.invocation_id, self.principal, self.deadline, generation
         )
         if output is None:
-            return await run_ctx.generate(text, instructions=instructions)
-        return await run_ctx.generate(text, instructions=instructions, output=output)
+            return await generation.generate_text(run_ctx, text, instructions)
+        return await generation.generate_output(run_ctx, text, instructions, output)
+
+
+def _check_conversation(conversation: Sequence[ModelMessage]) -> None:
+    # Untrusted content must never arrive as trusted system text or as tool traffic.
+    for message in conversation:
+        if message.role not in ("user", "assistant") or message.tool_calls:
+            raise DefinitionError(
+                "A routing conversation may only contain plain user and "
+                "assistant messages"
+            )
 
 
 def new_routing_context(
