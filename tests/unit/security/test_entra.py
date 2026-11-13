@@ -17,6 +17,7 @@ from fake_entra import (
     API_CLIENT_ID,
     CALLER_OID,
     METADATA_URL,
+    TARGET_CLIENT_ID,
     TENANT_ID,
     FakeEntra,
     new_rsa_key,
@@ -268,3 +269,63 @@ def test_missing_extra_names_the_extra_to_install() -> None:
 
     assert result.returncode != 0
     assert "agentframe-py[entra]" in result.stderr
+
+
+# Acting on behalf of users (OnBehalfOf remotes)
+
+
+async def test_a_delegated_user_token_is_kept_for_on_behalf_of(
+    entra: FakeEntra, auth: EntraIDAuth
+) -> None:
+    token = entra.token()
+
+    caller = await auth.authenticate(bearer(token))
+
+    assert caller.user_assertion == token
+    assert token not in repr(caller)
+
+
+@pytest.mark.parametrize(
+    "claims", [{"scp": None}, {"idtyp": "app"}], ids=["no-scp", "idtyp-app"]
+)
+async def test_an_app_only_token_is_never_kept(
+    entra: FakeEntra, auth: EntraIDAuth, claims: dict[str, Any]
+) -> None:
+    caller = await auth.authenticate(bearer(entra.token(**claims)))
+
+    assert caller.user_assertion is None
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"client_id": API_CLIENT_ID}, "both client_id and client_credential"),
+        ({"client_credential": "secret"}, "both client_id and client_credential"),
+        (
+            {"client_id": TARGET_CLIENT_ID, "client_credential": "secret"},
+            "client_id must equal audience",
+        ),
+    ],
+)
+def test_on_behalf_of_configuration_is_checked(
+    options: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(DefinitionError, match=message):
+        EntraIDAuth(tenant_id=TENANT_ID, audience=API_CLIENT_ID, **options)
+
+
+def test_on_behalf_of_needs_a_client_credential(auth: EntraIDAuth) -> None:
+    with pytest.raises(DefinitionError, match="client_credential"):
+        auth.check_on_behalf_of()
+
+
+def test_the_client_credential_is_never_shown() -> None:
+    auth = EntraIDAuth(
+        tenant_id=TENANT_ID,
+        audience=API_CLIENT_ID,
+        client_id=API_CLIENT_ID.upper(),
+        client_credential="hunter2",
+    )
+
+    auth.check_on_behalf_of()
+    assert "hunter2" not in repr(auth)

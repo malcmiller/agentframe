@@ -32,7 +32,11 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_jsonable_python
 
 from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
-from agentframe.discovery.identity import OutboundCredential, Service, check_identity
+from agentframe.discovery.identity import (
+    OutboundCredential,
+    RemoteIdentity,
+    check_identity,
+)
 from agentframe.errors import (
     AuthenticationError,
     ClarificationNeededError,
@@ -566,7 +570,7 @@ def remote_name(annotation: object) -> str | None:
 
 
 async def find_remote(
-    directory: AgentDirectory, name: str, identity: Service | None
+    directory: AgentDirectory, name: str, identity: RemoteIdentity | None
 ) -> DiscoveredAgent:
     """Look an agent up and check that a binding can call it.
 
@@ -600,11 +604,18 @@ async def bind_remote(
     deadline: float,
     invocation_id: str,
     principal: Principal | None,
-    identity: Service | None,
+    identity: RemoteIdentity | None,
+    credential: OutboundCredential | None,
     hops: int,
     max_hops: int,
 ) -> Remote[Any]:
     """Create the binding one run passes to a ``Remote`` skill parameter.
+
+    Args:
+        identity: The agent's entry in ``remotes=``, if any, checked against
+            its card.
+        credential: What this run sends for ``identity``: a ``Service``'s
+            credential, or the run's on-behalf-of token for ``OnBehalfOf``.
 
     Raises:
         DefinitionError: As for ``find_remote``, or the directory is not open.
@@ -622,7 +633,7 @@ async def bind_remote(
         deadline=deadline,
         invocation_id=invocation_id,
         principal=principal,
-        credential=identity.credential if identity is not None else None,
+        credential=credential,
         hops=hops,
         max_hops=max_hops,
     )

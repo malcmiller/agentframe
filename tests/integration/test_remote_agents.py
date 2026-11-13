@@ -271,6 +271,7 @@ async def bound(directory: AgentDirectory) -> Research:
         identity=None,
         hops=0,
         max_hops=5,
+        credential=None,
     )
 
 

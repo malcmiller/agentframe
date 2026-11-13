@@ -16,7 +16,13 @@ from a2a.types import (
 )
 from azure.core.credentials_async import AsyncTokenCredential
 
-from agentframe import APIKeyCredential, DefinitionError, EntraAppCredential, Service
+from agentframe import (
+    APIKeyCredential,
+    DefinitionError,
+    EntraAppCredential,
+    OnBehalfOf,
+    Service,
+)
 from agentframe.discovery.identity import check_identity
 
 API_KEY = SecurityScheme(
@@ -49,6 +55,7 @@ class NoTokens:
 
 KEY = APIKeyCredential("k")
 ENTRA = EntraAppCredential(NoTokens(), scope="api://x/.default")
+OBO = OnBehalfOf(scope="api://x/.default")
 
 
 @pytest.mark.parametrize(
@@ -64,10 +71,13 @@ ENTRA = EntraAppCredential(NoTokens(), scope="api://x/.default")
         (ENTRA, BEARER, True),
         (ENTRA, BASIC, False),
         (ENTRA, API_KEY, False),
+        (OBO, OIDC, True),
+        (OBO, BEARER, True),
+        (OBO, API_KEY, False),
     ],
 )
 def test_credentials_satisfy_only_matching_schemes(
-    credential: APIKeyCredential | EntraAppCredential,
+    credential: APIKeyCredential | EntraAppCredential | OnBehalfOf,
     scheme: SecurityScheme,
     expected: bool,
 ) -> None:
@@ -117,6 +127,11 @@ def test_a_requirement_naming_an_undefined_scheme_is_never_met() -> None:
 
 def test_schemes_without_requirements_are_alternatives() -> None:
     check_identity("a", card({"key": API_KEY, "entra": OIDC}), Service(credential=KEY))
+
+
+def test_on_behalf_of_cannot_meet_an_api_key_card() -> None:
+    with pytest.raises(DefinitionError, match="OnBehalfOf cannot provide"):
+        check_identity("a", card({"key": API_KEY}), OBO)
 
 
 def test_credential_reprs_hide_the_secret() -> None:

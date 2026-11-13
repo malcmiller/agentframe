@@ -2,6 +2,8 @@
 
 Validation follows Microsoft's access token guidance:
 https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validate-tokens
+and the on-behalf-of exchange follows
+https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow
 Needs the optional extra: ``pip install agentframe-py[entra]``.
 """
 
@@ -9,8 +11,8 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any
 
 try:
     import httpx
@@ -30,6 +32,10 @@ from agentframe.security.authentication import (
     VerifiedCaller,
     find_header,
 )
+
+if TYPE_CHECKING:
+    from azure.core.pipeline.transport import AsyncHttpTransport
+    from azure.identity.aio import OnBehalfOfCredential
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +73,33 @@ class EntraIDAuth(Authenticator, DeclaresCardSecurity):
     every 5 minutes, which picks up rotated keys. Tokens are never logged or
     included in error messages.
 
+    With ``client_id`` and ``client_credential`` it can also act for signed-in
+    users: ``OnBehalfOf`` remotes exchange a delegated user token (one with
+    an ``scp`` claim) for a token to the remote through the Entra
+    on-behalf-of flow. App-only tokens are never exchanged.
+
     Args:
         tenant_id: The tenant (directory) ID, a GUID.
         audience: The protected API's application (client) ID, a GUID. In v2.0
             access tokens ``aud`` is this client ID, not the ``api://`` App ID
             URI that callers use in the scope they request.
+        client_id: The API's own client ID, for on-behalf-of exchanges. It
+            must equal ``audience``: Entra only exchanges a token whose
+            ``aud`` is the app asking.
+        client_credential: How the API proves its identity for on-behalf-of
+            exchanges: a client secret (``str``), a PEM or PKCS12 certificate
+            with its private key and no password (``bytes``), or a function
+            returning a client assertion (``Callable[[], str]``), for example
+            a federated managed identity token. Never shown by ``repr``.
         transport: Optional ``httpx`` transport for fetching the tenant's
             metadata and keys, for example a test double or a proxy.
+        token_transport: Optional ``azure-core`` async transport for the
+            on-behalf-of token requests, for example a test double or a proxy.
 
     Raises:
-        DefinitionError: ``tenant_id`` or ``audience`` is not a GUID.
+        DefinitionError: ``tenant_id`` or ``audience`` is not a GUID, only one
+            of ``client_id`` and ``client_credential`` is given, or
+            ``client_id`` is not ``audience``.
     """
 
     def __init__(
@@ -84,7 +107,10 @@ class EntraIDAuth(Authenticator, DeclaresCardSecurity):
         *,
         tenant_id: str,
         audience: str,
+        client_id: str | None = None,
+        client_credential: str | bytes | Callable[[], str] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        token_transport: "AsyncHttpTransport[Any, Any] | None" = None,
     ) -> None:
         if not _is_guid(tenant_id):
             raise DefinitionError(
@@ -96,8 +122,20 @@ class EntraIDAuth(Authenticator, DeclaresCardSecurity):
                 "a GUID: v2.0 access tokens carry the client ID in 'aud', not an "
                 "api:// App ID URI."
             )
+        if (client_id is None) != (client_credential is None):
+            raise DefinitionError(
+                "EntraIDAuth needs both client_id and client_credential to act "
+                "on behalf of users, or neither."
+            )
+        if client_id is not None and client_id.lower() != audience.lower():
+            raise DefinitionError(
+                "EntraIDAuth client_id must equal audience: Entra only exchanges "
+                "a user token on behalf of the app it was issued to."
+            )
         self._tenant_id = tenant_id.lower()
         self._audience = audience.lower()
+        self._client_credential = client_credential
+        self._token_transport = token_transport
         self._issuer = f"{AUTHORITY}/{self._tenant_id}/v2.0"
         self._metadata_url = f"{self._issuer}/.well-known/openid-configuration"
         self._transport = transport
@@ -135,11 +173,65 @@ class EntraIDAuth(Authenticator, DeclaresCardSecurity):
         try:
             key = await self._signing_key(token)
             claims = self._decode(token, key)
-            return _caller(claims, self._tenant_id)
+            return _caller(claims, self._tenant_id, token)
         except jwt.InvalidTokenError as error:
             # The reason helps operators; the token itself is never logged.
             logger.debug("Rejected an Entra access token: %s", error)
             raise AuthenticationError("Invalid credentials.") from None
+
+    def check_on_behalf_of(self) -> None:
+        """Check that this authenticator can act on behalf of users.
+
+        ``AgentApp`` calls it when a remote is configured ``OnBehalfOf``.
+
+        Raises:
+            DefinitionError: ``client_id`` and ``client_credential`` were
+                not given.
+        """
+        if self._client_credential is None:
+            raise DefinitionError(
+                "OnBehalfOf remotes need EntraIDAuth(client_id=..., "
+                "client_credential=...) to exchange the user's token."
+            )
+
+    def on_behalf_of(self, user_assertion: str) -> "OnBehalfOfCredential":
+        """Return a new credential that exchanges a user's token for others.
+
+        Each ``get_token(scope)`` call asks Entra for a token to ``scope`` on
+        behalf of the user, sending ``user_assertion``; tokens are cached
+        until they near expiry. Close the credential when done.
+
+        Args:
+            user_assertion: A delegated user token this authenticator verified.
+
+        Raises:
+            DefinitionError: Not configured for on-behalf-of.
+            ImportError: ``azure-identity`` is not installed.
+        """
+        self.check_on_behalf_of()
+        try:
+            from azure.identity.aio import OnBehalfOfCredential
+        except ImportError as error:
+            raise ImportError(
+                "OnBehalfOf needs the optional 'azure-identity' package; "
+                "install it with: pip install 'agentframe-py[entra]'"
+            ) from error
+        credential = self._client_credential
+        options: dict[str, Any] = {}
+        if self._token_transport is not None:
+            options["transport"] = self._token_transport
+        if isinstance(credential, str):
+            options["client_secret"] = credential
+        elif isinstance(credential, bytes):
+            options["client_certificate"] = credential
+        else:
+            options["client_assertion_func"] = credential
+        return OnBehalfOfCredential(
+            self._tenant_id,
+            self._audience,
+            user_assertion=user_assertion,
+            **options,
+        )
 
     def _decode(self, token: str, key: jwt.PyJWK) -> dict[str, Any]:
         """Check the signature, issuer, audience and validity period."""
@@ -218,8 +310,13 @@ def _bearer_token(headers: Mapping[str, str]) -> str:
     return token.strip()
 
 
-def _caller(claims: Mapping[str, Any], tenant_id: str) -> VerifiedCaller:
-    """Check the Entra-specific claims and build the verified caller."""
+def _caller(claims: Mapping[str, Any], tenant_id: str, token: str) -> VerifiedCaller:
+    """Check the Entra-specific claims and build the verified caller.
+
+    Only a delegated user token is kept as ``user_assertion``: it has the
+    ``scp`` claim, which app-only tokens never carry, and is not marked
+    app-only by the optional ``idtyp`` claim.
+    """
     if claims.get("ver") != "2.0":
         raise jwt.InvalidTokenError("Only v2.0 access tokens are accepted.")
     if claims.get("tid") != tenant_id:
@@ -233,7 +330,12 @@ def _caller(claims: Mapping[str, Any], tenant_id: str) -> VerifiedCaller:
         raise jwt.InvalidTokenError("The 'roles' claim is not a list of names.")
     if not isinstance(scopes, str):
         raise jwt.InvalidTokenError("The 'scp' claim is not a string.")
-    return VerifiedCaller(id=object_id, roles=frozenset([*roles, *scopes.split()]))
+    is_user = bool(scopes.split()) and claims.get("idtyp") != "app"
+    return VerifiedCaller(
+        id=object_id,
+        roles=frozenset([*roles, *scopes.split()]),
+        user_assertion=token if is_user else None,
+    )
 
 
 async def _get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:

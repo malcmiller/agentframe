@@ -4,6 +4,7 @@ Requests travel over real localhost HTTP to an ``AgentApp`` served by Uvicorn.
 """
 
 import asyncio
+import logging
 import socket
 import uuid
 from collections.abc import AsyncIterator, Mapping
@@ -701,3 +702,18 @@ def test_host_config_role_permissions_are_read_only() -> None:
     assert host.role_permissions == {"Admin": frozenset({"clock:read"})}
     with pytest.raises(TypeError):
         host.role_permissions["Admin"] = ["clock:write"]  # type: ignore[index]
+
+
+async def test_credentials_are_kept_out_of_the_sdks_debug_logs(
+    http: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The SDK logs each task's call context, including request headers.
+    caplog.set_level(logging.DEBUG)
+    http.headers["Authorization"] = "Bearer not-for-logs"
+
+    task = await run_task(http, "greet", {"name": "Ada"})
+
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert "a2a.server" in caplog.text
+    assert READER_KEY not in caplog.text
+    assert "not-for-logs" not in caplog.text
