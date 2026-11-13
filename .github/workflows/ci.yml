@@ -53,6 +53,7 @@ jobs:
           assert importlib.util.find_spec('ollama') is None, 'ollama installed';
           assert importlib.util.find_spec('openai') is None, 'openai installed';
           assert importlib.util.find_spec('azure') is None, 'azure-identity installed';
+          assert importlib.util.find_spec('jwt') is None, 'PyJWT installed';
           print('base install imports without provider extras')"
       - name: Run the agentframe command from the wheel's server extra
         working-directory: ${{ runner.temp }}

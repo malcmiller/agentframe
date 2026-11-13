@@ -139,7 +139,7 @@ class APIKeyAuth(Authenticator, DeclaresCardSecurity):
         Raises:
             AuthenticationError: The header is missing or the key is unknown.
         """
-        sent_key = _header(headers, API_KEY_HEADER)
+        sent_key = find_header(headers, API_KEY_HEADER)
         if not sent_key:
             raise AuthenticationError("Authentication required.")
         identity = self._find(sent_key.encode())
@@ -256,7 +256,8 @@ def www_authenticate(schemes: Mapping[str, SecurityScheme]) -> str:
     return ", ".join(challenges)
 
 
-def _header(headers: Mapping[str, str], name: str) -> str | None:
+def find_header(headers: Mapping[str, str], name: str) -> str | None:
+    """Return the value of header ``name``, matching names case-insensitively."""
     wanted = name.lower()
     for header_name, value in headers.items():
         if header_name.lower() == wanted:

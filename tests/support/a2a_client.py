@@ -32,23 +32,27 @@ from a2a.types import (
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 
 
-class APIKeyCredentials(CredentialService):
-    """Hands one API key to the SDK for whatever scheme the card declares."""
+class StaticCredentials(CredentialService):
+    """Hands one API key or bearer token to the SDK for any declared scheme."""
 
-    def __init__(self, key: str) -> None:
-        self.key = key
+    def __init__(self, credential: str) -> None:
+        self.credential = credential
 
     async def get_credentials(
         self, security_scheme_name: str, context: ClientCallContext | None
     ) -> str:
-        return self.key
+        return self.credential
 
 
-async def connect(base_url: str, api_key: str | None = None) -> Client:
-    """Connect like any A2A caller: resolve the public card, then use it."""
+async def connect(base_url: str, credential: str | None = None) -> Client:
+    """Connect like any A2A caller: resolve the public card, then use it.
+
+    ``credential`` is an API key or bearer token; the SDK sends it the way the
+    card's security scheme says.
+    """
     interceptors: list[ClientCallInterceptor] = []
-    if api_key is not None:
-        interceptors.append(AuthInterceptor(APIKeyCredentials(api_key)))
+    if credential is not None:
+        interceptors.append(AuthInterceptor(StaticCredentials(credential)))
     return await ClientFactory(ClientConfig()).create_from_url(
         base_url, interceptors=interceptors
     )

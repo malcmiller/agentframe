@@ -13,7 +13,7 @@ names. Roles are one application-controlled way to grant permissions.
 
 | Concept | Proposed responsibility |
 | --- | --- |
-| `Authenticator` | Trusted host interface, with `EntraIDAuth`, `APIKeyAuth` and explicit `AllowAnonymous()` built-ins. `async authenticate(headers) -> VerifiedCaller \| None` is implemented with `APIKeyAuth`/`AllowAnonymous`; `EntraIDAuth` is M7. |
+| `Authenticator` | Trusted host interface, with `EntraIDAuth`, `APIKeyAuth` and explicit `AllowAnonymous()` built-ins. `async authenticate(headers) -> VerifiedCaller \| None` is implemented with `APIKeyAuth`/`AllowAnonymous` (M2) and `EntraIDAuth` (M7 #76). |
 | `Principal` | Immutable invocation identity with trusted subject, issuer, tenant where applicable, and verified claims/permission grants. Exact fields remain open. |
 | `@skill(requires_permissions=[...])` | Declare stable permission requirements. All listed permissions are required; metadata does not enforce itself. |
 | `AuthorizationPolicy` | Injected policy interface evaluating principal, skill requirements, and validated resource arguments against authoritative application data. |
@@ -24,8 +24,15 @@ organization's permission assignments. Do not invent a built-in `admin` bypass.
 
 Configure application mappings through `HostConfig(role_permissions=...)`,
 using only verified roles/scopes, never roles supplied as skill arguments.
-Entra validates issuer/tenant, audience, expiry and signature; exact scope mapping
-and permission merging remain open. An illustrative application mapping:
+`EntraIDAuth` (optional extra `agentframe[entra]`) accepts only Microsoft Entra
+v2.0 access tokens for one tenant: it checks the `RS256` signature against the
+tenant's signing keys, the issuer, `tid`, audience (the API's client ID),
+expiry/not-before with 60 seconds of skew and `ver`. The caller's `oid` becomes
+the principal ID; its app `roles` and delegated `scp` scopes share one namespace
+in `role_permissions`, and the principal's permissions are their union. Signing
+keys that cannot be fetched fail closed with 401. See
+[`EntraIDAuth`](../api/authorization.md#entraidauth) for the app registration
+setup. An illustrative application mapping:
 
 | Role | Permissions |
 | --- | --- |

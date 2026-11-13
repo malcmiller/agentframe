@@ -341,7 +341,7 @@ built-in Entra ID, API-key and explicit anonymous implementations.
 
 **Signature status:** implemented as a structural protocol (M2 story #4) and
 wired into HTTP by `AgentApp` (#3): missing or invalid credentials on `/a2a`
-get HTTP 401 with no task. `EntraIDAuth` is M7.
+get HTTP 401 with no task. `EntraIDAuth` is implemented (M7 #76).
 
 ```text
 class Authenticator(Protocol):
@@ -427,9 +427,10 @@ class DeclaresCardSecurity(Protocol):
 | --- | --- | --- |
 | Return | `dict[str, a2a.types.SecurityScheme]` | Card security schemes keyed by name, using the official SDK type. Callers must satisfy all of them. `{}` declares open access. |
 
-`APIKeyAuth` returns an `apiKey` scheme for the `X-API-Key` header and
-`AllowAnonymous` returns `{}`. See the `ServiceTokenAuth` example under
-[`Authenticator`](#authenticator) for a custom implementation.
+`APIKeyAuth` returns an `apiKey` scheme for the `X-API-Key` header,
+`EntraIDAuth` an OpenID Connect `entraId` scheme and `AllowAnonymous` returns
+`{}`. See the `ServiceTokenAuth` example under [`Authenticator`](#authenticator)
+for a custom implementation.
 
 **Behavior / failures:** card generation raises `DefinitionError` naming the
 authenticator class when it does not implement `card_security()`. The
@@ -439,33 +440,99 @@ declaration is descriptive; the authenticator still enforces credentials.
 
 ## `EntraIDAuth`
 
-**Purpose / decision:** validate Microsoft Entra tokens and map verified
-roles/scopes to permissions.
+**Purpose / decision:** authenticate callers with Microsoft Entra v2.0 access
+tokens and map their verified app roles and scopes to permissions.
 
-**Decided constructor fields:**
-`EntraIDAuth(tenant_id=..., audience=...)`.
+**Signature status:** implemented (M7 story #76). Requires the optional extra
+`agentframe[entra]`, which pins `PyJWT[crypto]` and `httpx`; importing
+`EntraIDAuth` without it raises `ImportError` naming the extra.
+
+```text
+EntraIDAuth(*, tenant_id: str, audience: str, transport: httpx.AsyncBaseTransport | None = None)
+```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `tenant_id` | `str` | Required | Trusted configured tenant; validate issuer/tenant, not untrusted arguments. |
-| `audience` | `str` | Required | Expected token audience; validate signature, expiry and audience. |
+| `tenant_id` | `str` | Required | The tenant (directory) ID, a GUID. Domain names and `common`/`organizations` are refused (`DefinitionError`): only tokens from this one tenant are accepted. |
+| `audience` | `str` | Required | The protected API's **application (client) ID**, a GUID. In v2.0 access tokens `aud` is the API's client ID, not its `api://` App ID URI (callers still request the token with the `api://.../.default` scope). Any other value, including an `api://` URI, raises `DefinitionError` naming this rule. |
+| `transport` | `httpx.AsyncBaseTransport \| None` | Optional; default real HTTPS | Transport for fetching the tenant's metadata and signing keys, for example a test double or an outbound proxy. |
 
 ```python
 from agentframe import EntraIDAuth, HostConfig
 
 
-def entra_host(tenant_id: str, audience: str) -> HostConfig:
+def entra_host(tenant_id: str, writer_api_client_id: str) -> HostConfig:
     return HostConfig(
         public_url="https://writer.example.com",
-        auth=EntraIDAuth(tenant_id=tenant_id, audience=audience),
-        role_permissions={"Editor": ["documents:write"]},
+        auth=EntraIDAuth(tenant_id=tenant_id, audience=writer_api_client_id),
+        role_permissions={
+            "Editor": ["documents:write"],  # an app role
+            "Documents.Read": ["documents:read"],  # a delegated scope
+        },
     )
 ```
 
-**Behavior / failures:** invalid tokens fail authentication; mapped grants do
-not bypass current resource policy. `role_permissions` is application-owned on
-`HostConfig`, not an organization role hardcoded on skills. Exact scope mapping,
-claim selection, key refresh and permission-merge rules remain open.
+**Validation:** following Microsoft's
+[access token validation guidance](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validate-tokens),
+a request is accepted only when all of these hold:
+
+- The `Authorization` header is `Bearer <jwt>`. A missing header or another
+  scheme raises `AuthenticationError`.
+- The token is signed with `RS256` (never `none` or HMAC) by a key in the
+  tenant's key set, found through the `jwks_uri` in
+  `https://login.microsoftonline.com/{tenant_id}/v2.0/.well-known/openid-configuration`.
+- `iss` is exactly `https://login.microsoftonline.com/{tenant_id}/v2.0`,
+  `tid` equals `tenant_id`, `aud` equals `audience` and `ver` is `"2.0"`.
+- `exp` is present and `exp`/`nbf` hold with 60 seconds of clock skew.
+- `oid` (the stable object ID of the user or service principal) is present.
+
+`VerifiedCaller.id` is `oid`. Its roles are the `roles` claim plus the
+space-separated `scp` scopes, in one namespace for `role_permissions`: both are
+defined on the API's own app registration. v1.0 tokens are not accepted.
+
+**Signing keys:** fetched lazily on the first request (construction does no
+I/O), cached for 24 hours, and refetched at most once every 5 minutes when a
+token names an unknown key ID, which picks up rotated keys. If the keys cannot
+be fetched (an Entra outage) requests fail closed with the normal 401 and a
+warning log that names the tenant, not the token.
+
+**Agent Card:** `card_security()` returns an OpenID Connect scheme named
+`entraId` pointing at the tenant's v2.0 metadata URL, so A2A clients such as
+the official SDK send `Authorization: Bearer <token>`; 401 responses carry the
+`WWW-Authenticate: Bearer` challenge.
+
+**Behavior / failures:** every rejection is `AuthenticationError`, which the
+host maps to HTTP 401 with no task. Tokens never appear in logs or error
+messages; the rejection reason is logged at debug level. Only the global Azure
+cloud authority (`login.microsoftonline.com`) is supported. Mapped grants do
+not bypass resource policy, and `role_permissions` is application-owned.
+
+**One-time app registration setup** (in the Microsoft Entra admin center, for
+the API the agent hosts):
+
+1. Register an application for the API and note its application (client) ID:
+   that GUID is `audience`.
+2. Under **Expose an API**, set the Application ID URI (for example
+   `api://<client-id>`) and add delegated scopes such as `Documents.Read`.
+   Callers request tokens with the `api://<client-id>/.default` or a specific
+   scope; the issued token's `aud` is still the client ID.
+3. Under **App roles**, add roles such as `Editor` for users, groups or
+   applications, and assign them.
+4. In the **Manifest**, set `requestedAccessTokenVersion` to `2` (shown as
+   `accessTokenAcceptedVersion` in the older manifest format) so Entra issues
+   v2.0 tokens for this API; otherwise tokens are v1.0 and rejected.
+5. To run the opt-in `entra` test, add the Azure CLI
+   (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) as an authorized client application
+   for a scope, grant `Documents.Read` to your account if needed, run
+   `az login`, then:
+
+```bash
+AGENTFRAME_TEST_ENTRA=1 AGENTFRAME_ENTRA_TENANT_ID=<tenant-id> \
+  AGENTFRAME_ENTRA_AUDIENCE=<api-client-id> uv run pytest -m entra
+```
+
+`AGENTFRAME_ENTRA_RESOURCE` overrides the requested resource (default
+`api://<audience>`). The test is never run in CI.
 
 **Related:** [`Authenticator`](#authenticator), [identity guide](../guides/authorization.md).
 

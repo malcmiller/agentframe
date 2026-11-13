@@ -168,6 +168,25 @@ or send free text to the built-in [`ModelRouter`](docs/api/hosting.md#modelroute
 or a custom [`SkillRouter`](docs/api/hosting.md#skillrouter).
 `tests/integration/test_interoperability.py` drives every case with the official A2A client.
 
+For production identity in a Microsoft environment, replace the API key with
+[`EntraIDAuth`](docs/api/authorization.md#entraidauth) (install the `entra`
+extra). Callers send a Microsoft Entra v2.0 access token as
+`Authorization: Bearer <token>`; their app roles and scopes map to permissions:
+
+```python
+from agentframe import EntraIDAuth, HostConfig
+
+host = HostConfig(
+    public_url="https://writer.example.com",
+    # audience is the API's application (client) ID, not its api:// URI.
+    auth=EntraIDAuth(tenant_id=tenant_id, audience=writer_api_client_id),
+    role_permissions={"Editor": ["documents:write"], "Documents.Read": ["documents:read"]},
+)
+```
+
+`tenant_id` and `writer_api_client_id` come from your app registration; the
+reference page lists the one-time setup.
+
 The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
 need no provider configuration. See [agents with and without models](docs/guides/agent-examples.md)
 for multi-skill, mixed, and local invocation examples, and the
