@@ -402,7 +402,11 @@ The registry-read role is the expected one from the documented role
 definitions; verify it with the opt-in test below before relying on it.
 
 **Opt-in test** (`tests/integration/test_foundry_agents.py`, marked `foundry`,
-skipped unless enabled). It only reads. One-time setup, outside AgentFrame:
+skipped unless enabled). It lists the project and fetches the card read-only,
+then, as the real non-AgentFrame server of the
+[interoperability acceptance](#interoperability-with-non-agentframe-agents),
+`ask`s the agent one short message (usage stays unknown) and checks that
+`call` is refused before sending. One-time setup, outside AgentFrame:
 create a prompt agent in a Foundry project, enable incoming A2A as the guide
 shows, and give your `az login` identity Foundry User on the project (or the
 custom role above). Then:
@@ -1033,6 +1037,26 @@ ceiling, so `RunResult.usage` counts every hop once; `model_calls` and
   authorization. It is not a hard billing guarantee.
 
 **Related:** [`Remote.call`](#remotecall), [request styles](../design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
+
+### Interoperability with non-AgentFrame agents
+
+Proven by `tests/integration/test_multi_agent_interop.py` (#94) against a
+plain official-SDK agent with no AgentFrame extension
+(`tests/support/a2a_peer.py`), and by the opt-in
+[Foundry test](#foundryagentregistry) against a real Foundry agent:
+
+- `ask` gets plain A2A: one text part, no `agentframe.*` metadata and no
+  extension activation. Its text answer is returned; usage is unknown
+  (`None`), never zero.
+- The run's own deadline still stops a slow peer, and its task is cancelled
+  with a standard `CancelTask` (best effort).
+- `call` raises `RemoteAgentError` before sending, because the card does not
+  declare the skill-call extension; it never falls back to free text.
+- A question (`TASK_STATE_INPUT_REQUIRED`) raises `ClarificationNeededError`;
+  a failed task raises `RemoteAgentError` with a safe message, never the
+  peer's own text.
+- The official SDK client calling an AgentFrame orchestrator, with or without
+  the skill-call extension, gets standard tasks, artifacts and failed states.
 
 ## `ClarificationNeededError`
 

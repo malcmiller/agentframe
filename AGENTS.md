@@ -148,13 +148,16 @@ AGENTFRAME_TEST_FOUNDRY=1 AGENTFRAME_FOUNDRY_ENDPOINT=<base-url> \
 
 An enabled provider with a missing required variable fails rather than skips.
 
-`tests/integration/test_foundry_agents.py` has one opt-in `foundry` test for
+`tests/integration/test_foundry_agents.py` has opt-in `foundry` tests for
 `FoundryAgentRegistry` (#86): it lists a real project with one A2A-enabled
 agent and fetches that agent's card, read-only. It runs only with
 `AGENTFRAME_TEST_FOUNDRY_AGENTS=1`, `AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT`
 (`https://<account>.services.ai.azure.com/api/projects/<project>`) and
 `AGENTFRAME_FOUNDRY_A2A_AGENT` (the agent's name), after `az login`. Setup and
-roles are in `docs/api/discovery.md#foundryagentregistry`.
+roles are in `docs/api/discovery.md#foundryagentregistry`. The same agent is the
+real non-AgentFrame server for #94: one test `ask`s it once, another checks
+`call` is refused before sending. In CI, `test_multi_agent_interop.py` proves
+both directions against a plain SDK peer (`tests/support/a2a_peer.py`).
 
 `tests/integration/test_entra_interoperability.py` has one opt-in `entra` test
 using a real token from `az account get-access-token`, enabled with
