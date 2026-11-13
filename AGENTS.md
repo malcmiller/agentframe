@@ -675,8 +675,8 @@ Read `README.md` and `docs/README.md` first. Keep `docs/roadmap.md`, the
 guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
 `authorization.md`, `development.md`) and the design docs
 (`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
-`prompt-safeguarding.md`, `discovery.md`, `streaming.md`) consistent, including
-discovery/streaming API pages and navigation. Preserve the distinction between
+`prompt-safeguarding.md`, `discovery.md`, `streaming.md`, `evaluation.md`)
+consistent, including discovery/streaming API pages and navigation. Preserve the distinction between
 confirmed product direction and illustrative API details.
 
 Maintain `docs/api/README.md` and its linked surface reference pages alongside
