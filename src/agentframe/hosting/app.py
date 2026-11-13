@@ -1,5 +1,7 @@
 """Serve an agent over A2A 1.0 as an ASGI application."""
 
+import asyncio
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -16,6 +18,7 @@ from a2a.server.routes import (
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
     AgentCard,
+    CancelTaskRequest,
     GetTaskRequest,
     ListTasksRequest,
     ListTasksResponse,
@@ -43,6 +46,7 @@ from agentframe.hosting.a2a_executor import (
 from agentframe.hosting.admission import RUN_SLOT_STATE_KEY, RunAdmission, RunSlot
 from agentframe.hosting.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
 from agentframe.hosting.host import HostConfig
+from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.request_size import read_body_within, with_body
 from agentframe.hosting.routing import SkillRouter, routing_limits
@@ -55,6 +59,17 @@ from agentframe.security.execution_policy import ExecutionPolicy
 from agentframe.security.principal import Principal
 
 type Endpoint = Callable[[Request], Awaitable[Response]]
+
+HEALTH_PATH = "/health"
+"""Liveness probe: ``200 {"status": "ok"}`` whenever the app is serving."""
+
+READY_PATH = "/ready"
+"""Readiness probe: ``200`` after startup succeeded until shutdown starts."""
+
+_CANCEL_SECONDS = 5
+"""How long shutdown waits for runs to unwind once it has cancelled them."""
+
+logger = logging.getLogger(__name__)
 
 
 class AgentApp:
@@ -79,6 +94,15 @@ class AgentApp:
     A request body over ``host.max_request_bytes`` gets HTTP 413 before
     authentication and creates no task; a result or question over
     ``host.max_response_bytes`` fails its task instead of being sent.
+
+    ``/health`` (liveness) and ``/ready`` (readiness) need no credentials and
+    say nothing about the agent. ``/ready`` answers 200 only after startup
+    succeeded and until shutdown starts. Shutdown then refuses new messages
+    with HTTP 503 and ``Retry-After: 1``, while task reads and cancels keep
+    working; waits up to ``host.shutdown_grace_seconds`` for running runs to
+    finish; and cancels the rest, so their tasks end ``CANCELED`` and their
+    per-run services are cleaned up. Shutdown starts at ASGI lifespan
+    shutdown, or on the shutdown signal under ``agentframe run``.
 
     Args:
         agent: Instance of an ``@agent``-decorated class.
@@ -147,6 +171,10 @@ class AgentApp:
             task_store=InMemoryTaskStore(),
             agent_card=card,
         )
+        self._host = host
+        admission = RunAdmission(host.max_concurrent_runs)
+        lifecycle = Lifecycle(host.shutdown_grace_seconds)
+        self._lifecycle = lifecycle
         [a2a_route] = create_jsonrpc_routes(
             handler, rpc_url=A2A_PATH, context_builder=_CallerContextBuilder()
         )
@@ -159,20 +187,26 @@ class AgentApp:
             await runtime.validate_model(agent, limits_ceiling=host.limits_ceiling)
             if isinstance(router, ModelRouter):
                 await router.validate_model(routing_limits(agent, host.limits_ceiling))
+            lifecycle.mark_started()
             yield
+            await lifecycle.wait_for_runs(admission)
+            await handler.cancel_running_tasks()
             # Models are application-owned, so they are never closed here.
             await handler.aclose()
 
         self._app = Starlette(
             routes=[
                 *create_agent_card_routes(card),
+                Route(HEALTH_PATH, _health, methods=["GET"]),
+                Route(READY_PATH, _readiness_endpoint(lifecycle), methods=["GET"]),
                 Route(
                     A2A_PATH,
                     _guard_a2a_endpoint(
                         _acknowledge_skill_call_extension(a2a_route.endpoint),
                         host,
                         card,
-                        RunAdmission(host.max_concurrent_runs),
+                        admission,
+                        lifecycle,
                     ),
                     methods=["POST"],
                 ),
@@ -184,6 +218,17 @@ class AgentApp:
         """Handle one ASGI connection."""
         await self._app(scope, receive, send)
 
+    def begin_shutdown(self) -> None:
+        """Start shutdown now: stop being ready and refuse new messages.
+
+        Package-internal: ``agentframe run`` calls it from Uvicorn's signal
+        handler, because Uvicorn waits for open requests before ASGI lifespan
+        shutdown. The grace period is measured from the first call, and lifespan
+        shutdown then only waits for what remains of it. Safe to call more
+        than once and from a signal handler.
+        """
+        self._lifecycle.begin_shutdown()
+
 
 def _check_limits_within_ceiling(agent: Agent, host: HostConfig) -> None:
     """Fail when an agent or skill explicitly sets a limit above the ceiling."""
@@ -194,18 +239,33 @@ def _check_limits_within_ceiling(agent: Agent, host: HostConfig) -> None:
         check_within_ceiling(explicit, host.limits_ceiling, f"Skill '{skill.id}'")
 
 
+async def _health(_request: Request) -> Response:
+    return JSONResponse({"status": "ok"})
+
+
+def _readiness_endpoint(lifecycle: Lifecycle) -> Endpoint:
+    async def readiness(_request: Request) -> Response:
+        if lifecycle.ready:
+            return JSONResponse({"status": "ready"})
+        return JSONResponse({"status": "not ready"}, 503)
+
+    return readiness
+
+
 def _guard_a2a_endpoint(
     sdk_endpoint: Endpoint,
     host: HostConfig,
     card: AgentCard,
     admission: RunAdmission,
+    lifecycle: Lifecycle,
 ) -> Endpoint:
     """Wrap the SDK's A2A endpoint with the host's checks, in a fixed order.
 
     1. Size: the body must fit ``host.max_request_bytes``. It is read here,
        before anything parses it, so an oversized body is never held in full.
     2. Authentication: every request needs a caller the host verifies.
-    3. Admission: a ``SendMessage`` needs a free run slot.
+    3. Admission: a ``SendMessage`` needs a free run slot and a host that
+       is not shutting down.
 
     Every refusal happens before the SDK sees the request, so no task exists.
     Deduplication belongs between authentication and admission, so a
@@ -233,17 +293,16 @@ def _guard_a2a_endpoint(
 
         if not await _is_send_message(request):
             return await sdk_endpoint(request)
+        if lifecycle.shutting_down:
+            return _unavailable("The agent is shutting down; retry later.")
         slot = admission.try_admit()
         if slot is None:
             # Overload fails fast: the caller retries rather than waiting here.
-            return JSONResponse(
-                {"error": "The agent is busy; retry later."},
-                503,
-                headers={"Retry-After": "1"},
-            )
+            return _unavailable("The agent is busy; retry later.")
         request.state.run_slot = slot
         try:
-            return await sdk_endpoint(request)
+            with lifecycle.track_send():
+                return await sdk_endpoint(request)
         finally:
             # A started run releases its own slot when it ends, which can be
             # after a non-blocking response. A message the SDK refused never
@@ -252,6 +311,10 @@ def _guard_a2a_endpoint(
                 slot.release()
 
     return guarded_endpoint
+
+
+def _unavailable(error: str) -> Response:
+    return JSONResponse({"error": error}, 503, headers={"Retry-After": "1"})
 
 
 async def _is_send_message(request: Request) -> bool:
@@ -308,12 +371,50 @@ class _RequestHandler(DefaultRequestHandler):
 
     Args:
         router: The executor's router; ``None`` refuses free text.
+        agent_executor: Runs each message.
         **sdk_options: Passed to the SDK's ``DefaultRequestHandler``.
     """
 
-    def __init__(self, *, router: SkillRouter | None, **sdk_options: Any) -> None:
-        super().__init__(**sdk_options)
+    def __init__(
+        self,
+        *,
+        router: SkillRouter | None,
+        agent_executor: RuntimeExecutor,
+        **sdk_options: Any,
+    ) -> None:
+        super().__init__(agent_executor=agent_executor, **sdk_options)
         self._router = router
+        self._executor = agent_executor
+
+    async def cancel_running_tasks(self) -> None:
+        """Cancel every running task as its caller's ``CancelTask`` would.
+
+        Each task ends ``CANCELED`` and its run unwinds, cleaning up its
+        per-run services. Waiting for that is bounded, because the handler
+        is force-closed next anyway.
+        """
+        running = self._executor.running_tasks()
+        if not running:
+            return
+        logger.warning("Cancelling %d run(s) still going at shutdown", len(running))
+        try:
+            async with asyncio.timeout(_CANCEL_SECONDS):
+                await asyncio.gather(
+                    *(
+                        self._cancel_quietly(task_id, context)
+                        for task_id, context in running.items()
+                    )
+                )
+        except TimeoutError:
+            logger.error("Runs did not stop within %d seconds", _CANCEL_SECONDS)
+
+    async def _cancel_quietly(self, task_id: str, context: ServerCallContext) -> None:
+        # noinspection PyBroadException
+        try:
+            await self.on_cancel_task(CancelTaskRequest(id=task_id), context)
+        except Exception:
+            # The run may have just finished; shutdown goes on either way.
+            logger.debug("Could not cancel task %s at shutdown", task_id, exc_info=True)
 
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext

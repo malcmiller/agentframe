@@ -14,8 +14,6 @@ from agentframe.security.authentication import Authenticator
 class HostConfig:
     """Deployment settings for a remotely hosted agent.
 
-    Shutdown settings come later (M7).
-
     Args:
         public_url: The origin callers use to reach the agent, for example
             ``"https://echo.example.com"``. It is advertised on the Agent Card;
@@ -46,13 +44,18 @@ class HostConfig:
             task may return, in bytes of its UTF-8 text or compact JSON. A
             larger one fails the task with ``LimitExceededError``; none of it
             is sent. Defaults to 4 MiB.
+        shutdown_grace_seconds: How long a shutdown waits for running work to
+            finish, measured once from when shutdown starts. New messages are
+            refused meanwhile; runs still going after it are cancelled.
+            Defaults to 30.
 
     Raises:
         DefinitionError: ``auth`` is ``None``; ``public_url`` is not an
             absolute http(s) URL, or it contains credentials, a query or a
             fragment; a ``role_permissions`` value is a single string
             instead of a list; or ``max_concurrent_runs``,
-            ``max_request_bytes`` or ``max_response_bytes`` is less than 1.
+            ``max_request_bytes`` or ``max_response_bytes`` is less than 1;
+            or ``shutdown_grace_seconds`` is not positive.
     """
 
     public_url: str
@@ -62,6 +65,7 @@ class HostConfig:
     max_concurrent_runs: int = 32
     max_request_bytes: int = 1_048_576
     max_response_bytes: int = 4_194_304
+    shutdown_grace_seconds: float = 30
 
     def __post_init__(self) -> None:
         _check_public_url(self.public_url)
@@ -77,6 +81,8 @@ class HostConfig:
         for name in ("max_concurrent_runs", "max_request_bytes", "max_response_bytes"):
             if getattr(self, name) < 1:
                 raise DefinitionError(f"HostConfig {name} must be at least 1")
+        if not self.shutdown_grace_seconds > 0:
+            raise DefinitionError("HostConfig shutdown_grace_seconds must be positive")
 
 
 def _check_public_url(public_url: str) -> None:

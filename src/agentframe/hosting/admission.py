@@ -31,6 +31,11 @@ class RunAdmission:
         self._running += 1
         return RunSlot(self)
 
+    @property
+    def running(self) -> int:
+        """How many admitted runs have not yet released their slot."""
+        return self._running
+
     def _release(self) -> None:
         self._running -= 1
 

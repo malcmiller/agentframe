@@ -11,6 +11,7 @@ import pytest
 
 from agentframe import AgentApp, DefinitionError
 from agentframe.cli import CommandError, RunSettings, build_app, main
+from agentframe.hosting.draining_server import DrainingServer
 from local_server import ServeLocally
 
 
@@ -22,6 +23,20 @@ def settings(target: str, *, host: str = "127.0.0.1", dev: bool = False) -> RunS
 def uvicorn_runs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     """Record what ``agentframe run`` asks uvicorn to serve instead of serving it."""
     runs: list[dict[str, Any]] = []
+
+    def record_server_run(server: DrainingServer) -> None:
+        config = server.config
+        runs.append(
+            {
+                "app": config.app,
+                "host": config.host,
+                "port": config.port,
+                "timeout_graceful_shutdown": config.timeout_graceful_shutdown,
+            }
+        )
+        server.started = True
+
+    monkeypatch.setattr(DrainingServer, "run", record_server_run)
     monkeypatch.setattr(
         "uvicorn.run", lambda app, **options: runs.append({"app": app, **options})
     )
@@ -51,6 +66,26 @@ def test_run_passes_host_and_port_to_the_server(
 
     [run] = uvicorn_runs
     assert (run["host"], run["port"]) == ("0.0.0.0", 9000)
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_uvicorn_waits_for_open_requests_at_most_the_grace_period(
+    uvicorn_runs: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch, reload: bool
+) -> None:
+    monkeypatch.setenv("AGENTFRAME_RUN_SETTINGS", "")
+    main(["run", "cli_targets:create_quick_shutdown_app", *(["--reload"] * reload)])
+
+    [run] = uvicorn_runs
+    assert run["timeout_graceful_shutdown"] == 1
+
+
+def test_a_server_that_fails_to_start_exits_with_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(DrainingServer, "run", lambda server: None)
+
+    assert main(["run", "cli_targets:create_app"]) == 1
+    assert "did not start" in capsys.readouterr().err
 
 
 def test_reload_worker_rebuilds_the_same_app(
