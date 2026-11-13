@@ -582,7 +582,7 @@ belongs to that release even though telemetry exporters/integration stay optiona
   clarification contract are implemented (M6 #67-#69); structured requests use
   the native A2A extension, not a standardized base skill field.
 - YAML name/URL schema details, environment encoding, source conflict/order,
-  card enrichment bounds, find filter combinations/pagination, resolver
+  card enrichment bounds, resolver
   auth/destination interfaces, source reconciliation, cache isolation/stale-age
   bounds and ownership details, Foundry mapping/RBAC/pagination. `sources`,
   `directory=`, `find`, TTL 300/on-stale refresh and named-remote validation decided.

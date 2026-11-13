@@ -19,6 +19,10 @@ changelog.
   for 300 seconds, with `allow_stale`, `refresh`, `allow_http_hosts` and an
   optional caller-owned `http_client`. New `RemoteAgentError` for failures
   caused by another agent. `httpx` is now an exactly pinned core dependency.
+- **Discovery (M8+):** `AgentDirectory.find(skill=..., tags=...)` returns the
+  Agent Cards of listed agents with a skill matching the ID and every tag,
+  in source order. It fetches at most eight cards at a time through the cache
+  and raises on any source or card failure instead of returning fewer cards.
 
 ### Fixed
 
