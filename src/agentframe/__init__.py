@@ -29,6 +29,7 @@ from agentframe.errors import (
 )
 from agentframe.hosting.app import AgentApp
 from agentframe.hosting.host import HostConfig
+from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.routing import (
     Clarification,
     RoutingContext,
@@ -99,6 +100,7 @@ __all__ = [
     "ModelRefusalError",
     "ModelRequest",
     "ModelResponse",
+    "ModelRouter",
     "ModelSettings",
     "OutputSchema",
     "OutputValidationError",
