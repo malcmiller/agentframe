@@ -4,7 +4,8 @@
 ([`AgentRegistry`](#agentregistry) through [`FileAgentRegistry`](#fileagentregistry))
 are implemented (M8+ #83), and [`AgentDirectory`](#agentdirectory) with
 [`get`](#agentdirectoryget), [`refresh`](#agentdirectoryrefresh), its async
-context manager and [`DiscoveredAgent`](#discoveredagent) (#84); every other API
+context manager and [`DiscoveredAgent`](#discoveredagent) (#84) and
+[`find`](#agentdirectoryfind) (#85); every other API
 here is unimplemented, and its
 confirmed names/defaults are decisions while unspecified signatures remain
 illustrative. Discovery/registry and remote A2A invocation are core
@@ -321,8 +322,8 @@ this does not mean AgentFrame agents deploy to Foundry.
 
 **Purpose / decision:** one directory that combines agent sources and returns
 validated native Agent Cards, so applications never write card-fetching,
-caching or refresh code. Implemented (M8+ #84); [`find`](#agentdirectoryfind)
-arrives in #85. The card fetcher and cache are internal: there are no public
+caching or refresh code. Implemented (M8+ #84), with
+[`find`](#agentdirectoryfind) (#85). The card fetcher and cache are internal: there are no public
 `AgentCardResolver` or `CardCacheConfig` classes (decided 2026-11-12; keyword
 arguments are enough until a second resolver is needed).
 
@@ -457,32 +458,45 @@ freshness, so the next call tries again. Without `http_client`, calling before
 
 ## `AgentDirectory.find`
 
-**Purpose / decision:** dynamically find matching native Agent Cards using
-validated card metadata, not assumed skill/tag fields on source references.
+**Purpose / signature:** find the native Agent Cards of listed agents that
+advertise a matching skill, using validated card metadata rather than fields on
+source references. Implemented (M8+ #85).
 
-**Decided calls:** `await directory.find(skill="find_sources")` or
-`await directory.find(tags=["research"])`. Exact collection/generic typing,
-combined-filter semantics and pagination remain open.
+```python
+async def find(
+    self, *, skill: str | None = None, tags: Collection[str] = ()
+) -> list[AgentCard]: ...
+```
 
 | Parameter/result | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `skill` | `str` | Optional named filter | Match an advertised skill ID after native card resolution/validation. |
-| `tags` | `list[str]` in decided example | Optional named filter | Match advertised skill tags; all/any/combined matching still open. |
-| Result | Matching native `AgentCard` collection | On success | Eligible cards, not invocation permission or Python methods; pagination/completeness contract open. |
+| `skill` | `str \| None` | Optional; default `None` | A card matches only if one of its advertised skills has this ID. |
+| `tags` | `Collection[str]` | Optional; default `()` | That same skill must carry every one of these tags (all-of). A single string raises `DefinitionError`. |
+| Result | `list[AgentCard]` | On success | The matching official SDK cards, in source order. Eligible cards, not invocation permission or Python methods. |
+
+At least one of `skill` and `tags` is required. When both are given they must
+match on the same advertised skill (decided 2026-11-12).
 
 ```python
 from agentframe import AgentDirectory
 
 
 async def research_count(directory: AgentDirectory) -> int:
-    cards = await directory.find(tags=["research"])
+    cards = await directory.find(skill="find_sources", tags=["research"])
     return len(cards)
 ```
 
-**Behavior / failures:** bound source reads/card enrichment, isolate caller
-variants, automatically refresh stale cards. Failed refresh fails unless stale
-use is explicit; never silently omit failed sources as empty matches. No
-automatic remote invocation. Source conflict/result ordering remain open.
+**Behavior / failures:** lists every agent of every source, then resolves each
+card exactly as [`get`](#agentdirectoryget) does (cached while fresh, refetched
+when stale), with at most eight card fetches at a time. Any failure raises
+instead of returning a shorter list: an unreadable source, a name listed by
+more than one source, or no filter raises `DefinitionError`; an unreachable,
+invalid or refused card raises `RemoteAgentError` unless `allow_stale=True`
+can serve its previous card. There is no pagination: `find` reads every listed
+agent, so it is meant for small curated sources. A found card cannot be called
+yet; orchestrators call configured remotes, and dynamic invocation of found
+agents is deferred to a later story (decided 2026-11-12). Matching is not
+authorization.
 
 **Related:** [`AgentDirectory`](#agentdirectory),
 [search boundaries](../design/discovery.md#query-matching-and-card-enrichment).

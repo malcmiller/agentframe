@@ -2,8 +2,8 @@
 
 This is a proposed next-release design. The read-only registries (`AgentRegistry`,
 `FileAgentRegistry`, `EnvironmentAgentRegistry`) are implemented (M8+ #83), and
-`AgentDirectory` with validated, cached card resolution (#84); `find`, the
-Foundry source and remote calls are not. The Foundry source API is chosen below; this does not
+`AgentDirectory` with validated, cached card resolution (#84) and card-backed
+`find` (#85); the Foundry source and remote calls are not. The Foundry source API is chosen below; this does not
 expand the initial authoring slice into a platform.
 Discovery/registry and remote A2A invocation are **core scope for the next
 multi-agent release (M8+) after the M7 single-agent release**, not optional
@@ -157,7 +157,12 @@ Ordering and pagination for paginated sources remain open.
 The directory resolves/validates cards and matches their advertised skills/tags;
 it does not require file references to contain these fields. Bound enrichment
 reads and preserve source/refresh errors; do not silently return an incomplete
-search as complete. Exact combination semantics and result pagination remain open.
+search as complete. Implemented (#85); decisions confirmed 2026-11-12: `skill`
+and `tags` must match on the same advertised skill and tags are all-of; `find`
+returns cards, and dynamic invocation of a found agent is deferred to a later
+story driven by real usage (orchestrators call configured `Remote["name"]`
+bindings); no pagination in M8+, since `find` reads every listed agent and is
+meant for small curated sources.
 Restrict eligible discovery candidates using caller policy; matching is never
 authorization.
 

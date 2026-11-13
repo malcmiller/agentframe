@@ -435,6 +435,12 @@ Compose `AgentDirectory(sources=[...])`, inject via `AgentApp(directory=...)`,
 and validate configured `Remote["name"]` bindings at startup.
 `directory.find(skill="find_sources")` / `find(tags=["research"])` returns
 matching native cards from bounded validated enrichment, not assumed reference fields.
+Implemented (#85): `find(*, skill=None, tags=())`, at least one filter; skill
+ID and all-of tags must match on the same card skill; every source listed,
+cards resolved through the cache, at most 8 fetches at a time; any source/card
+failure raises (honouring `allow_stale`); source order; no pagination (small
+curated sources). Found cards are not callable; orchestrators call configured
+remotes, dynamic invocation is deferred.
 Inject directories as application dependencies;
 caller-owned resources stay caller-owned unless explicitly transferred. No
 registration writes, deploy/start/stop/delete, leases/federation, or A2A task
