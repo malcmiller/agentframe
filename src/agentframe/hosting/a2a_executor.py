@@ -23,6 +23,8 @@ Outcomes map to native A2A results as follows:
 - Unknown skills, invalid arguments and denied permissions end the task in
   ``REJECTED``; every other failure ends it in ``FAILED``; ``CancelTask`` ends
   it in ``CANCELED`` through AgentFrame's ``CancelledError``.
+- A result or question larger than the host's ``max_response_bytes`` ends the
+  task in ``FAILED`` with ``LimitExceededError``; none of it is sent.
 - A router's question leaves the task in ``INPUT_REQUIRED``; the caller answers
   with a new message in the same task, which is routed again with the earlier
   messages.
@@ -49,7 +51,7 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import Message, Part, Task, TaskState
 from a2a.utils.errors import InvalidParamsError
-from pydantic_core import to_jsonable_python
+from pydantic_core import to_json, to_jsonable_python
 
 from agentframe.authoring.agent import Agent
 from agentframe.errors import (
@@ -57,6 +59,7 @@ from agentframe.errors import (
     CancelledError,
     DefinitionError,
     InputValidationError,
+    LimitExceededError,
     OutputValidationError,
     PermissionDeniedError,
 )
@@ -93,6 +96,9 @@ CANCELLED_MESSAGE = "The task was cancelled."
 
 HOST_MISCONFIGURED_MESSAGE = "The agent is not configured correctly."
 """What callers see for a ``DefinitionError``, whose message names internals."""
+
+RESPONSE_TOO_LARGE_MESSAGE = "The result exceeds the host's response size limit"
+"""What callers see when a result or question is over ``max_response_bytes``."""
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +171,9 @@ class RuntimeExecutor(AgentExecutor):
             request handler refuses free text before it reaches the executor.
         limits_ceiling: The host's ceiling, which caps the limits of every
             run and of routing. ``None`` caps nothing.
+        max_response_bytes: The largest result or question a task may
+            return, measured as by ``check_response_size``. ``None`` bounds
+            nothing.
     """
 
     def __init__(
@@ -173,11 +182,13 @@ class RuntimeExecutor(AgentExecutor):
         runtime: Runtime,
         router: SkillRouter | None = None,
         limits_ceiling: RunLimits | None = None,
+        max_response_bytes: int | None = None,
     ) -> None:
         self._agent = agent
         self._runtime = runtime
         self._router = router
         self._limits_ceiling = limits_ceiling
+        self._max_response_bytes = max_response_bytes
         # Accounting of each running task, so a cancel can report its usage.
         self._running: dict[str, RunAccounting] = {}
 
@@ -247,6 +258,9 @@ class RuntimeExecutor(AgentExecutor):
                 context, principal, started_at, invocation_id, accounting
             )
             if isinstance(call, Clarification):
+                check_response_size(
+                    call.question.encode(), self._max_response_bytes, invocation_id
+                )
                 await publish_input_required(
                     task, call.question, invocation_id, accounting
                 )
@@ -265,7 +279,7 @@ class RuntimeExecutor(AgentExecutor):
                 accounting,
                 self._limits_ceiling,
             )
-            part = result_part(result.value, invocation_id)
+            part = result_part(result.value, invocation_id, self._max_response_bytes)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
             await publish_failure(task, error, accounting)
@@ -335,12 +349,15 @@ class RuntimeExecutor(AgentExecutor):
         )
 
 
-def result_part(value: Any, invocation_id: str) -> Part:
+def result_part(value: Any, invocation_id: str, max_bytes: int | None = None) -> Part:
     """Serialize a skill's validated result as one A2A part.
 
     Args:
         value: The skill's validated return value.
         invocation_id: The run that produced it, for the error.
+        max_bytes: The host's ``max_response_bytes``, checked against the
+            UTF-8 text or the compact JSON of ``{"value": ...}``. ``None``
+            bounds nothing.
 
     Returns:
         One text part for a ``str``; otherwise one data part ``{"value": ...}``
@@ -348,16 +365,42 @@ def result_part(value: Any, invocation_id: str) -> Part:
 
     Raises:
         OutputValidationError: The value cannot be represented as JSON.
+        LimitExceededError: The serialized value is larger than ``max_bytes``.
     """
     if isinstance(value, str):
+        check_response_size(value.encode(), max_bytes, invocation_id)
         return new_text_part(value)
     try:
-        return new_data_part({"value": to_jsonable_python(value)})
+        data = {"value": to_jsonable_python(value)}
     except (TypeError, ValueError):
         raise OutputValidationError(
             "The skill returned a value that cannot be serialized as JSON",
             invocation_id=invocation_id,
         ) from None
+    check_response_size(to_json(data), max_bytes, invocation_id)
+    return new_data_part(data)
+
+
+def check_response_size(
+    content: bytes, max_bytes: int | None, invocation_id: str
+) -> None:
+    """Fail when content to send the caller is larger than ``max_bytes``.
+
+    Only the content is measured, not the JSON-RPC envelope around it.
+
+    Args:
+        content: A result's UTF-8 text or compact JSON, or a question's text.
+        max_bytes: The host's ``max_response_bytes``; ``None`` bounds nothing.
+        invocation_id: The run that produced the content, for the error.
+
+    Raises:
+        LimitExceededError: The content is larger than ``max_bytes``. The
+            task fails instead; none of the content is sent or logged.
+    """
+    if max_bytes is not None and len(content) > max_bytes:
+        raise LimitExceededError(
+            RESPONSE_TOO_LARGE_MESSAGE, invocation_id=invocation_id
+        )
 
 
 def failure_state(error: AgentFrameError) -> TaskState:

@@ -14,7 +14,7 @@ from agentframe.security.authentication import Authenticator
 class HostConfig:
     """Deployment settings for a remotely hosted agent.
 
-    Request size limits and shutdown settings come later (M7).
+    Shutdown settings come later (M7).
 
     Args:
         public_url: The origin callers use to reach the agent, for example
@@ -38,12 +38,21 @@ class HostConfig:
             ``SendMessage`` is refused immediately with HTTP 503 and
             ``Retry-After: 1``; nothing is queued. A task waiting for input
             holds no slot. Defaults to 32.
+        max_request_bytes: The largest ``/a2a`` request body accepted, in
+            bytes. A larger one is refused with HTTP 413 before
+            authentication, without being read in full, and creates no task.
+            Defaults to 1 MiB.
+        max_response_bytes: The largest result or clarification question a
+            task may return, in bytes of its UTF-8 text or compact JSON. A
+            larger one fails the task with ``LimitExceededError``; none of it
+            is sent. Defaults to 4 MiB.
 
     Raises:
         DefinitionError: ``auth`` is ``None``; ``public_url`` is not an
             absolute http(s) URL, or it contains credentials, a query or a
             fragment; a ``role_permissions`` value is a single string
-            instead of a list; or ``max_concurrent_runs`` is less than 1.
+            instead of a list; or ``max_concurrent_runs``,
+            ``max_request_bytes`` or ``max_response_bytes`` is less than 1.
     """
 
     public_url: str
@@ -51,6 +60,8 @@ class HostConfig:
     role_permissions: Mapping[str, Iterable[str]] = field(default_factory=dict)
     limits_ceiling: RunLimits | None = None
     max_concurrent_runs: int = 32
+    max_request_bytes: int = 1_048_576
+    max_response_bytes: int = 4_194_304
 
     def __post_init__(self) -> None:
         _check_public_url(self.public_url)
@@ -63,8 +74,9 @@ class HostConfig:
         object.__setattr__(
             self, "role_permissions", _frozen_role_permissions(self.role_permissions)
         )
-        if self.max_concurrent_runs < 1:
-            raise DefinitionError("HostConfig max_concurrent_runs must be at least 1")
+        for name in ("max_concurrent_runs", "max_request_bytes", "max_response_bytes"):
+            if getattr(self, name) < 1:
+                raise DefinitionError(f"HostConfig {name} must be at least 1")
 
 
 def _check_public_url(public_url: str) -> None:
