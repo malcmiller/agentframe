@@ -377,10 +377,25 @@ Declare `idempotent=True` only when the tool really is (here, because the
 backend deduplicates); the declaration itself guarantees nothing.
 
 For A2A, **same verified caller + same `messageId` within 10 minutes** returns
-the original task instead of re-running. The window is configurable; storage
-defaults to memory, with a pluggable store for multi-instance hosts. This is
-explicitly not exactly-once: process loss, expiry and distributed side effects
-still need application handling. Store/window API, atomic claims, changed
-payloads under the same ID and direct-message-only interactions remain open.
-Deduplication does not waive current task-access authorization or publish
-another caller's results. It is not a general retry/resume workflow.
+the original task instead of re-running (implemented, M7 #75). Configure it
+with [`AgentApp(a2a=A2AConfig(dedup_window_seconds=..., dedup_store=...))`](../api/hosting.md#a2aconfig):
+
+- The original task comes back whatever its state; failed and cancelled tasks
+  are not re-run. A repeat takes no run slot, so it gets its task even when the
+  host is full. Repeated answers to input-required tasks are deduplicated too.
+- Reusing a `messageId` for a different message is refused with JSON-RPC
+  `InvalidParams`. A message refused before it ran (for example busy) runs
+  when retried.
+- Anonymous callers are not deduplicated: they share one namespace, so a
+  guessable `messageId` would expose another anonymous caller's task.
+- Storage defaults to memory, so claims are **lost on restart**; a
+  [`MessageDedupStore`](../api/hosting.md#messagededupstore) with an atomic
+  `put_if_absent` can be shared by several instances.
+- This is **not exactly-once**: process loss, expiry, instances that cannot
+  see each other's tasks and distributed side effects still need application
+  handling, such as idempotent backends.
+
+Deduplication does **not bypass task authorization**: the original task is
+looked up as the caller, and another caller's same `messageId` gets its own
+task, never the first caller's results. It is not a general retry/resume
+workflow.

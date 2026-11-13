@@ -296,8 +296,11 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
   may combine (M5 #58). No tool is ever auto-retried and model retries never
   replay tools; repeated model-requested calls are not blocked (M5 #63).
 - A2A same verified caller + `messageId` within default 10 minutes returns
-  original task; in-memory default, pluggable multi-instance store, not
-  exactly-once. Store/window API, atomicity/payload conflicts remain open.
+  original task (M7 #75): `AgentApp(a2a=A2AConfig(dedup_window_seconds=600,
+  dedup_store=None))`, atomic `MessageDedupStore.put_if_absent`; in-memory
+  default, not exactly-once. Order size -> auth -> dedupe -> admission (a hit
+  takes no slot); anonymous not deduplicated; answers deduplicated; reused ID
+  with different parts/metadata (SHA-256) -> InvalidParams.
 - `HostConfig` defaults: max_concurrent_runs=32 (immediate HTTP 503 +
   `Retry-After: 1` before the SDK, no task; INPUT_REQUIRED holds no slot; M7 #72),
   max_request_bytes=1048576 (HTTP 413 before auth, no task; M7 #73),

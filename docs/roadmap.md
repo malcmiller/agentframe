@@ -88,7 +88,7 @@ framework base class.
 | First usable release | One `ctx.generate`: text, `output=Summary` for validated Pydantic output, `tools=[...]` for registered bounded continuations; complete validated results, not partial streams. AgentFrame owns normalized model types; unsupported capabilities fail before sending; refusals/truncation raise typed errors. | Normalized usage layouts; provider schema subsets are documented per adapter (M4 #55/#56); no implicit partial-output success (explicit opt-in: catch `IncompleteOutputError`, read `.partial_text`, M4 #54). |
 | Services and results | `Inject[T]`, `Services.add` / `add_scoped`, `services=` on app/runtime; startup missing-service errors. `invoke` returns a value; `run` returns `RunResult` independent of tracing. | Factory/disposal interfaces, generic typing, duration unit, usage marker fields and failed-run metadata access. |
 | Errors and identity | Named [safe error hierarchy](api/runtime.md#agentframeerror); `Authenticator` with `EntraIDAuth`, `APIKeyAuth`, explicit `AllowAnonymous()`. `HostConfig.auth` is mandatory remotely; `role_permissions` maps verified claims. | Error constructors/startup correlation and exact transport mapping, principal/custom-auth methods and API-key entries. `EntraIDAuth` maps roles and scopes together (#76). |
-| Retry and host defaults | Transient model failures only, two retries/backoff, SDK retries disabled; side-effecting tools never auto-retry. Same caller/A2A message ID dedupes for 10 minutes (memory, pluggable store), not exactly-once. Host defaults 32 runs/1 MiB request/4 MiB response/30 seconds drain; `/health` and `/ready`. | Retry/store configuration, atomicity/payload conflicts; defaults and minimal probe bodies decided. |
+| Retry and host defaults | Transient model failures only, two retries/backoff, SDK retries disabled; side-effecting tools never auto-retry. Same caller/A2A message ID dedupes for 10 minutes (memory, pluggable store), not exactly-once. Host defaults 32 runs/1 MiB request/4 MiB response/30 seconds drain; `/health` and `/ready`. | Retry configuration; defaults and minimal probe bodies decided. Dedup configuration (`A2AConfig`, `MessageDedupStore.put_if_absent`), atomicity and changed-payload refusal are implemented (M7 #75). |
 | A2A request styles | Prefer deterministic structured skill/JSON-argument requests through a card-declared, caller-activated extension. Free-text uses custom or opt-in model routing; ambiguity/missing input asks back via input-required tasks. No automatic routing from agent model injection. | Router/extraction/clarification contract, native result mappings. The skill-call extension wire format is implemented (M2 #5). |
 | Human approvals | Application-owned workflows; no built-in approval pause/resume in first release. Required tool/action authorization remains enforced. | Application integration/decision types; protocol tasks are not durable approval workflows. |
 | Multi-agent composition | M8+: `Remote["name"]` injection, structured `call`, plain `ask`, input-required error; multi-source directory/find, YAML files, 300-second stale-refresh cache, OBO/service identity, deadline/token/depth controls (5 hops), plain Python orchestration, dev CLI/containers. | Detailed extension schema/identity config, source conflicts/card mapping/search pagination, accounting trust and dev config; typed class proxy only later, no initial orchestration helpers. |
@@ -196,9 +196,11 @@ cloud-routed model tags; localhost alone does not guarantee local inference.
   the shutdown signal, M7 #74). `/health` is liveness; `/ready` means startup
   checks passed and not shutting down; probe bodies are minimal `{"status":
   ...}` JSON. All are configurable.
-- A2A deduplicates the same caller and `messageId` for a configurable 10-minute
-  window, returning the original task. In-memory default, pluggable multi-instance
-  store; not exactly-once or restart-durable. Task access is still authorized.
+- A2A deduplicates the same verified caller and `messageId` for a configurable
+  10-minute window, returning the original task (M7 #75:
+  `A2AConfig(dedup_window_seconds=600, dedup_store=None)`). In-memory default,
+  pluggable multi-instance store; not exactly-once or restart-durable; anonymous
+  callers are not deduplicated. Task access is still authorized.
 
 ## Identity, authorization, and prompt safeguarding
 
@@ -496,9 +498,8 @@ belongs to that release even though telemetry exporters/integration stay optiona
   `RunResult` generics for `run`, provider usage completeness details and
   failed-run usage access remain open, not whether local metadata exists.
 - Host probe bodies; retry configuration/
-  backoff/transient codes; dedupe store/window API, atomicity, changed payloads
-  and message-only interactions. Protection defaults and no-side-effect replay
-  are decided.
+  backoff/transient codes. Protection defaults, no-side-effect replay and the
+  dedupe store/window API (M7 #75) are decided.
 - Exact compatible runtime dependency pins when each is introduced. M0 tool
   pins, Ruff rules and pytest-asyncio auto integration are configured; Python
   3.13+ with testing through 3.15 and the A2A 1.0/official SDK target are decided above.
