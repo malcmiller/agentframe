@@ -72,7 +72,9 @@ AGENTFRAME_DEV_CLIENT_KEY=my-local-key agentframe dev
 Every agent also accepts `AGENTFRAME_DEV_CLIENT_KEY`, when set in the
 environment `dev` runs in, as caller `developer`: that is how you, a script
 or a test call an agent (`X-API-Key: my-local-key`). Without it, only the
-agents can call each other.
+agents can call each other. An `AGENTFRAME_AGENTS` registry exported in your
+shell is not passed on; the agents find each other only through the generated
+registry.
 
 Each factory reads that wiring with
 [`dev_settings()`](../api/hosting.md#dev_settings) and stays plain Python:

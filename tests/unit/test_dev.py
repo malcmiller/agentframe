@@ -44,6 +44,18 @@ def test_each_agent_accepts_the_others_keys_and_calls_with_its_own(
     assert "AGENTFRAME_DEV_CLIENT_KEY" not in environment
 
 
+def test_an_exported_agents_registry_is_not_passed_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTFRAME_AGENTS", "research-agent=https://elsewhere/card")
+
+    environment = child_environment(
+        PLANNER, [RESEARCH, PLANNER], KEYS, None, Path("agents.yaml")
+    )
+
+    assert "AGENTFRAME_AGENTS" not in environment
+
+
 def test_without_a_client_key_only_the_agents_are_accepted() -> None:
     environment = child_environment(
         PLANNER, [RESEARCH, PLANNER], KEYS, None, Path("agents.yaml")
