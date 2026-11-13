@@ -392,7 +392,15 @@ continuations, once per logical request) and output checks; only an explicit
 `True` allows, a denial raises `PermissionDeniedError` and an erroring or
 late check `PolicyUnavailableError` (#77). A manually triggered, reviewer-approved
 GitHub workflow runs the opt-in Foundry tests with OpenID Connect sign-in and no
-stored secret; normal CI still never calls a provider (#81).
+stored secret; normal CI still never calls a provider (#81). Runnable examples
+in `examples/` cover a model-free agent behind a development API key
+(`echo.py`), text and structured output (`assistant.py`), tool calling
+(`orders.py`) and built-in routing (`routed_assistant.py`); each model-backed
+`create_app(model=None)` defaults to the environment-selected provider.
+`examples/smoke.py` serves each one in-process with `ScriptedModel`, calls it
+with the official A2A client and checks a complete, validated result; CI's
+`build` job runs it against the installed wheel with the `server` extra on
+Python 3.13, with no network beyond localhost (#80).
 
 ### Resolved M0 platform and API decisions
 

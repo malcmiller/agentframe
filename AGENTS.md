@@ -94,6 +94,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
 | `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`). |
+| `examples/` | Runnable examples, each with `create_app()`; `smoke.py` checks them all against the installed wheel in CI. |
 | `docs/roadmap.md` | Product boundaries, decisions and milestones. |
 | `docs/guides/` | How to use AgentFrame and how its behavior works. |
 | `docs/design/` | Rationale and proposed designs. |

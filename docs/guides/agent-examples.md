@@ -1,7 +1,9 @@
 # Agents with and without models
 
-These are illustrative API proposals, not executable examples from a released
-AgentFrame package. An agent is an `Agent` subclass with one or more separately
+The snippets here are short illustrations. The runnable, tested versions are in
+[`examples/`](../../examples/) (listed in the
+[README](../../README.md#runnable-examples)); a smoke runner checks each one
+against the installed wheel in CI. An agent is an `Agent` subclass with one or more separately
 decorated async skills. There is no required `handle()` method or manual
 dispatch switch. Decorated inherited skills may also satisfy this requirement.
 
@@ -250,46 +252,11 @@ runtime for application invocation. Runtime construction performs no model calls
 ## A2A hosting and selection
 
 The built-in router (M6) is opt-in: pass `router=ModelRouter(model)` to
-`AgentApp`. This is [`examples/routed_assistant.py`](../../examples/routed_assistant.py),
-shortened:
+`AgentApp`. [`examples/routed_assistant.py`](../../examples/routed_assistant.py)
+serves an agent with a text `answer` skill and a model-free `to_fahrenheit`
+skill that returns a typed `Temperature`:
 
 ```python
-from pydantic import BaseModel
-
-from agentframe import (
-    Agent,
-    AgentApp,
-    AllowAnonymous,
-    HostConfig,
-    ModelRouter,
-    OllamaModel,
-    RunContext,
-    agent,
-    skill,
-)
-
-
-class Temperature(BaseModel):
-    celsius: float
-    fahrenheit: float
-
-
-@agent(version="1.0.0")
-class RoutedAssistant(Agent):
-    """Answers general questions and converts temperatures."""
-
-    @skill("answer", tags=["questions"])
-    async def answer(self, question: str, ctx: RunContext) -> str:
-        """Answer a general knowledge question briefly."""
-        return await ctx.generate(question)
-
-    @skill("to_fahrenheit", tags=["units"])
-    async def to_fahrenheit(self, celsius: float, ctx: RunContext) -> Temperature:
-        """Convert a temperature from degrees Celsius to degrees Fahrenheit."""
-        return Temperature(celsius=celsius, fahrenheit=celsius * 9 / 5 + 32)
-
-
-model = OllamaModel(model="llama3.2:3b", context_window=8192)
 app = AgentApp(
     agent=RoutedAssistant(model=model),
     host=HostConfig(public_url="http://127.0.0.1:8000", auth=AllowAnonymous()),
