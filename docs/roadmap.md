@@ -426,7 +426,12 @@ examples (#80) merged, the M7 build stories are complete. Two checks wait on
 the maintainer's own setup: the opt-in real-token Entra test (#76) needs an app
 registration, and the first manual Foundry workflow run (#81) needs its
 one-time setup. Publishing the first release to PyPI (#82) is still pending
-and is done by the maintainer; no release has been published.
+and is done by the maintainer; no release has been published. The release
+preparation is in place: version `0.1.0`, `CHANGELOG.md`, the README install
+and pre-1.0 stability statement, and `.github/workflows/release.yml`, which
+publishes a GitHub release from a `v*` tag to TestPyPI, verifies a clean
+install there, then publishes to PyPI with trusted publishing behind the `pypi`
+environment's reviewers (see [releasing](guides/releasing.md)).
 
 ### Resolved M0 platform and API decisions
 

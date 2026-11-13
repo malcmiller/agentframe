@@ -6,7 +6,7 @@ import agentframe
 
 
 def test_package_imports() -> None:
-    assert agentframe.__version__ == "0.1.0.dev0"
+    assert agentframe.__version__ == "0.1.0"
     assert version("agentframe") == agentframe.__version__
 
 
