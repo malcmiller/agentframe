@@ -156,7 +156,9 @@ Every other outcome follows this table:
   message: no stack traces, provider payloads, submitted values (including the
   requested skill ID) or secrets. Exceptions raised by a skill are logged
   with their details and reported only as "The skill failed."; router
-  exceptions likewise as "The skill router failed." A `DefinitionError` names agent internals, so it is logged and
+  exceptions likewise as "The skill router failed.", except `AgentFrameError`s
+  such as model or limit errors, which keep their safe messages (M6 #67).
+  A `DefinitionError` names agent internals, so it is logged and
   reported only as "The agent is not configured correctly."
 - Every task status carries the run's `invocation_id` in the task metadata,
   including failures. The host allocates the ID before the run, so the caller,
@@ -619,12 +621,17 @@ deterministically and never call the router.
 
 **Signature status:** implemented in M2 (#6) as a structural `Protocol` with
 one async method; any class with a matching `route` works without inheritance.
-Router budget propagation and the M6 model router's construction remain open.
+M6 (#67) added the required `ctx: RoutingContext` parameter (a pre-release
+breaking change) so router model calls are charged to the run. The M6 model
+router's construction is decided in #68.
 
 ```python
 class SkillRouter(Protocol):
     async def route(
-        self, conversation: Sequence[Message], skills: Sequence[SkillDefinition]
+        self,
+        conversation: Sequence[Message],
+        skills: Sequence[SkillDefinition],
+        ctx: RoutingContext,
     ) -> SkillCall | Clarification: ...
 ```
 
@@ -632,10 +639,12 @@ class SkillRouter(Protocol):
 | --- | --- | --- |
 | `conversation` | `Sequence[a2a.types.Message]` | The task's native A2A messages so far, oldest first: the caller's messages and the agent's earlier questions. The last message is the one being routed. |
 | `skills` | `Sequence[SkillDefinition]` | The agent's skills whose `requires_permissions` the caller holds, recomputed for every message. |
+| `ctx` | [`RoutingContext`](#routingcontext) | The message's routing context. Make model calls with `ctx.generate(model, ...)` so they are charged to the run. |
 | Returns | `SkillCall(skill, arguments)` | Run skill `skill` with the business `arguments` dict. The skill must be one of `skills`; the arguments are validated like any caller's. |
 | Returns | `Clarification(question)` | A non-empty question for the caller when the request is ambiguous or misses input. Never guess or pick the first skill. |
 
-`SkillCall`, `Clarification` and `SkillRouter` are exported from `agentframe`.
+`SkillCall`, `Clarification`, `SkillRouter` and `RoutingContext` are exported
+from `agentframe`.
 
 ```python
 from collections.abc import Sequence
@@ -643,14 +652,23 @@ from collections.abc import Sequence
 from a2a.helpers import get_message_text
 from a2a.types import Message, Role
 
-from agentframe import Clarification, SkillCall, SkillDefinition, SkillRouter
+from agentframe import (
+    Clarification,
+    RoutingContext,
+    SkillCall,
+    SkillDefinition,
+    SkillRouter,
+)
 
 
 class GreetingRouter(SkillRouter):
     """Routes "greet <name>" to the greet skill; asks for a missing name."""
 
     async def route(
-        self, conversation: Sequence[Message], skills: Sequence[SkillDefinition]
+        self,
+        conversation: Sequence[Message],
+        skills: Sequence[SkillDefinition],
+        ctx: RoutingContext,
     ) -> SkillCall | Clarification:
         words = " ".join(
             get_message_text(m) for m in conversation if m.role == Role.ROLE_USER
@@ -673,8 +691,9 @@ Pass it as `AgentApp(agent=..., host=..., router=GreetingRouter())`.
 | `SkillCall` to an offered skill | The skill runs through the runtime: argument validation, permissions and the authorization policy all apply. |
 | `SkillCall` to a skill not offered (unknown, or the caller lacks its permissions), invalid arguments, an empty question or any other return value | Task `REJECTED` with a safe message that does not echo the skill ID. |
 | `Clarification` | Task `INPUT_REQUIRED` with the question as the status message. |
-| Router raises | Task `FAILED` with "The skill router failed."; details are logged with the `invocation_id`. |
-| Router does not answer in time | Task `FAILED` with a timeout message. |
+| Router raises an `AgentFrameError` (M6 #67), such as `ModelRefusalError`, `ProviderError` or a `LimitExceededError` from `ctx.generate` | Task in that error's state (`FAILED` for these) with the error's own safe message. A `DefinitionError` still gets the generic "not configured correctly" message. |
+| Router raises any other exception | Task `FAILED` with "The skill router failed."; details are logged with the `invocation_id`. |
+| Router does not answer in time, including while a routing model call is running | Task `FAILED` with a timeout message (`TimeoutLimitExceededError`). |
 
 - **Continuation:** the caller answers with a new message naming the task's
   `taskId` (its `contextId` may be omitted). The router runs again with the
@@ -694,12 +713,122 @@ Pass it as `AgentApp(agent=..., host=..., router=GreetingRouter())`.
   finish within the agent-level `limits.timeout_seconds` (not a skill's own
   limits), and the time it takes counts against the selected
   skill's timeout: the skill's deadline is measured from when routing started.
+- **Routing budget (M6 #67):** model calls made through `ctx.generate` use
+  the run's accounting, so routing tokens and model calls count against the
+  selected skill's `max_total_tokens` and `max_model_calls`; the skill only
+  gets what remains. For example, with `max_model_calls=2` on the agent, a
+  router that makes two calls leaves a model-backed skill none
+  (`ModelCallLimitExceededError`), while a model-free skill still runs. Task
+  usage metadata on `COMPLETED`, `INPUT_REQUIRED` and `FAILED` includes routing
+  calls. Structured skill calls never create a `RoutingContext` and make no
+  routing calls.
 - A router cannot grant permissions; selection is not authorization.
   Clarification is not human approval or durable workflow resumption.
 
-**Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
+**Related:** [`RoutingContext`](#routingcontext),
+[`Runtime.invoke`](runtime.md#runtimeinvoke),
 [result and failure mapping](#result-and-failure-mapping),
 [routing design](../guides/annotations.md#skill-registration-versus-request-routing).
+
+## `RoutingContext`
+
+**Purpose / decision:** per-message context passed to
+[`SkillRouter.route`](#skillrouter), so model calls made while routing are
+charged to the same run as the selected skill (M6 #67). Created by the host
+for free-text messages only; never shared between messages.
+
+**Signature status:** implemented in M6 (#67) as a frozen dataclass. Routers
+read its fields and call `generate`; they do not construct it.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `invocation_id` | `str` | The run being routed; the selected skill runs under the same ID. |
+| `principal` | `Principal \| None` | Verified caller identity, or `None`. |
+| `deadline` | `float` | Event-loop time (`loop.time()`) when routing times out: the agent's `timeout_seconds` from the start of the run. |
+
+### `RoutingContext.generate`
+
+```python
+async def generate(
+    self,
+    model: Model,
+    text: str,
+    *,
+    instructions: str | None = None,
+    output: type[T] | None = None,
+    model_settings: ModelSettings | None = None,
+) -> str | T: ...
+```
+
+| Parameter | Type | Required/default | Meaning |
+| --- | --- | --- | --- |
+| `model` | `Model` | Required | The router's own model. The agent's model is never used implicitly; pass the same instance explicitly to share it. |
+| `text` | `str` | Required | Untrusted content, sent as a `user` message. |
+| `instructions` | `str \| None` | `None` | Trusted routing instructions, sent as a `system` message. The agent's own `instructions` are not sent; they are for its skills. |
+| `output` | `type[BaseModel] \| None` | `None` | Validate the reply as this Pydantic model, as in [`RunContext.generate`](agents.md#runcontextgenerate). |
+| `model_settings` | `ModelSettings \| None` | `None` | Router override; each field set replaces the library and agent value. |
+
+- **Settings and limits:** the skill is not known yet, so routing calls use
+  the library defaults merged with the agent's `model_settings` and `limits`,
+  plus the router's `model_settings` override. No tools are offered.
+- **Accounting:** each call reserves and settles against the run's shared
+  accounting before the skill runs, with the same input, context-window,
+  token, model-call and retry rules as a skill's `ctx.generate`.
+- **Failures:** raises the same errors as `RunContext.generate`. They reach the
+  task with their own safe messages (see [`SkillRouter`](#skillrouter)).
+
+```python
+from collections.abc import Sequence
+
+from a2a.helpers import get_message_text
+from a2a.types import Message
+from pydantic import BaseModel
+
+from agentframe import (
+    Clarification,
+    Model,
+    RoutingContext,
+    SkillCall,
+    SkillDefinition,
+    SkillRouter,
+)
+
+
+class Choice(BaseModel):
+    skill: str
+
+
+class OneShotRouter(SkillRouter):
+    """Asks its own model which skill to run; each skill takes ``text``."""
+
+    def __init__(self, model: Model) -> None:
+        self.model = model
+
+    async def route(
+        self,
+        conversation: Sequence[Message],
+        skills: Sequence[SkillDefinition],
+        ctx: RoutingContext,
+    ) -> SkillCall | Clarification:
+        text = get_message_text(conversation[-1])
+        choice = await ctx.generate(
+            self.model,
+            text,
+            instructions="Reply with the id of one of: "
+            + ", ".join(skill.id for skill in skills),
+            output=Choice,
+        )
+        if choice.skill not in {skill.id for skill in skills}:
+            return Clarification("What would you like me to do?")
+        return SkillCall(choice.skill, {"text": text})
+```
+
+`OneShotRouter` is an illustration; `Model` is any configured model, such as
+an `OllamaModel`. The built-in router (#68) adds argument extraction and never
+guesses.
+
+**Related:** [`SkillRouter`](#skillrouter),
+[limits: defaults versus ceilings](../guides/limits.md#defaults-versus-ceilings).
 
 ## Built-in model-based router (planned implementation)
 

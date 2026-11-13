@@ -103,7 +103,14 @@ TLS or binding. The ceiling fields are illustrative proposals. The host must
 validate configured agent allowances against its ceilings before accepting work.
 
 For A2A model-backed routing, establish a request-wide budget and deadline
-before routing. The selected skill inherits the remaining allowance. Routing,
+before routing. The selected skill inherits the remaining allowance.
+Implemented in M6 (#67): a router's
+[`RoutingContext.generate`](../api/hosting.md#routingcontextgenerate) calls use
+the library defaults merged with the agent's limits and model settings (the
+skill is not known yet), charged to the run's shared accounting. The selected
+skill then runs with its own effective limits against the same accounting and
+the same deadline start, so routing tokens and model calls count against its
+`max_total_tokens` and `max_model_calls`. Routing,
 retries, tool-loop continuations, and any explicitly composed child work must
 not reset budgets or be counted twice. Independent remote services need their
 own enforcement; local limits do not establish distributed billing guarantees.
