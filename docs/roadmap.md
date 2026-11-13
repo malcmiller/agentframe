@@ -382,6 +382,12 @@ Microsoft Entra v2.0 access tokens (signature via the tenant's keys, issuer,
 tenant, client-ID audience, expiry, `ver`), maps `roles` and `scp` through
 `role_permissions`, fails closed when keys are unavailable and declares an
 OpenID Connect card scheme; it needs the optional `entra` extra (#76).
+`ExecutionPolicy` (`Runtime(policy=...)` / `AgentApp(policy=...)`) runs
+application input checks, model-request checks before every model request
+(including routing with `skill=None`, structured output and tool-loop
+continuations, once per logical request) and output checks; only an explicit
+`True` allows, a denial raises `PermissionDeniedError` and an erroring or
+late check `PolicyUnavailableError` (#77).
 
 ### Resolved M0 platform and API decisions
 
@@ -509,7 +515,8 @@ belongs to that release even though telemetry exporters/integration stay optiona
 - Pinned MCP/telemetry versions, authorization hooks, schema/result mappings,
   and transport-specific correlation metadata.
 - Principal construction and OBO/service configuration/claims/consent, custom
-  authenticator/resource-policy/content-check methods and API-key entry format.
+  authenticator/resource-policy methods, tool content checks (#78) and
+  API-key entry format.
   `auth`, built-in authenticators, `role_permissions` and explicit
   `AllowAnonymous()` are decided; `EntraIDAuth` maps roles and scopes into one
   `role_permissions` namespace (M7 #76).
