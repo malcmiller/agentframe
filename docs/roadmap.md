@@ -422,8 +422,11 @@ message. Local runs never convert `asyncio.CancelledError`; AgentFrame
 `CancelledError` only reports a cancelled hosted task (later a remote call).
 Skill tracebacks stay in operator logs. A shutdown race it found, harmless with
 the in-memory task store, is tracked in #128. With installed-wheel
-examples (#80) merged, M7 is complete; publishing the first release to PyPI
-(#82) is still pending and is done by the maintainer.
+examples (#80) merged, the M7 build stories are complete. Two checks wait on
+the maintainer's own setup: the opt-in real-token Entra test (#76) needs an app
+registration, and the first manual Foundry workflow run (#81) needs its
+one-time setup. Publishing the first release to PyPI (#82) is still pending
+and is done by the maintainer; no release has been published.
 
 ### Resolved M0 platform and API decisions
 
