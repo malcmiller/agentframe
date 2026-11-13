@@ -609,8 +609,8 @@ async def test_with_nothing_left_the_default_ceiling_says_to_pass_one_per_call()
     assert peer.methods() == []
 
 
-@pytest.mark.parametrize("ceiling", [0, -5])
-async def test_a_ceiling_below_1_is_a_definition_error(ceiling: int) -> None:
+@pytest.mark.parametrize("ceiling", [0, -5, True])
+async def test_a_ceiling_below_1_or_a_bool_is_a_definition_error(ceiling: int) -> None:
     peer = Peer(card=budget_card("max_total_tokens"))
 
     with pytest.raises(DefinitionError, match="greater than 0"):

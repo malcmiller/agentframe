@@ -202,7 +202,7 @@ class Remote[N: str]:
                 is sent.
             LimitExceededError: The run is already at its
                 ``max_remote_hops`` depth; nothing is sent.
-            DefinitionError: ``max_total_tokens`` is not greater than 0.
+            DefinitionError: ``max_total_tokens`` is not a whole number greater than 0.
         """
         self._check_depth()
         message = Message(
@@ -273,7 +273,7 @@ class Remote[N: str]:
             TokenLimitExceededError: As for ``ask``; nothing is sent.
             LimitExceededError: The run is already at its
                 ``max_remote_hops`` depth; nothing is sent.
-            DefinitionError: ``max_total_tokens`` is not greater than 0.
+            DefinitionError: ``max_total_tokens`` is not a whole number greater than 0.
             pydantic_core.PydanticSerializationError: An argument cannot be
                 represented as JSON. Nothing is sent.
         """
@@ -364,9 +364,12 @@ class Remote[N: str]:
         Returns:
             The agent's message reply, or its task in a state it stopped in.
         """
-        if max_total_tokens is not None and max_total_tokens < 1:
+        # bool is an int subclass, but True is not a token count.
+        if max_total_tokens is not None and (
+            isinstance(max_total_tokens, bool) or max_total_tokens < 1
+        ):
             raise DefinitionError(
-                "max_total_tokens must be greater than 0",
+                "max_total_tokens must be a whole number greater than 0",
                 invocation_id=self._invocation_id,
             )
         charge = self._hold(max_total_tokens)
