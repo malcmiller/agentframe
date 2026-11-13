@@ -14,8 +14,9 @@ agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 
 **Constructor status:** implemented in M2 (#3, #6) as
 `AgentApp(*, agent, host, runtime=None, services=None, authorization=None,
-policy=None, router=None, a2a=None, directory=None)`, with `policy=` from M7
-#77, `a2a=` from M7 #75 and `directory=` from M8+ #87; the other parameters
+policy=None, router=None, a2a=None, directory=None, remotes=None)`, with
+`policy=` from M7 #77, `a2a=` from M7 #75, `directory=` from M8+ #87 and
+`remotes=` from #92; the other parameters
 below arrive with their stories (`mcp=` later, later `ag_ui=`). `services=` and
 `ag_ui=` are decided; unspecified omission details remain illustrative.
 
@@ -24,7 +25,8 @@ AgentApp(
     *, agent: Agent, host: HostConfig, runtime: Runtime = ...,
     a2a: A2AConfig = ..., mcp: MCPConfig = ..., router: SkillRouter = ...,
     services: Services = ...,
-    directory: AgentDirectory = ..., ag_ui: AGUIConfig = ...,
+    directory: AgentDirectory = ..., remotes: Mapping[str, Service] = ...,
+    ag_ui: AGUIConfig = ...,
 )
 ```
 
@@ -32,14 +34,15 @@ AgentApp(
 | --- | --- | --- | --- |
 | `agent` | `Agent` instance | Required in current shape | Valid registered skills and identity; no per-method A2A RPC endpoints. |
 | `host` | `HostConfig` | Explicit in current examples; omission contract open | Advertised origin, authentication integration, independent resource ceilings. |
-| `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization, policy=policy, directory=directory)` | The single authoritative runtime and service container for every request. Passing it together with `services=`, `authorization=`, `policy=` or `directory=` raises `DefinitionError`. Pass a runtime to authorize tool calls: `AgentApp(runtime=Runtime(services=..., tool_authorization=...))`; there is no separate host setting (M5 #62). |
+| `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization, policy=policy, directory=directory, remotes=remotes)` | The single authoritative runtime and service container for every request. Passing it together with `services=`, `authorization=`, `policy=`, `directory=` or `remotes=` raises `DefinitionError`. Pass a runtime to authorize tool calls: `AgentApp(runtime=Runtime(services=..., tool_authorization=...))`; there is no separate host setting (M5 #62). |
 | `a2a` | [`A2AConfig`](#a2aconfig) | Optional; `None` means `A2AConfig()` (M7 #75) | A2A endpoint settings; today only [message deduplication](#a2aconfig). A2A is always served. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
 | `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app never closes a router's model. |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
 | `authorization` | `AuthorizationPolicy` | Optional; only without `runtime=` | Resource policy applied to every run, as on [`Runtime`](runtime.md#runtime). |
 | `policy` | [`ExecutionPolicy`](authorization.md#executionpolicy) | Optional; only without `runtime=` (M7 #77) | Input, model-request and output checks for every run, as on [`Runtime`](runtime.md#runtime). Model-request checks also cover routing model calls, with `skill=None`. |
-| `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; only without `runtime=`; required when a skill takes a `Remote` parameter (M8+ #87) | Where [`Remote[Literal["name"]]`](discovery.md#remoteliteralname) parameters find their agents. Construction fails without it; server startup looks up every name with [`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes) and fails for an unknown name or an invalid or credential-requiring card. The application opens and closes it; the app never does. |
+| `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; only without `runtime=`; required when a skill takes a `Remote` parameter (M8+ #87) | Where [`Remote[Literal["name"]]`](discovery.md#remoteliteralname) parameters find their agents. Construction fails without it; server startup looks up every name with [`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes) and fails for an unknown name, an invalid card, or a card requiring credentials that `remotes=` cannot provide. The application opens and closes it; the app never does. |
+| `remotes` | `Mapping[str, `[`Service`](authorization.md#service)`]` | Optional; only without `runtime=` (M8+ #92) | How to authenticate to each remote agent, by name, as on [`Runtime`](runtime.md#runtime). Never forwards the incoming caller's credentials. |
 | `ag_ui` | `AGUIConfig` | Later explicit opt-in, off unless enabled | `AGUIConfig(enabled=True)` serves `/ag-ui` with the same auth/permissions/limits. |
 
 Supply an instance of [`Echo`](agents.md#agent) for this single-skill
@@ -84,7 +87,8 @@ authenticator; no remote host starts without a choice.
 - With [`Remote`](discovery.md#remoteliteralname) parameters (M8+ #87),
   construction needs `directory=`, and startup then runs
   [`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes): an unknown
-  name or an invalid or credential-requiring card fails startup.
+  name, an invalid card, or a card requiring credentials that `remotes=`
+  cannot provide fails startup.
 - With a [`ModelRouter`](#modelrouter) (M6 #69), construction also builds its
   selection and extraction schemas, and startup checks its model: see
   [`ModelRouter` hosting](#modelrouter-hosting). Custom routers are not

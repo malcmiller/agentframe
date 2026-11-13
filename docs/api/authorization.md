@@ -8,6 +8,8 @@ wires in. M2 story #19 implements
 `AuthorizationPolicy` with the local `Runtime`; M5 story #62 implements
 `ToolAuthorizationPolicy` and `@tool(requires_permissions=...)`. M7 stories #77 and
 #78 implement `ExecutionPolicy` input, model-request, tool and output checks.
+M8+ story #92 implements outbound identity for remote calls: `Service`,
+`OutboundCredential`, `APIKeyCredential` and `EntraAppCredential`.
 Authentication, authorization,
 and prompt/content checks are separate responsibilities.
 
@@ -696,3 +698,192 @@ loopback. Anonymous requests cannot satisfy protected grants by default;
 enabling this never disables validation, limits, accounting or checks.
 
 **Related:** [`Authenticator`](#authenticator), [anonymous access](../guides/authorization.md#exposure-anonymous-access-and-delegation).
+
+## `Service`
+
+**Purpose / decision:** per-remote outbound identity: call a remote agent with
+the calling agent's own credential (`service` mode). Implemented in M8+ (#92).
+Entra on-behalf-of (`OnBehalfOf`, #93) is a separate, later mode; there is no
+implicit mode and no fallback between modes.
+
+**Signature status:** implemented as `Service(credential: OutboundCredential)`,
+a frozen dataclass, configured through `remotes=` on
+[`Runtime`](runtime.md#runtime) or [`AgentApp`](hosting.md#agentapp).
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `credential` | [`OutboundCredential`](#outboundcredential) | Required | What every request to that remote carries, such as [`APIKeyCredential`](#apikeycredential) or [`EntraAppCredential`](#entraappcredential). |
+| `remotes=` | `Mapping[str, Service]` on `Runtime` / `AgentApp` | Optional; default no credentials | Keys are directory names, as in `Remote[Literal["name"]]`. Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. Kept separate from discovery, so credentials never live in registries or cards. Entries for names no skill uses are allowed. |
+
+```python
+import os
+
+from azure.identity.aio import ManagedIdentityCredential
+
+from agentframe import (
+    AgentDirectory, APIKeyCredential, EntraAppCredential, Runtime, Service,
+)
+
+
+def planner_runtime(
+    directory: AgentDirectory, credential: ManagedIdentityCredential,
+) -> Runtime:
+    return Runtime(
+        directory=directory,
+        remotes={
+            "research-agent": Service(
+                credential=APIKeyCredential(os.environ["RESEARCH_API_KEY"])
+            ),
+            "review-agent": Service(
+                credential=EntraAppCredential(credential, scope="api://review/.default")
+            ),
+        },
+    )
+```
+
+`directory` is the application's opened
+[`AgentDirectory`](discovery.md#agentdirectory); the credential is the
+application's own and is never closed by AgentFrame.
+
+**Behavior / failures:**
+
+- The remote authorizes the calling agent, not the caller the run serves. It
+  is the only mode for agents whose callers use API keys or no authentication.
+  Service mode is a deliberate application choice, never a fallback for a
+  denied user.
+- Outbound headers come only from the configured credential. Incoming
+  `Authorization`, `X-API-Key` or any other caller header is never copied.
+- `credential.headers()` is called before every request (`SendMessage`, each
+  `GetTask` poll and a best-effort `CancelTask`), and its headers go per
+  request only to the card's validated interface URL, which has the same
+  origin as the registry's card URL. They never go into the shared directory
+  client's defaults and never with a card fetch. Redirects are not followed:
+  a redirect fails the call with `RemoteAgentError`, and startup refuses a
+  remote with credentials when the directory's `http_client` follows
+  redirects.
+- **Startup check** ([`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes)):
+  a card that declares no security is called without credentials when the
+  remote has no entry. A card that declares security needs an entry whose
+  credential satisfies every scheme of one of the card's
+  `security_requirements` (or one of its `security_schemes` when it lists no
+  requirements); otherwise `DefinitionError` naming the remote and the
+  credential type, never the secret. A remote with an entry but an open card
+  is still sent the credential.
+- A credential whose `headers()` raises fails the call with
+  `AuthenticationError`; its error is logged by type only.
+- Invalid `remotes=` (a value that is not a `Service`, or a credential that
+  does not implement `OutboundCredential`) raises `DefinitionError` at
+  construction.
+
+**Related:** [identity propagation](../guides/authorization.md#cross-agent-identity-propagation-m8),
+[`Remote`](discovery.md#remoteliteralname).
+
+## `OutboundCredential`
+
+**Purpose / decision:** the structural protocol for what a `Service` sends.
+Implement it for another kind of credential; no base class is needed.
+
+**Signature status:** implemented (#92), `runtime_checkable`:
+
+```text
+class OutboundCredential(Protocol):
+    async def headers(self) -> Mapping[str, str]: ...
+    def satisfies(self, scheme: a2a.types.SecurityScheme) -> bool: ...
+```
+
+| Method | Returns | Meaning and constraints |
+| --- | --- | --- |
+| `headers()` | `Mapping[str, str]` | The HTTP headers carrying the credential. Called before every request, so a credential can refresh an expired token. Never log the values. |
+| `satisfies(scheme)` | `bool` | Whether these headers meet one native security scheme from the remote's Agent Card. Used only by the startup check; never guess `True` for schemes the credential cannot meet. |
+
+```python
+from collections.abc import Mapping
+
+from a2a.types import SecurityScheme
+
+
+class BasicCredential:
+    def __init__(self, encoded: str) -> None:
+        self._encoded = encoded
+
+    async def headers(self) -> Mapping[str, str]:
+        return {"Authorization": f"Basic {self._encoded}"}
+
+    def satisfies(self, scheme: SecurityScheme) -> bool:
+        return (
+            scheme.WhichOneof("scheme") == "http_auth_security_scheme"
+            and scheme.http_auth_security_scheme.scheme.lower() == "basic"
+        )
+```
+
+`satisfies` was added to the issue's proposed `headers()`-only protocol so the
+decided startup check can match custom credentials without guessing.
+
+**Related:** [`Service`](#service).
+
+## `APIKeyCredential`
+
+**Purpose / decision:** send an API key in one header, as
+[`APIKeyAuth`](#apikeyauth) expects. Implemented (#92).
+
+**Signature status:** `APIKeyCredential(key: str, *, header: str = "X-API-Key")`.
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `key` | `str` | Required, non-empty | The key. Load it from the environment or a secret store; `repr` never shows it. |
+| `header` | `str` | `"X-API-Key"` | The header that carries it. |
+
+```python
+import os
+
+from agentframe import APIKeyCredential, Service
+
+research = Service(credential=APIKeyCredential(os.environ["RESEARCH_API_KEY"]))
+```
+
+**Behavior / failures:** satisfies an `apiKey` scheme located in a header with
+the same name (case-insensitive); not query or cookie keys. An empty key or
+header raises `DefinitionError`.
+
+**Related:** [`Service`](#service), [`APIKeyAuth`](#apikeyauth).
+
+## `EntraAppCredential`
+
+**Purpose / decision:** send a Microsoft Entra token for the calling agent's
+own app identity (client credentials), for example to call a Foundry A2A agent
+or an [`EntraIDAuth`](#entraidauth) agent. Implemented (#92).
+
+**Signature status:** `EntraAppCredential(credential, *, scope: str)`.
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `credential` | Any `azure.core` async token credential | Required | For example `azure.identity.aio.ClientSecretCredential`, `CertificateCredential` or `ManagedIdentityCredential`. Typed structurally (only `get_token(scope)` is used), so AgentFrame's core install does not need `azure-identity`. It stays yours: AgentFrame never closes it. |
+| `scope` | `str` | Required, non-empty | The remote's scope: `api://<client-id>/.default` for an `EntraIDAuth` agent, `https://ai.azure.com/.default` for Foundry agents. |
+
+```python
+from azure.identity.aio import ManagedIdentityCredential
+
+from agentframe import EntraAppCredential, Service
+
+identity = ManagedIdentityCredential()
+review = Service(
+    credential=EntraAppCredential(identity, scope="api://review/.default")
+)
+```
+
+**Behavior / failures:** every request calls `credential.get_token(scope)` and
+sends `Authorization: Bearer <token>`; `azure-identity` credentials cache the
+token until it nears expiry. Satisfies OAuth 2.0, OpenID Connect and HTTP
+`bearer` card schemes (`EntraIDAuth` cards declare OpenID Connect). A failed
+token request fails the call with `AuthenticationError`. The token is never
+logged, put in errors or exposed on `RunContext`. This is not on-behalf-of: the
+remote sees the calling app, not the user (#93).
+
+For an `EntraIDAuth` target, grant the calling app an app role on the target's
+app registration (application permission, admin consent), map that role with
+`role_permissions`, and use `scope="api://<target-client-id>/.default"`; the
+caller's `oid` is the calling app's service principal. For Foundry agents, give
+the calling identity a role that may invoke agent endpoints (see
+[`FoundryAgentRegistry`](discovery.md#foundryagentregistry) roles).
+
+**Related:** [`Service`](#service), [`EntraIDAuth`](#entraidauth).

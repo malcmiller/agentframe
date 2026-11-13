@@ -11,7 +11,8 @@ adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
 `TokenLimitExceededError`, `ModelCallLimitExceededError` and
 `TimeoutLimitExceededError` subtypes. M5 #61 adds `ToolCallLimitExceededError`
 and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`; M8+ #84 adds `RemoteAgentError` and #87 adds
-`Runtime(directory=...)`, `Runtime.validate_remotes` and `ClarificationNeededError`.
+`Runtime(directory=...)`, `Runtime.validate_remotes` and `ClarificationNeededError`;
+#92 adds `Runtime(remotes=...)`.
 The remaining parameters and errors
 arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
@@ -28,7 +29,7 @@ Runtime(
     *, authorization: AuthorizationPolicy = ...,
     tool_authorization: ToolAuthorizationPolicy = ...,
     policy: ExecutionPolicy = ..., tracing: TracingConfig = ..., services: Services = ...,
-    directory: AgentDirectory = ...,
+    directory: AgentDirectory = ..., remotes: Mapping[str, Service] = ...,
 )
 ```
 
@@ -40,6 +41,7 @@ Runtime(
 | `tracing` | `TracingConfig` | Optional; tracing disabled unless configured | Application owns provider/exporters/sampling; accounting and invocation IDs do not depend on export. |
 | `services` | `Services` | Explicit when skills need registered dependencies | Resolve `Inject[T]` parameters; missing registration is a startup `DefinitionError`. Same service container contract as `AgentApp`. |
 | `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; required when a skill takes a [`Remote`](discovery.md#remoteliteralname) parameter (M8+ #87) | Where `Remote[Literal["name"]]` parameters find their agents; each run binds them at its start, within its deadline. The application opens and closes it. |
+| `remotes` | `Mapping[str, `[`Service`](authorization.md#service)`]` | Optional; default no credentials (M8+ #92) | How to authenticate to each remote agent, by directory name. A remote without an entry is called without credentials, which only works when its card declares no security. A value that is not a `Service` raises `DefinitionError`. |
 
 ```python
 from agentframe import Runtime
@@ -54,7 +56,8 @@ implements `Runtime(*, services: Services | None = None, authorization:
 AuthorizationPolicy | None = None)`; omitting `authorization` means no resource
 checks. M5 #62 adds `tool_authorization: ToolAuthorizationPolicy | None = None`
 and M7 #77 adds `policy: ExecutionPolicy | None = None`. M8+ #87 adds
-`directory: AgentDirectory | None = None`.
+`directory: AgentDirectory | None = None` and #92 adds
+`remotes: Mapping[str, Service] | None = None`.
 
 **Behavior / failures:** no inference on construction. Validate definitions and
 configuration; create invocation-scoped context, enforce policy/limits, validate
@@ -161,8 +164,10 @@ async def check_remotes(agent: Agent, directory: AgentDirectory) -> None:
 **Behavior / failures:** looks every distinct name up in the directory,
 fetching its card. Agents without `Remote` parameters pass without I/O.
 Raises `DefinitionError` when a skill takes a `Remote` parameter and there is
-no directory, the directory is not open, no source lists a name, or a card
-requires credentials (outbound identity is #92, #93); raises
+no directory, the directory is not open, no source lists a name, a card
+requires credentials that the name's `remotes=` entry cannot provide (see
+[`Service`](authorization.md#service)), or a remote with credentials uses a
+directory client that follows redirects; raises
 [`RemoteAgentError`](#remoteagenterror) when a card cannot be fetched or is
 invalid. Local runs that skip it fail the same way when the skill runs.
 

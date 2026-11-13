@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -45,6 +45,7 @@ from starlette.types import Receive, Scope, Send
 from agentframe.authoring.agent import Agent
 from agentframe.authoring.services import Services
 from agentframe.discovery.directory import AgentDirectory
+from agentframe.discovery.identity import Service
 from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.hosting.a2a_executor import (
     PRINCIPAL_STATE_KEY,
@@ -147,15 +148,19 @@ class AgentApp:
             to ``A2AConfig()``.
         directory: Where ``Remote[Literal["name"]]`` parameters find their
             agents, when ``runtime`` is not given. Server startup looks up
-            every name and fails if one is unknown or its card is invalid or
-            requires credentials. The application opens and closes it.
+            every name and fails if one is unknown, its card is invalid, or
+            it requires credentials that ``remotes`` cannot provide. The
+            application opens and closes it.
+        remotes: How to authenticate to each remote agent, by name, when
+            ``runtime`` is not given; see ``Runtime``.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
             not registered, a skill takes a ``Remote`` parameter and there
             is no directory, an agent or skill limit is explicitly set above
             ``host.limits_ceiling``, ``runtime`` is combined with ``services``,
-            ``authorization``, ``policy`` or ``directory``, the authenticator
+            ``authorization``, ``policy``, ``directory`` or ``remotes``,
+            ``remotes`` is not a mapping of names to ``Service``, the authenticator
             cannot describe its security on the Agent Card, or a
             ``ModelRouter`` cannot describe a skill's arguments as a JSON schema.
     """
@@ -172,17 +177,19 @@ class AgentApp:
         router: SkillRouter | None = None,
         a2a: A2AConfig | None = None,
         directory: AgentDirectory | None = None,
+        remotes: Mapping[str, Service] | None = None,
     ) -> None:
         if runtime is not None and (
             services is not None
             or authorization is not None
             or policy is not None
             or directory is not None
+            or remotes is not None
         ):
             raise DefinitionError(
-                "Pass services, authorization, policy and directory either to "
-                "AgentApp or to its Runtime, not both; the runtime is the single "
-                "source of them."
+                "Pass services, authorization, policy, directory and remotes "
+                "either to AgentApp or to its Runtime, not both; the runtime is "
+                "the single source of them."
             )
         if runtime is None:
             runtime = Runtime(
@@ -190,6 +197,7 @@ class AgentApp:
                 authorization=authorization,
                 policy=policy,
                 directory=directory,
+                remotes=remotes,
             )
         runtime.validate(agent)
         _check_limits_within_ceiling(agent, host)

@@ -379,8 +379,10 @@ async def foundry_card_name(agent_name: str) -> str:
   `Authorization: Bearer <token>` for `https://ai.azure.com/.default` from
   `credential`, only for card URLs inside this project. Foundry cards require
   Entra ID (no anonymous access), so the directory sends this source identity's
-  token, never the caller's; every caller sees the same card. Remote calls get
-  their own identity handling (#92, #93).
+  token, never the caller's; every caller sees the same card. Remote calls
+  never reuse it: configure their identity with `remotes=` (#92), for example
+  [`EntraAppCredential`](authorization.md#entraappcredential) with this same
+  scope.
 - Preview hosted-agent A2A passthrough and Foundry's
   [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
   are not read. A model deployment is not an agent endpoint; see
@@ -437,7 +439,7 @@ AgentDirectory(
 | `card_ttl_seconds` | `float` | Optional; default `300` | How long a fetched card stays fresh; finite, `0` or more (`0` refetches on every `get`). Not health checking or background polling. |
 | `allow_stale` | `bool` | Optional; default `False` | When a stale card's refresh fails, serve the previous card with `stale=True` and log a warning instead of raising. Does not apply to `refresh` or to source failures. |
 | `allow_http_hosts` | `Collection[str]` | Optional; default empty | Non-loopback host names whose cards may be fetched over plain `http`, for development. Case-insensitive; a single string raises `DefinitionError`. |
-| `http_client` | `httpx.AsyncClient \| None` | Optional; default `None` | Caller-owned client used for card fetches (and, later, remote calls); never closed by the directory. It must not carry credentials in default headers or cookies. When omitted, the directory creates a client on `async with` and closes it on exit. Also lets tests use in-process ASGI apps. |
+| `http_client` | `httpx.AsyncClient \| None` | Optional; default `None` | Caller-owned client used for card fetches and remote calls; never closed by the directory. It must not carry credentials in default headers or cookies, and must not follow redirects when any remote has credentials (startup refuses it). When omitted, the directory creates a client on `async with` and closes it on exit. Also lets tests use in-process ASGI apps. |
 
 ```python
 from agentframe import AgentDirectory, EnvironmentAgentRegistry, FileAgentRegistry
@@ -473,7 +475,8 @@ cards are cached per card URL. Every card fetch:
 - is parsed by the official SDK into `a2a.types.AgentCard`, which must have a
   name and a JSON-RPC A2A 1.0 interface whose URL has the same origin (scheme,
   host and port) as the registry's card URL. The registry's `card_url` is the
-  only trusted origin; later outbound credentials (#92, #93) go only there.
+  only trusted origin; outbound credentials ([`Service`](authorization.md#service),
+  #92) go only there.
 
 Failures caused by the other agent (unreachable, non-success HTTP status,
 redirect, timeout, oversized body, invalid JSON, a body that is not an Agent
@@ -693,7 +696,7 @@ The decided authoring surface is [`Remote[Literal["name"]]`](#remoteliteralname)
 | Concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | Discovered destination/card | Validated reference/native card; client interface open | Needed for selected interaction | Re-check destinations, trust, binding and current authorization, not just cache freshness. |
-| Outbound identity | Per-remote `on_behalf_of` / `service`; configuration shape open | OBO default for Entra ingress; service explicit | Exchange target-scoped tokens; never forward incoming token or fall back on exchange failure. API-key/anonymous ingress supports only service. |
+| Outbound identity | `remotes={name: Service(credential=...)}` (#92); `OnBehalfOf` is #93 | OBO recommended for Entra ingress; service explicit | Exchange target-scoped tokens; never forward incoming token or fall back on exchange failure. API-key/anonymous ingress supports only service. See [`Service`](authorization.md#service). |
 | Deadline/budget/depth | Shared AgentFrame extension; wire schema open | Remaining deadline/budget, default max 5 hops | Receiver lowers ceilings, reports actual usage; caller enforces locally. Other peers' usage unknown, never zero. No hard billing promise. |
 | Typed proxy | Later optional `Remote[ResearchAgent]` | Not first multi-agent release | Method syntax could use same structured request; no proprietary RPC. |
 
@@ -734,17 +737,18 @@ the `Literal`. The string form `Remote["name"]` is not used, because
 `mypy --strict` reads a string subscript as a forward reference.
 
 **Signature status:** the annotation, [`ask`](#remoteask), [`call`](#remotecall)
-(#88) and the `directory=` parameters are implemented; deadline/hop
-propagation (#89), token budgets (#90) and outbound identity (#92, #93) are
-later stories. `Remote[ResearchAgent]` typed proxies are later only.
+(#88), the `directory=` parameters and service-mode outbound identity
+([`remotes=`](authorization.md#service), #92) are implemented; deadline/hop
+propagation (#89), token budgets (#90) and Entra on-behalf-of (#93) are later
+stories. `Remote[ResearchAgent]` typed proxies are later only.
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | Name | One string in a `Literal` | Required | The agent's name in the directory; never a caller-supplied URL. Anything else (bare `Remote`, `Remote[str]`, two names) raises `DefinitionError` when the class is defined. |
 | Injection | Library-managed binding | New per run | Excluded from caller arguments, the Agent Card and every schema, like `Inject[T]`. A caller sending an argument with the parameter's name is rejected as an unknown argument. Tools cannot take `Remote` parameters. |
 | Directory | `Runtime(directory=...)` / `AgentApp(directory=...)` | Required when a skill takes `Remote` | Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. The application opens and closes it. |
-| Card security | Card without `security_schemes`/`security_requirements` | Until outbound identity (#92, #93) | A card that requires credentials fails with `DefinitionError`. Foundry A2A endpoints require an Entra bearer token, so Foundry agents cannot be called until #92. A source's `card_headers` are used only to fetch cards, never to call agents. |
-| Identity mode (later) | `on_behalf_of` or `service`; config carrier open | OBO for Entra caller, service explicit otherwise | No token forwarding, authority amplification or stronger-identity fallback. |
+| Card security | The card's `security_schemes`/`security_requirements` | Checked at startup and each run | A card that declares no security is called without credentials. One that declares security needs a `remotes=` entry whose credential satisfies one of its requirements, otherwise `DefinitionError` naming the remote. Foundry A2A agents need [`EntraAppCredential`](authorization.md#entraappcredential) with `https://ai.azure.com/.default`. A source's `card_headers` are used only to fetch cards, never to call agents. |
+| Identity mode | [`Service(credential=...)`](authorization.md#service) in `remotes=` (#92); `OnBehalfOf` later (#93) | Per remote; no implicit mode | No token forwarding, authority amplification or stronger-identity fallback. |
 | Hop limit (later, #89) | Counter/setting representation open | Maximum 5 remote hops by default | Exceeding depth fails, including recursive loops; no guessed wire field. |
 
 Define a `type` alias per remote to keep signatures short:
@@ -783,8 +787,8 @@ def planner_app(directory: AgentDirectory) -> AgentApp:
 fails with `DefinitionError` when the `AgentApp` is constructed (locally, at
 `Runtime.validate` or the first run). At server startup,
 [`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes) looks up every
-name: an unknown name or a card that requires credentials raises
-`DefinitionError`, a card that cannot be fetched or validated (including an
+name: an unknown name or a card that requires credentials its `remotes=`
+entry cannot provide raises `DefinitionError`, a card that cannot be fetched or validated (including an
 interface URL on another origin) raises `RemoteAgentError`, and startup fails.
 Every run also looks its names up at its start, inside the run's deadline, and
 fails the same way before the skill runs. Each run gets a new binding that
@@ -905,16 +909,19 @@ client transport, using the directory's HTTP client, only to the card's
 validated interface URL (same origin as the registry's card URL). The request
 asks to return immediately, so the remote task ID is known at once; an
 unfinished task is then polled with `GetTask` (after 0.25 s, 0.5 s, then every
-1 s). Every request carries `A2A-Version: 1.0` and a timeout of the run's
-remaining time; headers go per request, never into the shared client's
-defaults.
+1 s). Every request carries `A2A-Version: 1.0`, the remote's configured
+credential headers (if any; see [`Service`](authorization.md#service)) and a
+timeout of the run's remaining time; headers go per request, never into the
+shared client's defaults, and redirects are never followed.
 
 - Completed: the joined text. A result with a non-text part raises
   `RemoteAgentError`.
 - Input required: raises [`ClarificationNeededError`](#clarificationneedederror)
   with the question. Nothing answers it automatically.
+- The configured credential fails to produce its headers: raises
+  `AuthenticationError` before anything is sent.
 - Failed, rejected, cancelled or auth required, a task that disappears, or an
-  unreachable or refusing peer: raises
+  unreachable, refusing or redirecting peer: raises
   [`RemoteAgentError`](runtime.md#remoteagenterror) with the remote task ID and
   state when known. The remote status text is never put in the message.
 - The run's deadline passes: the remote task gets a best-effort `CancelTask`,

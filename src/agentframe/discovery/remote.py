@@ -32,7 +32,9 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_jsonable_python
 
 from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
+from agentframe.discovery.identity import OutboundCredential, Service, check_identity
 from agentframe.errors import (
+    AuthenticationError,
     ClarificationNeededError,
     DefinitionError,
     OutputValidationError,
@@ -82,6 +84,8 @@ class Remote[N: str]:
         deadline: Event-loop time when the run that owns the binding times out.
         invocation_id: The run that owns the binding.
         principal: The run's verified caller, kept for outbound identity.
+        credential: What to authenticate every request with, or ``None`` to
+            send none. Its headers go only to ``found.interface_url``.
     """
 
     def __init__(
@@ -92,12 +96,14 @@ class Remote[N: str]:
         deadline: float,
         invocation_id: str,
         principal: Principal | None,
+        credential: OutboundCredential | None = None,
     ) -> None:
         self._found = found
         self._transport = transport
         self._deadline = deadline
         self._invocation_id = invocation_id
         self._principal = principal
+        self._credential = credential
         self._agent = f"Agent '{found.reference.name}'"
 
     @property
@@ -122,6 +128,8 @@ class Remote[N: str]:
             message, when it has no artifacts), joined by newlines.
 
         Raises:
+            AuthenticationError: The configured credential could not provide
+                its headers (for example, no Entra token was issued).
             ClarificationNeededError: The remote agent asked a question.
                 Nothing answers it automatically.
             RemoteAgentError: The agent could not be reached, refused the
@@ -284,10 +292,9 @@ class Remote[N: str]:
             message=message,
             configuration=SendMessageConfiguration(return_immediately=True),
         )
+        context = await self._call_context(extensions)
         with self._translated_errors():
-            response = await self._transport.send_message(
-                request, context=self._call_context(extensions)
-            )
+            response = await self._transport.send_message(request, context=context)
         if response.HasField("task"):
             return response.task
         if response.HasField("message"):
@@ -306,9 +313,10 @@ class Remote[N: str]:
         try:
             while task.status.state in _UNFINISHED_STATES:
                 await asyncio.sleep(next(delays))
+                context = await self._call_context()
                 with self._translated_errors(task.id):
                     task = await self._transport.get_task(
-                        GetTaskRequest(id=task.id), context=self._call_context()
+                        GetTaskRequest(id=task.id), context=context
                     )
         except (asyncio.CancelledError, TimeoutLimitExceededError):
             await self._in_background(self._cancel(task.id))
@@ -332,23 +340,28 @@ class Remote[N: str]:
         try:
             async with asyncio.timeout(_CANCEL_SECONDS):
                 reply = await sending
-        except (RemoteAgentError, TimeoutLimitExceededError, TimeoutError):
+        except (
+            AuthenticationError,
+            RemoteAgentError,
+            TimeoutLimitExceededError,
+            TimeoutError,
+        ):
             return
         if isinstance(reply, Task) and reply.status.state in _UNFINISHED_STATES:
             await self._cancel(reply.id)
 
     async def _cancel(self, task_id: str) -> None:
         """Ask the agent to cancel ``task_id``; a failure is only logged."""
-        context = ClientCallContext(
-            timeout=_CANCEL_SECONDS,
-            service_parameters={VERSION_HEADER: PROTOCOL_VERSION_1_0},
-        )
         try:
             async with asyncio.timeout(_CANCEL_SECONDS):
+                context = ClientCallContext(
+                    timeout=_CANCEL_SECONDS,
+                    service_parameters=await self._headers(),
+                )
                 await self._transport.cancel_task(
                     CancelTaskRequest(id=task_id), context=context
                 )
-        except (A2AError, ParseError, TimeoutError):
+        except (AuthenticationError, A2AError, ParseError, TimeoutError):
             logger.warning(
                 "%s did not accept the cancellation of its task (invocation_id=%s)",
                 self._agent,
@@ -392,21 +405,48 @@ class Remote[N: str]:
             )
         return "\n".join(_texts(parts))
 
-    def _call_context(self, extensions: Sequence[str] = ()) -> ClientCallContext:
-        """Bound one request by the run's remaining time.
+    async def _call_context(self, extensions: Sequence[str] = ()) -> ClientCallContext:
+        """Give one request its headers and bound it by the run's remaining time.
 
-        Headers go per request, never into the shared client's defaults.
+        Headers go per request, never into the shared client's defaults, so
+        credentials reach only this agent's interface URL.
 
         Args:
             extensions: Extension URIs the request activates.
         """
+        headers = await self._headers()
         remaining = self._deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             raise self._timeout()
-        headers = {VERSION_HEADER: PROTOCOL_VERSION_1_0}
         if extensions:
             headers[HTTP_EXTENSION_HEADER] = ",".join(extensions)
         return ClientCallContext(timeout=remaining, service_parameters=headers)
+
+    async def _headers(self) -> dict[str, str]:
+        """Return the credential's headers, if any, and the A2A version.
+
+        Raises:
+            AuthenticationError: The credential failed. Its error is logged
+                by type only, since it may describe the secret.
+        """
+        headers: dict[str, str] = {}
+        if self._credential is not None:
+            try:
+                headers.update(await self._credential.headers())
+            except Exception as error:
+                logger.warning(
+                    "The credential for %s failed with %s (invocation_id=%s)",
+                    self._agent,
+                    type(error).__name__,
+                    self._invocation_id,
+                )
+                raise AuthenticationError(
+                    f"{self._agent}: the configured credential could not "
+                    "provide its headers",
+                    invocation_id=self._invocation_id,
+                ) from None
+        headers[VERSION_HEADER] = PROTOCOL_VERSION_1_0
+        return headers
 
     @contextmanager
     def _translated_errors(self, task_id: str | None = None) -> Iterator[None]:
@@ -468,20 +508,30 @@ def remote_name(annotation: object) -> str | None:
     return names[0]
 
 
-async def find_remote(directory: AgentDirectory, name: str) -> DiscoveredAgent:
+async def find_remote(
+    directory: AgentDirectory, name: str, identity: Service | None
+) -> DiscoveredAgent:
     """Look an agent up and check that a binding can call it.
 
+    Args:
+        directory: Where to look the agent up.
+        name: The agent's name.
+        identity: The agent's entry in ``remotes=``, if any.
+
     Raises:
-        DefinitionError: No source lists the agent, or its card requires
-            credentials, which remote calls cannot send yet.
+        DefinitionError: No source lists the agent, its card requires
+            credentials that ``identity`` cannot provide, or credentials
+            would be sent with an HTTP client that follows redirects.
         RemoteAgentError: Its card cannot be fetched or is invalid.
     """
     found = await directory.get(name)
-    card = found.card
-    if card.security_schemes or card.security_requirements:
+    check_identity(name, found.card, identity)
+    # noinspection PyProtectedMember
+    if identity is not None and directory._open_client().follow_redirects:
         raise DefinitionError(
-            f"Agent '{name}' requires credentials; remote calls cannot "
-            "authenticate yet, so only agents without card security can be called"
+            f"Remote '{name}' has credentials, but the AgentDirectory's "
+            "http_client follows redirects; credentials are only sent to the "
+            "card's own origin, so pass a client with follow_redirects=False."
         )
     return found
 
@@ -493,6 +543,7 @@ async def bind_remote(
     deadline: float,
     invocation_id: str,
     principal: Principal | None,
+    identity: Service | None,
 ) -> Remote[Any]:
     """Create the binding one run passes to a ``Remote`` skill parameter.
 
@@ -500,7 +551,7 @@ async def bind_remote(
         DefinitionError: As for ``find_remote``, or the directory is not open.
         RemoteAgentError: As for ``find_remote``.
     """
-    found = await find_remote(directory, name)
+    found = await find_remote(directory, name, identity)
     # noinspection PyProtectedMember
     client = directory._open_client()
     transport = JsonRpcTransport(
@@ -512,4 +563,5 @@ async def bind_remote(
         deadline=deadline,
         invocation_id=invocation_id,
         principal=principal,
+        credential=identity.credential if identity is not None else None,
     )
