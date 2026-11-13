@@ -10,6 +10,16 @@ changelog.
 
 ### Added
 
+- **Multi-agent (M8+):** `OnBehalfOf(scope=...)` in `remotes=` calls a remote
+  agent on behalf of the signed-in user through the Microsoft Entra
+  on-behalf-of flow; the incoming token is never forwarded. `EntraIDAuth`
+  gains `client_id=`, `client_credential=` and `token_transport=`, and keeps a
+  delegated user token privately as `VerifiedCaller.user_assertion`. Startup
+  refuses `OnBehalfOf` behind non-Entra hosts or without a client credential;
+  app-only callers and local runs fail with `PermissionDeniedError`, failed
+  exchanges with `AuthenticationError`, never falling back to `Service`. The
+  `entra` extra now pins `azure-identity==1.27.0` and `aiohttp==3.14.5`.
+
 - **Multi-agent (M8+):** `Remote.ask` sends the run's remaining time
   (`agentframe.deadline_ms`) and depth (`agentframe.hops`) to peers whose card
   lists them in the skill-call extension's new `params.context`; others get
@@ -69,6 +79,10 @@ changelog.
   `HostConfig.public_url` and registry card URLs.
 - `FileAgentRegistry` strips whitespace around names and URLs, like
   `EnvironmentAgentRegistry`.
+- Credential headers (`Authorization`, `Proxy-Authorization`, `Cookie`,
+  `X-API-Key`) are dropped from the A2A SDK's call context after
+  authentication, so the SDK's debug logs no longer contain bearer tokens or
+  API keys.
 
 ## [0.1.0] - 2026-11-13
 

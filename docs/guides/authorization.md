@@ -237,8 +237,9 @@ are never sent to callers; operational diagnostics are redacted.
 
 ## Cross-agent identity propagation (M8+)
 
-**Decided per-remote modes:** `on_behalf_of` defaults when the incoming caller
-used Entra. Use the standard Entra
+**Decided per-remote modes:** `OnBehalfOf` is the recommended mode when the
+incoming caller used Entra; every remote is configured explicitly, with no
+implicit mode. Use the standard Entra
 [On-Behalf-Of flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow)
 to obtain a token scoped to the target, not the original incoming bearer token.
 The target verifies original user and calling-agent identity and applies its
@@ -300,10 +301,57 @@ See [`Service`](../api/authorization.md#service) for the exact rules, and
 [`EntraAppCredential`](../api/authorization.md#entraappcredential) for the
 app-role setup an Entra-protected target needs.
 
-The `OnBehalfOf` mode (#93) adds consent/scope and actor-claim handling;
+**Implemented on-behalf-of mode (#93):** the orchestrator's own client
+credential lives on its inbound `EntraIDAuth`, because the exchange redeems
+the token that authenticator verified; each remote names its scope:
+
+```python
+import os
+
+from agentframe import EntraIDAuth, HostConfig, OnBehalfOf, Service
+
+
+def planner_host(tenant_id: str, planner_client_id: str) -> HostConfig:
+    return HostConfig(
+        public_url="https://planner.example.com",
+        auth=EntraIDAuth(
+            tenant_id=tenant_id,
+            audience=planner_client_id,
+            client_id=planner_client_id,  # must equal audience
+            client_credential=os.environ["PLANNER_CLIENT_SECRET"],
+        ),
+    )
+
+
+def planner_remotes(research_client_id: str, review: Service) -> dict[str, object]:
+    return {
+        "research-agent": OnBehalfOf(scope=f"api://{research_client_id}/.default"),
+        "review-agent": review,  # background work under the agent's own identity
+    }
+```
+
+Pass the host and `remotes=` to `AgentApp`. Each run exchanges the signed-in
+user's token once for the remote's scope (one `OnBehalfOfCredential` per run)
+and sends only the new token, only to the remote's validated interface origin.
+The specialist sees the user's `oid`, the calling agent's client ID in `azp`
+and the delegated scopes in `scp`, and authorizes on the user's roles and
+scopes; checking the calling app is the target's own policy and out of
+AgentFrame's scope.
+
+- An `OnBehalfOf` remote behind `APIKeyAuth`/`AllowAnonymous`, or an
+  `EntraIDAuth` without its client credential, fails at startup
+  (`DefinitionError`); `client_id` must equal `audience`.
+- A caller with an app-only token, and every local run, has no user to act
+  for: `PermissionDeniedError` (hosted task `REJECTED`).
+- A refused exchange (missing consent, revoked user, outage) fails the call
+  with `AuthenticationError`, never a fallback to `Service`.
+- Tokens and the client credential never appear in logs, errors, `Principal`
+  or `RunContext`.
+
 OBO is not a universal mechanism for every A2A peer; incompatible targets fail
 explicitly under the configured mode rather than silently switching identity.
-See [remote calls](../design/discovery.md#planned-remote-calls-and-cross-agent-context).
+The app registration and consent steps, and the opt-in real test, are in
+[`OnBehalfOf`](../api/authorization.md#onbehalfof).
 
 ## Checks required before release
 

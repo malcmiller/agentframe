@@ -2,7 +2,8 @@
 
 Each remote is configured on its own, in ``remotes=`` on ``Runtime`` or
 ``AgentApp``, never in a registry or card. ``Service`` sends the calling
-agent's own credential. An incoming caller's token is never forwarded.
+agent's own credential; ``OnBehalfOf`` exchanges the signed-in user's token for
+one scoped to the remote. An incoming caller's token is never forwarded.
 """
 
 from collections.abc import Mapping
@@ -119,13 +120,18 @@ class EntraAppCredential:
 
     def satisfies(self, scheme: SecurityScheme) -> bool:
         """Match OAuth 2.0, OpenID Connect and HTTP bearer schemes."""
-        match scheme.WhichOneof("scheme"):
-            case "oauth2_security_scheme" | "open_id_connect_security_scheme":
-                return True
-            case "http_auth_security_scheme":
-                return scheme.http_auth_security_scheme.scheme.lower() == "bearer"
-            case _:
-                return False
+        return _accepts_bearer_token(scheme)
+
+
+def _accepts_bearer_token(scheme: SecurityScheme) -> bool:
+    """Say whether an ``Authorization: Bearer`` token meets ``scheme``."""
+    match scheme.WhichOneof("scheme"):
+        case "oauth2_security_scheme" | "open_id_connect_security_scheme":
+            return True
+        case "http_auth_security_scheme":
+            return scheme.http_auth_security_scheme.scheme.lower() == "bearer"
+        case _:
+            return False
 
 
 @dataclass(frozen=True)
@@ -144,20 +150,114 @@ class Service:
     credential: OutboundCredential
 
 
-def checked_remotes(remotes: Mapping[str, Service] | None) -> dict[str, Service]:
+@dataclass(frozen=True)
+class OnBehalfOf:
+    """Call a remote agent on behalf of the signed-in user (Entra on-behalf-of).
+
+    Each run exchanges the user's incoming token for a token scoped to the
+    remote, through the standard Microsoft Entra on-behalf-of flow, so the
+    remote applies the user's permissions and sees the calling agent in
+    ``azp``. The incoming token itself is never forwarded. It is the
+    recommended mode for agents whose callers sign in with ``EntraIDAuth``,
+    which must then have ``client_id=`` and ``client_credential=``.
+
+    A run without a signed-in user (an app-only token, an API-key or
+    anonymous caller, or a local run) fails with ``PermissionDeniedError``;
+    a failed exchange fails the call with ``AuthenticationError``. Neither
+    falls back to ``Service``.
+
+    Args:
+        scope: The remote's scope, for example ``api://<client-id>/.default``.
+
+    Raises:
+        DefinitionError: ``scope`` is empty.
+    """
+
+    scope: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.scope, str) or not self.scope:
+            raise DefinitionError("OnBehalfOf needs a scope.")
+
+    def satisfies(self, scheme: SecurityScheme) -> bool:
+        """Match OAuth 2.0, OpenID Connect and HTTP bearer schemes."""
+        return _accepts_bearer_token(scheme)
+
+
+class UserTokenCredential(Protocol):
+    """An ``azure.core`` async token credential that the runtime closes."""
+
+    async def get_token(self, *scopes: str) -> _AccessToken: ...
+
+    async def close(self) -> None: ...
+
+
+@runtime_checkable
+class UserTokenExchange(Protocol):
+    """An authenticator that can exchange a user's token on their behalf.
+
+    ``EntraIDAuth`` implements it; ``OnBehalfOf`` remotes need one.
+    """
+
+    def check_on_behalf_of(self) -> None:
+        """Check that the exchange is configured.
+
+        Raises:
+            DefinitionError: It has no client credential to exchange with.
+        """
+        ...
+
+    def on_behalf_of(self, user_assertion: str) -> UserTokenCredential:
+        """Return a new credential that exchanges ``user_assertion``.
+
+        Args:
+            user_assertion: The verified incoming user token.
+        """
+        ...
+
+
+class UserToken:
+    """A run's verified incoming user token and what can exchange it.
+
+    Package-internal. The host creates one per request from the token its
+    authenticator verified; ``repr`` never shows the token.
+    """
+
+    def __init__(self, assertion: str, exchange: UserTokenExchange) -> None:
+        self._assertion = assertion
+        self._exchange = exchange
+
+    def __repr__(self) -> str:
+        return "UserToken(<hidden>)"
+
+    def credential(self) -> UserTokenCredential:
+        """Return a new on-behalf-of credential for this token."""
+        return self._exchange.on_behalf_of(self._assertion)
+
+
+type RemoteIdentity = Service | OnBehalfOf
+"""How a run authenticates to one remote agent."""
+
+
+def checked_remotes(
+    remotes: Mapping[str, RemoteIdentity] | None,
+) -> dict[str, RemoteIdentity]:
     """Check a ``remotes=`` mapping and return a copy.
 
     Raises:
-        DefinitionError: A name is not a string or an identity is not a
-            ``Service`` with an ``OutboundCredential``.
+        DefinitionError: A name is not a string, or an identity is neither
+            ``OnBehalfOf`` nor a ``Service`` with an ``OutboundCredential``.
     """
     checked = dict(remotes or {})
     for name, identity in checked.items():
-        if not isinstance(name, str) or not isinstance(identity, Service):
+        if not isinstance(name, str) or not isinstance(identity, Service | OnBehalfOf):
             raise DefinitionError(
-                "remotes= maps agent names to Service(credential=...) identities."
+                "remotes= maps agent names to Service(credential=...) or "
+                "OnBehalfOf(scope=...) identities."
             )
-        if not isinstance(identity.credential, OutboundCredential):
+        if isinstance(identity, Service) and not isinstance(
+            identity.credential, OutboundCredential
+        ):
             raise DefinitionError(
                 f"Remote '{name}': Service credential must implement "
                 "OutboundCredential (headers() and satisfies())."
@@ -165,7 +265,12 @@ def checked_remotes(remotes: Mapping[str, Service] | None) -> dict[str, Service]
     return checked
 
 
-def check_identity(name: str, card: AgentCard, identity: Service | None) -> None:
+def on_behalf_of_names(remotes: Mapping[str, RemoteIdentity]) -> list[str]:
+    """Return the names of the ``OnBehalfOf`` remotes, sorted."""
+    return sorted(n for n, i in remotes.items() if isinstance(i, OnBehalfOf))
+
+
+def check_identity(name: str, card: AgentCard, identity: RemoteIdentity | None) -> None:
     """Check that the configured identity meets the security the card declares.
 
     A card that declares no security needs no identity. Otherwise the
@@ -183,9 +288,10 @@ def check_identity(name: str, card: AgentCard, identity: Service | None) -> None
     if identity is None:
         raise DefinitionError(
             f"Agent '{name}' requires credentials; configure "
-            f"remotes={{'{name}': Service(credential=...)}}."
+            f"remotes={{'{name}': OnBehalfOf(scope=...)}} or "
+            "Service(credential=...)."
         )
-    credential = identity.credential
+    credential = identity.credential if isinstance(identity, Service) else identity
     for schemes in alternatives:
         if all(s is not None and credential.satisfies(s) for s in schemes):
             return

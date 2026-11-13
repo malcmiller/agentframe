@@ -33,6 +33,7 @@ from agentframe import (
     HostConfig,
     InputValidationError,
     LimitExceededError,
+    OnBehalfOf,
     OutputValidationError,
     Remote,
     RemoteAgentError,
@@ -405,6 +406,7 @@ async def research(peer: Peer, hops: int = 0) -> Research:
         identity=None,
         hops=hops,
         max_hops=5,
+        credential=None,
     )
 
 
@@ -587,6 +589,7 @@ async def test_call_sends_the_credential_with_the_extension_header() -> None:
         identity=remotes["research-agent"],
         hops=0,
         max_hops=5,
+        credential=remotes["research-agent"].credential,
     )
 
     await binding.call("find_sources", topic=Topic(name="tides"))
@@ -607,6 +610,7 @@ async def test_ask_sends_the_credential_and_context_under_one_extension() -> Non
         invocation_id="run-1",
         principal=None,
         identity=with_key()["research-agent"],
+        credential=APIKeyCredential("planner-key"),
         hops=2,
         max_hops=5,
     )
@@ -752,6 +756,11 @@ async def test_an_open_card_is_called_with_the_configured_credential() -> None:
 def test_remotes_must_map_names_to_service_identities() -> None:
     with pytest.raises(DefinitionError, match="Service"):
         Runtime(remotes={"research-agent": APIKeyCredential("k")})  # type: ignore[dict-item]
+
+
+def test_on_behalf_of_needs_a_scope() -> None:
+    with pytest.raises(DefinitionError, match="scope"):
+        OnBehalfOf(scope="")
 
 
 def test_remotes_cannot_be_combined_with_a_runtime_on_agent_app() -> None:

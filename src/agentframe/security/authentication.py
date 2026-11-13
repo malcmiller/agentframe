@@ -7,7 +7,7 @@ into a 401 response before any task is created.
 
 import hmac
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from a2a.types import APIKeySecurityScheme, SecurityScheme
@@ -25,10 +25,16 @@ class VerifiedCaller:
     Attributes:
         id: Stable caller identifier; becomes ``Principal.id``.
         roles: Verified roles, mapped to permissions by ``role_permissions``.
+        user_assertion: The verified token of a signed-in user, which the
+            host may exchange on their behalf for ``OnBehalfOf`` remotes.
+            ``EntraIDAuth`` sets it for delegated user tokens only. It never
+            reaches ``Principal`` or ``RunContext``, is never forwarded, and
+            ``repr`` hides it.
     """
 
     id: str
     roles: frozenset[str] = frozenset()
+    user_assertion: str | None = field(default=None, repr=False, compare=False)
 
 
 class Authenticator(Protocol):

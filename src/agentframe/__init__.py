@@ -11,6 +11,7 @@ from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
 from agentframe.discovery.identity import (
     APIKeyCredential,
     EntraAppCredential,
+    OnBehalfOf,
     OutboundCredential,
     Service,
 )
@@ -146,6 +147,7 @@ __all__ = [
     "ModelResponse",
     "ModelRouter",
     "ModelSettings",
+    "OnBehalfOf",
     "OutboundCredential",
     "OutputCheck",
     "OutputSchema",

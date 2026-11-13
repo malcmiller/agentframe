@@ -45,10 +45,17 @@ from starlette.types import Receive, Scope, Send
 from agentframe.authoring.agent import Agent
 from agentframe.authoring.services import Services
 from agentframe.discovery.directory import AgentDirectory
-from agentframe.discovery.identity import Service
+from agentframe.discovery.identity import (
+    OnBehalfOf,
+    Service,
+    UserToken,
+    UserTokenExchange,
+    on_behalf_of_names,
+)
 from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.hosting.a2a_executor import (
     PRINCIPAL_STATE_KEY,
+    USER_TOKEN_STATE_KEY,
     RuntimeExecutor,
     incoming_context,
     is_skill_call,
@@ -71,7 +78,11 @@ from agentframe.hosting.routing import SkillRouter, routing_limits
 from agentframe.runtime.limits import RunLimits, check_within_ceiling
 from agentframe.runtime.options import merge_settings
 from agentframe.runtime.runtime import Runtime
-from agentframe.security.authentication import authenticate_request, www_authenticate
+from agentframe.security.authentication import (
+    API_KEY_HEADER,
+    principal_for,
+    www_authenticate,
+)
 from agentframe.security.authorization import AuthorizationPolicy
 from agentframe.security.execution_policy import ExecutionPolicy
 from agentframe.security.principal import Principal
@@ -88,6 +99,11 @@ _CANCEL_SECONDS = 5
 """How long shutdown waits for runs to unwind once it has cancelled them."""
 
 logger = logging.getLogger(__name__)
+
+_CREDENTIAL_HEADERS = frozenset(
+    {"authorization", "proxy-authorization", "cookie", API_KEY_HEADER.lower()}
+)
+"""Request headers kept out of the SDK's call context, which it logs."""
 
 
 class AgentApp:
@@ -155,7 +171,10 @@ class AgentApp:
             it requires credentials that ``remotes`` cannot provide. The
             application opens and closes it.
         remotes: How to authenticate to each remote agent, by name, when
-            ``runtime`` is not given; see ``Runtime``.
+            ``runtime`` is not given; see ``Runtime``. ``OnBehalfOf`` remotes
+            need ``host.auth`` to be ``EntraIDAuth`` with ``client_id=`` and
+            ``client_credential=``; each request's verified user token is
+            then exchanged for them, never forwarded.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
@@ -163,7 +182,10 @@ class AgentApp:
             is no directory, an agent or skill limit is explicitly set above
             ``host.limits_ceiling``, ``runtime`` is combined with ``services``,
             ``authorization``, ``policy``, ``directory`` or ``remotes``,
-            ``remotes`` is not a mapping of names to ``Service``, the authenticator
+            ``remotes`` is not a mapping of names to ``Service`` or
+            ``OnBehalfOf``, an ``OnBehalfOf`` remote's host does not
+            authenticate with ``EntraIDAuth`` configured for on-behalf-of
+            (API-key and anonymous callers support only ``Service``), the authenticator
             cannot describe its security on the Agent Card, or a
             ``ModelRouter`` cannot describe a skill's arguments as a JSON schema.
     """
@@ -180,7 +202,7 @@ class AgentApp:
         router: SkillRouter | None = None,
         a2a: A2AConfig | None = None,
         directory: AgentDirectory | None = None,
-        remotes: Mapping[str, Service] | None = None,
+        remotes: Mapping[str, Service | OnBehalfOf] | None = None,
     ) -> None:
         if runtime is not None and (
             services is not None
@@ -203,6 +225,7 @@ class AgentApp:
                 remotes=remotes,
             )
         runtime.validate(agent)
+        user_token_exchange = _user_token_exchange(runtime, host)
         _check_limits_within_ceiling(agent, host)
         definition = type(agent).definition()
         if isinstance(router, ModelRouter):
@@ -260,6 +283,7 @@ class AgentApp:
                     _guard_a2a_endpoint(
                         _acknowledge_skill_call_extension(a2a_route.endpoint),
                         host,
+                        user_token_exchange,
                         card,
                         deduplicator,
                         _task_finder(handler, context_builder),
@@ -288,6 +312,29 @@ class AgentApp:
         self._lifecycle.begin_shutdown()
 
 
+def _user_token_exchange(
+    runtime: Runtime, host: HostConfig
+) -> UserTokenExchange | None:
+    """Return what exchanges user tokens, when a remote is called on behalf of one.
+
+    Raises:
+        DefinitionError: An ``OnBehalfOf`` remote's host does not
+            authenticate users with ``EntraIDAuth`` configured for it.
+    """
+    # noinspection PyProtectedMember
+    names = on_behalf_of_names(runtime._remotes)
+    if not names:
+        return None
+    if not isinstance(host.auth, UserTokenExchange):
+        raise DefinitionError(
+            f"Remote '{names[0]}' is called OnBehalfOf the signed-in user, which "
+            "needs EntraIDAuth callers; with API-key or anonymous callers, use "
+            "Service(credential=...)."
+        )
+    host.auth.check_on_behalf_of()
+    return host.auth
+
+
 def _check_limits_within_ceiling(agent: Agent, host: HostConfig) -> None:
     """Fail when an agent or skill explicitly sets a limit above the ceiling."""
     if host.limits_ceiling is None:
@@ -313,6 +360,7 @@ def _readiness_endpoint(lifecycle: Lifecycle) -> Endpoint:
 def _guard_a2a_endpoint(
     sdk_endpoint: Endpoint,
     host: HostConfig,
+    user_token_exchange: UserTokenExchange | None,
     card: AgentCard,
     deduplicator: MessageDeduplicator,
     task_finder: Callable[[Request], FindTask],
@@ -323,7 +371,9 @@ def _guard_a2a_endpoint(
 
     1. Size: the body must fit ``host.max_request_bytes``. It is read here,
        before anything parses it, so an oversized body is never held in full.
-    2. Authentication: every request needs a caller the host verifies.
+    2. Authentication: every request needs a caller the host verifies. When
+       ``user_token_exchange`` is given, a signed-in user's verified token
+       is kept for the run's ``OnBehalfOf`` remotes, never anywhere else.
     3. Deduplication: a ``SendMessage`` that repeats one the caller already
        sent goes to the SDK for its original task, taking no run slot.
     4. Admission: any other ``SendMessage`` needs a free run slot and a host
@@ -342,13 +392,19 @@ def _guard_a2a_endpoint(
         request = with_body(request, body)
 
         try:
-            request.state.principal = await authenticate_request(
-                host.auth, request.headers, host.role_permissions
-            )
+            caller = await host.auth.authenticate(request.headers)
         except AuthenticationError:
             # The reply reveals nothing about the agent or its skills.
             return JSONResponse(
                 {"error": "Authentication required."}, 401, headers=challenge_headers
+            )
+        request.state.principal = (
+            principal_for(caller, host.role_permissions) if caller else None
+        )
+        request.state.user_token = None
+        if user_token_exchange and caller and caller.user_assertion:
+            request.state.user_token = UserToken(
+                caller.user_assertion, user_token_exchange
             )
 
         if not await _is_send_message(request):
@@ -593,7 +649,16 @@ class _CallerContextBuilder(DefaultServerCallContextBuilder):
 
     def build(self, request: Request) -> ServerCallContext:
         context = super().build(request)
+        # The SDK keeps the request headers in the call context and logs that
+        # context at debug level; credentials are no longer needed once the
+        # caller is verified, so they are dropped rather than logged.
+        context.state["headers"] = {
+            name: value
+            for name, value in context.state.get("headers", {}).items()
+            if name.lower() not in _CREDENTIAL_HEADERS
+        }
         context.state[PRINCIPAL_STATE_KEY] = request.state.principal
+        context.state[USER_TOKEN_STATE_KEY] = request.state.user_token
         slot: RunSlot | None = getattr(request.state, "run_slot", None)
         if slot is not None:
             context.state[RUN_SLOT_STATE_KEY] = slot

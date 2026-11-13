@@ -495,7 +495,13 @@ Implemented (#92): `remotes={name: Service(credential=...)}` on
 header="X-API-Key")`, `EntraAppCredential(credential, scope=...)`. Headers per
 request (send, polls, cancel) to `interface_url` only; no redirects. Startup:
 card security must be met by the entry, else `DefinitionError`; open cards need
-none. #93 `OnBehalfOf` plugs in as another per-remote mode.
+none. Implemented (#93): `OnBehalfOf(scope=...)` entries; credential on
+inbound `EntraIDAuth(client_id=audience, client_credential=secret|cert bytes|
+assertion func)`; delegated tokens (`scp`, not `idtyp=app`) kept privately as
+`VerifiedCaller.user_assertion`; one azure `OnBehalfOfCredential` per run.
+Non-Entra host/no credential -> startup `DefinitionError`; no user (app-only,
+local run) -> `PermissionDeniedError`; failed exchange -> `AuthenticationError`;
+never a `Service` fallback. Opt-in `entra` OBO test uses two registrations.
 `ClarificationNeededError(question, task_id, context_id)` fails a hosted
 orchestrator task. See `docs/design/discovery.md` and `docs/api/discovery.md`.
 

@@ -524,19 +524,31 @@ declaration is descriptive; the authenticator still enforces credentials.
 **Purpose / decision:** authenticate callers with Microsoft Entra v2.0 access
 tokens and map their verified app roles and scopes to permissions.
 
-**Signature status:** implemented (M7 story #76). Requires the optional extra
-`agentframe-py[entra]`, which pins `PyJWT[crypto]` and `httpx`; importing
+**Signature status:** implemented (M7 story #76; on-behalf-of parameters M8+
+#93). Requires the optional extra `agentframe-py[entra]`, which pins
+`PyJWT[crypto]`, `httpx` and (for on-behalf-of) `azure-identity`; importing
 `EntraIDAuth` without it raises `ImportError` naming the extra.
 
 ```text
-EntraIDAuth(*, tenant_id: str, audience: str, transport: httpx.AsyncBaseTransport | None = None)
+EntraIDAuth(
+    *,
+    tenant_id: str,
+    audience: str,
+    client_id: str | None = None,
+    client_credential: str | bytes | Callable[[], str] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    token_transport: azure.core.pipeline.transport.AsyncHttpTransport | None = None,
+)
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `tenant_id` | `str` | Required | The tenant (directory) ID, a GUID. Domain names and `common`/`organizations` are refused (`DefinitionError`): only tokens from this one tenant are accepted. |
 | `audience` | `str` | Required | The protected API's **application (client) ID**, a GUID. In v2.0 access tokens `aud` is the API's client ID, not its `api://` App ID URI (callers still request the token with the `api://.../.default` scope). Any other value, including an `api://` URI, raises `DefinitionError` naming this rule. |
+| `client_id` | `str \| None` | Optional; needed for [`OnBehalfOf`](#onbehalfof) remotes | The API's own application (client) ID, used to exchange user tokens. Must equal `audience` (case-insensitive), because Entra only exchanges a token whose `aud` is the app asking; otherwise `DefinitionError`. Give it together with `client_credential` or not at all. |
+| `client_credential` | `str \| bytes \| Callable[[], str] \| None` | Optional; needed for `OnBehalfOf` remotes | How the API proves its identity to Entra for on-behalf-of exchanges: a client secret (`str`), a PEM or PKCS12 certificate including its private key, without a password (`bytes`), or a function returning a client assertion (`Callable[[], str]`, for example a federated managed identity token). Load it from a secret store; `repr` never shows it. |
 | `transport` | `httpx.AsyncBaseTransport \| None` | Optional; default real HTTPS | Transport for fetching the tenant's metadata and signing keys, for example a test double or an outbound proxy. |
+| `token_transport` | `azure-core` async transport \| `None` | Optional; default real HTTPS | Transport for on-behalf-of token requests, for example a test double or an outbound proxy. |
 
 ```python
 from agentframe import EntraIDAuth, HostConfig
@@ -570,6 +582,11 @@ a request is accepted only when all of these hold:
 `VerifiedCaller.id` is `oid`. Its roles are the `roles` claim plus the
 space-separated `scp` scopes, in one namespace for `role_permissions`: both are
 defined on the API's own app registration. v1.0 tokens are not accepted.
+
+A delegated user token (one with an `scp` claim and no `idtyp: "app"`) is kept
+as the private `VerifiedCaller.user_assertion`, which only the host uses, for
+[`OnBehalfOf`](#onbehalfof) remotes. App-only tokens never are. It never
+reaches `Principal`, `RunContext`, logs or errors.
 
 **Signing keys:** fetched lazily on the first request (construction does no
 I/O), cached for 24 hours, and refetched at most once every 5 minutes when a
@@ -617,12 +634,11 @@ AGENTFRAME_TEST_ENTRA=1 AGENTFRAME_ENTRA_TENANT_ID=<tenant-id> \
 
 **Related:** [`Authenticator`](#authenticator), [identity guide](../guides/authorization.md).
 
-For M8+ remote calls, per-target `on_behalf_of` is the Entra-ingress default
-when a delegated user assertion is supported. Exchange for the target audience;
-never forward the incoming token. Explicit `service` uses agent identity.
-Exchange failure fails, never elevates via fallback. API-key/anonymous ingress
-supports only explicit service mode. Per-target configuration and claim/provider
-details remain open; see [OBO boundaries](../guides/authorization.md#cross-agent-identity-propagation-m8).
+For M8+ remote calls, [`OnBehalfOf`](#onbehalfof) is the recommended mode
+for Entra hosts: it exchanges the user's token for the target's scope and never
+forwards the incoming token. [`Service`](#service) uses the agent's own
+identity and is always explicit; there is no fallback between them. See
+[identity propagation](../guides/authorization.md#cross-agent-identity-propagation-m8).
 
 ## `APIKeyAuth`
 
@@ -703,8 +719,8 @@ enabling this never disables validation, limits, accounting or checks.
 
 **Purpose / decision:** per-remote outbound identity: call a remote agent with
 the calling agent's own credential (`service` mode). Implemented in M8+ (#92).
-Entra on-behalf-of (`OnBehalfOf`, #93) is a separate, later mode; there is no
-implicit mode and no fallback between modes.
+Entra on-behalf-of ([`OnBehalfOf`](#onbehalfof), #93) is the other mode; there
+is no implicit mode and no fallback between modes.
 
 **Signature status:** implemented as `Service(credential: OutboundCredential)`,
 a frozen dataclass, configured through `remotes=` on
@@ -713,7 +729,7 @@ a frozen dataclass, configured through `remotes=` on
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `credential` | [`OutboundCredential`](#outboundcredential) | Required | What every request to that remote carries, such as [`APIKeyCredential`](#apikeycredential) or [`EntraAppCredential`](#entraappcredential). |
-| `remotes=` | `Mapping[str, Service]` on `Runtime` / `AgentApp` | Optional; default no credentials | Keys are directory names, as in `Remote[Literal["name"]]`. Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. Kept separate from discovery, so credentials never live in registries or cards. Entries for names no skill uses are allowed. |
+| `remotes=` | `Mapping[str, Service \| OnBehalfOf]` on `Runtime` / `AgentApp` | Optional; default no credentials | Keys are directory names, as in `Remote[Literal["name"]]`. Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. Kept separate from discovery, so credentials never live in registries or cards. Entries for names no skill uses are allowed. |
 
 ```python
 import os
@@ -771,12 +787,144 @@ application's own and is never closed by AgentFrame.
   is still sent the credential.
 - A credential whose `headers()` raises fails the call with
   `AuthenticationError`; its error is logged by type only.
-- Invalid `remotes=` (a value that is not a `Service`, or a credential that
-  does not implement `OutboundCredential`) raises `DefinitionError` at
-  construction.
+- Invalid `remotes=` (a value that is neither a `Service` nor an
+  `OnBehalfOf`, or a credential that does not implement `OutboundCredential`)
+  raises `DefinitionError` at construction.
 
 **Related:** [identity propagation](../guides/authorization.md#cross-agent-identity-propagation-m8),
 [`Remote`](discovery.md#remoteliteralname).
+
+## `OnBehalfOf`
+
+**Purpose / decision:** per-remote outbound identity that calls a remote agent
+on behalf of the signed-in user, through the standard Microsoft Entra
+[on-behalf-of flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow).
+The remote applies the user's own permissions, so no agent gains more
+authority than the user has. It is the recommended mode for agents whose
+callers sign in with [`EntraIDAuth`](#entraidauth); `Service` stays explicit.
+Implemented in M8+ (#93).
+
+**Signature status:** implemented as `OnBehalfOf(scope: str)`, a frozen
+dataclass, configured through `remotes=` on [`AgentApp`](hosting.md#agentapp)
+(or its [`Runtime`](runtime.md#runtime)). The middle tier's own client
+credential lives on the inbound `EntraIDAuth(client_id=..., client_credential=...)`,
+because the exchange redeems the token that authenticator verified.
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `scope` | `str` | Required, non-empty | The remote's scope, `api://<target-client-id>/.default`. The exchanged token carries the delegated permissions the calling app was granted (and consented) on the target. |
+
+```python
+import os
+
+from agentframe import (
+    Agent, AgentApp, AgentDirectory, EntraIDAuth, HostConfig, OnBehalfOf,
+)
+
+
+def planner_app(directory: AgentDirectory, planner: Agent) -> AgentApp:
+    planner_client_id = os.environ["PLANNER_CLIENT_ID"]
+    return AgentApp(
+        agent=planner,  # an @agent instance with Remote[...] skill parameters
+        host=HostConfig(
+            public_url="https://planner.example.com",
+            auth=EntraIDAuth(
+                tenant_id=os.environ["TENANT_ID"],
+                audience=planner_client_id,
+                client_id=planner_client_id,  # must equal audience
+                client_credential=os.environ["PLANNER_CLIENT_SECRET"],
+            ),
+        ),
+        directory=directory,
+        remotes={
+            "research-agent": OnBehalfOf(
+                scope=f"api://{os.environ['RESEARCH_CLIENT_ID']}/.default"
+            ),
+        },
+    )
+```
+
+Prefer a certificate (`bytes`) or a federated client assertion
+(`Callable[[], str]`) over a client secret in production.
+
+**Behavior / failures:**
+
+- **Startup** (`AgentApp` construction): an `OnBehalfOf` remote whose host
+  `auth` is not `EntraIDAuth` (for example `APIKeyAuth` or `AllowAnonymous`),
+  or an `EntraIDAuth` without `client_id`/`client_credential`, raises
+  `DefinitionError`; `client_id != audience` already fails in `EntraIDAuth`.
+  Like `Service`, startup also checks the target's card: `OnBehalfOf` meets
+  OAuth 2.0, OpenID Connect and HTTP `bearer` schemes, so it fits
+  `EntraIDAuth` targets but not API-key cards.
+- **Each run** that binds an `OnBehalfOf` remote creates one
+  `azure.identity.aio.OnBehalfOfCredential` for the caller's verified token,
+  shared by all of that run's `OnBehalfOf` remotes and closed when the run
+  ends. Every request (`SendMessage`, `GetTask` polls, best-effort
+  `CancelTask`) sends `Authorization: Bearer <exchanged token>`; tokens are
+  cached until they near expiry, so one run normally exchanges once per
+  scope. Headers go only to the remote's validated interface origin, as for
+  `Service`. The incoming token is never forwarded.
+- **No signed-in user:** OBO works only for user principals. An app-only
+  caller (a token without `scp`, or with `idtyp: "app"`) and every local
+  `Runtime.run` fail with `PermissionDeniedError` when the run binds the
+  remote; hosted tasks end `REJECTED`. Nothing is exchanged or sent.
+- **Exchange failure** (Entra refuses the token, missing consent, an outage)
+  fails the call with `AuthenticationError`; hosted tasks end `FAILED`. The
+  error is logged by type only. There is never a fallback to `Service` or to
+  sending without credentials.
+- Tokens and the client credential never appear in logs, errors,
+  `Principal` or `RunContext`. The host also drops credential headers
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `X-API-Key`) from the A2A
+  SDK's call context, which the SDK logs at debug level.
+- **What the target sees:** the exchanged token's `oid` is the user, `azp` is
+  the calling agent's client ID, and `scp` lists the delegated permissions.
+  `EntraIDAuth` targets authorize on the user's roles and scopes through
+  `role_permissions`. Checking the calling app (`azp`) at the target is the
+  target's own application policy; AgentFrame does not add actor checks.
+
+**One-time setup: two app registrations** (Microsoft Entra admin center). The
+target (specialist) registration is the one described under
+[`EntraIDAuth`](#entraidauth), for example `agentframe-entra-test`, exposing
+`Documents.Read` with v2.0 tokens.
+
+1. **Orchestrator registration.** Register a second application (for example
+   `agentframe-obo-planner`) and note its client ID. In its **Manifest** set
+   `requestedAccessTokenVersion` to `2`.
+2. **Expose an API.** Set its Application ID URI to `api://<planner-client-id>`
+   and add a delegated scope, for example `Plans.Run`, so users can get a
+   token for the orchestrator.
+3. **Client credential.** Under **Certificates & secrets**, add a client
+   secret (or certificate or federated credential). This is
+   `EntraIDAuth(client_credential=...)`; keep it in a secret store.
+4. **API permission to the target.** Under **API permissions**, add
+   **My APIs** -> the target registration -> **Delegated permissions** ->
+   `Documents.Read`, then **Grant admin consent** (OBO has no user
+   interaction, so consent must exist up front). Alternatively, list the
+   orchestrator's client ID in the target's `knownClientApplications` for
+   combined consent.
+5. **User token for the orchestrator.** To get a token as yourself with the
+   Azure CLI, add the Azure CLI (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) as an
+   authorized client application for `Plans.Run` on the orchestrator, then:
+   `az login` and
+   `az account get-access-token --tenant <tenant-id> --scope api://<planner-client-id>/.default`.
+
+**Opt-in real test** (never in CI; `tests/integration/test_on_behalf_of.py`):
+
+```bash
+AGENTFRAME_TEST_ENTRA_OBO=1 AGENTFRAME_ENTRA_TENANT_ID=<tenant-id> \
+  AGENTFRAME_ENTRA_AUDIENCE=<target-client-id> \
+  AGENTFRAME_ENTRA_OBO_CLIENT_ID=<planner-client-id> \
+  AGENTFRAME_ENTRA_OBO_CLIENT_SECRET=<planner-client-secret> \
+  uv run pytest -m entra tests/integration/test_on_behalf_of.py
+```
+
+It serves the specialist (`EntraIDAuth` for the target) and the orchestrator
+(`EntraIDAuth` with the client secret and `OnBehalfOf`) on localhost, calls
+the orchestrator with your Azure CLI user token and checks the specialist
+answered for your `oid`. Your account needs `Documents.Read` consented as above.
+
+**Related:** [`EntraIDAuth`](#entraidauth), [`Service`](#service),
+[identity propagation](../guides/authorization.md#cross-agent-identity-propagation-m8).
 
 ## `OutboundCredential`
 
@@ -877,7 +1025,7 @@ token until it nears expiry. Satisfies OAuth 2.0, OpenID Connect and HTTP
 `bearer` card schemes (`EntraIDAuth` cards declare OpenID Connect). A failed
 token request fails the call with `AuthenticationError`. The token is never
 logged, put in errors or exposed on `RunContext`. This is not on-behalf-of: the
-remote sees the calling app, not the user (#93).
+remote sees the calling app, not the user; see [`OnBehalfOf`](#onbehalfof).
 
 For an `EntraIDAuth` target, grant the calling app an app role on the target's
 app registration (application permission, admin consent), map that role with

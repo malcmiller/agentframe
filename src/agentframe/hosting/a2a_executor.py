@@ -66,6 +66,7 @@ from a2a.utils.errors import InvalidParamsError
 from pydantic_core import to_json, to_jsonable_python
 
 from agentframe.authoring.agent import Agent
+from agentframe.discovery.identity import UserToken
 from agentframe.errors import (
     AgentFrameError,
     CancelledError,
@@ -100,6 +101,9 @@ from agentframe.security.principal import Principal
 
 PRINCIPAL_STATE_KEY = "agentframe.principal"
 """``ServerCallContext.state`` key holding the authenticated caller."""
+
+USER_TOKEN_STATE_KEY = "agentframe.user_token"
+"""``ServerCallContext.state`` key holding the caller's ``UserToken``, if any."""
 
 SKILL_FAILED_MESSAGE = "The skill failed."
 """What callers see when a skill raises an exception that is not AgentFrame's."""
@@ -290,6 +294,9 @@ class RuntimeExecutor(AgentExecutor):
         principal: Principal | None = context.call_context.state.get(
             PRINCIPAL_STATE_KEY
         )
+        user_token: UserToken | None = context.call_context.state.get(
+            USER_TOKEN_STATE_KEY
+        )
         started_at = asyncio.get_running_loop().time()
         message = context.message
         assert message is not None
@@ -333,6 +340,7 @@ class RuntimeExecutor(AgentExecutor):
                 accounting,
                 ceiling,
                 caller.hops,
+                user_token,
             )
             part = result_part(result.value, invocation_id, self._max_response_bytes)
         except AgentFrameError as error:
