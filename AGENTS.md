@@ -278,7 +278,8 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
   retries/backoff, one layer with provider SDK retries disabled. Every attempt
   consumes existing budgets/deadline. `@tool(side_effects=True)` never auto-retries;
   `idempotent=True` is not a blanket retry grant; both flags default False and
-  may combine (M5 #58).
+  may combine (M5 #58). No tool is ever auto-retried and model retries never
+  replay tools; repeated model-requested calls are not blocked (M5 #63).
 - A2A same verified caller + `messageId` within default 10 minutes returns
   original task; in-memory default, pluggable multi-instance store, not
   exactly-once. Store/window API, atomicity/payload conflicts remain open.

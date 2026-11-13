@@ -232,7 +232,14 @@ checks the actual arguments (for example, that the caller owns the order).
 Neither is mandatory for `side_effects=True`, but both are strongly advised.
 
 No tool is ever retried automatically, whatever its flags (#63), so a forgotten
-flag cannot cause a replay. No shell, filesystem, or network tools are granted by
+flag cannot cause a replay. All four combinations of `side_effects` and
+`idempotent` behave the same at run time: a tool that raises fails the run and
+is not run again, and a transient model retry re-sends a request that already
+holds earlier tool results, so it never re-runs a tool. A later model turn
+asking for the same call again is a new call, authorized and counted toward
+`max_tool_calls`; it is not blocked. For exactly-once effects, pass an
+idempotency key to the backend (see
+[retries and duplicate requests](../guides/limits.md#retries-and-duplicate-requests)). No shell, filesystem, or network tools are granted by
 default. Validated tool results will feed generation continuations under the
 same budgets, deadlines and outbound checks; defaults are 20 tool calls, 10 model
 attempts and 120 seconds per run. Application approval workflows are separate;

@@ -297,10 +297,58 @@ attempt. Implemented in M3 #37:
   incomplete output are never retried.
 
 Tools declare `@tool(side_effects=True)` or `@tool(idempotent=True)`; both
-default to `False` and may both be `True` (M5 #58).
-Side-effecting tools are **never automatically retried**; an idempotence
-declaration is not permission to replay or an exactly-once guarantee.
-Additional tool retry rules remain open.
+default to `False` and may both be `True` (M5 #58). Implemented in M5 #63:
+
+- **No tool is ever retried automatically**, whatever its flags. A tool that
+  raises fails the run at once; it is not run again and the model is not
+  called again. The flags are declarations for readers and policies, not
+  retry switches:
+
+  | `side_effects` | `idempotent` | Automatic tool retry |
+  | --- | --- | --- |
+  | `False` | `False` | Never |
+  | `True` | `False` | Never |
+  | `False` | `True` | Never |
+  | `True` | `True` | Never |
+
+- **A model retry never replays a tool.** A retry re-sends the same model
+  request, whose history already holds the results of the tools that ran.
+  If the continuation after `cancel_order` fails transiently, only that model
+  call is retried; the order is cancelled once. A retry that would exceed
+  `max_model_calls` fails the run with `ModelCallLimitExceededError`, still
+  without re-running the tool.
+- **Repeated calls are not blocked.** When the model asks for the same
+  side-effecting call again in a later turn, that is a new model decision: it
+  is authorized again, counts toward `max_tool_calls` and runs. AgentFrame does
+  not compare arguments across calls.
+
+A tool that wants retries implements them itself, inside the function. For
+exactly-once effects, make the backend operation idempotent: pass an
+idempotency key the backend deduplicates on, derived from stable inputs such
+as `ctx.invocation_id` plus the business arguments, so a repeated call within
+one run is a no-op. A key derived only from the invocation ID still lets a new
+run (a new user request) act again.
+
+```python
+from agentframe import Inject, RunContext, tool
+
+
+class Payments:  # Application-defined; deduplicates on idempotency_key.
+    async def refund(self, order_id: str, *, idempotency_key: str) -> None: ...
+
+
+@tool(description="Refund an order.", side_effects=True, idempotent=True)
+async def refund_order(
+    order_id: str, payments: Inject[Payments], ctx: RunContext
+) -> str:
+    await payments.refund(
+        order_id, idempotency_key=f"{ctx.invocation_id}:refund:{order_id}"
+    )
+    return "refunded"
+```
+
+Declare `idempotent=True` only when the tool really is (here, because the
+backend deduplicates); the declaration itself guarantees nothing.
 
 For A2A, **same verified caller + same `messageId` within 10 minutes** returns
 the original task instead of re-running. The window is configurable; storage
