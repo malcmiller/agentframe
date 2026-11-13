@@ -345,13 +345,14 @@ inference cost, authorization or validation.
 See [verified A2A mechanisms and open extension schema](mcp-skills.md#a2a-request-styles-and-extension-boundary);
 no final URI, selector key or wire schema is selected here.
 
-Identity mode is configured per remote: `on_behalf_of` defaults when ingress
+Identity mode is configured per remote: `OnBehalfOf` is recommended when ingress
 used Entra, exchanging for a target-scoped token through standard Entra OBO;
 `service` explicitly uses the calling agent's identity (background/no-user work).
 API-key/anonymous ingress can use only service mode, never inferred user delegation.
 Never forward an incoming token as-is or fall back on exchange failure. Target
 validates original-user/calling-agent identity and its own permissions; no authority
-amplification. Exact per-remote configuration and claim-validation details remain open.
+amplification. Implemented as `remotes={name: Service(...) | OnBehalfOf(scope=...)}`
+(#92, #93); actor (`azp`) checks at the target remain the target's own policy.
 See [identity propagation](../guides/authorization.md#cross-agent-identity-propagation-m8).
 
 Send remaining deadline automatically; an AgentFrame receiver takes the minimum

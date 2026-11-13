@@ -12,7 +12,7 @@ adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
 `TimeoutLimitExceededError` subtypes. M5 #61 adds `ToolCallLimitExceededError`
 and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`; M8+ #84 adds `RemoteAgentError` and #87 adds
 `Runtime(directory=...)`, `Runtime.validate_remotes` and `ClarificationNeededError`;
-#92 adds `Runtime(remotes=...)`.
+#92 adds `Runtime(remotes=...)` and #93 its `OnBehalfOf` entries.
 The remaining parameters and errors
 arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
@@ -41,7 +41,7 @@ Runtime(
 | `tracing` | `TracingConfig` | Optional; tracing disabled unless configured | Application owns provider/exporters/sampling; accounting and invocation IDs do not depend on export. |
 | `services` | `Services` | Explicit when skills need registered dependencies | Resolve `Inject[T]` parameters; missing registration is a startup `DefinitionError`. Same service container contract as `AgentApp`. |
 | `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; required when a skill takes a [`Remote`](discovery.md#remoteliteralname) parameter (M8+ #87) | Where `Remote[Literal["name"]]` parameters find their agents; each run binds them at its start, within its deadline. The application opens and closes it. |
-| `remotes` | `Mapping[str, `[`Service`](authorization.md#service)`]` | Optional; default no credentials (M8+ #92) | How to authenticate to each remote agent, by directory name. A remote without an entry is called without credentials, which only works when its card declares no security. A value that is not a `Service` raises `DefinitionError`. |
+| `remotes` | `Mapping[str, `[`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)`]` | Optional; default no credentials (M8+ #92, #93) | How to authenticate to each remote agent, by directory name. A remote without an entry is called without credentials, which only works when its card declares no security. Any other value raises `DefinitionError`. Local runs have no signed-in user, so an `OnBehalfOf` remote fails them with `PermissionDeniedError`. |
 
 ```python
 from agentframe import Runtime
@@ -57,7 +57,7 @@ AuthorizationPolicy | None = None)`; omitting `authorization` means no resource
 checks. M5 #62 adds `tool_authorization: ToolAuthorizationPolicy | None = None`
 and M7 #77 adds `policy: ExecutionPolicy | None = None`. M8+ #87 adds
 `directory: AgentDirectory | None = None` and #92 adds
-`remotes: Mapping[str, Service] | None = None`.
+`remotes: Mapping[str, Service | OnBehalfOf] | None = None`.
 
 **Behavior / failures:** no inference on construction. Validate definitions and
 configuration; create invocation-scoped context, enforce policy/limits, validate

@@ -16,7 +16,7 @@ agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 `AgentApp(*, agent, host, runtime=None, services=None, authorization=None,
 policy=None, router=None, a2a=None, directory=None, remotes=None)`, with
 `policy=` from M7 #77, `a2a=` from M7 #75, `directory=` from M8+ #87 and
-`remotes=` from #92; the other parameters
+`remotes=` from #92 (`OnBehalfOf` entries #93); the other parameters
 below arrive with their stories (`mcp=` later, later `ag_ui=`). `services=` and
 `ag_ui=` are decided; unspecified omission details remain illustrative.
 
@@ -42,7 +42,7 @@ AgentApp(
 | `authorization` | `AuthorizationPolicy` | Optional; only without `runtime=` | Resource policy applied to every run, as on [`Runtime`](runtime.md#runtime). |
 | `policy` | [`ExecutionPolicy`](authorization.md#executionpolicy) | Optional; only without `runtime=` (M7 #77) | Input, model-request and output checks for every run, as on [`Runtime`](runtime.md#runtime). Model-request checks also cover routing model calls, with `skill=None`. |
 | `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; only without `runtime=`; required when a skill takes a `Remote` parameter (M8+ #87) | Where [`Remote[Literal["name"]]`](discovery.md#remoteliteralname) parameters find their agents. Construction fails without it; server startup looks up every name with [`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes) and fails for an unknown name, an invalid card, or a card requiring credentials that `remotes=` cannot provide. The application opens and closes it; the app never does. |
-| `remotes` | `Mapping[str, `[`Service`](authorization.md#service)`]` | Optional; only without `runtime=` (M8+ #92) | How to authenticate to each remote agent, by name, as on [`Runtime`](runtime.md#runtime). Never forwards the incoming caller's credentials. |
+| `remotes` | `Mapping[str, `[`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)`]` | Optional; only without `runtime=` (M8+ #92, #93) | How to authenticate to each remote agent, by name, as on [`Runtime`](runtime.md#runtime). Never forwards the incoming caller's credentials. `OnBehalfOf` needs `auth=EntraIDAuth(client_id=..., client_credential=...)`, else `DefinitionError` at construction. |
 | `ag_ui` | `AGUIConfig` | Later explicit opt-in, off unless enabled | `AGUIConfig(enabled=True)` serves `/ag-ui` with the same auth/permissions/limits. |
 
 Supply an instance of [`Echo`](agents.md#agent) for this single-skill

@@ -696,7 +696,7 @@ The decided authoring surface is [`Remote[Literal["name"]]`](#remoteliteralname)
 | Concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | Discovered destination/card | Validated reference/native card; client interface open | Needed for selected interaction | Re-check destinations, trust, binding and current authorization, not just cache freshness. |
-| Outbound identity | `remotes={name: Service(credential=...)}` (#92); `OnBehalfOf` is #93 | OBO recommended for Entra ingress; service explicit | Exchange target-scoped tokens; never forward incoming token or fall back on exchange failure. API-key/anonymous ingress supports only service. See [`Service`](authorization.md#service). |
+| Outbound identity | `remotes={name: Service(credential=...)}` (#92) or `OnBehalfOf(scope=...)` (#93) | OBO recommended for Entra ingress; service explicit | Exchange target-scoped tokens; never forward incoming token or fall back on exchange failure. API-key/anonymous ingress supports only service. See [`Service`](authorization.md#service) and [`OnBehalfOf`](authorization.md#onbehalfof). |
 | Deadline/budget/depth | Shared AgentFrame extension; deadline and depth implemented (#89, [wire format](hosting.md#structured-skill-call-wire-format)), budget open | Remaining deadline/budget, default max 5 hops | Receiver lowers ceilings, reports actual usage; caller enforces locally. Other peers' usage unknown, never zero. No hard billing promise. |
 | Typed proxy | Later optional `Remote[ResearchAgent]` | Not first multi-agent release | Method syntax could use same structured request; no proprietary RPC. |
 
@@ -739,8 +739,8 @@ the `Literal`. The string form `Remote["name"]` is not used, because
 **Signature status:** the annotation, [`ask`](#remoteask), [`call`](#remotecall)
 (#88), the `directory=` parameters, service-mode outbound identity
 ([`remotes=`](authorization.md#service), #92) and deadline/hop propagation
-(#89) are implemented; token budgets (#90) and Entra on-behalf-of (#93) are
-later stories. `Remote[ResearchAgent]` typed proxies are later only.
+(#89) and Entra on-behalf-of ([`OnBehalfOf`](authorization.md#onbehalfof),
+#93) are implemented; token budgets (#90) are a later story. `Remote[ResearchAgent]` typed proxies are later only.
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -748,7 +748,7 @@ later stories. `Remote[ResearchAgent]` typed proxies are later only.
 | Injection | Library-managed binding | New per run | Excluded from caller arguments, the Agent Card and every schema, like `Inject[T]`. A caller sending an argument with the parameter's name is rejected as an unknown argument. Tools cannot take `Remote` parameters. |
 | Directory | `Runtime(directory=...)` / `AgentApp(directory=...)` | Required when a skill takes `Remote` | Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. The application opens and closes it. |
 | Card security | The card's `security_schemes`/`security_requirements` | Checked at startup and each run | A card that declares no security is called without credentials. One that declares security needs a `remotes=` entry whose credential satisfies one of its requirements, otherwise `DefinitionError` naming the remote. Foundry A2A agents need [`EntraAppCredential`](authorization.md#entraappcredential) with `https://ai.azure.com/.default`. A source's `card_headers` are used only to fetch cards, never to call agents. |
-| Identity mode | [`Service(credential=...)`](authorization.md#service) in `remotes=` (#92); `OnBehalfOf` later (#93) | Per remote; no implicit mode | No token forwarding, authority amplification or stronger-identity fallback. |
+| Identity mode | [`Service(credential=...)`](authorization.md#service) (#92) or [`OnBehalfOf(scope=...)`](authorization.md#onbehalfof) (#93) in `remotes=` | Per remote; no implicit mode | No token forwarding, authority amplification or stronger-identity fallback. |
 | Hop limit (#89) | [`RunLimits.max_remote_hops`](configuration.md#runlimits) | `5` | A run at that depth cannot call another agent: `ask` and `call` raise `LimitExceededError` before sending. The depth (`RunContext.hops`) and remaining time go to peers that advertise them; see [`Remote.ask`](#remoteask). |
 
 Define a `type` alias per remote to keep signatures short:
