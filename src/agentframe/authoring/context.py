@@ -18,6 +18,9 @@ class RunContext:
         invocation_id: Library-generated identifier of this run.
         principal: Verified caller identity, or ``None`` when none was supplied.
         deadline: Event-loop time (``loop.time()``) when the run times out.
+        hops: The run's depth in a chain of calls between agents: 0 when
+            started locally or by a caller that sent no depth, and one more
+            than the calling run's depth when another agent sent it.
     """
 
     invocation_id: str
@@ -26,6 +29,7 @@ class RunContext:
     # Private per-run model state; the context is frozen but its accounting
     # must change as the run makes model calls.
     _generation: GenerationState = field(repr=False, compare=False)
+    hops: int = 0
 
     @overload
     async def generate(

@@ -166,7 +166,8 @@ async def test_card_publishes_skill_argument_schemas_on_the_extension() -> None:
                 "properties": {"text": {"type": "string", "title": "Text"}},
                 "required": ["text"],
             },
-        }
+        },
+        "context": ["deadline_ms", "hops"],
     }
 
 

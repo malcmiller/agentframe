@@ -290,7 +290,6 @@ async def test_structured_result_is_a_data_artifact(http: httpx.AsyncClient) -> 
 @pytest.mark.parametrize(
     ("message_change", "problem"),
     [
-        pytest.param({"metadata": {}}, "agentframe.skill", id="no-skill-id"),
         pytest.param(
             {"metadata": {"agentframe.skill": ""}},
             "agentframe.skill",
@@ -371,6 +370,19 @@ async def test_other_extensions_metadata_is_ignored(http: httpx.AsyncClient) -> 
     task = (await post(http, body)).json()["result"]["task"]
 
     assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
+async def test_an_activated_message_without_a_skill_is_free_text(
+    http: httpx.AsyncClient,
+) -> None:
+    # This app has no skill router, so free text is refused.
+    body = send_skill("greet", {"name": "Ada"})
+    body["params"]["message"]["metadata"] = {}
+
+    response = await post(http, body)
+
+    assert response.json()["error"]["code"] == -32004  # unsupported operation
+    assert await list_tasks(http) == []
 
 
 async def test_without_the_extension_a_message_is_free_text_not_a_skill_call(

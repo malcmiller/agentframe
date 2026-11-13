@@ -12,7 +12,13 @@ Outcomes map to native A2A results as follows:
   JSON data part. A malformed skill call is a JSON-RPC ``InvalidParams`` error
   and creates no task (the app's request handler checks it before the SDK
   creates one).
-- A message without the extension is free text. The application's
+- With the extension activated, the metadata may also carry the caller's
+  remaining time and the request's depth (see ``hosting.skill_call``). The run's
+  timeout is capped by that remaining time; a request deeper than
+  ``RunLimits.max_remote_hops`` ends in ``REJECTED`` before routing or the
+  skill. Malformed values are ``InvalidParams`` errors, like malformed calls.
+- Any other message is free text, including one that activates the
+  extension without naming a skill. The application's
   ``SkillRouter`` selects the skill and its arguments from the task's
   conversation, or asks the caller a question; without a router free text is
   refused before a task exists. Routing time counts against the run's timeout,
@@ -47,7 +53,7 @@ Arguments, prompts and results are never logged.
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from a2a.helpers import get_data_parts, new_data_part, new_task, new_text_part
@@ -77,16 +83,20 @@ from agentframe.hosting.routing import (
     eligible_skills,
     new_routing_context,
     route,
+    routing_limits,
 )
-from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI, SKILL_METADATA_KEY
+from agentframe.hosting.skill_call import (
+    SKILL_CALL_EXTENSION_URI,
+    SKILL_METADATA_KEY,
+    CallerContext,
+    depth_exceeded,
+    read_caller_context,
+)
 from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
 from agentframe.runtime.runtime import Runtime
 from agentframe.security.principal import Principal
-
-SKILL_METADATA_NAMESPACE = "agentframe."
-"""Prefix of the message metadata keys the skill-call extension owns."""
 
 PRINCIPAL_STATE_KEY = "agentframe.principal"
 """``ServerCallContext.state`` key holding the authenticated caller."""
@@ -106,26 +116,44 @@ RESPONSE_TOO_LARGE_MESSAGE = "The result exceeds the host's response size limit"
 logger = logging.getLogger(__name__)
 
 
-def is_skill_call(requested_extensions: set[str]) -> bool:
-    """Return whether a request activated the skill-call extension.
+def is_skill_call(requested_extensions: set[str], message: Message) -> bool:
+    """Return whether a message is a skill call.
 
-    Only such a request is a skill call; any other message is free text.
+    It is when the request activated the skill-call extension and the
+    message's metadata names a skill; any other message is free text.
 
     Args:
         requested_extensions: Extension URIs the caller activated with the
             ``A2A-Extensions`` header.
+        message: The caller's message.
     """
-    return SKILL_CALL_EXTENSION_URI in requested_extensions
+    return (
+        SKILL_CALL_EXTENSION_URI in requested_extensions
+        and SKILL_METADATA_KEY in message.metadata
+    )
+
+
+def incoming_context(requested_extensions: set[str], message: Message) -> CallerContext:
+    """Return the context the caller sent, or a root request's.
+
+    Only a request that activated the extension carries context; in any
+    other, ``agentframe.`` metadata is ignored.
+
+    Raises:
+        InvalidParamsError: As for ``read_caller_context``.
+    """
+    if SKILL_CALL_EXTENSION_URI not in requested_extensions:
+        return CallerContext()
+    return read_caller_context(message)
 
 
 def read_skill_call(message: Message) -> SkillCall:
     """Read the skill id and JSON arguments of a skill-call extension message.
 
-    Call it only for requests that activated the extension. The skill id comes
-    from the ``agentframe.skill`` metadata key and the arguments from the
-    message's only part, a data part holding a JSON object. Other metadata
-    keys starting with ``agentframe.`` are unknown fields; keys outside that
-    namespace belong to other extensions and are ignored.
+    Call it only for messages ``is_skill_call`` accepts, after
+    ``incoming_context`` has checked their other ``agentframe.`` metadata.
+    The skill id comes from the ``agentframe.skill`` metadata key and the
+    arguments from the message's only part, a data part holding a JSON object.
 
     Args:
         message: The caller's message.
@@ -135,22 +163,12 @@ def read_skill_call(message: Message) -> SkillCall:
         arguments.
 
     Raises:
-        InvalidParamsError: The message names no skill, carries unknown
-            ``agentframe.`` metadata, or does not have exactly one part that is
-            a JSON object data part. This is a protocol error, not a task
-            failure, and the message is never reinterpreted as free text.
+        InvalidParamsError: The skill id is empty or not a string, or the
+            message does not have exactly one part that is a JSON object data
+            part. This is a protocol error, not a task failure, and the
+            message is never reinterpreted as free text.
     """
-    metadata = dict(message.metadata.items())
-    unknown = sorted(
-        key
-        for key in metadata
-        if key.startswith(SKILL_METADATA_NAMESPACE) and key != SKILL_METADATA_KEY
-    )
-    if unknown:
-        raise InvalidParamsError(
-            f"Unknown skill-call metadata fields: {', '.join(unknown)}."
-        )
-    skill_id = metadata.get(SKILL_METADATA_KEY)
+    skill_id = message.metadata[SKILL_METADATA_KEY]
     if not isinstance(skill_id, str) or not skill_id:
         raise InvalidParamsError(
             f"A skill call must name a skill in metadata '{SKILL_METADATA_KEY}'."
@@ -273,10 +291,25 @@ class RuntimeExecutor(AgentExecutor):
             PRINCIPAL_STATE_KEY
         )
         started_at = asyncio.get_running_loop().time()
+        message = context.message
+        assert message is not None
+        # The request handler has already refused malformed context.
+        caller = incoming_context(context.requested_extensions, message)
+        ceiling = _with_caller_deadline(self._limits_ceiling, caller)
+        max_hops = routing_limits(self._agent, ceiling).max_remote_hops
+        assert max_hops is not None  # DEFAULT_LIMITS sets every field.
+        if caller.hops > max_hops:
+            await publish_failure(
+                task,
+                depth_exceeded(max_hops, invocation_id),
+                accounting,
+                TaskState.TASK_STATE_REJECTED,
+            )
+            return
         # noinspection PyBroadException
         try:
             call = await self._choose_skill(
-                context, principal, started_at, invocation_id, accounting
+                context, principal, started_at, invocation_id, accounting, ceiling
             )
             if isinstance(call, Clarification):
                 check_response_size(
@@ -298,7 +331,8 @@ class RuntimeExecutor(AgentExecutor):
                 RunOptions(),
                 started_at,
                 accounting,
-                self._limits_ceiling,
+                ceiling,
+                caller.hops,
             )
             part = result_part(result.value, invocation_id, self._max_response_bytes)
         except AgentFrameError as error:
@@ -323,11 +357,15 @@ class RuntimeExecutor(AgentExecutor):
         started_at: float,
         invocation_id: str,
         accounting: RunAccounting,
+        ceiling: RunLimits | None,
     ) -> SkillCall | Clarification:
-        """Read the skill call, or ask the router about the free-text message."""
+        """Read the skill call, or ask the router about the free-text message.
+
+        ``ceiling`` is the host's, capped by the caller's deadline.
+        """
         message = context.message
         assert message is not None
-        if is_skill_call(context.requested_extensions):
+        if is_skill_call(context.requested_extensions, message):
             # The request handler has already refused malformed skill calls.
             return read_skill_call(message)
         # The request handler refuses free text when there is no router.
@@ -340,7 +378,7 @@ class RuntimeExecutor(AgentExecutor):
             principal,
             started_at,
             accounting,
-            self._limits_ceiling,
+            ceiling,
             # Routing requests pass the same model-request checks as the skill's.
             # noinspection PyProtectedMember
             self._runtime._policy,
@@ -459,9 +497,13 @@ async def publish_result(
 
 
 async def publish_failure(
-    task: TaskUpdater, error: AgentFrameError, accounting: RunAccounting
+    task: TaskUpdater,
+    error: AgentFrameError,
+    accounting: RunAccounting,
+    state: TaskState | None = None,
 ) -> None:
-    """End the task in the state for ``error`` with its safe message.
+    """End the task in ``state`` (by default, the one for ``error``) with its
+    safe message.
 
     A ``DefinitionError`` names agent internals, so it is logged and callers
     get a generic message instead. An error without an invocation ID (one
@@ -470,7 +512,7 @@ async def publish_failure(
     """
     message = task.new_agent_message([new_text_part(_safe_message(error))])
     await task.update_status(
-        failure_state(error),
+        state or failure_state(error),
         message=message,
         metadata=run_metadata(error.invocation_id or _new_invocation_id(), accounting),
     )
@@ -515,6 +557,23 @@ def run_metadata(invocation_id: str, accounting: RunAccounting) -> dict[str, Any
             "tool_calls": accounting.tool_calls,
         },
     }
+
+
+def _with_caller_deadline(
+    ceiling: RunLimits | None, caller: CallerContext
+) -> RunLimits | None:
+    """Lower the host's timeout ceiling to the time the caller has left.
+
+    The run's timeout then counts from when it started, as usual, so a
+    caller's deadline can shorten the run but never extend it.
+    """
+    if caller.deadline_seconds is None:
+        return ceiling
+    ceiling = ceiling or RunLimits()
+    timeout = caller.deadline_seconds
+    if ceiling.timeout_seconds is not None:
+        timeout = min(timeout, ceiling.timeout_seconds)
+    return replace(ceiling, timeout_seconds=timeout)
 
 
 def _earlier_messages(task: Task | None) -> list[Message]:

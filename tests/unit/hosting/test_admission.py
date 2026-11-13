@@ -286,7 +286,8 @@ async def test_the_slot_is_freed_when_a_run_is_cancelled(
     [
         pytest.param(skill_message("quick", taskId="no-such-task"), id="unknown task"),
         pytest.param(
-            {**skill_message("quick"), "metadata": {}}, id="malformed skill call"
+            {**skill_message("quick"), "metadata": {"agentframe.skill": ""}},
+            id="malformed skill call",
         ),
     ],
 )

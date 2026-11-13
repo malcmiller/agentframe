@@ -287,6 +287,7 @@ class Runtime:
         started_at: float | None = None,
         accounting: RunAccounting | None = None,
         limits_ceiling: RunLimits | None = None,
+        hops: int = 0,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
@@ -295,7 +296,8 @@ class Runtime:
         passes ``started_at``, the event-loop time its run began, so time spent
         routing the request counts against the skill's timeout, its own
         ``accounting`` so it can report usage when the run fails or is
-        cancelled, and its ``limits_ceiling``, which caps the merged limits.
+        cancelled, its ``limits_ceiling``, which caps the merged limits (and
+        carries the caller's deadline), and the request's ``hops``.
         """
         started = time.perf_counter()
         accounting = accounting or RunAccounting()
@@ -310,6 +312,7 @@ class Runtime:
                 started_at,
                 accounting,
                 limits_ceiling,
+                hops,
             )
         except AgentFrameError as error:
             error.invocation_id = invocation_id
@@ -335,6 +338,7 @@ class Runtime:
         started_at: float | None,
         accounting: RunAccounting,
         limits_ceiling: RunLimits | None,
+        hops: int,
     ) -> Any:
         """Run the skill and return its validated value."""
         definition = type(agent).definition()
@@ -387,9 +391,12 @@ class Runtime:
                     skill=skill,
                     policy=self._policy,
                 )
-                ctx = RunContext(invocation_id, principal, deadline, generation)
+                ctx = RunContext(
+                    invocation_id, principal, deadline, generation, hops=hops
+                )
                 injected = await services.resolve(skill.injected)
-                remotes = await self._bind_remotes(skill, ctx)
+                assert limits.max_remote_hops is not None  # Set by DEFAULT_LIMITS.
+                remotes = await self._bind_remotes(skill, ctx, limits.max_remote_hops)
                 result = await method(
                     **validated_arguments, **injected, **remotes, ctx=ctx
                 )
@@ -437,9 +444,12 @@ class Runtime:
             )
 
     async def _bind_remotes(
-        self, skill: SkillDefinition, ctx: RunContext
+        self, skill: SkillDefinition, ctx: RunContext, max_hops: int
     ) -> dict[str, object]:
-        """Create this run's ``Remote`` bindings, within the run's deadline."""
+        """Create this run's ``Remote`` bindings, within the run's deadline.
+
+        ``max_hops`` is the run's ``RunLimits.max_remote_hops``.
+        """
         bindings: dict[str, object] = {}
         for parameter_name, name in skill.remotes.items():
             assert self._directory is not None  # Checked before the run starts.
@@ -450,6 +460,8 @@ class Runtime:
                 invocation_id=ctx.invocation_id,
                 principal=ctx.principal,
                 identity=self._remotes.get(name),
+                hops=ctx.hops,
+                max_hops=max_hops,
             )
         return bindings
 

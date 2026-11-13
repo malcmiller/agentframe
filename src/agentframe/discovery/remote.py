@@ -41,7 +41,13 @@ from agentframe.errors import (
     RemoteAgentError,
     TimeoutLimitExceededError,
 )
-from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI, SKILL_METADATA_KEY
+from agentframe.hosting.skill_call import (
+    SKILL_CALL_EXTENSION_URI,
+    SKILL_METADATA_KEY,
+    advertised_context,
+    context_metadata,
+    depth_exceeded,
+)
 from agentframe.security.principal import Principal
 
 logger = logging.getLogger(__name__)
@@ -86,6 +92,8 @@ class Remote[N: str]:
         principal: The run's verified caller, kept for outbound identity.
         credential: What to authenticate every request with, or ``None`` to
             send none. Its headers go only to ``found.interface_url``.
+        hops: The run's depth in a chain of calls between agents.
+        max_hops: The run's ``RunLimits.max_remote_hops``.
     """
 
     def __init__(
@@ -97,6 +105,8 @@ class Remote[N: str]:
         invocation_id: str,
         principal: Principal | None,
         credential: OutboundCredential | None = None,
+        hops: int,
+        max_hops: int,
     ) -> None:
         self._found = found
         self._transport = transport
@@ -104,6 +114,11 @@ class Remote[N: str]:
         self._invocation_id = invocation_id
         self._principal = principal
         self._credential = credential
+        self._hops = hops
+        self._max_hops = max_hops
+        # What the peer's card says it reads; a peer that lists nothing,
+        # like any non-AgentFrame agent, gets plain A2A.
+        self._context_fields = advertised_context(found.card)
         self._agent = f"Agent '{found.reference.name}'"
 
     @property
@@ -115,10 +130,13 @@ class Remote[N: str]:
         """Send plain text to the agent and return its text answer.
 
         The text goes as one native A2A text part, so any A2A 1.0 agent can
-        answer it. The answer is untrusted content, never instructions or
-        identity. Waits no longer than the run's deadline; if the run times
-        out or is cancelled while waiting, the remote task is cancelled
-        (best effort) and the timeout or cancellation goes on.
+        answer it. When the agent's card lists AgentFrame context fields, the
+        run's remaining time and the request's depth go along with it in the
+        AgentFrame extension; otherwise the message is plain A2A. The answer
+        is untrusted content, never instructions or identity. Waits no longer
+        than the run's deadline; if the run times out or is cancelled while
+        waiting, the remote task is cancelled (best effort) and the timeout
+        or cancellation goes on.
 
         Args:
             text: The request. Untrusted as far as the remote agent knows.
@@ -136,7 +154,10 @@ class Remote[N: str]:
                 request, ended its task in any state but completed, or
                 answered with something other than text.
             TimeoutLimitExceededError: The run's deadline passed first.
+            LimitExceededError: The run is already at its
+                ``max_remote_hops`` depth; nothing is sent.
         """
+        self._check_depth()
         message = Message(
             message_id=str(uuid.uuid4()),
             role=Role.ROLE_USER,
@@ -163,7 +184,8 @@ class Remote[N: str]:
 
         The call uses AgentFrame's skill-call extension, so the peer runs
         exactly ``skill`` with ``arguments``; it never falls back to free text.
-        Waiting, deadline, cancellation and question handling match ``ask``.
+        Waiting, deadline, cancellation, question handling and the caller
+        context sent to peers that advertise it match ``ask``.
 
         Args:
             skill: The skill's ID on the agent's card.
@@ -189,6 +211,8 @@ class Remote[N: str]:
                 for a per-call token ceiling that is not implemented yet.
             ClarificationNeededError: The remote agent asked a question.
             TimeoutLimitExceededError: The run's deadline passed first.
+            LimitExceededError: The run is already at its
+                ``max_remote_hops`` depth; nothing is sent.
             pydantic_core.PydanticSerializationError: An argument cannot be
                 represented as JSON. Nothing is sent.
         """
@@ -198,6 +222,7 @@ class Remote[N: str]:
                 "token ceiling, which is not implemented yet",
                 invocation_id=self._invocation_id,
             )
+        self._check_depth()
         self._check_card_offers(skill)
         message = self._skill_call_message(skill, arguments)
         reply = await self._start(message, extensions=[SKILL_CALL_EXTENSION_URI])
@@ -287,12 +312,18 @@ class Remote[N: str]:
     async def _send(
         self, message: Message, extensions: Sequence[str]
     ) -> Task | Message:
+        # A peer that lists no context fields, like any non-AgentFrame
+        # agent, gets plain A2A.
+        if self._context_fields and SKILL_CALL_EXTENSION_URI not in extensions:
+            extensions = [*extensions, SKILL_CALL_EXTENSION_URI]
+        context = await self._call_context(extensions)
+        # After the credential's headers, so the time they took is not sent.
+        self._add_caller_context(message, context)
         # Returning at once gives the task ID needed to cancel it later.
         request = SendMessageRequest(
             message=message,
             configuration=SendMessageConfiguration(return_immediately=True),
         )
-        context = await self._call_context(extensions)
         with self._translated_errors():
             response = await self._transport.send_message(request, context=context)
         if response.HasField("task"):
@@ -405,6 +436,34 @@ class Remote[N: str]:
             )
         return "\n".join(_texts(parts))
 
+    def _check_depth(self) -> None:
+        if self._hops + 1 > self._max_hops:
+            raise depth_exceeded(self._max_hops, self._invocation_id)
+
+    def _add_caller_context(self, message: Message, context: ClientCallContext) -> None:
+        """Add the context fields the peer's card lists to ``message``.
+
+        Args:
+            message: The message to send.
+            context: The request's call context; its timeout is the run's
+                remaining time.
+        """
+        assert context.timeout is not None  # _call_context always sets one.
+        message.metadata.update(
+            context_metadata(
+                self._context_fields,
+                remaining_seconds=context.timeout,
+                hops=self._hops + 1,
+            )
+        )
+
+    def _remaining(self) -> float:
+        """Return the run's remaining seconds, or raise once there are none."""
+        remaining = self._deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise self._timeout()
+        return remaining
+
     async def _call_context(self, extensions: Sequence[str] = ()) -> ClientCallContext:
         """Give one request its headers and bound it by the run's remaining time.
 
@@ -415,9 +474,7 @@ class Remote[N: str]:
             extensions: Extension URIs the request activates.
         """
         headers = await self._headers()
-        remaining = self._deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            raise self._timeout()
+        remaining = self._remaining()
         if extensions:
             headers[HTTP_EXTENSION_HEADER] = ",".join(extensions)
         return ClientCallContext(timeout=remaining, service_parameters=headers)
@@ -544,6 +601,8 @@ async def bind_remote(
     invocation_id: str,
     principal: Principal | None,
     identity: Service | None,
+    hops: int,
+    max_hops: int,
 ) -> Remote[Any]:
     """Create the binding one run passes to a ``Remote`` skill parameter.
 
@@ -564,4 +623,6 @@ async def bind_remote(
         invocation_id=invocation_id,
         principal=principal,
         credential=identity.credential if identity is not None else None,
+        hops=hops,
+        max_hops=max_hops,
     )
