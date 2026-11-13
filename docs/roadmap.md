@@ -425,6 +425,29 @@ the in-memory task store, is tracked in #128. M7 is complete once installed-whee
 examples (#80) are merged; publishing the first release to PyPI (#82) is done
 by the maintainer.
 
+M7 hardening acceptance was proven on **2026-11-12** (#79): host ceilings
+(#71), admission (#72), size limits (#73), graceful shutdown and probes (#74),
+deduplication (#75), `EntraIDAuth` (#76) and `ExecutionPolicy` (#77, #78) are
+merged, and `tests/integration/test_hardening.py` drives every M7 guarantee
+offline in CI, through the official A2A client where hosting is involved:
+library -> agent -> skill -> run limits capped by `limits_ceiling`; policy
+checks, scoped service setup, routing, model calls and retry waits spending
+one deadline; local `asyncio` cancellation re-raised unchanged and hosted
+`CancelTask`/shutdown ending tasks `CANCELED`, with per-run services closed on
+success, failure, timeout and cancel; missing services failing startup;
+`RunResult` metadata without tracing; every hosted failure carrying an
+invocation ID and safe message, with a log-capture check that no argument
+values, prompts or credentials reach callers or logs; API-key, permission,
+resource-policy, execution-policy and Entra failures; and admission, byte
+limits, probes, drain, deduplication and caller isolation. It added one
+fix: every `FAILED` hosted run now logs its invocation ID, error class and safe
+message. Local runs never convert `asyncio.CancelledError`; AgentFrame
+`CancelledError` only reports a cancelled hosted task (later a remote call).
+Skill tracebacks stay in operator logs. A shutdown race it found, harmless with
+the in-memory task store, is tracked in #128. M7 is complete once installed-wheel
+examples (#80) are merged; publishing the first release to PyPI (#82) is done
+by the maintainer.
+
 ### Resolved M0 platform and API decisions
 
 Approved and source-checked on **2026-11-11**. These resolve the Python, A2A
