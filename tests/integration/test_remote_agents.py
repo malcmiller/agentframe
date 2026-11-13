@@ -1,4 +1,7 @@
-"""An orchestrator asks a specialist over real A2A, through ``Remote.ask``.
+"""An orchestrator asks and calls a specialist over real A2A.
+
+``Remote.ask`` sends free text; ``Remote.call`` runs a skill by ID through the
+skill-call extension and validates its typed result.
 
 Both agents are ``AgentApp``s served over localhost HTTP. The orchestrator
 finds the specialist through an ``AgentDirectory`` and is itself called with
@@ -12,8 +15,9 @@ from typing import Literal
 
 import pytest
 from a2a.client import Client
-from a2a.helpers import get_artifact_text, get_message_text
+from a2a.helpers import get_artifact_text, get_data_parts, get_message_text
 from a2a.types import CancelTaskRequest, GetTaskRequest, Message, TaskState
+from pydantic import BaseModel
 
 from a2a_client import call_skill, connect
 from agentframe import (
@@ -25,6 +29,7 @@ from agentframe import (
     ClarificationNeededError,
     FileAgentRegistry,
     HostConfig,
+    OutputValidationError,
     Remote,
     RemoteAgentError,
     RoutingContext,
@@ -39,9 +44,19 @@ from agentframe import (
     agent,
     skill,
 )
+from agentframe.discovery.remote import bind_remote
 from local_server import ServeLocally, lifespan_startup
 
 type Research = Remote[Literal["research-agent"]]
+
+
+class Topic(BaseModel):
+    name: str
+
+
+class Source(BaseModel):
+    title: str
+    url: str
 
 
 # The specialist: answers free text, asks back, fails or waits on request.
@@ -67,6 +82,10 @@ class Specialist(Agent):
                 raise
         return f"Findings on {topic}"
 
+    @skill(id="find_sources", description="Find sources.", tags=["research"])
+    async def find_sources(self, topic: Topic, ctx: RunContext) -> list[Source]:
+        return [Source(title=f"About {topic.name}", url="https://example.com/")]
+
 
 class TopicRouter(SkillRouter):
     """Routes any text to ``research``, but asks back for "unclear"."""
@@ -83,7 +102,7 @@ class TopicRouter(SkillRouter):
         return SkillCall("research", {"topic": text})
 
 
-# The orchestrator: one skill that asks the specialist.
+# The orchestrator: asks the specialist, or calls its skill.
 
 
 @agent(name="Planner", description="Plans with research.", version="0.1.0")
@@ -91,6 +110,13 @@ class Planner(Agent):
     @skill(id="plan", description="Research a goal.", tags=["planning"])
     async def plan(self, goal: str, research: Research, ctx: RunContext) -> str:
         return await research.ask(goal)
+
+    @skill(id="sources", description="Find sources for a goal.", tags=["planning"])
+    async def sources(
+        self, goal: str, research: Research, ctx: RunContext
+    ) -> list[Source]:
+        topic = Topic(name=goal)
+        return await research.call("find_sources", topic=topic, output=list[Source])
 
 
 @pytest.fixture
@@ -228,3 +254,66 @@ async def test_startup_fails_for_an_unknown_remote_name(tmp_path: Path) -> None:
 
     assert reply["type"] == "lifespan.startup.failed"
     assert "research-agent" in reply["message"]
+
+
+# Calling a skill
+
+
+async def bound(directory: AgentDirectory) -> Research:
+    """A binding like the one a run gets, for calls no Planner skill makes."""
+    deadline = asyncio.get_running_loop().time() + 10
+    return await bind_remote(
+        directory,
+        "research-agent",
+        deadline=deadline,
+        invocation_id="run-1",
+        principal=None,
+    )
+
+
+async def test_the_orchestrator_returns_the_specialists_typed_result(
+    planner: Client,
+) -> None:
+    task = await call_skill(planner, "sources", {"goal": "tides"})
+
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    [data] = get_data_parts(task.artifacts[0].parts)
+    assert data == {"value": [{"title": "About tides", "url": "https://example.com/"}]}
+
+
+async def test_a_local_run_calls_the_specialist(directory: AgentDirectory) -> None:
+    runtime = Runtime(directory=directory)
+
+    found = await runtime.invoke(Planner(), skill="sources", arguments={"goal": "moon"})
+
+    assert found == [Source(title="About moon", url="https://example.com/")]
+
+
+async def test_a_skill_not_on_the_card_is_refused_with_no_fallback(
+    directory: AgentDirectory,
+) -> None:
+    research = await bound(directory)
+
+    with pytest.raises(RemoteAgentError, match="no skill 'summarize'"):
+        await research.call("summarize", text="tides")
+
+
+async def test_invalid_arguments_are_rejected_by_the_specialist(
+    directory: AgentDirectory,
+) -> None:
+    research = await bound(directory)
+
+    with pytest.raises(RemoteAgentError) as raised:
+        await research.call("find_sources", topic={"secret": "remote detail"})
+
+    assert raised.value.task_state == "TASK_STATE_REJECTED"
+    assert "secret" not in raised.value.message
+
+
+async def test_a_result_of_the_wrong_type_raises_output_validation_error(
+    directory: AgentDirectory,
+) -> None:
+    research = await bound(directory)
+
+    with pytest.raises(OutputValidationError):
+        await research.call("find_sources", topic={"name": "x"}, output=list[int])

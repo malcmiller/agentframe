@@ -3,14 +3,15 @@
 import asyncio
 import logging
 import uuid
-from collections.abc import Coroutine, Iterable, Iterator
+from collections.abc import Coroutine, Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Literal, TypeAliasType, get_args, get_origin
+from typing import Any, Literal, TypeAliasType, get_args, get_origin, overload
 
 from a2a.client import ClientCallContext
 from a2a.client.errors import A2AClientTimeoutError
 from a2a.client.transports import JsonRpcTransport
-from a2a.helpers import new_text_part
+from a2a.extensions.common import HTTP_EXTENSION_HEADER
+from a2a.helpers import get_data_parts, new_data_part, new_text_part
 from a2a.types import (
     CancelTaskRequest,
     GetTaskRequest,
@@ -27,14 +28,18 @@ from a2a.utils.errors import A2AError
 
 # protobuf ships no type stubs; ParseError is what the SDK raises for bad replies.
 from google.protobuf.json_format import ParseError  # type: ignore[import-untyped]
+from pydantic import TypeAdapter, ValidationError
+from pydantic_core import to_jsonable_python
 
 from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
 from agentframe.errors import (
     ClarificationNeededError,
     DefinitionError,
+    OutputValidationError,
     RemoteAgentError,
     TimeoutLimitExceededError,
 )
+from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI, SKILL_METADATA_KEY
 from agentframe.security.principal import Principal
 
 logger = logging.getLogger(__name__)
@@ -46,6 +51,9 @@ _CANCEL_SECONDS = 2.0
 
 _cancel_requests: set[asyncio.Task[None]] = set()
 """Cancellations still being sent; see ``Remote._in_background``."""
+
+_RESERVED_ARGUMENT = "max_total_tokens"
+"""A ``call`` keyword reserved for the per-call token ceiling (#90)."""
 
 _UNFINISHED_STATES = (TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING)
 
@@ -130,22 +138,147 @@ class Remote[N: str]:
         if isinstance(reply, Message):
             return self._text(reply.parts)
         task = await self._wait(reply)
-        return self._answer(task)
+        return self._text(self._result_parts(task), task)
 
-    async def _start(self, message: Message) -> Task | Message:
+    @overload
+    async def call[T](
+        self, skill: str, /, *, output: type[T], **arguments: Any
+    ) -> T: ...
+
+    @overload
+    async def call(self, skill: str, /, **arguments: Any) -> Any: ...
+
+    async def call(
+        self, skill: str, /, *, output: type[Any] | None = None, **arguments: Any
+    ) -> Any:
+        """Run one of the agent's skills by ID and return its result.
+
+        The call uses AgentFrame's skill-call extension, so the peer runs
+        exactly ``skill`` with ``arguments``; it never falls back to free text.
+        Waiting, deadline, cancellation and question handling match ``ask``.
+
+        Args:
+            skill: The skill's ID on the agent's card.
+            output: The type to validate the result into, such as
+                ``list[Source]``. Without it the result is returned as decoded
+                JSON (numbers come back as ``float``) or as ``str`` for a text
+                result.
+            **arguments: The skill's arguments, sent as one JSON object in
+                Pydantic JSON mode, so Pydantic models and dates work.
+                ``output`` and ``max_total_tokens`` are reserved and cannot be
+                remote argument names.
+
+        Returns:
+            The skill's result, validated as ``output`` when given.
+
+        Raises:
+            RemoteAgentError: The card does not declare the skill-call
+                extension or the skill (nothing is sent), or the agent could
+                not be reached, refused the request (for example invalid
+                arguments), did not complete its task or sent no result.
+            OutputValidationError: The result does not match ``output``.
+            DefinitionError: ``max_total_tokens`` was passed; it is reserved
+                for a per-call token ceiling that is not implemented yet.
+            ClarificationNeededError: The remote agent asked a question.
+            TimeoutLimitExceededError: The run's deadline passed first.
+            pydantic_core.PydanticSerializationError: An argument cannot be
+                represented as JSON. Nothing is sent.
+        """
+        if _RESERVED_ARGUMENT in arguments:
+            raise DefinitionError(
+                f"'{_RESERVED_ARGUMENT}' is reserved for Remote.call's per-call "
+                "token ceiling, which is not implemented yet",
+                invocation_id=self._invocation_id,
+            )
+        self._check_card_offers(skill)
+        message = self._skill_call_message(skill, arguments)
+        reply = await self._start(message, extensions=[SKILL_CALL_EXTENSION_URI])
+        if isinstance(reply, Message):
+            value = self._result_value(reply.parts)
+        else:
+            task = await self._wait(reply)
+            value = self._result_value(self._result_parts(task), task)
+        return value if output is None else self._validated(value, output)
+
+    def _check_card_offers(self, skill: str) -> None:
+        card = self._found.card
+        uris = {extension.uri for extension in card.capabilities.extensions}
+        if SKILL_CALL_EXTENSION_URI not in uris:
+            raise RemoteAgentError(
+                f"{self._agent} does not declare the skill-call extension "
+                f"'{SKILL_CALL_EXTENSION_URI}'",
+                invocation_id=self._invocation_id,
+            )
+        if skill not in {card_skill.id for card_skill in card.skills}:
+            raise RemoteAgentError(
+                f"{self._agent} has no skill '{skill}' on its card",
+                invocation_id=self._invocation_id,
+            )
+
+    def _skill_call_message(self, skill: str, arguments: dict[str, Any]) -> Message:
+        message = Message(
+            message_id=str(uuid.uuid4()),
+            role=Role.ROLE_USER,
+            parts=[new_data_part(to_jsonable_python(arguments))],
+        )
+        message.metadata.update({SKILL_METADATA_KEY: skill})
+        return message
+
+    def _result_value(self, parts: Iterable[Part], task: Task | None = None) -> Any:
+        """Decode the one part an AgentFrame host sends as a skill's result.
+
+        A ``str`` result is a text part; anything else a data part
+        ``{"value": ...}``.
+        """
+        parts = list(parts)
+        if len(parts) == 1:
+            part = parts[0]
+            if part.HasField("text"):
+                return part.text
+            if part.HasField("data"):
+                [data] = get_data_parts([part])
+                if isinstance(data, dict) and data.keys() == {"value"}:
+                    return data["value"]
+        raise RemoteAgentError(
+            f"{self._agent} did not answer with a skill result",
+            task_id=task.id if task else None,
+            task_state=TaskState.Name(task.status.state) if task else None,
+            invocation_id=self._invocation_id,
+        )
+
+    def _validated(self, value: Any, output: type[Any]) -> Any:
+        try:
+            return TypeAdapter(output).validate_python(value)
+        except ValidationError:
+            # The validation details would repeat untrusted remote data.
+            raise OutputValidationError(
+                f"{self._agent} returned a result that does not match the "
+                "requested output type",
+                invocation_id=self._invocation_id,
+            ) from None
+
+    async def _start(
+        self, message: Message, *, extensions: Sequence[str] = ()
+    ) -> Task | Message:
         """Send the message; if the run stops meanwhile, cancel what it started.
 
         The peer may start the task before its reply arrives, so a cancelled
         send still finishes in the background to learn the task ID.
+
+        Args:
+            message: The message to send.
+            extensions: Extension URIs to activate for this request only.
         """
-        sending = asyncio.create_task(self._send(message))
+        sending = asyncio.create_task(self._send(message, extensions))
         try:
             return await asyncio.shield(sending)
         except asyncio.CancelledError:
             await self._in_background(self._cancel_when_started(sending))
             raise
 
-    async def _send(self, message: Message) -> Task | Message:
+    async def _send(
+        self, message: Message, extensions: Sequence[str]
+    ) -> Task | Message:
         # Returning at once gives the task ID needed to cancel it later.
         request = SendMessageRequest(
             message=message,
@@ -153,7 +286,7 @@ class Remote[N: str]:
         )
         with self._translated_errors():
             response = await self._transport.send_message(
-                request, context=self._call_context()
+                request, context=self._call_context(extensions)
             )
         if response.HasField("task"):
             return response.task
@@ -222,11 +355,16 @@ class Remote[N: str]:
                 self._invocation_id,
             )
 
-    def _answer(self, task: Task) -> str:
+    def _result_parts(self, task: Task) -> list[Part]:
+        """Return a completed task's result parts, or raise for any other end.
+
+        The parts are those of its artifacts, or of its final message when it
+        has no artifacts.
+        """
         state = task.status.state
         if state == TaskState.TASK_STATE_COMPLETED:
             parts = [part for artifact in task.artifacts for part in artifact.parts]
-            return self._text(parts or task.status.message.parts, task)
+            return parts or list(task.status.message.parts)
         if state == TaskState.TASK_STATE_INPUT_REQUIRED:
             raise ClarificationNeededError(
                 f"{self._agent} needs more input before it can answer",
@@ -254,18 +392,21 @@ class Remote[N: str]:
             )
         return "\n".join(_texts(parts))
 
-    def _call_context(self) -> ClientCallContext:
+    def _call_context(self, extensions: Sequence[str] = ()) -> ClientCallContext:
         """Bound one request by the run's remaining time.
 
         Headers go per request, never into the shared client's defaults.
+
+        Args:
+            extensions: Extension URIs the request activates.
         """
         remaining = self._deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             raise self._timeout()
-        return ClientCallContext(
-            timeout=remaining,
-            service_parameters={VERSION_HEADER: PROTOCOL_VERSION_1_0},
-        )
+        headers = {VERSION_HEADER: PROTOCOL_VERSION_1_0}
+        if extensions:
+            headers[HTTP_EXTENSION_HEADER] = ",".join(extensions)
+        return ClientCallContext(timeout=remaining, service_parameters=headers)
 
     @contextmanager
     def _translated_errors(self, task_id: str | None = None) -> Iterator[None]:

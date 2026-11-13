@@ -1,3 +1,4 @@
+import asyncio
 import itertools
 import json
 from typing import Any, Literal, assert_type
@@ -7,6 +8,7 @@ import pytest
 from a2a.helpers import new_data_part, new_task, new_text_artifact, new_text_part
 from a2a.types import Message, Role, SendMessageResponse, Task, TaskState
 from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]
+from pydantic import BaseModel
 
 from agentframe import (
     Agent,
@@ -19,6 +21,7 @@ from agentframe import (
     DefinitionError,
     HostConfig,
     InputValidationError,
+    OutputValidationError,
     Remote,
     RemoteAgentError,
     RunContext,
@@ -28,8 +31,8 @@ from agentframe import (
     tool,
 )
 from agentframe.discovery import remote
-from agentframe.discovery.remote import remote_name
-from agentframe.hosting.card import build_agent_card
+from agentframe.discovery.remote import bind_remote, remote_name
+from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
 from local_server import lifespan_startup
 
 ORIGIN = "https://research.example.com"
@@ -42,10 +45,23 @@ type Research = Remote[Literal["research-agent"]]
 REAL_POLL_DELAYS = remote.poll_delays
 
 
-# Checked by mypy --strict in CI: both spellings type-check, and ask returns str.
+class Topic(BaseModel):
+    name: str
+
+
+class Source(BaseModel):
+    title: str
+    pages: int
+
+
+# Checked by mypy --strict in CI: both spellings type-check, ask returns str and
+# call returns its output type, or Any without one.
 async def _type_checks(research: Research, direct: Remote[Literal["x"]]) -> None:
     assert_type(await research.ask("Research tides"), str)
     assert_type(await direct.ask("Hello"), str)
+    found = await research.call("find_sources", topic="tides", output=list[Source])
+    assert_type(found, list[Source])
+    assert_type(await research.call("find_sources", topic="tides"), Any)
 
 
 @agent(name="Planner", description="Plans with research.", version="0.1.0")
@@ -82,6 +98,23 @@ def card_json(interface_url: str = A2A_URL, **extra: Any) -> dict[str, Any]:
         "skills": [],
         **extra,
     }
+
+
+def skill_call_card(*skill_ids: str) -> dict[str, Any]:
+    """A card that offers the skill-call extension and the given skills."""
+    skills = [
+        {"id": skill_id, "name": skill_id, "description": "A skill.", "tags": []}
+        for skill_id in skill_ids
+    ]
+    capabilities = {"extensions": [{"uri": SKILL_CALL_EXTENSION_URI}]}
+    return card_json(capabilities=capabilities, skills=skills)
+
+
+def result(value: Any, state: TaskState = TaskState.TASK_STATE_COMPLETED) -> Task:
+    """A finished task whose artifact is a skill result as AgentFrame sends it."""
+    finished = task(state)
+    finished.artifacts.add(parts=[new_data_part({"value": value})])
+    return finished
 
 
 def task(state: TaskState, *parts: str) -> Task:
@@ -279,3 +312,111 @@ async def test_a_non_text_result_raises_remote_agent_error() -> None:
         await ask(Peer(finished))
 
     assert raised.value.task_state == "TASK_STATE_COMPLETED"
+
+
+# Calling a skill
+
+
+async def research(peer: Peer) -> Research:
+    deadline = asyncio.get_running_loop().time() + 10
+    return await bind_remote(
+        peer.directory(),
+        "research-agent",
+        deadline=deadline,
+        invocation_id="run-1",
+        principal=None,
+    )
+
+
+async def test_call_sends_a_skill_call_with_json_arguments() -> None:
+    peer = Peer(result([]), card=skill_call_card("find_sources"))
+
+    await (await research(peer)).call("find_sources", topic=Topic(name="tides"))
+
+    sent = peer.requests[-1]
+    message = json.loads(sent.content)["params"]["message"]
+    assert sent.headers["A2A-Extensions"] == SKILL_CALL_EXTENSION_URI
+    assert sent.headers["A2A-Version"] == "1.0"
+    assert message["metadata"] == {"agentframe.skill": "find_sources"}
+    assert message["parts"] == [{"data": {"topic": {"name": "tides"}}}]
+
+
+async def test_call_validates_the_result_into_the_output_type() -> None:
+    sources = [{"title": "Tide tables", "pages": 12}]
+    peer = Peer(
+        task(TaskState.TASK_STATE_WORKING),
+        result(sources),
+        card=skill_call_card("find_sources"),
+    )
+
+    found = await (await research(peer)).call(
+        "find_sources", topic="tides", output=list[Source]
+    )
+
+    assert found == [Source(title="Tide tables", pages=12)]
+    assert peer.methods() == ["SendMessage", "GetTask"]
+
+
+async def test_call_without_output_returns_the_json_value_or_text() -> None:
+    card = skill_call_card("count", "greet")
+    text_result = task(TaskState.TASK_STATE_COMPLETED, "Hello")
+    remote_agent = await research(Peer(result({"n": 3}), text_result, card=card))
+
+    assert await remote_agent.call("count") == {"n": 3.0}
+    assert await remote_agent.call("greet") == "Hello"
+
+
+async def test_a_result_that_does_not_match_raises_output_validation_error() -> None:
+    peer = Peer(result([{"title": "secret remote text"}]), card=skill_call_card("s"))
+
+    with pytest.raises(OutputValidationError) as raised:
+        await (await research(peer)).call("s", output=list[Source])
+
+    assert "secret" not in raised.value.message
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("card", "missing"),
+    [
+        (card_json(), "skill-call extension"),
+        (skill_call_card("other"), "no skill 'find_sources'"),
+    ],
+)
+async def test_a_card_without_the_extension_or_skill_fails_before_sending(
+    card: dict[str, Any], missing: str
+) -> None:
+    peer = Peer(card=card)
+
+    with pytest.raises(RemoteAgentError, match=missing):
+        await (await research(peer)).call("find_sources", topic="tides")
+
+    assert peer.methods() == []
+
+
+async def test_max_total_tokens_is_reserved_and_never_sent() -> None:
+    peer = Peer(card=skill_call_card("s"))
+
+    with pytest.raises(DefinitionError, match="reserved"):
+        await (await research(peer)).call("s", max_total_tokens=100)
+
+    assert peer.methods() == []
+
+
+async def test_a_rejected_call_raises_remote_agent_error_with_the_state() -> None:
+    rejected = task(TaskState.TASK_STATE_REJECTED)
+    peer = Peer(rejected, card=skill_call_card("find_sources"))
+
+    with pytest.raises(RemoteAgentError, match="did not complete") as raised:
+        await (await research(peer)).call("find_sources", topic=3)
+
+    assert raised.value.task_state == "TASK_STATE_REJECTED"
+
+
+async def test_a_result_that_is_not_a_skill_result_raises_remote_agent_error() -> None:
+    finished = task(TaskState.TASK_STATE_COMPLETED)
+    finished.artifacts.add(parts=[new_data_part({"other": 1})])
+    peer = Peer(finished, card=skill_call_card("s"))
+
+    with pytest.raises(RemoteAgentError, match="did not answer with a skill result"):
+        await (await research(peer)).call("s")
