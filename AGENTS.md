@@ -234,9 +234,9 @@ limits, accounting and tracing.
 `invoke` returns a validated value; `Runtime.run` returns `RunResult` with
 value, invocation ID, usage, model/tool calls, duration and finish reason even
 without tracing. Usage marks completeness/estimation; unknown is not zero.
-Ordinary remote A2A gets only invocation ID execution metadata, never internal results.
+Ordinary remote A2A gets the invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts) (M3 #36), never `RunResult` internals or provider details.
 The negotiated M8+ extension additionally reports actual usage for accounting,
-not `RunResult` or raw provider details; ordinary callers retain ID-only correlation.
+not `RunResult` or raw provider details; ordinary callers keep that snapshot only.
 Exact usage marker fields, duration unit and failed-run access remain open.
 
 Prefer structured A2A requests naming a skill with JSON arguments in a native
@@ -495,10 +495,15 @@ Errors derive from `AgentFrameError`: `DefinitionError`, `InputValidationError`,
 `ModelRefusalError`, `IncompleteOutputError`, `ProviderError`),
 `LimitExceededError` (`TokenLimitExceededError`, `ModelCallLimitExceededError`,
 `TimeoutLimitExceededError`, `ToolCallLimitExceededError`) and AgentFrame
-`CancelledError` distinct from `asyncio.CancelledError`. Every error carries
+`CancelledError` distinct from `asyncio.CancelledError`: local runs never
+convert `asyncio.CancelledError` (it propagates); AgentFrame's only reports a
+cancelled hosted task, later a cancelled remote call (M8+) (M7 #79). Every error carries
 invocation ID and safe message; constructor/startup-ID/transport details open.
 A2A failures use safe failed/rejected states as appropriate; no raw provider
-exception, stack trace or secret goes to callers. Log diagnostics with redaction.
+exception, stack trace or secret goes to callers. Log diagnostics with redaction:
+failed runs log ID, class and safe message; skill/tool/router tracebacks stay in
+operator logs with the ID, so authors keep secrets out of exception messages.
+`tests/integration/test_hardening.py` is the M7 end-to-end acceptance suite.
 Network host examples must include clearly labeled application-supplied
 development authentication/authorization placeholders where appropriate;
 loopback/omission is not access policy or a production-safe default.

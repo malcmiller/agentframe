@@ -152,8 +152,8 @@ failed/rejected states as appropriate; never expose raw provider exceptions,
 stack traces or secrets. Logs are redacted; clarification remains input-required.
 
 `invoke` returns a validated value; `run` returns `RunResult` with local metadata
-even without tracing. Ordinary remote A2A receives only invocation ID execution
-metadata; negotiated M8+ extension usage is an accounting exchange, not `RunResult`.
+even without tracing. Ordinary remote A2A receives the invocation ID and
+a safe usage snapshot (token counts, estimated flag, model and tool call counts); negotiated M8+ extension usage is an accounting exchange, not `RunResult`.
 Services support app-owned singletons and AgentFrame-created/closed per-run
 instances. Defaults resolve library → agent → skill → per-run within host
 ceilings: 120 seconds, 100000 total tokens, 10 model attempts, 20 tool calls;

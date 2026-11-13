@@ -202,7 +202,7 @@ Direct `await echo.echo(...)` is an ordinary Python call and bypasses this
 pipeline. Per-skill settings use `@skill(limits=..., model_settings=...)`;
 per-run settings use `options=RunOptions(...)`, separate from business
 arguments. Precedence is library → agent → skill → per-run; allowances must not
-exceed host ceilings (M7), weaken security, or extend a parent deadline.
+exceed host ceilings (M7 #71), weaken security, or extend a parent deadline.
 
 **Related:** [`Principal`](authorization.md#principal),
 [`RunContext`](agents.md#runcontext), [`RunLimits`](configuration.md#runlimits),
@@ -707,6 +707,11 @@ subclass with the inherited constructor. Over A2A it ends the task in
 `CANCELED` ([mapping](hosting.md#result-and-failure-mapping)): the host
 reports an A2A `CancelTask` with it, while the running skill itself stops
 through ordinary `asyncio` cancellation. `Runtime.run` does not raise it.
+Decided (M7 #79): local runs never convert `asyncio.CancelledError`; cancelling
+the task running `Runtime.run` re-raises it unchanged, even during a policy
+check, after per-run services are cleaned up. AgentFrame `CancelledError` only
+reports a cancelled hosted task (`CancelTask` or shutdown), and later a
+cancelled remote call (M8+).
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |

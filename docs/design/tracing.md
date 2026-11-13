@@ -125,8 +125,8 @@ accounting or required checks.
 Export traces through the configured backend. Do not invent a REST response
 envelope for standard A2A or MCP. Return correlation only through documented
 transport-appropriate metadata or headers, if supported; exact mappings remain
-open. For ordinary A2A, only the invocation ID goes in response metadata, never internal
-`RunResult` counters/provider details; its exact metadata key remains open.
+open. For ordinary A2A, task metadata carries the invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts) under `invocation_id` and `usage`
+(M3 #36), never `RunResult` internals or provider details.
 The negotiated M8+ extension separately reports actual remote usage for budget
 reconciliation, not arbitrary local internals. Dev combined logs are tagged by
 agent and invocation ID while preserving redaction/content-capture defaults.

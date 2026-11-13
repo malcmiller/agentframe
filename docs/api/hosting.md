@@ -215,6 +215,13 @@ Every other outcome follows this table:
   including failures. The host allocates the ID before the run, so the caller,
   the skill's `ctx.invocation_id` and the log entry for a skill exception all
   share it. A failure raised before a run starts gets a new ID.
+- Server logs (M7 #79): every `FAILED` run logs one warning with its
+  `invocation_id`, error class and safe message; never the error's cause,
+  arguments, prompts or results. Skill, tool and router exceptions are also
+  logged with their traceback under the same ID, for operators only, so skill
+  authors must not put secrets in exception messages. Rejections and cancels
+  are not logged. `tests/integration/test_hardening.py` checks that no
+  argument values, prompts or credentials reach callers or logs.
 - Since M3 #36 every task status also carries a safe `usage` snapshot next to
   `invocation_id`, on success, failure, input-required and cancel:
 
@@ -595,7 +602,7 @@ A2AConfig(*, dedup_window_seconds: float = 600, dedup_store: MessageDedupStore |
 | Task-store integration, supported capabilities | Exact fields/types open | Select/verify before release | Reuse SDK interfaces; first-release complete results only. Do not advertise streaming/push/task features the host cannot execute. |
 | Structured requests | A2A extension declaration/activation, data-part arguments; [wire format implemented (M2 #5)](#structured-skill-call-wire-format) | Preferred request style; no constructor keyword | Card declares support; caller selects a skill under that extension, bypassing routing but not authorization/typed validation/limits/accounting/tracing. |
 | Prompt clarification | Native A2A task/status message; exact contract open | Required for ambiguous/missing prompt input | Return `TASK_STATE_INPUT_REQUIRED` with an ask-back, not a guessed invocation or successful final result. |
-| Response correlation/errors | Native response metadata/task states; exact mappings open | Only invocation ID exposed from run internals | Safe failed/rejected states as appropriate; no `RunResult`, raw provider exception, stack trace or secrets. |
+| Response correlation/errors | Native response metadata/task states; exact mappings open | The invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts) (M3 #36) | Safe failed/rejected states as appropriate; no `RunResult`, raw provider exception, stack trace or secrets. |
 | Long-running tasks | Native A2A task store; constructor setting open | In-memory default, persistent store pluggable | Task persistence is not Python skill checkpointing, human approval resume or exactly-once execution. |
 
 ```python

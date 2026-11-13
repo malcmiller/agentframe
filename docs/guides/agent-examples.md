@@ -482,8 +482,8 @@ async def summarize_with_metadata(runtime: Runtime, writer: Agent) -> RunResult:
 `RunResult` contains `value`, `invocation_id`, `usage`, `model_calls`,
 `tool_calls`, `duration` and `finish_reason`, even with tracing off. Usage
 reports input/output/total tokens with completeness/estimate information;
-unknown usage is never assumed zero. Ordinary remote A2A gets only invocation ID
-metadata, not this internal result object.
+unknown usage is never assumed zero. Ordinary remote A2A gets the invocation ID and
+a safe usage snapshot (token counts, estimated flag, model and tool call counts), not this internal result object.
 
 ## Limits, tracing, and optional MCP
 

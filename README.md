@@ -42,6 +42,10 @@ M6 built-in opt-in model routing is complete: with
 skill with validated arguments, or the caller is asked a question in the same
 task; the routing calls count toward the run's limits (see
 [`examples/routed_assistant.py`](examples/routed_assistant.py)).
+M7 hardening is in place: host limit ceilings, run admission, request and
+response size limits, graceful shutdown with `/health` and `/ready`, A2A
+message deduplication, `EntraIDAuth` and `ExecutionPolicy` checks, proven end
+to end by `tests/integration/test_hardening.py`.
 There is no published release yet, and the API is not stable. Reviewed capability and contract decisions are recorded below and in
 the reference. Approved names/defaults are design decisions; unspecified
 interfaces remain open. Examples beyond the M1 surface are design proposals.

@@ -260,7 +260,7 @@ context is not identity. See [tracing](design/tracing.md).
 `Runtime.invoke` returns the validated value. `Runtime.run` returns `RunResult`
 with value, invocation ID, token usage (complete/estimated; unknown never zero),
 model/tool calls, duration and finish reason even with tracing off. A2A returns
-only invocation ID execution metadata, not internal counters/provider details;
+the invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts), never `RunResult` internals or provider details;
 the negotiated M8+ extension separately reports downstream accounting usage.
 
 ## Delivery milestones
@@ -393,6 +393,29 @@ continuations, once per logical request) and output checks; only an explicit
 late check `PolicyUnavailableError` (#77). A manually triggered, reviewer-approved
 GitHub workflow runs the opt-in Foundry tests with OpenID Connect sign-in and no
 stored secret; normal CI still never calls a provider (#81).
+
+M7 hardening acceptance was proven on **2026-11-12** (#79): host ceilings
+(#71), admission (#72), size limits (#73), graceful shutdown and probes (#74),
+deduplication (#75), `EntraIDAuth` (#76) and `ExecutionPolicy` (#77, #78) are
+merged, and `tests/integration/test_hardening.py` drives every M7 guarantee
+offline in CI, through the official A2A client where hosting is involved:
+library -> agent -> skill -> run limits capped by `limits_ceiling`; policy
+checks, scoped service setup, routing, model calls and retry waits spending
+one deadline; local `asyncio` cancellation re-raised unchanged and hosted
+`CancelTask`/shutdown ending tasks `CANCELED`, with per-run services closed on
+success, failure, timeout and cancel; missing services failing startup;
+`RunResult` metadata without tracing; every hosted failure carrying an
+invocation ID and safe message, with a log-capture check that no argument
+values, prompts or credentials reach callers or logs; API-key, permission,
+resource-policy, execution-policy and Entra failures; and admission, byte
+limits, probes, drain, deduplication and caller isolation. It added one
+fix: every `FAILED` hosted run now logs its invocation ID, error class and safe
+message. Local runs never convert `asyncio.CancelledError`; AgentFrame
+`CancelledError` only reports a cancelled hosted task (later a remote call).
+Skill tracebacks stay in operator logs. A shutdown race it found, harmless with
+the in-memory task store, is tracked in #128. M7 is complete once installed-wheel
+examples (#80) are merged; publishing the first release to PyPI (#82) is done
+by the maintainer.
 
 ### Resolved M0 platform and API decisions
 
