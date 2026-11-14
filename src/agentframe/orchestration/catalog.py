@@ -9,7 +9,7 @@ Later stages offer the entries to a model; building a catalog never calls one.
 import logging
 import re
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
 
@@ -70,7 +70,9 @@ class RemoteSkill:
             bounded and its ``examples`` dropped; ``None`` for ``ask``.
             Treat it as read-only.
         requires_permissions: Permissions a caller must hold to use the
-            entry. Empty; set by later stories.
+            entry, from ``remote_skills(permissions=...)``; empty by default.
+            Entries the caller lacks are never shown to a model, and a call
+            to one fails the run before anything is sent.
     """
 
     name: str
@@ -152,10 +154,12 @@ async def build_catalog(
     tags: Collection[str],
     ask: bool,
     max_tokens_per_call: int | None,
+    permissions: Mapping[str, Collection[str]] | None,
 ) -> SkillCatalog:
     """Build a run's catalog and remember it on ``run``; see
     ``RunContext.remote_skills``."""
     _check_max_tokens(max_tokens_per_call)
+    required = _checked_permissions(permissions)
     names = _checked_collection("agents", agents)
     wanted_tags = _checked_collection("tags", tags) or frozenset()
     declared = _declared(remotes, names) if remotes else {}
@@ -182,10 +186,54 @@ async def build_catalog(
         entries += agent_entries
         bindings[name] = declared[name] if remotes else run.bind_found(found)
     _check_unique_names(entries)
+    # Counted before any caller's permissions hide entries, so whether a
+    # catalog is too large never depends on who calls.
     _check_size(entries)
+    entries = [_with_permissions(entry, required) for entry in entries]
     catalog = SkillCatalog(entries, bindings, max_tokens_per_call)
     run.catalogs.append(catalog)
     return catalog
+
+
+def _checked_permissions(
+    permissions: Mapping[str, Collection[str]] | None,
+) -> dict[str, frozenset[str]]:
+    """Return ``permissions`` as frozen sets by entry name.
+
+    Raises:
+        DefinitionError: ``permissions`` is not a mapping of entry names to
+            lists of permission strings.
+    """
+    if permissions is None:
+        return {}
+    problem = DefinitionError(
+        "remote_skills permissions= must map entry names to lists of "
+        'permission strings, for example {"billing-agent.refund": '
+        '{"refunds:write"}}'
+    )
+    if not isinstance(permissions, Mapping):
+        raise problem
+    checked: dict[str, frozenset[str]] = {}
+    for name, required in permissions.items():
+        # A bare string would otherwise be read as one permission per character.
+        if (
+            not isinstance(name, str)
+            or isinstance(required, str)
+            or not isinstance(required, Collection)
+            or not all(isinstance(permission, str) for permission in required)
+        ):
+            raise problem
+        checked[name] = frozenset(required)
+    return checked
+
+
+def _with_permissions(
+    entry: RemoteSkill, permissions: Mapping[str, frozenset[str]]
+) -> RemoteSkill:
+    required = permissions.get(entry.name)
+    if not required:
+        return entry
+    return replace(entry, requires_permissions=required)
 
 
 def _check_max_tokens(max_tokens_per_call: int | None) -> None:

@@ -361,17 +361,21 @@ class GenerationState:
         ``max_tool_calls`` before it runs. The loop ends because those limits
         are finite. A tool call, local or remote, is never retried.
 
-        Tools the caller lacks a required permission for are left out of the
-        request, and every call is authorized again, then passes the
-        execution policy's tool checks, before it runs. Every request,
-        including each continuation, passes the execution policy's
-        model-request checks before it is sent.
+        Tools and remote entries the caller lacks a required permission for
+        are left out of the request, and every call is authorized again,
+        then passes the execution policy's tool checks, before it runs.
+        Every request, including each continuation, passes the execution
+        policy's model-request checks before it is sent.
         """
         specs = tuple(
             tool_spec(tool)
             for tool in tools.values()
             if is_permitted(tool, ctx.principal)
-        ) + tuple(remote.spec() for remote in remote_tools.values())
+        ) + tuple(
+            remote.spec()
+            for remote in remote_tools.values()
+            if is_permitted(remote.entry, ctx.principal)
+        )
         while True:
             request = ModelRequest(
                 messages=messages, settings=self.settings, output=output, tools=specs

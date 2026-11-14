@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     # Imported only for type checking: these modules import this one.
     from agentframe.authoring.context import RunContext
     from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
+    from agentframe.orchestration.catalog import RemoteSkill
     from agentframe.security.authorization import ToolAuthorizationPolicy
 
 
@@ -57,8 +58,14 @@ def tool_message(call: ToolCall, result: str) -> Message:
     )
 
 
-def is_permitted(tool: "ToolDefinition", principal: Principal | None) -> bool:
-    """Return whether ``principal`` holds every permission ``tool`` requires."""
+def is_permitted(
+    tool: "ToolDefinition | RemoteSkill", principal: Principal | None
+) -> bool:
+    """Return whether ``principal`` holds every permission ``tool`` requires.
+
+    The one rule for ``@tool`` functions and remote skill catalog entries:
+    anything the caller may not use is never shown to a model.
+    """
     if not tool.requires_permissions:
         return True
     return principal is not None and tool.requires_permissions <= principal.permissions
