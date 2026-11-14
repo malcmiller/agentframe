@@ -122,10 +122,20 @@ class LocalSkill:
                 f"Agent '{definition.name}' has no skill '{skill}' to evaluate."
             )
         self._agent = agent
+        self._agent_name = definition.name
         self._skill: SkillDefinition = skill_definition
         self._runtime = runtime or Runtime()
         self._principal = principal
         self._options = options
+
+    @property
+    def description(self) -> dict[str, str]:
+        """What this target runs, for reports: its type, agent name and skill ID."""
+        return {
+            "type": "local_skill",
+            "agent": self._agent_name,
+            "skill": self._skill.id,
+        }
 
     @property
     def token_ceiling(self) -> int:

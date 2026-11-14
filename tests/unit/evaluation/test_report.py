@@ -1,7 +1,13 @@
 """Tests for ``EvalReport`` aggregates and its plain-text summary."""
 
+import json
 from datetime import timedelta
+from pathlib import Path
+from typing import Any
 
+import pytest
+
+import agentframe
 from agentframe import Agent, RunContext, Usage, agent, skill
 from agentframe.evaluation import (
     Case,
@@ -276,3 +282,200 @@ async def test_the_summary_shows_failure_reasons_when_content_is_captured() -> N
     report = await secret_evaluation(capture_content=True).run()
 
     assert f"  leak never_matches: got {SECRET}" in str(report).splitlines()
+
+
+def written(report: EvalReport, tmp_path: Path) -> dict[str, Any]:
+    path = tmp_path / "eval-report.json"
+    report.write_json(path)
+    document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return document
+
+
+async def test_the_json_report_is_versioned_and_holds_no_content_by_default(
+    tmp_path: Path,
+) -> None:
+    report = await secret_evaluation(capture_content=False).run()
+
+    document = written(report, tmp_path)
+
+    assert SECRET not in (tmp_path / "eval-report.json").read_text(encoding="utf-8")
+    assert document["schema"] == "agentframe.evaluation.report/1"
+    assert document["agentframe_version"] == agentframe.__version__
+    assert document["target"] == {
+        "type": "local_skill",
+        "agent": "Echo",
+        "skill": "echo",
+    }
+    assert document["scorers"] == ["never_matches"]
+    assert document["capture_content"] is False
+    [result] = document["results"]
+    assert result["status"] == "failed"
+    assert result["scores"] == [
+        {"scorer": "never_matches", "passed": False, "value": None}
+    ]
+    assert result["finish_reason"] == "completed"
+    assert not {"arguments", "text", "expected", "output"} & result.keys()
+
+
+async def test_the_json_report_holds_content_when_captured(tmp_path: Path) -> None:
+    report = await secret_evaluation(capture_content=True).run()
+
+    [result] = written(report, tmp_path)["results"]
+
+    assert result["arguments"] == {"text": SECRET}
+    assert result["expected"] == SECRET
+    assert result["output"] == SECRET
+    assert result["scores"][0]["reason"] == f"got {SECRET}"
+
+
+def test_the_json_report_keeps_only_not_run_reasons_by_default(
+    tmp_path: Path,
+) -> None:
+    report = EvalReport(
+        results=(
+            CaseResult(
+                case_id="a",
+                status=CaseStatus.ERRORED,
+                error_type="KeyError",
+                error_message="Scorer 'exact' raised KeyError.",
+            ),
+            CaseResult(
+                case_id="b",
+                status=CaseStatus.NOT_RUN,
+                error_message="The evaluation's timeout expired before this attempt.",
+            ),
+        )
+    )
+
+    errored, not_run = written(report, tmp_path)["results"]
+
+    assert errored["error_type"] == "KeyError"
+    assert errored["error_message"] is None
+    assert not_run["error_message"] == (
+        "The evaluation's timeout expired before this attempt."
+    )
+
+
+def test_the_json_report_holds_every_aggregate_with_unknown_usage_as_null(
+    tmp_path: Path,
+) -> None:
+    document = written(repeated_report(), tmp_path)
+
+    assert document["max_total_tokens"] == 20
+    assert document["aggregates"] == {
+        "attempt_count": 4,
+        "passed_count": 2,
+        "failed_count": 0,
+        "errored_count": 1,
+        "not_run_count": 1,
+        "pass_rate": 2 / 3,
+        "scorer_pass_rates": {},
+        "tag_pass_rates": {"slow": 0.0},
+        "flaky_cases": ["a"],
+        "total_usage": {
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+            "known_total_tokens": 30,
+            "unknown_cases": 1,
+            "estimated": False,
+        },
+        "over_budget": True,
+        "budget_fully_enforced": False,
+        "latency": None,
+        "errors_by_class": {"ValueError": 1},
+    }
+    first, second = document["results"][:2]
+    assert (first["attempt"], second["attempt"]) == (1, 2)
+    assert first["usage"] == {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "estimated": False,
+    }
+    assert second["usage"] is None
+
+
+def test_the_json_report_writes_latency_and_durations_in_seconds(
+    tmp_path: Path,
+) -> None:
+    document = written(mixed_report(), tmp_path)
+
+    assert document["aggregates"]["latency"] == {
+        "p50_seconds": 1.0,
+        "p95_seconds": 3.0,
+        "max_seconds": 3.0,
+    }
+    assert document["aggregates"]["budget_fully_enforced"] is None
+    assert [result["duration_seconds"] for result in document["results"]] == [
+        1.0,
+        3.0,
+        None,
+    ]
+
+
+def two_of_three_passed() -> EvalReport:
+    tokens = Usage(10, 5, 15, estimated=False)
+    return EvalReport(
+        results=(
+            CaseResult(case_id="a", status=CaseStatus.PASSED, usage=tokens),
+            CaseResult(case_id="b", status=CaseStatus.PASSED, usage=tokens),
+            CaseResult(case_id="c", status=CaseStatus.FAILED, usage=tokens),
+        )
+    )
+
+
+def test_require_passes_at_the_thresholds() -> None:
+    two_of_three_passed().require(min_pass_rate=2 / 3, max_total_tokens=45)
+
+
+def test_require_lists_every_missed_threshold_then_the_summary() -> None:
+    report = two_of_three_passed()
+
+    with pytest.raises(AssertionError) as raised:
+        report.require(min_pass_rate=0.9, max_total_tokens=44)
+
+    assert str(raised.value) == (
+        "Evaluation requirements not met:\n"
+        "- pass rate 66.7% is below 90.0%\n"
+        "- 45 tokens used; at most 44 allowed\n"
+        f"\n{report}"
+    )
+
+
+def test_require_by_default_fails_errored_not_run_and_over_budget_attempts() -> None:
+    report = repeated_report()
+
+    with pytest.raises(AssertionError) as raised:
+        report.require()
+
+    assert str(raised.value).splitlines()[1:4] == [
+        "- 1 attempts errored; at most 0 allowed",
+        "- 1 attempts did not run",
+        "- 30 reported tokens are over the budget of 20",
+    ]
+    report.require(max_errors=None, allow_not_run=True, allow_over_budget=True)
+    report.require(max_errors=1, allow_not_run=True, allow_over_budget=True)
+
+
+def test_require_never_passes_a_token_threshold_on_unknown_usage() -> None:
+    with pytest.raises(AssertionError, match="token usage is unknown for 1 attempts"):
+        mixed_report().require(max_errors=None, max_total_tokens=1_000_000)
+
+
+def test_require_fails_a_pass_rate_threshold_when_nothing_ran() -> None:
+    report = EvalReport(
+        results=(CaseResult(case_id="a", status=CaseStatus.NOT_RUN),),
+    )
+
+    with pytest.raises(AssertionError, match="no attempt ran"):
+        report.require(min_pass_rate=0.0, allow_not_run=True)
+
+
+@pytest.mark.parametrize(
+    "thresholds",
+    [{"min_pass_rate": 1.5}, {"max_errors": -1}, {"max_total_tokens": 0}],
+)
+def test_require_refuses_thresholds_out_of_range(thresholds: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="must be"):
+        two_of_three_passed().require(**thresholds)

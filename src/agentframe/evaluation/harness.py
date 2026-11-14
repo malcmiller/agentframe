@@ -175,6 +175,9 @@ class Evaluation:
         return EvalReport(
             results=tuple(finished),
             max_total_tokens=self._max_total_tokens,
+            target=self._target.description,
+            scorers=tuple(scorer_name(scorer) for scorer in self._scorers),
+            capture_content=self._capture_content,
         )
 
     async def _run_case(self, case: Case[Any], attempt: int) -> CaseResult:
