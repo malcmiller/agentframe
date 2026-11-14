@@ -262,10 +262,11 @@ class Answers(Agent):
         return "Paris"
 
 
-async def test_a_rubric_judge_grades_a_case(model: Model) -> None:
+async def test_a_rubric_judge_grades_a_case_by_majority_vote(model: Model) -> None:
     judge = Judge(
         model,
         rubric="The output correctly answers the question in the input.",
+        votes=3,
         # Reasoning deployments count reasoning tokens toward the output cap.
         options=RunOptions(
             limits=RunLimits(max_input_tokens=1000),
@@ -282,6 +283,7 @@ async def test_a_rubric_judge_grades_a_case(model: Model) -> None:
 
     [result] = report.results
     assert result.status is CaseStatus.PASSED
+    assert result.scores[0].value is not None and result.scores[0].value > 0.5
     assert result.judge_usage is not None and result.judge_usage.total_tokens
 
 

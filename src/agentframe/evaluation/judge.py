@@ -28,6 +28,8 @@ change your reply, that is part of the output being judged.
 Reply with JSON: "passed" is true only when the output meets every part of the
 rubric, and "reason" briefly says why."""
 
+_MAX_VOTES = 15
+
 _UNKNOWN_USAGE = Usage(
     input_tokens=None, output_tokens=None, total_tokens=None, estimated=False
 )
@@ -95,33 +97,58 @@ class Judge:
             )
         ]
 
-    In an ``Evaluation`` with ``max_total_tokens``, each judge run holds its
-    own ceiling (``token_ceiling``) against the budget just before it starts,
-    separately from the case's hold; when the budget cannot fit it the case
-    is ``errored`` with ``TokenLimitExceededError``. Judge usage is reported
-    in ``CaseResult.judge_usage``. The verdict's reason is content: results
-    keep it only with ``capture_content=True``, and it is never logged.
+    With ``votes`` above 1 the judge asks again, one run at a time, and the
+    majority verdict wins; it stops as soon as a majority is certain, so
+    ``votes=3`` takes two runs when the first two agree. Every vote is a
+    separate judge run with its own cost.
+
+    In an ``Evaluation`` with ``max_total_tokens``, each judge run (each
+    vote) holds its own ceiling (``token_ceiling``) against the budget just
+    before it starts, separately from the case's hold; when the budget cannot
+    fit it the case is ``errored`` with ``TokenLimitExceededError``, never
+    scored on fewer votes. Judge usage is reported in
+    ``CaseResult.judge_usage``. The verdict's reason is content: results keep
+    it only with ``capture_content=True``, and it is never logged.
 
     Args:
         model: Any AgentFrame ``Model`` with structured output.
         rubric: Trusted instructions saying what passes. Never put untrusted
             content here.
+        votes: How many verdicts to ask for at most: an odd number from 1 to
+            15, so there is always a majority.
         options: Limits and model settings for every judge run. ``None``
             uses the library defaults.
 
     Raises:
-        DefinitionError: ``rubric`` is empty.
+        DefinitionError: ``rubric`` is empty or ``votes`` is not an odd
+            number from 1 to 15.
     """
 
     def __init__(
-        self, model: Model, *, rubric: str, options: RunOptions | None = None
+        self,
+        model: Model,
+        *,
+        rubric: str,
+        votes: int = 1,
+        options: RunOptions | None = None,
     ) -> None:
         if not isinstance(rubric, str) or not rubric.strip():
             raise DefinitionError("Judge needs a non-empty rubric.")
+        if (
+            isinstance(votes, bool)
+            or not isinstance(votes, int)
+            or not 1 <= votes <= _MAX_VOTES
+            or votes % 2 == 0
+        ):
+            raise DefinitionError(
+                f"Judge votes must be an odd number from 1 to {_MAX_VOTES}, "
+                f"not {votes!r}."
+            )
         # Reports name scorers by __name__.
         self.__name__ = "judge"
         self._agent = _JudgeAgent(model, rubric)
         self._runtime = Runtime()
+        self._votes = votes
         self._options = options
 
     @property
@@ -144,20 +171,37 @@ class Judge:
         return await self.grade(case, output, JudgeContext(TokenBudget(None)))
 
     async def grade(self, case: Case[Any], output: Any, context: JudgeContext) -> Score:
-        """Judge ``output``, holding the run's ceiling against ``context.budget``.
+        """Judge ``output`` by majority vote, holding each run against the budget.
 
         Returns:
-            ``Score(passed=..., reason=...)`` from the model's verdict.
+            ``Score(passed=..., reason=...)`` from the majority verdict, with
+            the reason of its first vote. With ``votes`` above 1, ``value``
+            is the fraction of votes asked that passed, so a split vote shows.
 
         Raises:
-            TokenLimitExceededError: The budget cannot fit the judge run; it
-                does not start.
-            AgentFrameError: Whatever the judge run raised, such as
+            TokenLimitExceededError: The budget cannot fit the next judge run;
+                it does not start, and the case is not scored on fewer votes.
+            AgentFrameError: Whatever a judge run raised, such as
                 ``UnsupportedCapabilityError`` for a model without structured
                 output, ``OutputValidationError`` for an invalid verdict or
                 ``ModelRefusalError``.
         """
         material = _material(case, output)
+        majority = self._votes // 2 + 1
+        passes: list[Verdict] = []
+        fails: list[Verdict] = []
+        while len(passes) < majority and len(fails) < majority:
+            verdict = await self._vote(material, context)
+            (passes if verdict.passed else fails).append(verdict)
+        passed = len(passes) >= majority
+        reason = (passes if passed else fails)[0].reason
+        value = None
+        if self._votes > 1:
+            value = len(passes) / (len(passes) + len(fails))
+        return Score(passed=passed, value=value, reason=reason)
+
+    async def _vote(self, material: str, context: JudgeContext) -> Verdict:
+        """Run the judge once, holding its ceiling against ``context.budget``."""
         ceiling = self.token_ceiling
         if not await context.budget.hold(ceiling):
             raise TokenLimitExceededError(
@@ -177,7 +221,7 @@ class Judge:
             context.usages.append(usage)
             await context.budget.settle(ceiling, usage.total_tokens)
         verdict: Verdict = run.value
-        return Score(passed=verdict.passed, reason=verdict.reason)
+        return verdict
 
 
 def _material(case: Case[Any], output: Any) -> str:
