@@ -82,6 +82,9 @@ class CaseResult:
         invocation_id: The run's invocation ID, also kept when the run failed
             with an AgentFrame error.
         usage: Token usage; fields may be ``None`` (unknown, not zero).
+        judge_usage: The ``Judge`` runs' usage for this attempt, added up
+            separately from the target's; ``None`` when no judge ran. A
+            judge run that failed makes it unknown.
         duration: How long the run took.
         model_calls: Model calls the run made; ``None`` for ``A2ATarget``.
         tool_calls: Tool calls the model asked for; ``None`` for ``A2ATarget``.
@@ -101,6 +104,7 @@ class CaseResult:
     error_message: str | None = None
     invocation_id: str | None = None
     usage: Usage | None = None
+    judge_usage: Usage | None = None
     duration: timedelta | None = None
     model_calls: int | None = None
     tool_calls: int | None = None
@@ -257,37 +261,36 @@ class EvalReport:
 
     @property
     def total_usage(self) -> UsageTotals:
-        """Token usage summed over the attempts that ran; unknown is never zero."""
-        usages = [result.usage for result in self._ran]
-        unknown_cases = sum(not _is_fully_known(usage) for usage in usages)
-        reported = [usage for usage in usages if usage is not None]
+        """The targets' token usage summed over the attempts that ran.
 
-        def total(counts: list[int | None]) -> int | None:
-            known = [count for count in counts if count is not None]
-            return sum(known) if len(known) == len(usages) else None
+        Unknown is never zero. ``Judge`` usage is in ``total_judge_usage``.
+        """
+        return _usage_totals([result.usage for result in self._ran])
 
-        return UsageTotals(
-            input_tokens=total([usage.input_tokens for usage in reported]),
-            output_tokens=total([usage.output_tokens for usage in reported]),
-            total_tokens=total([usage.total_tokens for usage in reported]),
-            known_total_tokens=sum(usage.total_tokens or 0 for usage in reported),
-            unknown_cases=unknown_cases,
-            estimated=any(usage.estimated for usage in reported),
-        )
+    @property
+    def total_judge_usage(self) -> UsageTotals | None:
+        """``Judge`` token usage summed over the attempts a judge ran for.
+
+        ``None`` when no judge ran. Unknown is never zero.
+        """
+        judged = [result for result in self._ran if result.judge_usage is not None]
+        if not judged:
+            return None
+        return _usage_totals([result.judge_usage for result in judged])
 
     @property
     def over_budget(self) -> bool:
-        """Whether reported usage went over ``max_total_tokens``.
+        """Whether reported target and judge usage went over ``max_total_tokens``.
 
         Admission never over-commits the budget, but a run's reported usage
         replaces its hold even when higher, so an overrun is reported here
         rather than prevented. Attempts with unknown usage
-        (``total_usage.unknown_cases``) mean the budget could not be fully
-        enforced.
+        (``unknown_cases`` of ``total_usage`` or ``total_judge_usage``) mean
+        the budget could not be fully enforced.
         """
         if self.max_total_tokens is None:
             return False
-        return self.total_usage.known_total_tokens > self.max_total_tokens
+        return _known_tokens(self) > self.max_total_tokens
 
     @property
     def latency(self) -> Latency | None:
@@ -410,6 +413,35 @@ class EvalReport:
 
 def _rate(part: int, whole: int) -> float:
     return part / whole if whole else 0.0
+
+
+def _usage_totals(usages: list[Usage | None]) -> UsageTotals:
+    reported = [usage for usage in usages if usage is not None]
+
+    def total(counts: list[int | None]) -> int | None:
+        known = [count for count in counts if count is not None]
+        return sum(known) if len(known) == len(usages) else None
+
+    return UsageTotals(
+        input_tokens=total([usage.input_tokens for usage in reported]),
+        output_tokens=total([usage.output_tokens for usage in reported]),
+        total_tokens=total([usage.total_tokens for usage in reported]),
+        known_total_tokens=sum(usage.total_tokens or 0 for usage in reported),
+        unknown_cases=sum(not _is_fully_known(usage) for usage in usages),
+        estimated=any(usage.estimated for usage in reported),
+    )
+
+
+def _known_tokens(report: EvalReport) -> int:
+    judge = report.total_judge_usage
+    judged = judge.known_total_tokens if judge else 0
+    return report.total_usage.known_total_tokens + judged
+
+
+def _unknown_cases(report: EvalReport) -> int:
+    judge = report.total_judge_usage
+    judged = judge.unknown_cases if judge else 0
+    return report.total_usage.unknown_cases + judged
 
 
 def _is_fully_known(usage: Usage | None) -> bool:
@@ -592,6 +624,8 @@ def _summary(report: EvalReport) -> str:
         + f" (pass rate {_percent(report.pass_rate)})",
         f"Tokens: {_usage_line(report.total_usage)}",
     ]
+    if report.total_judge_usage is not None:
+        lines.append(f"Judge tokens: {_usage_line(report.total_judge_usage)}")
     if report.max_total_tokens is not None:
         lines.append(f"Budget: {_budget_line(report)}")
     lines.append(f"Latency: {_latency_line(report.latency)}")
@@ -683,8 +717,8 @@ def _usage_line(usage: UsageTotals) -> str:
 def _budget_line(report: EvalReport) -> str:
     line = f"{report.max_total_tokens} tokens"
     if report.over_budget:
-        line += f", over budget ({report.total_usage.known_total_tokens} reported)"
-    unknown = report.total_usage.unknown_cases
+        line += f", over budget ({_known_tokens(report)} reported)"
+    unknown = _unknown_cases(report)
     if unknown:
         line += f", not fully enforced ({unknown} attempts with unknown usage)"
     return line

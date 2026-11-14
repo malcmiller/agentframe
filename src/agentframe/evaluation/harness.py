@@ -12,6 +12,7 @@ from agentframe.errors import (
 )
 from agentframe.evaluation.budget import TokenBudget
 from agentframe.evaluation.cases import Case
+from agentframe.evaluation.judge import Judge, JudgeContext, sum_usage
 from agentframe.evaluation.report import (
     CaseResult,
     CaseStatus,
@@ -20,6 +21,7 @@ from agentframe.evaluation.report import (
 )
 from agentframe.evaluation.scoring import Scorer, run_scorer, scorer_name
 from agentframe.evaluation.targets import Target, TargetResult
+from agentframe.runtime.usage import Usage
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +57,8 @@ class Evaluation:
     Args:
         cases: The cases, each with a unique ID.
         target: What runs each case, such as ``LocalSkill`` or ``A2ATarget``.
-        scorers: Sync or async callables ``(case, output) -> bool | Score``.
+        scorers: Sync or async callables ``(case, output) -> bool | Score``,
+            or a ``Judge``.
         capture_content: Whether results keep case inputs, expected values,
             outputs and score reasons. Off by default; a report with content
             is sensitive. The harness itself logs only case IDs, statuses
@@ -75,7 +78,10 @@ class Evaluation:
             attempt, it waits for running ones, and once nothing is running
             it is ``not_run``. A finished attempt's reported usage replaces
             its hold; unknown usage (including a failed run) keeps the whole
-            hold charged. Per-run limits are never raised.
+            hold charged. The attempt's hold ends before scoring; each
+            ``Judge`` run then holds its own ceiling the same way, and is
+            ``errored`` with ``TokenLimitExceededError`` when it cannot fit.
+            Per-run limits are never raised.
         timeout_seconds: An optional wall-clock limit for the whole
             evaluation. When it expires, running attempts are cancelled and
             marked ``errored`` with ``TimeoutLimitExceededError``, and
@@ -144,8 +150,7 @@ class Evaluation:
             for index, (case, attempt) in queue:
                 if await budget.hold(ceiling):
                     started.add(index)
-                    result = await self._run_case(case, attempt)
-                    await budget.settle(ceiling, _total_tokens(result))
+                    result = await self._run_case(case, attempt, budget, ceiling)
                 else:
                     result = self._not_run(case, attempt, _BUDGET_STOP)
                 _log(result)
@@ -180,19 +185,44 @@ class Evaluation:
             capture_content=self._capture_content,
         )
 
-    async def _run_case(self, case: Case[Any], attempt: int) -> CaseResult:
+    async def _run_case(
+        self, case: Case[Any], attempt: int, budget: TokenBudget, ceiling: int
+    ) -> CaseResult:
+        run: TargetResult[Any] | None = None
         try:
             run = await self._target.run(case)
         except Exception as error:
             return self._errored(case, attempt, error, "The target", (), run=None)
+        finally:
+            # The case's hold ends before scoring: judge runs hold their own.
+            await budget.settle(ceiling, run.usage.total_tokens if run else None)
+        return await self._score(case, attempt, run, budget)
+
+    async def _score(
+        self,
+        case: Case[Any],
+        attempt: int,
+        run: TargetResult[Any],
+        budget: TokenBudget,
+    ) -> CaseResult:
+        judging = JudgeContext(budget)
         scores: list[ScoreResult] = []
         for scorer in self._scorers:
             name = scorer_name(scorer)
             try:
-                score = await run_scorer(scorer, case, run.value)
+                if isinstance(scorer, Judge):
+                    score = await scorer.grade(case, run.value, judging)
+                else:
+                    score = await run_scorer(scorer, case, run.value)
             except Exception as error:
                 return self._errored(
-                    case, attempt, error, f"Scorer '{name}'", tuple(scores), run
+                    case,
+                    attempt,
+                    error,
+                    f"Scorer '{name}'",
+                    tuple(scores),
+                    run,
+                    judge_usage=sum_usage(judging.usages),
                 )
             reason = score.reason if self._capture_content else None
             scores.append(
@@ -202,7 +232,14 @@ class Evaluation:
             )
         passed = all(score.passed for score in scores)
         status = CaseStatus.PASSED if passed else CaseStatus.FAILED
-        return self._result(case, attempt, status, tuple(scores), run)
+        return self._result(
+            case,
+            attempt,
+            status,
+            tuple(scores),
+            run,
+            judge_usage=sum_usage(judging.usages),
+        )
 
     def _stopped_by_timeout(
         self, case: Case[Any], attempt: int, *, running: bool
@@ -234,6 +271,8 @@ class Evaluation:
         source: str,
         scores: tuple[ScoreResult, ...],
         run: TargetResult[Any] | None,
+        *,
+        judge_usage: Usage | None = None,
     ) -> CaseResult:
         # A failed run has no result, but its AgentFrame error carries the ID.
         invocation_id = run.invocation_id if run else None
@@ -260,6 +299,7 @@ class Evaluation:
             error_type=type(error).__name__,
             error_message=message,
             invocation_id=invocation_id,
+            judge_usage=judge_usage,
         )
 
     def _result(
@@ -273,6 +313,7 @@ class Evaluation:
         error_type: str | None = None,
         error_message: str | None = None,
         invocation_id: str | None = None,
+        judge_usage: Usage | None = None,
     ) -> CaseResult:
         capture = self._capture_content
         return CaseResult(
@@ -284,6 +325,7 @@ class Evaluation:
             error_message=error_message,
             invocation_id=invocation_id or (run.invocation_id if run else None),
             usage=run.usage if run else None,
+            judge_usage=judge_usage,
             duration=run.duration if run else None,
             model_calls=run.model_calls if run else None,
             tool_calls=run.tool_calls if run else None,
@@ -294,10 +336,6 @@ class Evaluation:
             expected=case.expected if capture else None,
             output=run.value if capture and run else None,
         )
-
-
-def _total_tokens(result: CaseResult) -> int | None:
-    return result.usage.total_tokens if result.usage else None
 
 
 def _log(result: CaseResult) -> None:

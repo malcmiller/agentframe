@@ -52,6 +52,7 @@ from agentframe import (
     skill,
     tool,
 )
+from agentframe.evaluation import Case, CaseStatus, Evaluation, Judge, LocalSkill
 from agentframe.models.foundry import FOUNDRY_SCOPE
 from agentframe.models.ollama import DEFAULT_ENDPOINT
 from examples.assistant import Summary, create_app
@@ -246,6 +247,42 @@ async def test_unknown_model_fails_with_a_clear_error(open_model: OpenModel) -> 
 
     assert not raised.value.transient
     assert raised.value.invocation_id
+
+
+# Evaluation
+
+
+@agent(version="1.0.0")
+class Answers(Agent):
+    """Returns a fixed answer without calling a model."""
+
+    @skill("paris", tags=["evaluation"])
+    async def paris(self, question: str, ctx: RunContext) -> str:
+        """Answer every question with Paris."""
+        return "Paris"
+
+
+async def test_a_rubric_judge_grades_a_case(model: Model) -> None:
+    judge = Judge(
+        model,
+        rubric="The output correctly answers the question in the input.",
+        # Reasoning deployments count reasoning tokens toward the output cap.
+        options=RunOptions(
+            limits=RunLimits(max_input_tokens=1000),
+            model_settings=ModelSettings(max_output_tokens=512),
+        ),
+    )
+    evaluation = Evaluation(
+        cases=[Case(id="capital", arguments={"question": "The capital of France?"})],
+        target=LocalSkill(Answers(), skill="paris"),
+        scorers=[judge],
+    )
+
+    report = await evaluation.run()
+
+    [result] = report.results
+    assert result.status is CaseStatus.PASSED
+    assert result.judge_usage is not None and result.judge_usage.total_tokens
 
 
 # Structured output

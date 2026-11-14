@@ -6,6 +6,7 @@ this package.
 
 from agentframe.evaluation.cases import Case, load_cases
 from agentframe.evaluation.harness import Evaluation
+from agentframe.evaluation.judge import Judge
 from agentframe.evaluation.report import (
     CaseResult,
     CaseStatus,
@@ -24,6 +25,7 @@ __all__ = [
     "CaseStatus",
     "EvalReport",
     "Evaluation",
+    "Judge",
     "Latency",
     "LocalSkill",
     "Score",

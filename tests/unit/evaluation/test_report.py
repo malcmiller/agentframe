@@ -225,6 +225,34 @@ def test_reported_usage_over_the_budget_is_flagged() -> None:
     assert not EvalReport(results=report.results).over_budget
 
 
+def test_judge_usage_is_totalled_apart_and_counts_against_the_budget() -> None:
+    results = (
+        CaseResult(
+            case_id="a",
+            status=CaseStatus.PASSED,
+            usage=Usage(5, 5, 10, estimated=False),
+            judge_usage=Usage(5, 1, 6, estimated=False),
+        ),
+        CaseResult(
+            case_id="b",
+            status=CaseStatus.ERRORED,
+            usage=Usage(5, 5, 10, estimated=False),
+            judge_usage=Usage(None, None, None, estimated=False),
+        ),
+        passed("c", usage=Usage(1, 1, 2, estimated=False)),
+    )
+    report = EvalReport(results=results, max_total_tokens=25)
+
+    assert report.total_usage.total_tokens == 22
+    judge = report.total_judge_usage
+    assert judge is not None
+    assert (judge.total_tokens, judge.known_total_tokens) == (None, 6)
+    assert judge.unknown_cases == 1
+    assert report.over_budget
+    assert "over budget (28 reported), not fully enforced (1 attempts" in str(report)
+    assert EvalReport(results=results[2:]).total_judge_usage is None
+
+
 def test_the_summary_shows_attempts_not_run_budget_and_flaky_cases() -> None:
     lines = str(repeated_report()).splitlines()
 
