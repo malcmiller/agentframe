@@ -1,4 +1,4 @@
-# Orchestration: remote skill catalogs and remote skills as tools
+# Orchestration: remote skill catalogs, remote skills as tools and plans
 
 Model-planned orchestration ([M10](../design/orchestration.md)) lets an
 orchestrator's model choose which registered agent and skill to call. This
@@ -7,9 +7,11 @@ catalog** (M10 [#166](https://github.com/malcmiller/agentframe/issues/166)),
 offering its entries to a model as **tools**
 ([#167](https://github.com/malcmiller/agentframe/issues/167)) and
 [permissions and tool checks](#permissions-and-tool-checks) for model-chosen
-calls ([#168](https://github.com/malcmiller/agentframe/issues/168)). Plans
-(#169-#174) and the optional `default_remote` identity (#175) are planned, not
-implemented.
+calls ([#168](https://github.com/malcmiller/agentframe/issues/168)), and
+typed [plans](#plan) checked by [`SkillCatalog.check`](#skillcatalogcheck)
+([#169](https://github.com/malcmiller/agentframe/issues/169)). Planning and
+running plans (#170-#174) and the optional `default_remote` identity (#175)
+are planned, not implemented.
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
@@ -165,6 +167,8 @@ application code. Implemented (#166).
 | --- | --- | --- |
 | `entries` | `tuple[RemoteSkill, ...]` | The entries, in source and card order. |
 | `max_tokens_per_call` | `int \| None` | The tokens each model-chosen call to an entry may use; `None` means everything the run has left. |
+| `get(name)` | `RemoteSkill \| None` | The entry named `name`, or `None`. |
+| `check(plan, *, max_steps=8)` | `tuple[tuple[PlanStep, ...], ...]` | Checks a [`Plan`](#plan) without I/O; see [`SkillCatalog.check`](#skillcatalogcheck). |
 | `iter(catalog)` | `Iterator[RemoteSkill]` | Iterates the entries. |
 | `len(catalog)` | `int` | The number of entries, at most 20, including entries hidden from callers without their permissions. |
 
@@ -181,9 +185,135 @@ A catalog belongs to the run that built it: each binding carries that run's
 deadline, hop depth, token budget, identity and correlation, exactly like a
 `Remote` parameter. Its entries are called by a model through
 [`ctx.generate(tools=[...])`](#remote-skills-as-model-tools) (#167); plans
-(#171) are planned.
+are [checked](#skillcatalogcheck) against it (#169), and running them (#171) is
+planned.
 
 **Related:** [M10 overview](https://github.com/malcmiller/agentframe/issues/177).
+
+## `Plan`
+
+**Purpose / signature:** an execution plan: a flat list of
+[`PlanStep`](#planstep)s whose order comes from their dependencies, forming a
+directed acyclic graph. A frozen Pydantic model, public so tests and reviewed
+plans can construct one; there is no builder DSL, loops or conditions.
+Implemented (#169); `ctx.plan` (#170) and `ctx.run_plan` (#171) are planned.
+
+| Field | Type | Required / default | Meaning |
+| --- | --- | --- | --- |
+| `steps` | `list[PlanStep]` | Required | The steps, in any order. |
+| `result` | `str` | Required | The ID of the step whose value is the plan's value. |
+
+```python
+from agentframe import Plan, PlanStep
+
+plan = Plan(
+    steps=[
+        PlanStep(id="tides", use="research-agent.find_sources", arguments={"topic": "tides"}),
+        PlanStep(id="waves", use="research-agent.find_sources", arguments={"topic": "waves"}),
+        PlanStep(
+            id="brief",
+            use="research-agent.brief",
+            arguments={"sources": [{"$ref": "tides"}, {"$ref": "waves"}]},
+        ),
+        PlanStep(id="post", use="writer-agent", text="Write a post from this brief: {brief}"),
+    ],
+    result="post",
+)
+```
+
+Unknown fields and non-JSON argument values fail with Pydantic's
+`ValidationError` when the plan is constructed. Everything else is checked by
+[`SkillCatalog.check`](#skillcatalogcheck).
+
+**Related:** [plan shape](../design/orchestration.md#plan-shape).
+
+## `PlanStep`
+
+**Purpose / signature:** one call in a [`Plan`](#plan): a catalog entry plus
+its `arguments` (structured entries) or `text` (`ask` entries). A frozen
+Pydantic model. Implemented (#169).
+
+| Field | Type | Required / default | Meaning |
+| --- | --- | --- | --- |
+| `id` | `str` | Required | Unique in the plan, matching `^[a-z][a-z0-9_]{0,31}$`. |
+| `use` | `str` | Required | A catalog [entry name](#remoteskill), for example `"research-agent.find_sources"`, or an agent's name for its `ask` entry. |
+| `arguments` | `dict[str, JsonValue]` | `{}` | JSON arguments for a structured entry; only structured entries take them. |
+| `text` | `str \| None` | `None` | The message for an `ask` entry; required for `ask` entries and refused for structured ones. |
+| `after` | `list[str]` | `[]` | Step IDs that must complete first although no data flows from them. |
+
+References copy values from earlier steps; there are no expressions,
+indexing, filters or functions:
+
+- In `arguments`, any value (at any depth) `{"$ref": "brief"}` stands for that
+  step's whole result and `{"$ref": "brief.summary"}` for one top-level field
+  of it. The object must have no other key. Types are preserved.
+- In `text`, `{brief}` or `{brief.summary}` stands for the value as text;
+  `{{` and `}}` are literal braces. Conversions (`{brief!r}`) and formats
+  (`{brief:>9}`) are refused.
+- An `ask` step's value is text, so `.field` of an `ask` step is refused.
+
+A step depends on every step it references and every step in `after`.
+Substituting values happens when the plan runs (#171).
+
+**Related:** [data between steps](../design/orchestration.md#data-between-steps).
+
+## `SkillCatalog.check`
+
+**Purpose / signature:** `catalog.check(plan, *, max_steps=8) ->
+tuple[tuple[PlanStep, ...], ...]`. Checks that a [`Plan`](#plan) only calls the
+catalog's entries, correctly, without any network or model call. Implemented
+(#169); `ctx.plan` and `ctx.run_plan` will run it too.
+
+| Parameter | Type | Required / default | Meaning |
+| --- | --- | --- | --- |
+| `plan` | `Plan` | Required | The plan to check. |
+| `max_steps` | `int` | `8` | The most steps the plan may have, a whole number above 0. The author may raise it, but the limit never exceeds the tool calls the run has left (`RunLimits.max_tool_calls`), since each step is one tool call. |
+
+It checks, in order:
+
+1. at most `max_steps` steps and at most 64 KiB serialized as JSON;
+2. step IDs well formed and unique;
+3. every `use` names a catalog entry; `arguments` only on structured entries;
+   `text` on, and only on, `ask` entries;
+4. literal arguments against the entry's argument schema's **top level only**:
+   every `required` property present (a reference counts) and, when the
+   schema has `"additionalProperties": false`, no property it does not list.
+   The receiving agent validates everything else when the step runs, as it
+   does for every call; there is no JSON Schema validator;
+5. every reference, placeholder and `after` names a step of the plan, and is
+   well formed;
+6. `result` names a step;
+7. no dependency cycle, including through `after` and a step referring to
+   itself.
+
+It returns the steps in **parallel groups**: each group's steps depend only on
+steps in earlier groups, so they can run at once. Groups are a deterministic
+topological order, and steps keep their plan order within a group.
+
+```python
+from agentframe import Plan, PlanStep, RunContext
+
+
+async def review(ctx: RunContext, plan: Plan) -> list[list[str]]:
+    catalog = await ctx.remote_skills(agents=["research-agent", "writer-agent"])
+    groups = catalog.check(plan, max_steps=6)  # raises InputValidationError
+    return [[step.id for step in group] for group in groups]
+```
+
+For the plan in [`Plan`](#plan) this returns `[["tides", "waves"],
+["brief"], ["post"]]`.
+
+**Failures:** an invalid plan raises `InputValidationError` whose message names
+the step (by ID, or by position when the ID itself is malformed) and the
+field, for example `Plan step 'brief' field 'arguments.sources' refers to no
+step of the plan`. Messages never include argument values, unknown entry
+names, malformed IDs or reference targets; an argument name is included only
+when it is 1-64 letters, digits, `_` or `-`. A `max_steps` that is not a whole
+number above 0 raises `DefinitionError`. Checking says nothing about
+permissions: entries a caller lacks are filtered before planning (#170) and
+re-checked with `tool_checks` before each step runs (#171).
+
+**Related:** [validation before execution](../design/orchestration.md#validation-before-execution).
 
 ## Remote skills as model tools
 

@@ -25,6 +25,20 @@ changelog.
   `Target.description` (`LocalSkill` and `A2ATarget`, names only, never URLs
   or credentials). No pytest plugin; see the new
   [evaluation guide](docs/guides/evaluation.md) (#156).
+- **Orchestration (M10):** typed execution plans. `Plan(steps, result)` and
+  `PlanStep(id, use, arguments, text, after)` are frozen Pydantic values: a
+  flat directed acyclic graph whose dependencies come from references
+  (`{"$ref": "step"}` / `{"$ref": "step.field"}` in arguments, `{step}` /
+  `{step.field}` in `ask` text) plus `after`. `SkillCatalog.check(plan,
+  max_steps=8)` validates a plan without any network or model call (unique,
+  well-formed step IDs; catalog entries; arguments versus text by entry kind;
+  top-level required and unknown arguments; references; no cycles; at most
+  `max_steps`, never above the run's remaining `max_tool_calls`, and 64 KiB)
+  and returns the steps in parallel groups in a deterministic topological
+  order. Failures raise `InputValidationError` naming the step and field,
+  never values. New `SkillCatalog.get(name)` looks an entry up by name. No
+  plan runs yet (#169).
+
 - **Evaluation (M9):** `Evaluation(concurrency=4, repeats=1,
   max_total_tokens=None, timeout_seconds=None)`. Up to `concurrency` attempts
   run at once, started and reported in case order. `repeats` runs each case

@@ -21,7 +21,7 @@ unresolved defaults or interfaces.
 | Security and protocols | [Authenticators, authorization and content policy](api/authorization.md), [hosting/protection defaults](api/hosting.md) |
 | Next core multi-agent release | [Read-first registries, managed directory and remote A2A client](api/discovery.md) |
 | Evaluation (M9, in progress) | [Cases, JSONL datasets, local skill targets and scorers](api/evaluation.md) |
-| Model-planned orchestration (M10, in progress) | [Remote skill catalog: `remote_skills`, `RemoteSkill`, `SkillCatalog`; remote skills as model tools](api/orchestration.md) |
+| Model-planned orchestration (M10, in progress) | [Remote skill catalog: `remote_skills`, `RemoteSkill`, `SkillCatalog`; remote skills as model tools; `Plan`, `PlanStep`, `SkillCatalog.check`](api/orchestration.md) |
 | Future streaming | [Optional AG-UI adapter and runtime event boundary](api/streaming.md) |
 
 ## Roadmap, guides and design discussion
