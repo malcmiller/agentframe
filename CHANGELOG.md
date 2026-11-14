@@ -10,6 +10,19 @@ changelog.
 
 ### Added
 
+- **Evaluation (M9):** `Judge(model, rubric=..., options=None)`, a scorer
+  (named `judge` in reports) that asks any AgentFrame `Model` with structured
+  output for a binary `Verdict(passed, reason)` through an ordinary `Runtime`
+  run. The rubric is a trusted instruction; the case input, output and
+  `expected` reference (when set) are one JSON user message. Each judge run
+  holds its own `token_ceiling` against the evaluation's `max_total_tokens`
+  just before it starts, after the case's hold has ended, and errors the case
+  with `TokenLimitExceededError` when it cannot fit. Judge usage is reported
+  apart from the target's in `CaseResult.judge_usage` and
+  `EvalReport.total_judge_usage` (both in `write_json`, unknown as `null`),
+  and counts toward `over_budget`, `budget_fully_enforced` and
+  `require(max_total_tokens=...)`; the verdict's reason is kept only with
+  `capture_content=True` (#160).
 - **Evaluation (M9):** `A2ATarget` is proven against agents not built with
   AgentFrame: CI evaluates a plain official-SDK A2A agent with free-text cases
   (usage reported as unknown, never 0; a `skill=` case refused before

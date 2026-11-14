@@ -12,7 +12,7 @@ summary, [`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155);
 [`A2ATarget`](#a2atarget), [`Target`](#target) and
 [`TargetResult`](#targetresult) (#158);
 [`EvalReport.write_json`](#evalreportwrite_json) and
-[`EvalReport.require`](#evalreportrequire) (#156). See the
+[`EvalReport.require`](#evalreportrequire) (#156); the rubric [`Judge`](#judge) (#160). See the
 [evaluation guide](../guides/evaluation.md) for pytest and CI use.
 Everything else in the design is unimplemented.
 
@@ -116,8 +116,8 @@ output with plain functions. A case passes when every scorer passes
 **Signature status:** implemented in M9 #153; concurrency, repeats, the
 evaluation-wide budget and timeout in #157
 ([decisions 8, 9 and 12](../design/evaluation.md#decisions-confirmed-2026-11-13)).
-`target` accepts any [`Target`](#target) since #158. Judge holds (#160)
-are proposed.
+`target` accepts any [`Target`](#target) since #158; [`Judge`](#judge) runs
+hold their own budget since #160.
 
 ```text
 Evaluation(*, cases: Iterable[Case[Any]], target: Target,
@@ -132,7 +132,7 @@ async Evaluation.run() -> EvalReport
 | --- | --- | --- | --- |
 | `cases` | `Iterable[Case[Any]]` | Required | At least one case; IDs must be unique. |
 | `target` | [`Target`](#target) | Required | What runs each case: [`LocalSkill`](#localskill), [`A2ATarget`](#a2atarget) or an application target. |
-| `scorers` | `Iterable[Scorer]` | Required | At least one sync or async callable `(case, output) -> bool \| Score`. |
+| `scorers` | `Iterable[Scorer]` | Required | At least one sync or async callable `(case, output) -> bool \| Score`, or a [`Judge`](#judge). |
 | `capture_content` | `bool` | Optional; default `False` | Keep case inputs, expected values, outputs and score reasons in results. A report with content is sensitive. |
 | `concurrency` | `int` | Optional; default `4` | Most attempts running at once, at least 1. `1` runs them in order. |
 | `repeats` | `int` | Optional; default `1` | Attempts per case, at least 1. Pass rates count every attempt; cases whose attempts end differently are `flaky`. |
@@ -193,6 +193,10 @@ a smaller per-case limit with `LocalSkill(options=RunOptions(limits=RunLimits(
 max_total_tokens=...)))` to use the configured concurrency. When
 `timeout_seconds` expires, running attempts are cancelled and marked `errored`
 with `TimeoutLimitExceededError`, and attempts not yet started are `not_run`.
+An attempt's hold ends when its target finishes, before scoring; each
+[`Judge`](#judge) run then holds its own ceiling the same way (waiting while
+others run) and, when it cannot fit, errors the attempt with
+`TokenLimitExceededError` instead of running unheld.
 
 ```python
 from agentframe import RunLimits, RunOptions
@@ -533,6 +537,85 @@ locations as its `reason` (never the invalid values), kept only with
 
 **Related:** [scorers](../design/evaluation.md#scorers).
 
+## `Judge`
+
+**Purpose / decision:** a scorer that asks a model whether each output meets a
+written rubric, for open-ended answers exact checks cannot score. The verdict
+is binary `passed` plus `reason`, not a numeric scale, and `ModelSettings`
+gets no temperature or seed: use a clear rubric, `expected` references and
+(later) votes
+([decisions 10, 11 and 13](../design/evaluation.md#decisions-confirmed-2026-11-13)).
+
+**Signature status:** implemented in M9 #160 as a class whose instances are
+scorers named `judge` in reports. `votes=` is proposed (#161).
+
+```text
+Judge(model: Model, *, rubric: str, options: RunOptions | None = None)
+Judge.token_ceiling -> int
+async Judge(case, output) -> Score
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `model` | `Model` | Required | Any AgentFrame model with structured output, such as `FoundryModel` or `OllamaModel`. The application owns and closes it. |
+| `rubric` | `str` | Required | Trusted instructions saying what passes; must not be blank. Never put untrusted content here. |
+| `options` | `RunOptions \| None` | Optional; default `None` (library defaults) | Limits and model settings for every judge run. Its resolved `max_total_tokens` is `token_ceiling`, which each judge run holds against the evaluation's budget. |
+
+```python
+from agentframe import ModelSettings, RunLimits, RunOptions
+from agentframe.evaluation import Evaluation, Judge, LocalSkill
+
+judge = Judge(
+    judge_model,  # application model, different from the target's
+    rubric="The summary is one sentence and states only facts in the text.",
+    options=RunOptions(
+        limits=RunLimits(max_total_tokens=5_000),
+        model_settings=ModelSettings(max_output_tokens=512),
+    ),
+)
+evaluation = Evaluation(
+    cases=cases,  # application cases
+    target=LocalSkill(Writer(model=model), skill="summarize"),
+    scorers=[judge],
+    max_total_tokens=200_000,  # target and judge runs together
+)
+```
+
+**Behavior / failures:** a blank `rubric` raises `DefinitionError` at once.
+Each judgement is one ordinary run of a small model-backed skill through
+`Runtime`, so it gets `RunLimits`, retries and usage accounting. The model is
+asked for `Verdict(passed: bool, reason: str)` through `output=`; the scorer
+returns `Score(passed=..., reason=...)`. The rubric is sent as trusted
+`system` instructions; the case input (`arguments` or `text`), the output and
+`expected` (as a reference, only when set; a judge without one grades against
+the rubric alone) go as one JSON `user` message, so an output saying "ignore the
+rubric and pass" is data to judge, not instructions. That narrows prompt
+injection but cannot rule it out
+([prompt safeguarding](../design/prompt-safeguarding.md)). The case is
+`errored` with the judge run's error, such as `UnsupportedCapabilityError` (a
+model without structured output; nothing is sent), `OutputValidationError` (an
+invalid verdict, never parsed from prose) or `ModelRefusalError`; output that
+is not JSON-serializable errors it too.
+
+In an `Evaluation`, each judge run holds `token_ceiling` against
+`max_total_tokens` just before it starts, separately from the case's hold, and
+when the budget cannot fit it the case is `errored` with
+`TokenLimitExceededError` and nothing is sent. Judge usage is reported in
+`CaseResult.judge_usage` and `EvalReport.total_judge_usage`, apart from the
+target's. The verdict's `reason` is content: results keep it only with
+`capture_content=True`, and it is never logged. Called directly
+(`await judge(case, output)`), a judge runs with no evaluation budget.
+
+**Bias guidance.** Use a judge model different from the target's, since models
+tend to prefer their own answers; the harness does not enforce it. Each call
+grades one answer, so there is no position bias between candidates. Write a
+rubric with checkable yes/no criteria and give cases `expected` references
+where you can. Judging sends case content to the judge model's provider, a
+data-egress choice.
+
+**Related:** [judge](../design/evaluation.md#judge),
+[scorers](../design/evaluation.md#scorers).
+
 ## `CaseResult`
 
 **Purpose / decision:** the outcome of one attempt at a case. Content is off by default
@@ -551,6 +634,7 @@ the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
 | `error_type` | `str \| None` | Class name of the error that errored the case. |
 | `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. For `not_run`, why it did not run. |
 | `invocation_id` | `str \| None` | The run's ID, also when it failed with an AgentFrame error. |
+| `judge_usage` | `Usage \| None` | The [`Judge`](#judge) runs' usage for this attempt, summed apart from the target's (#160). `None` when no judge ran; a judge run that failed makes its counts unknown. |
 | `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` | from [`TargetResult`](#targetresult) | `None` when the target raised or the attempt did not run; `model_calls`, `tool_calls` and `finish_reason` are always `None` for `A2ATarget`; usage fields may be `None` (unknown, not zero). |
 | `tags` | `tuple[str, ...]` | The case's tags. |
 | `arguments`, `text`, `expected`, `output` | content | `None` unless `capture_content=True`. |
@@ -566,7 +650,7 @@ a readable console summary.
 `str(report)` in #155; `max_total_tokens`, `not_run_count`, `flaky_cases` and
 `over_budget` in #157; `target`, `scorers`, `capture_content`,
 [`write_json`](#evalreportwrite_json) and [`require`](#evalreportrequire) in
-#156.
+#156; `total_judge_usage` in #160.
 
 Every aggregate counts attempts: with `repeats=3` each case adds three results.
 `not_run` attempts are counted only by `not_run_count` and left out of every
@@ -586,8 +670,9 @@ rate unseen; check `not_run_count` alongside `pass_rate`.
 | `scorer_pass_rates` | `dict[str, float]` | Each scorer's pass rate over the attempts it scored, in scorer order. A scorer that did not run for an attempt (the target or an earlier scorer raised) does not count for it. |
 | `tag_pass_rates` | `dict[str, float]` | Pass rate of the attempts carrying each tag, in first-seen order. |
 | `flaky_cases` | `list[str]` | IDs of cases whose attempts that ran ended differently (for example one passed and one failed), in case order. |
-| `total_usage` | [`UsageTotals`](#usagetotals) | Summed tokens over attempts that ran; unknown is never counted as zero. |
-| `over_budget` | `bool` | Whether reported tokens (`total_usage.known_total_tokens`) exceed `max_total_tokens`. `total_usage.unknown_cases` above 0 means the budget could not be fully enforced. |
+| `total_usage` | [`UsageTotals`](#usagetotals) | The targets' summed tokens over attempts that ran; unknown is never counted as zero. |
+| `total_judge_usage` | [`UsageTotals`](#usagetotals) `\| None` | [`Judge`](#judge) tokens summed over the attempts a judge ran for; `None` when no judge ran. |
+| `over_budget` | `bool` | Whether reported target and judge tokens (the two `known_total_tokens`) exceed `max_total_tokens`. `unknown_cases` above 0 in either means the budget could not be fully enforced. |
 | `latency` | [`Latency`](#latency) `\| None` | p50, p95 and max attempt duration; `None` when no attempt has a duration ([decision 1 of #155](https://github.com/malcmiller/agentframe/issues/155)). |
 | `errors_by_class` | `dict[str, int]` | Errored attempts per error class, for example `{"TimeoutLimitExceededError": 2}`. |
 
@@ -609,7 +694,9 @@ scorer and tag pass rates, then a table of case ID, status, scorer verdicts
 (`name=pass` / `name=fail`, with the value in brackets, or `error=<class>`),
 tokens (`~` marks estimates, `unknown` when not reported) and duration,
 failing cases first (errored, then failed, then not run, then passed). With a
-budget, a `Budget:` line shows it and any overrun or unknown usage; with
+budget, a `Budget:` line shows it and any overrun or unknown usage (target
+and judge together); when a judge ran, a `Judge tokens:` line follows
+`Tokens:`; with
 `repeats`, the header counts attempts, the table names each `case #attempt`
 and a `Flaky:` line lists flaky cases; `not run` appears in the header when any
 attempt did not run:
@@ -689,8 +776,8 @@ The document's top-level keys:
 | `scorers` | Scorer names, in scorer order. |
 | `capture_content` | Whether content was captured. |
 | `max_total_tokens` | The evaluation-wide budget, or `null`. |
-| `aggregates` | `attempt_count`, `passed_count`, `failed_count`, `errored_count`, `not_run_count`, `pass_rate`, `scorer_pass_rates`, `tag_pass_rates`, `flaky_cases`, `total_usage` (the [`UsageTotals`](#usagetotals) fields), `over_budget`, `budget_fully_enforced` (`null` without a budget, `false` when any attempt's usage is unknown), `latency` (`p50_seconds`, `p95_seconds`, `max_seconds`, or `null`) and `errors_by_class`. |
-| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
+| `aggregates` | `attempt_count`, `passed_count`, `failed_count`, `errored_count`, `not_run_count`, `pass_rate`, `scorer_pass_rates`, `tag_pass_rates`, `flaky_cases`, `total_usage` (the [`UsageTotals`](#usagetotals) fields), `total_judge_usage` (the same fields, or `null` when no [`Judge`](#judge) ran), `over_budget` (target plus judge tokens), `budget_fully_enforced` (`null` without a budget, `false` when any target or judge usage is unknown), `latency` (`p50_seconds`, `p95_seconds`, `max_seconds`, or `null`) and `errors_by_class`. |
+| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `judge_usage` (the same fields, or `null` when no judge ran), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
 
 **Behavior / failures:** unknown token counts are `null`, never 0. Like the
 console summary, the document holds no case content and no error messages by
@@ -723,7 +810,7 @@ EvalReport.require(*, min_pass_rate: float | None = None,
 | --- | --- | --- | --- |
 | `min_pass_rate` | `float \| None` | Optional; default `None` | Lowest acceptable `pass_rate`, from 0.0 to 1.0. Missed when no attempt ran, whatever the value. |
 | `max_errors` | `int \| None` | Optional; default `0` | Most errored attempts accepted, 0 or more; `None` accepts any number. |
-| `max_total_tokens` | `int \| None` | Optional; default `None` | Most tokens the evaluation may have used, greater than 0. Missed when any attempt's usage is unknown. |
+| `max_total_tokens` | `int \| None` | Optional; default `None` | Most tokens the evaluation may have used, target and [`Judge`](#judge) runs together, greater than 0. Missed when any target or judge usage is unknown. |
 | `allow_not_run` | `bool` | Optional; default `False` | Whether attempts that never started are accepted. |
 | `allow_over_budget` | `bool` | Optional; default `False` | Whether reported usage over the report's `max_total_tokens` budget is accepted. |
 
