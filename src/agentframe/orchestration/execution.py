@@ -9,10 +9,18 @@ failure cancels the running steps (their bindings send a best-effort
 ``CancelTask``) and is raised as itself. With ``on_failure="continue"`` a
 remote agent's failure or question is kept as that step's result instead,
 and the steps depending on it are skipped.
+
+Each step that starts is logged at INFO as ``Plan step started`` and
+``Plan step completed``, a skipped step only as ``Plan step completed``, with
+the run's correlation and the step's ID, entry name, status, error type,
+remote task ID, duration and total tokens. Arguments, text, results, error
+messages and questions are never logged: they can carry user data.
 """
 
 import asyncio
-from collections.abc import Coroutine, Mapping, Sequence
+import logging
+import time
+from collections.abc import Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
@@ -33,7 +41,8 @@ from agentframe.orchestration.plan import (
     substituted_arguments,
     substituted_text,
 )
-from agentframe.runtime.generation import GenerationState
+from agentframe.runtime.correlation import RunCorrelation
+from agentframe.runtime.generation import NO_USAGE, GenerationState, add_usage
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.tools import is_permitted
 from agentframe.runtime.usage import Usage
@@ -53,6 +62,8 @@ type StepStatus = Literal[
     "completed", "failed", "skipped", "cancelled", "input_required"
 ]
 """How one step of a plan ended."""
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -77,6 +88,10 @@ class StepResult:
             or the step did not complete.
         remote_task_id: The remote agent's task ID, which ties the step to
             that agent's logs, or ``None`` when there was no task.
+        use: The name of the catalog entry the step called.
+        duration_ms: How long the step took, in whole milliseconds, from
+            just before its checks until the agent's reply, or ``None`` for
+            a skipped step.
         error_type: The class name of the error that ended a ``"failed"``,
             ``"cancelled"`` or ``"input_required"`` step, else ``None``.
         error_message: That error's safe message, else ``None``. Never the
@@ -89,6 +104,8 @@ class StepResult:
     value: Any
     usage: Usage | None
     remote_task_id: str | None
+    use: str
+    duration_ms: int | None
     error_type: str | None = None
     error_message: str | None = None
     question: str | None = None
@@ -105,11 +122,15 @@ class PlanResult:
             checked to run.
         complete: Whether every step completed. Always ``True`` under the
             default ``on_failure="stop"``.
+        usage: The usage of the steps that were sent, added up, or ``None``
+            when any of them is unknown. Skipped steps were never sent. The
+            run's own usage already includes it.
     """
 
     value: Any
     steps: Mapping[str, StepResult]
     complete: bool
+    usage: Usage | None
 
 
 async def run_plan(
@@ -145,11 +166,23 @@ async def run_plan(
     await _check_plan(plan, generation, principal, deadline)
     tokens = max_tokens_per_step or _equal_share(generation, len(steps))
     execution = _Execution(
-        catalog, generation, principal, deadline, max_parallel, tokens, on_failure
+        catalog,
+        generation,
+        run.correlation,
+        principal,
+        deadline,
+        max_parallel,
+        tokens,
+        on_failure,
     )
     results = await execution.run(steps)
     complete = all(result.status == "completed" for result in results.values())
-    return PlanResult(results[plan.result].value, MappingProxyType(results), complete)
+    return PlanResult(
+        results[plan.result].value,
+        MappingProxyType(results),
+        complete,
+        _total_usage(results.values()),
+    )
 
 
 async def _check_plan(
@@ -179,6 +212,18 @@ def _check_whole_number(name: str, value: int) -> None:
         raise DefinitionError(f"{name}= must be a whole number greater than 0")
 
 
+def _total_usage(steps: Iterable[StepResult]) -> Usage | None:
+    """Add up the sent steps' usage; unknown when any sent step's is unknown."""
+    total = NO_USAGE
+    for step in steps:
+        if step.status == "skipped":
+            continue
+        if step.usage is None:
+            return None
+        total = add_usage(total, step.usage)
+    return total
+
+
 def _equal_share(generation: GenerationState, step_count: int) -> int:
     """Return the run's remaining tokens divided equally among the steps.
 
@@ -203,6 +248,7 @@ class _Execution:
         catalog: The checked plan's catalog, holding the run's bindings.
         generation: The run's state: its limits, accounting, execution
             policy and running skill.
+        correlation: The run's place in the request, for the step logs.
         principal: The run's verified caller, or ``None``.
         deadline: Event-loop time when the run times out; tool checks must
             answer by then.
@@ -216,6 +262,7 @@ class _Execution:
         self,
         catalog: SkillCatalog,
         generation: GenerationState,
+        correlation: RunCorrelation,
         principal: Principal | None,
         deadline: float,
         max_parallel: int,
@@ -224,6 +271,7 @@ class _Execution:
     ) -> None:
         self._catalog = catalog
         self._generation = generation
+        self._correlation = correlation
         self._principal = principal
         self._deadline = deadline
         self._tokens_per_step = tokens_per_step
@@ -260,10 +308,12 @@ class _Execution:
                 await self._finished[name].wait()
             if self._depends_on_unfinished_step(step):
                 # Never sent, counted or checked: there is nothing to send.
-                self._results[step.id] = StepResult("skipped", None, None, None)
+                skipped = StepResult("skipped", None, None, None, step.use, None)
+                self._log("Plan step completed", step, "skipped")
+                self._results[step.id] = skipped
             else:
                 async with self._slots:
-                    self._results[step.id] = await self._send(step)
+                    self._results[step.id] = await self._send_logged(step)
             self._finished[step.id].set()
         except Exception as error:
             # The first failure cancels the rest, whose own errors follow it.
@@ -276,8 +326,86 @@ class _Execution:
             self._results[name].status != "completed" for name in dependencies(step)
         )
 
-    async def _send(self, step: PlanStep) -> StepResult:
-        """Count, resolve, authorize and check one step, then send it."""
+    async def _send_logged(self, step: PlanStep) -> StepResult:
+        """Send ``step`` between its ``started`` and ``completed`` log records."""
+        self._log("Plan step started", step, "started")
+        started = time.monotonic()
+        try:
+            result = await self._send(step, started)
+        except (RemoteAgentError, ClarificationNeededError) as error:
+            # Raised under "stop"; logged as "continue" would keep it.
+            self._log_result(step, _unfinished(error, step.use, _elapsed_ms(started)))
+            raise
+        except asyncio.CancelledError:
+            self._log_stopped(step, "cancelled", "CancelledError", started)
+            raise
+        except Exception as error:
+            self._log_stopped(step, "failed", type(error).__name__, started)
+            raise
+        self._log_result(step, result)
+        return result
+
+    def _log_result(self, step: PlanStep, result: StepResult) -> None:
+        usage = result.usage
+        self._log(
+            "Plan step completed",
+            step,
+            result.status,
+            error_type=result.error_type,
+            remote_task_id=result.remote_task_id,
+            duration_ms=result.duration_ms,
+            total_tokens=None if usage is None else usage.total_tokens,
+        )
+
+    def _log_stopped(
+        self, step: PlanStep, status: StepStatus, error_type: str, started: float
+    ) -> None:
+        """Log a step stopped by a limit, check or cancellation of the run."""
+        self._log(
+            "Plan step completed",
+            step,
+            status,
+            error_type=error_type,
+            duration_ms=_elapsed_ms(started),
+        )
+
+    def _log(
+        self,
+        message: str,
+        step: PlanStep,
+        status: str,
+        *,
+        error_type: str | None = None,
+        remote_task_id: str | None = None,
+        duration_ms: int | None = None,
+        total_tokens: int | None = None,
+    ) -> None:
+        # Only fields the library controls or has checked: never arguments,
+        # text, results, error messages or questions.
+        logger.info(
+            "%s (plan_step=%s, use=%s, status=%s, invocation_id=%s)",
+            message,
+            step.id,
+            step.use,
+            status,
+            self._correlation.invocation_id,
+            extra={
+                **self._correlation.log_extra(),
+                "plan_step": step.id,
+                "use": step.use,
+                "status": status,
+                "error_type": error_type,
+                "remote_task_id": remote_task_id,
+                "duration_ms": duration_ms,
+                "total_tokens": total_tokens,
+            },
+        )
+
+    async def _send(self, step: PlanStep, started: float) -> StepResult:
+        """Count, resolve, authorize and check one step, then send it.
+
+        ``started`` is the ``time.monotonic()`` the step's duration counts from.
+        """
         entry = self._catalog.get(step.use)
         assert entry is not None  # The plan was checked against the catalog.
         generation = self._generation
@@ -305,8 +433,15 @@ class _Execution:
         except (RemoteAgentError, ClarificationNeededError) as error:
             if self._on_failure == "stop":
                 raise
-            return _unfinished(error)
-        return StepResult("completed", reply.value, reply.usage, reply.task_id)
+            return _unfinished(error, step.use, _elapsed_ms(started))
+        return StepResult(
+            "completed",
+            reply.value,
+            reply.usage,
+            reply.task_id,
+            step.use,
+            _elapsed_ms(started),
+        )
 
     async def _check(self, entry: RemoteSkill, arguments: dict[str, Any]) -> None:
         """Check the caller may use ``entry`` and the policy allows sending
@@ -338,7 +473,9 @@ class _Execution:
         )
 
 
-def _unfinished(error: RemoteAgentError | ClarificationNeededError) -> StepResult:
+def _unfinished(
+    error: RemoteAgentError | ClarificationNeededError, use: str, duration_ms: int
+) -> StepResult:
     """Keep a remote agent's failure or question as its step's result.
 
     Only the error's class name and safe message are kept, plus the
@@ -351,6 +488,8 @@ def _unfinished(error: RemoteAgentError | ClarificationNeededError) -> StepResul
             None,
             None,
             error.task_id,
+            use,
+            duration_ms,
             error_type,
             message,
             question=error.question,
@@ -358,4 +497,10 @@ def _unfinished(error: RemoteAgentError | ClarificationNeededError) -> StepResul
     status: StepStatus = (
         "cancelled" if error.task_state == "TASK_STATE_CANCELED" else "failed"
     )
-    return StepResult(status, None, None, error.task_id, error_type, message)
+    return StepResult(
+        status, None, None, error.task_id, use, duration_ms, error_type, message
+    )
+
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)

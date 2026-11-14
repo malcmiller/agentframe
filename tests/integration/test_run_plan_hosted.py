@@ -7,6 +7,7 @@ plan locally, except in the depth test, which hosts it.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
@@ -295,8 +296,13 @@ async def test_independent_steps_overlap_and_the_dependent_step_waits_for_both(
     assert steps["tides"].value == {"topic": "tides", "sources": ["tides source"]}
     assert steps["tides"].usage is not None
     assert steps["tides"].usage.total_tokens == 50
-    # The run's usage is the steps' reported usage: two 50-token model calls.
+    assert steps["tides"].use == "research.find_sources"
+    assert (steps["tides"].duration_ms or 0) >= STEP_SECONDS * 1000
+    # The run's usage is the steps' reported usage: two 50-token model calls,
+    # charged once, and the plan's usage adds up the same steps.
     assert result.usage.total_tokens == 100
+    assert orchestrator.result.usage is not None
+    assert orchestrator.result.usage.total_tokens == 100
     assert result.tool_calls == 3
 
 
@@ -408,6 +414,9 @@ async def test_placeholders_insert_text_and_json_and_a_plain_peer_makes_usage_un
     assert result.value == f"Echo: {sent}"
     assert orchestrator.result is not None
     assert orchestrator.result.steps["post"].usage is None
+    assert orchestrator.result.steps["found"].usage is not None
+    # One unknown step makes the plan's usage unknown, never a partial sum.
+    assert orchestrator.result.usage is None
     assert result.usage.total_tokens is None
 
 
@@ -588,7 +597,11 @@ async def test_continue_keeps_the_independent_branch_and_skips_dependents_of_a_f
     assert bad.value is None and bad.usage is None and bad.remote_task_id
     assert bad.error_type == "RemoteAgentError"
     assert bad.error_message == "Agent 'research' did not complete its task"
-    assert steps["later"] == StepResult("skipped", None, None, None)
+    assert steps["later"] == StepResult(
+        "skipped", None, None, None, "research.find_sources", None
+    )
+    # The failed step was sent, and its usage is unknown, so the plan's is.
+    assert orchestrator.result.usage is None
     # Skipped steps are never counted, checked or sent.
     assert result.tool_calls == 2
     assert [name for name, _ in recorder.seen] == ["research.find_sources"] * 2
@@ -885,3 +898,132 @@ async def test_plan_checks_run_only_on_a_plan_the_catalog_check_accepted(
         )
 
     assert checked == []
+
+
+STEP_LOG_FIELDS = {
+    "agent",
+    "invocation_id",
+    "root_invocation_id",
+    "parent_invocation_id",
+    "plan_step",
+    "use",
+    "status",
+    "error_type",
+    "remote_task_id",
+    "duration_ms",
+    "total_tokens",
+}
+
+
+def records(caplog: pytest.LogCaptureFixture, prefix: str) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.getMessage().startswith(prefix)]
+
+
+async def test_steps_are_logged_with_correlation_and_without_content(
+    serve: ServeLocally,
+    agents: Agents,
+    research: Research,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe")
+    orchestrator = Orchestrator()
+    plan = Plan(
+        steps=[find("found", "hush"), brief("found.sources", "found.sources")],
+        result="brief",
+    )
+
+    async with agents() as directory:
+
+        def orchestrator_app(public_url: str) -> AgentApp:
+            return AgentApp(
+                agent=orchestrator, host=anonymous(public_url), directory=directory
+            )
+
+        async with serve(orchestrator_app) as url:
+            client = await connect(url)
+            task = await call_skill(client, "execute", {"plan": plan.model_dump()})
+
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED
+    runs = {r.__dict__["agent"]: r.__dict__ for r in records(caplog, "Run started")}
+    run = runs["Orchestrator"]
+    started = records(caplog, "Plan step started")
+    completed = records(caplog, "Plan step completed")
+    assert [r.__dict__["plan_step"] for r in started] == ["found", "brief"]
+    assert [r.__dict__["plan_step"] for r in completed] == ["found", "brief"]
+    for record in started + completed:
+        fields = record.__dict__
+        assert fields.keys() >= STEP_LOG_FIELDS
+        assert fields["agent"] == "Orchestrator"
+        assert fields["invocation_id"] == run["invocation_id"]
+        assert fields["root_invocation_id"] == run["root_invocation_id"]
+    found, briefed = (r.__dict__ for r in completed)
+    assert found["use"] == "research.find_sources"
+    assert found["status"] == "completed"
+    assert found["remote_task_id"]
+    assert found["duration_ms"] >= STEP_SECONDS * 1000
+    assert found["total_tokens"] == 50
+    # The brief skill makes no model call, so its agent reports zero tokens.
+    assert briefed["total_tokens"] == 0
+    # The specialist sees the orchestrator's run as its parent, same root.
+    specialist_runs = [
+        r.__dict__
+        for r in records(caplog, "Run started")
+        if r.__dict__["agent"] == "Research"
+    ]
+    assert len(specialist_runs) == 2
+    for specialist in specialist_runs:
+        assert specialist["parent_invocation_id"] == run["invocation_id"]
+        assert specialist["root_invocation_id"] == run["root_invocation_id"]
+    # No argument or result reaches the orchestrator's plan logs.
+    for record in started + completed:
+        assert "hush" not in record.getMessage()
+        assert all("hush" not in str(value) for value in record.__dict__.values())
+
+
+async def test_a_failing_step_is_logged_without_the_peers_error(
+    agents: Agents, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe")
+    plan = Plan(steps=[find("bad", "fail")], result="bad")
+
+    with pytest.raises(RemoteAgentError):
+        await execute(agents, Orchestrator(), plan)
+
+    (record,) = records(caplog, "Plan step completed")
+    assert record.__dict__["status"] == "failed"
+    assert record.__dict__["error_type"] == "RemoteAgentError"
+    assert record.__dict__["remote_task_id"]
+    assert record.__dict__["total_tokens"] is None
+    for content in ("did not complete", "secret"):
+        assert content not in record.getMessage()
+        assert all(content not in str(value) for value in record.__dict__.values())
+
+
+async def test_continue_logs_the_error_type_only_and_skipped_steps(
+    agents: Agents, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe")
+    plan = Plan(
+        steps=[find("bad", "fail"), find("later", "later", after=["bad"])],
+        result="later",
+    )
+
+    await execute(agents, Orchestrator(on_failure="continue"), plan)
+
+    completed = {
+        r.__dict__["plan_step"]: r for r in records(caplog, "Plan step completed")
+    }
+    bad, later = completed["bad"].__dict__, completed["later"].__dict__
+    assert bad["status"] == "failed"
+    assert bad["error_type"] == "RemoteAgentError"
+    assert bad["remote_task_id"]
+    assert later["status"] == "skipped"
+    assert later["duration_ms"] is None
+    assert [r.__dict__["plan_step"] for r in records(caplog, "Plan step started")] == [
+        "bad"
+    ]
+    # Neither the safe error message nor the peer's own error is logged.
+    for record in completed.values():
+        for content in ("did not complete", "secret"):
+            assert content not in record.getMessage()
+            assert all(content not in str(value) for value in record.__dict__.values())
