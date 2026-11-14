@@ -7,6 +7,7 @@ What it does depends on the text it is sent:
 - ``"wait"``: waits until cancelled.
 - ``"fail"``: fails its task with a message holding a secret detail.
 - ``"question"``: asks a question back (``TASK_STATE_INPUT_REQUIRED``).
+- ``"cancel"``: cancels its own task (``TASK_STATE_CANCELED``).
 - anything else: echoes the text as its answer.
 
 Every request is recorded, so tests can check exactly what reached it.
@@ -81,6 +82,8 @@ class PeerExecutor(AgentExecutor):
         elif text == "question":
             question = task.new_agent_message([new_text_part(PEER_QUESTION)])
             await task.requires_input(question)
+        elif text == "cancel":
+            await task.cancel()
         else:
             await task.add_artifact([new_text_part(f"Echo: {text}")])
             await task.complete()
