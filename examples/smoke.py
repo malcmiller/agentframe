@@ -32,7 +32,14 @@ import agentframe
 from agentframe import AgentApp, ModelCapabilities, ToolCall
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.testing import ScriptedModel
-from examples import assistant, echo, evaluation, orders, routed_assistant
+from examples import (
+    assistant,
+    echo,
+    evaluation,
+    orders,
+    plan_approval,
+    routed_assistant,
+)
 from examples.multi_agent import planner, research
 
 STRUCTURED = ModelCapabilities(context_window=8192, structured_output=True)
@@ -255,6 +262,46 @@ async def check_evaluation() -> None:
     report.require(min_pass_rate=1.0)
 
 
+async def check_plan_approval() -> None:
+    """A proposed plan runs on the research agent once a reviewer sends it back."""
+    os.environ["AGENTFRAME_DEV"] = "1"
+
+    def create_research(base_url: str) -> AgentApp:
+        os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
+        os.environ["AGENTFRAME_DEV_API_KEYS"] = "approvals=smoke-research-key"
+        return research.create_app(ScriptedModel())
+
+    async with serve(create_research) as research_url:
+        step = {
+            "id": "tides",
+            "use": "research-agent.find_sources",
+            "arguments": json.dumps({"topic": "tides"}),
+            "after": [],
+        }
+        reply = json.dumps({"steps": [step], "result": "tides", "reason": None})
+        os.environ["AGENTFRAME_AGENTS"] = (
+            f"research-agent={research_url}/.well-known/agent-card.json"
+        )
+        os.environ["RESEARCH_API_KEY"] = "smoke-research-key"
+        os.environ["APPROVALS_REQUESTER_KEY"] = "smoke-requester-key"
+        os.environ["APPROVALS_REVIEWER_KEY"] = "smoke-reviewer-key"
+
+        def create_approvals(base_url: str) -> AgentApp:
+            os.environ["APPROVALS_PUBLIC_URL"] = base_url
+            model = ScriptedModel([reply], capabilities=STRUCTURED)
+            return plan_approval.create_app(model)
+
+        async with (
+            serve(create_approvals) as approvals_url,
+            connect(approvals_url, "smoke-requester-key") as requester,
+            connect(approvals_url, "smoke-reviewer-key") as reviewer,
+        ):
+            task = await call_skill(requester, "propose", {"goal": "Explain tides"})
+            plan = data_result(task)
+            task = await call_skill(reviewer, "execute", {"plan": plan})
+            expect("Tide tables explained" in text_result(task), True)
+
+
 async def main() -> None:
     """Check every example in turn; raise ``AssertionError`` on the first failure."""
     print(f"agentframe {agentframe.__version__} from {agentframe.__file__}")
@@ -265,6 +312,7 @@ async def main() -> None:
         check_routed_assistant,
         check_multi_agent,
         check_evaluation,
+        check_plan_approval,
     )
     for check in checks:
         await check()
