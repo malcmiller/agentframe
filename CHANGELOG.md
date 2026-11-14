@@ -19,7 +19,9 @@ changelog.
   just before it starts, after the case's hold has ended, and errors the case
   with `TokenLimitExceededError` when it cannot fit. Judge usage is reported
   apart from the target's in `CaseResult.judge_usage` and
-  `EvalReport.total_judge_usage`, and counts toward `over_budget`; the
+  `EvalReport.total_judge_usage` (both in `write_json`, unknown as `null`),
+  and counts toward `over_budget`, `budget_fully_enforced` and
+  `require(max_total_tokens=...)`; the
   verdict's reason is kept only with `capture_content=True` (#160).
 
 - **Evaluation (M9):** `A2ATarget` is proven against agents not built with

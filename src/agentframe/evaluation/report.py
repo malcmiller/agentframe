@@ -367,9 +367,10 @@ class EvalReport:
                 1.0. Missed when no attempt ran, whatever the value.
             max_errors: The most errored attempts accepted; ``None`` accepts
                 any number.
-            max_total_tokens: The most tokens the evaluation may have used.
-                Missed when any attempt's usage is unknown, since the total
-                cannot be shown to be within it.
+            max_total_tokens: The most tokens the evaluation may have used,
+                target and ``Judge`` runs together. Missed when any target or
+                judge usage is unknown, since the total cannot be shown to be
+                within it.
             allow_not_run: Whether attempts that never started are accepted.
             allow_over_budget: Whether reported usage over
                 ``EvalReport.max_total_tokens`` is accepted.
@@ -438,6 +439,16 @@ def _known_tokens(report: EvalReport) -> int:
     return report.total_usage.known_total_tokens + judged
 
 
+def _total_tokens(report: EvalReport) -> int | None:
+    """Target plus judge tokens, or ``None`` when any count is unknown."""
+    judge = report.total_judge_usage
+    target_tokens = report.total_usage.total_tokens
+    judge_tokens = judge.total_tokens if judge else 0
+    if target_tokens is None or judge_tokens is None:
+        return None
+    return target_tokens + judge_tokens
+
+
 def _unknown_cases(report: EvalReport) -> int:
     judge = report.total_judge_usage
     judged = judge.unknown_cases if judge else 0
@@ -493,29 +504,28 @@ def _misses(
         )
     if not allow_not_run and report.not_run_count:
         misses.append(f"{report.not_run_count} attempts did not run")
-    usage = report.total_usage
     if not allow_over_budget and report.over_budget:
         misses.append(
-            f"{usage.known_total_tokens} reported tokens are over the budget of "
+            f"{_known_tokens(report)} reported tokens are over the budget of "
             f"{report.max_total_tokens}"
         )
     if max_total_tokens is not None:
-        if usage.total_tokens is None:
+        # Target and judge tokens count together, as for the budget.
+        used = _total_tokens(report)
+        if used is None:
             misses.append(
-                f"token usage is unknown for {usage.unknown_cases} attempts, so it "
-                f"cannot be shown to be at most {max_total_tokens}"
+                f"token usage is unknown for {_unknown_cases(report)} target or "
+                f"judge runs, so it cannot be shown to be at most {max_total_tokens}"
             )
-        elif usage.total_tokens > max_total_tokens:
-            misses.append(
-                f"{usage.total_tokens} tokens used; at most {max_total_tokens} allowed"
-            )
+        elif used > max_total_tokens:
+            misses.append(f"{used} tokens used; at most {max_total_tokens} allowed")
     return misses
 
 
 def _report_json(report: EvalReport) -> dict[str, Any]:
-    usage = report.total_usage
+    judge_usage = report.total_judge_usage
     budget_fully_enforced = (
-        None if report.max_total_tokens is None else usage.unknown_cases == 0
+        None if report.max_total_tokens is None else _unknown_cases(report) == 0
     )
     return {
         "schema": _SCHEMA,
@@ -534,7 +544,8 @@ def _report_json(report: EvalReport) -> dict[str, Any]:
             "scorer_pass_rates": report.scorer_pass_rates,
             "tag_pass_rates": report.tag_pass_rates,
             "flaky_cases": report.flaky_cases,
-            "total_usage": asdict(usage),
+            "total_usage": asdict(report.total_usage),
+            "total_judge_usage": asdict(judge_usage) if judge_usage else None,
             "over_budget": report.over_budget,
             "budget_fully_enforced": budget_fully_enforced,
             "latency": _latency_json(report.latency),
@@ -562,7 +573,8 @@ def _result_json(result: CaseResult, *, capture_content: bool) -> dict[str, Any]
         "error_type": result.error_type,
         "error_message": result.error_message if keep_message else None,
         "invocation_id": result.invocation_id,
-        "usage": asdict(result.usage) if result.usage is not None else None,
+        "usage": _usage_json(result.usage),
+        "judge_usage": _usage_json(result.judge_usage),
         "duration_seconds": _seconds_json(result.duration),
         "model_calls": result.model_calls,
         "tool_calls": result.tool_calls,
@@ -574,6 +586,10 @@ def _result_json(result: CaseResult, *, capture_content: bool) -> dict[str, Any]
         entry["expected"] = _content_json(result.expected)
         entry["output"] = _content_json(result.output)
     return entry
+
+
+def _usage_json(usage: Usage | None) -> dict[str, Any] | None:
+    return asdict(usage) if usage is not None else None
 
 
 def _score_json(score: ScoreResult, *, capture_content: bool) -> dict[str, Any]:

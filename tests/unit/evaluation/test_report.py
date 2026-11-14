@@ -225,7 +225,12 @@ def test_reported_usage_over_the_budget_is_flagged() -> None:
     assert not EvalReport(results=report.results).over_budget
 
 
-def test_judge_usage_is_totalled_apart_and_counts_against_the_budget() -> None:
+def judged_report(*, judge_known: bool = False) -> EvalReport:
+    second_judge = (
+        Usage(2, 1, 3, estimated=False)
+        if judge_known
+        else Usage(None, None, None, estimated=False)
+    )
     results = (
         CaseResult(
             case_id="a",
@@ -237,11 +242,15 @@ def test_judge_usage_is_totalled_apart_and_counts_against_the_budget() -> None:
             case_id="b",
             status=CaseStatus.ERRORED,
             usage=Usage(5, 5, 10, estimated=False),
-            judge_usage=Usage(None, None, None, estimated=False),
+            judge_usage=second_judge,
         ),
         passed("c", usage=Usage(1, 1, 2, estimated=False)),
     )
-    report = EvalReport(results=results, max_total_tokens=25)
+    return EvalReport(results=results, max_total_tokens=25)
+
+
+def test_judge_usage_is_totalled_apart_and_counts_against_the_budget() -> None:
+    report = judged_report()
 
     assert report.total_usage.total_tokens == 22
     judge = report.total_judge_usage
@@ -250,7 +259,62 @@ def test_judge_usage_is_totalled_apart_and_counts_against_the_budget() -> None:
     assert judge.unknown_cases == 1
     assert report.over_budget
     assert "over budget (28 reported), not fully enforced (1 attempts" in str(report)
-    assert EvalReport(results=results[2:]).total_judge_usage is None
+    assert EvalReport(results=report.results[2:]).total_judge_usage is None
+
+
+def test_the_json_report_holds_judge_usage_with_unknown_as_null(
+    tmp_path: Path,
+) -> None:
+    document = written(judged_report(), tmp_path)
+
+    aggregates = document["aggregates"]
+    assert aggregates["total_judge_usage"] == {
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+        "known_total_tokens": 6,
+        "unknown_cases": 1,
+        "estimated": False,
+    }
+    assert (aggregates["over_budget"], aggregates["budget_fully_enforced"]) == (
+        True,
+        False,
+    )
+    judged, unknown, unjudged = (r["judge_usage"] for r in document["results"])
+    assert judged == {
+        "input_tokens": 5,
+        "output_tokens": 1,
+        "total_tokens": 6,
+        "estimated": False,
+    }
+    assert unknown == {
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+        "estimated": False,
+    }
+    assert unjudged is None
+    assert written(mixed_report(), tmp_path)["aggregates"]["total_judge_usage"] is None
+
+
+def test_require_counts_target_and_judge_tokens_together() -> None:
+    report = judged_report(judge_known=True)  # 22 target + 9 judge tokens.
+
+    report.require(max_errors=None, allow_over_budget=True, max_total_tokens=31)
+    with pytest.raises(AssertionError) as raised:
+        report.require(max_errors=None, max_total_tokens=30)
+
+    assert str(raised.value).splitlines()[1:3] == [
+        "- 31 reported tokens are over the budget of 25",
+        "- 31 tokens used; at most 30 allowed",
+    ]
+
+
+def test_require_never_passes_a_token_threshold_on_unknown_judge_usage() -> None:
+    with pytest.raises(AssertionError, match="unknown for 1 target or judge runs"):
+        judged_report().require(
+            max_errors=None, allow_over_budget=True, max_total_tokens=1_000_000
+        )
 
 
 def test_the_summary_shows_attempts_not_run_budget_and_flaky_cases() -> None:
@@ -408,6 +472,7 @@ def test_the_json_report_holds_every_aggregate_with_unknown_usage_as_null(
             "unknown_cases": 1,
             "estimated": False,
         },
+        "total_judge_usage": None,
         "over_budget": True,
         "budget_fully_enforced": False,
         "latency": None,
@@ -487,7 +552,7 @@ def test_require_by_default_fails_errored_not_run_and_over_budget_attempts() -> 
 
 
 def test_require_never_passes_a_token_threshold_on_unknown_usage() -> None:
-    with pytest.raises(AssertionError, match="token usage is unknown for 1 attempts"):
+    with pytest.raises(AssertionError, match="token usage is unknown for 1 target"):
         mixed_report().require(max_errors=None, max_total_tokens=1_000_000)
 
 

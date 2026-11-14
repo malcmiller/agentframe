@@ -46,7 +46,8 @@ failure, with each miss listed above the console summary. By default it fails
 when any attempt errored, any attempt did not run, or reported usage went over
 the evaluation's `max_total_tokens` budget; `max_errors=None`,
 `allow_not_run=True` and `allow_over_budget=True` accept them. A
-`max_total_tokens=` threshold never passes when any attempt's usage is unknown,
+`max_total_tokens=` threshold counts target and `Judge` tokens together and
+never passes when any of that usage is unknown,
 and `min_pass_rate=` fails when no attempt ran. Outside pytest, a script can
 call `require` and let the `AssertionError` exit non-zero.
 

@@ -776,8 +776,8 @@ The document's top-level keys:
 | `scorers` | Scorer names, in scorer order. |
 | `capture_content` | Whether content was captured. |
 | `max_total_tokens` | The evaluation-wide budget, or `null`. |
-| `aggregates` | `attempt_count`, `passed_count`, `failed_count`, `errored_count`, `not_run_count`, `pass_rate`, `scorer_pass_rates`, `tag_pass_rates`, `flaky_cases`, `total_usage` (the [`UsageTotals`](#usagetotals) fields), `over_budget`, `budget_fully_enforced` (`null` without a budget, `false` when any attempt's usage is unknown), `latency` (`p50_seconds`, `p95_seconds`, `max_seconds`, or `null`) and `errors_by_class`. |
-| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
+| `aggregates` | `attempt_count`, `passed_count`, `failed_count`, `errored_count`, `not_run_count`, `pass_rate`, `scorer_pass_rates`, `tag_pass_rates`, `flaky_cases`, `total_usage` (the [`UsageTotals`](#usagetotals) fields), `total_judge_usage` (the same fields, or `null` when no [`Judge`](#judge) ran), `over_budget` (target plus judge tokens), `budget_fully_enforced` (`null` without a budget, `false` when any target or judge usage is unknown), `latency` (`p50_seconds`, `p95_seconds`, `max_seconds`, or `null`) and `errors_by_class`. |
+| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `judge_usage` (the same fields, or `null` when no judge ran), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
 
 **Behavior / failures:** unknown token counts are `null`, never 0. Like the
 console summary, the document holds no case content and no error messages by
@@ -810,7 +810,7 @@ EvalReport.require(*, min_pass_rate: float | None = None,
 | --- | --- | --- | --- |
 | `min_pass_rate` | `float \| None` | Optional; default `None` | Lowest acceptable `pass_rate`, from 0.0 to 1.0. Missed when no attempt ran, whatever the value. |
 | `max_errors` | `int \| None` | Optional; default `0` | Most errored attempts accepted, 0 or more; `None` accepts any number. |
-| `max_total_tokens` | `int \| None` | Optional; default `None` | Most tokens the evaluation may have used, greater than 0. Missed when any attempt's usage is unknown. |
+| `max_total_tokens` | `int \| None` | Optional; default `None` | Most tokens the evaluation may have used, target and [`Judge`](#judge) runs together, greater than 0. Missed when any target or judge usage is unknown. |
 | `allow_not_run` | `bool` | Optional; default `False` | Whether attempts that never started are accepted. |
 | `allow_over_budget` | `bool` | Optional; default `False` | Whether reported usage over the report's `max_total_tokens` budget is accepted. |
 
