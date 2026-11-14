@@ -17,9 +17,11 @@ optional [`default_remote`](#default_remote) identity for registered agents
 [`ctx.plan`](#runcontextplan) planning call
 ([#170](https://github.com/malcmiller/agentframe/issues/170)), and
 [running a plan](#runcontextrun_plan) with [`PlanResult`](#planresult)
-([#171](https://github.com/malcmiller/agentframe/issues/171)). The `continue`
-failure policy (#172), per-step logs (#173) and plan checks (#174) are
-planned, not implemented.
+([#171](https://github.com/malcmiller/agentframe/issues/171)), and
+[plan checks and the approval pattern](#plan-checks-and-the-approval-pattern)
+([#174](https://github.com/malcmiller/agentframe/issues/174)), with the
+`continue` failure policy (#172). Per-step logs (#173) are planned, not
+implemented.
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
@@ -548,7 +550,10 @@ class Orchestrator(Agent):
 [`SkillCatalog.check`](#skillcatalogcheck) against only the entries the
 caller may use, so a step using a hidden entry fails exactly like one using
 an unknown name ("names no entry of the skill catalog"). An invalid plan
-sends nothing. Steps then run under one
+sends nothing. Every `ExecutionPolicy.plan_checks` check then sees the whole
+plan ([plan checks](#plan-checks-and-the-approval-pattern)); a plan they do
+not all allow sends nothing and counts no tool call, under either
+`on_failure` policy. Steps then run under one
 `asyncio.TaskGroup`: a step starts when every step it references or lists in
 `after` has completed, with at most `max_parallel` running. Just before a step
 is sent:
@@ -592,6 +597,8 @@ entries, never argument values or results; nothing is logged with them.
 | A `.field` reference into a value that is not an object or lacks the field (for example a structured skill that returned text) | `InputValidationError`, for example `Plan step 'brief' field 'arguments.sources' refers to field 'summary' of 'tides', whose result has no such field`; that step is not sent |
 | The caller lacks a permission the entry requires, or a tool check denies the step | `PermissionDeniedError`; that step is not sent |
 | A tool check raises or is still running at the run's deadline | `PolicyUnavailableError`; that step is not sent |
+| A plan check denies the plan | `PermissionDeniedError` ("The plan was blocked by an execution policy check"); nothing is sent |
+| A plan check raises or is still running at the run's deadline | `PolicyUnavailableError`; nothing is sent |
 | A step's tokens do not fit what the run has left, or fewer tokens are left than the plan has steps (default share) | `TokenLimitExceededError` before that step (or any step) is sent |
 | The run's deadline passes | `TimeoutLimitExceededError`; running steps are cancelled |
 | The run is at its `max_remote_hops` depth | `LimitExceededError`; nothing is sent |
@@ -623,7 +630,7 @@ only another step failed.
 Every other error stops the plan whatever `on_failure` says, cancelling
 running steps and raising the original error: limits (`LimitExceededError`
 and its subclasses, including the run's deadline), authorization
-(`PermissionDeniedError`, including tool check denials, and
+(`PermissionDeniedError`, including tool and plan check denials, and
 `AuthenticationError`), policy (`PolicyUnavailableError`), an invalid `.field`
 reference (`InputValidationError`) and cancellation of the run
 (`asyncio.CancelledError`). They protect the whole run, not one step. No step
@@ -871,3 +878,125 @@ entries `permissions=`, add tool checks, narrow the catalog, or prefer
 **Related:** [design: authorization and approval](../design/orchestration.md#authorization-and-approval),
 [`ExecutionPolicy`](authorization.md#executionpolicy),
 [OWASP LLM06 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/).
+
+## Plan checks and the approval pattern
+
+**Purpose / signature:** approve or deny a whole plan before any step is
+sent, to enforce which agents may be combined and where data may flow, and
+build human review in the application. Configured with
+[`ExecutionPolicy.plan_checks`](authorization.md#executionpolicy); each check
+is an async `(skill, principal, plan) -> bool`. Implemented (M10 #174).
+
+```python
+from agentframe import ExecutionPolicy, Plan, Principal, SkillDefinition
+
+INTERNAL = {"hr-agent.salaries"}
+
+
+async def no_partner_with_internal_data(
+    skill: SkillDefinition, principal: Principal | None, plan: Plan
+) -> bool:
+    # Application-supplied placeholder rule: a plan that reads internal data
+    # may not also call the external partner agent.
+    uses = {step.use for step in plan.steps}
+    return not (uses & INTERNAL and "partner-agent" in uses)
+
+
+policy = ExecutionPolicy(plan_checks=[no_partner_with_internal_data])
+```
+
+Pass `policy=policy` to `AgentApp` (or `Runtime`). A finer rule can read each
+step's `{"$ref": ...}` values, `{step}` placeholders and `after` list to allow
+the combination when no data flows from one to the other.
+
+**Behavior.** [`ctx.run_plan`](#runcontextrun_plan) runs the checks once, in
+order, after the plan passed [`SkillCatalog.check`](#skillcatalogcheck)
+against the entries the caller may use and before the first step counts as a
+tool call or is sent. Each check gets the running skill, the principal and its
+own deep copy of the plan: every step's entry, arguments, `ask` text,
+references and `after`. Changing the copy changes nothing that runs. Values
+from earlier steps do not exist yet; per-step
+[tool checks](#permissions-and-tool-checks) still run and see them after
+substitution. The fail-closed rules are those of every `ExecutionPolicy`
+check:
+
+- Only an explicit `True` allows. Anything else raises
+  `PermissionDeniedError` ("The plan was blocked by an execution policy
+  check"); over A2A the task ends `REJECTED`.
+- A check that raises, or is still running at the run's deadline, raises
+  `PolicyUnavailableError` ("The plan could not be checked: an execution
+  policy check is unavailable").
+- Either way no step is sent. Messages never describe the plan, and
+  AgentFrame never logs it.
+
+There is no taint or label system: a check reads the references and `after`
+lists to see which data may flow where.
+
+### Propose, review, execute
+
+AgentFrame has no built-in pause or approval workflow. Human review is two
+ordinary skills: one returns [`ctx.plan(...)`](#runcontextplan) without
+running it; the caller's application shows the plan to a person, then sends
+the approved plan back to another skill that runs it with
+`ctx.run_plan`.
+
+```python
+from typing import Literal
+
+from agentframe import Agent, Plan, Remote, RunContext, agent, skill
+
+type Research = Remote[Literal["research-agent"]]
+
+
+@agent(name="Approvals", version="0.1.0")
+class Approvals(Agent):
+    """Proposes research plans for review and runs reviewed ones."""
+
+    @skill(id="propose", tags=["planning"])
+    async def propose(self, goal: str, research: Research, ctx: RunContext) -> Plan:
+        """Propose a plan for a goal; nothing is sent to the research agent."""
+        skills = await ctx.remote_skills(research)
+        return await ctx.plan(goal, skills, max_steps=4)
+
+    # Open-proxy warning: this skill runs caller-supplied plans as this agent.
+    @skill(id="execute", tags=["planning"], requires_permissions=["plans:run"])
+    async def execute(self, plan: Plan, research: Research, ctx: RunContext) -> str:
+        """Run a reviewed plan and return its result as text."""
+        skills = await ctx.remote_skills(research)
+        result = await ctx.run_plan(plan, skills, max_steps=4)
+        return str(result.value)
+```
+
+[`examples/plan_approval.py`](../../examples/plan_approval.py) serves this
+agent with a plan check and two development API keys, one of whose role
+grants `plans:run`.
+
+- **The returned plan is untrusted input.** Whatever `propose` returned, the
+  plan `execute` receives comes from the caller and may have been changed.
+  `run_plan` checks it again against the catalog and the caller's
+  permissions: a step naming an entry outside the catalog, or one the caller
+  may not use, raises `InputValidationError` ("... names no entry of the
+  skill catalog") and nothing is sent. Plan checks and per-step tool checks
+  then run as for a model-made plan.
+- **The approval is the application's.** AgentFrame does not record that a
+  person approved a plan or that `execute` received the plan `propose`
+  returned. If that matters, keep proposed plans in the application (for
+  example by ID or hash) and have a plan check accept only approved ones.
+
+**Open-proxy warning.** The execute skill runs caller-supplied plans with the
+orchestrator's outbound identity. With `Service` identity, any caller who can
+reach it can call any catalog entry as the orchestrator. So:
+
+1. give the execute skill `requires_permissions` (here `plans:run`) granted
+   only to callers trusted to run plans;
+2. run it over a narrowed catalog: declared remotes, or `agents=`, `skill=`
+   and `tags=`, never every registered agent by default;
+3. prefer `OnBehalfOf` with Entra callers, so every agent authorizes the real
+   user and the orchestrator can never exceed that user's authority;
+4. add per-entry `permissions=`, plan checks and tool checks for
+   consequential entries.
+
+**Related:** [design: authorization and approval](../design/orchestration.md#authorization-and-approval),
+[`ExecutionPolicy`](authorization.md#executionpolicy),
+[prompt safeguarding](../design/prompt-safeguarding.md),
+[Design Patterns for Securing LLM Agents against Prompt Injections](https://arxiv.org/abs/2506.08837).

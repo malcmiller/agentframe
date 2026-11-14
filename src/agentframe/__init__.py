@@ -92,6 +92,7 @@ from agentframe.security.execution_policy import (
     InputCheck,
     ModelRequestCheck,
     OutputCheck,
+    PlanCheck,
     ToolCheck,
 )
 from agentframe.security.principal import Principal
@@ -159,6 +160,7 @@ __all__ = [
     "OutputValidationError",
     "PermissionDeniedError",
     "Plan",
+    "PlanCheck",
     "PlanResult",
     "PlanStep",
     "PolicyUnavailableError",

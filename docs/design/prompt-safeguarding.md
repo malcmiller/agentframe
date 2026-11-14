@@ -22,8 +22,8 @@ The strongest protection is limiting what a compromised agent can access or do.
 
 ## Policy hooks
 
-Input, model-request and output checks (M7 #77) and tool checks (M7 #78) are
-implemented. See [`ExecutionPolicy`](../api/authorization.md#executionpolicy)
+Input, model-request and output checks (M7 #77), tool checks (M7 #78) and
+plan checks (M10 #174) are implemented. See [`ExecutionPolicy`](../api/authorization.md#executionpolicy)
 for the check signatures and their order in a run.
 
 ```python
@@ -58,6 +58,7 @@ authenticate and authorize admission
   -> assemble a model request with trust boundaries preserved
   -> apply outbound data checks before each model request
   -> validate and authorize every proposed tool/action before execution
+  -> check a whole plan before any step, then every step before it is sent
   -> validate final output and apply output checks
   -> return the protocol-native result
 ```
@@ -76,6 +77,16 @@ must run before affected content is released. Buffer or decline streaming when t
 whole-output inspection; a later rejection cannot retract already sent data.
 Output rejection also cannot undo actions already performed, so action checks
 and approvals must occur before side effects.
+
+Plans made by a model or supplied by a caller ([orchestration](orchestration.md#authorization-and-approval))
+are checked twice before anything is sent: `ExecutionPolicy.plan_checks` see
+the whole plan, including which step's result feeds which agent, and tool
+checks see each step's arguments after earlier results are filled in. No
+model reads results between steps, so injected content in one agent's answer
+can change data, not which steps run. Human approval is application-owned:
+one skill proposes a plan, another runs a plan the caller sends back after
+review, and that plan is untrusted input, checked again
+([approval pattern](../api/orchestration.md#propose-review-execute)).
 This includes frontend-visible tool arguments/results and error/progress events,
 not only assistant text. Partial structured output is not a validated result.
 Human approval workflows belong to the application; there is no built-in

@@ -8,7 +8,10 @@
 [plans](#plan-shape) with static checking
 ([#169](https://github.com/malcmiller/agentframe/issues/169)) and the
 [planning call](#planning-call)
-([#170](https://github.com/malcmiller/agentframe/issues/170)) are implemented
+([#170](https://github.com/malcmiller/agentframe/issues/170)), [running a
+plan](#running-a-plan) ([#171](https://github.com/malcmiller/agentframe/issues/171))
+and [plan checks with the approval pattern](#authorization-and-approval)
+([#174](https://github.com/malcmiller/agentframe/issues/174)) are implemented
 (reference: [orchestration API](../api/orchestration.md)); everything else on
 this page is planned, not implemented. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
@@ -536,14 +539,17 @@ bounded by `max_model_calls` like any other.
   the arguments about to be sent: for plan steps, after `$ref` and placeholder
   substitution. This is the data-exfiltration gate: a check sees exactly which
   data goes to which agent.
-- **Plan checks** ([#174](https://github.com/malcmiller/agentframe/issues/174)):
-  new `ExecutionPolicy.plan_checks`, async `(skill, principal, plan) -> bool`,
-  run before the first step with the usual fail-closed rules. They see every
-  step and reference, so they can refuse plans that move internal results to an
-  external agent.
-- **Human approval stays application-owned.** The documented pattern is two
-  skills: one returns `ctx.plan(...)`, another accepts a `Plan` argument and
-  calls `ctx.run_plan`. A caller-supplied plan is untrusted input and is checked
+- **Plan checks** (implemented, [#174](https://github.com/malcmiller/agentframe/issues/174);
+  [reference](../api/orchestration.md#plan-checks-and-the-approval-pattern)):
+  `ExecutionPolicy.plan_checks`, async `(skill, principal, plan) -> bool`,
+  run by `ctx.run_plan` after the catalog re-check and before the first step,
+  with the usual fail-closed rules. Each gets its own copy of the plan with
+  every step and reference, so it can refuse plans that move internal results
+  to an external agent. Per-step tool checks still run.
+- **Human approval stays application-owned** (implemented, #174). The
+  documented pattern is two skills: one returns `ctx.plan(...)`, another
+  accepts a `Plan` argument and calls `ctx.run_plan`
+  ([`examples/plan_approval.py`](../../examples/plan_approval.py)). A caller-supplied plan is untrusted input and is checked
   against the catalog and the caller's permissions again. There is no built-in
   pause/resume.
 - **The execute skill can become an open proxy.** It runs caller-supplied plans

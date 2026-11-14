@@ -7,7 +7,8 @@ standalone units, which the HTTP host [`AgentApp`](hosting.md#agentapp) (#3)
 wires in. M2 story #19 implements
 `AuthorizationPolicy` with the local `Runtime`; M5 story #62 implements
 `ToolAuthorizationPolicy` and `@tool(requires_permissions=...)`. M7 stories #77 and
-#78 implement `ExecutionPolicy` input, model-request, tool and output checks.
+#78 implement `ExecutionPolicy` input, model-request, tool and output checks;
+M10 story #174 adds plan checks.
 M8+ story #92 implements outbound identity for remote calls: `Service`,
 `OutboundCredential`, `APIKeyCredential` and `EntraAppCredential`.
 Authentication, authorization,
@@ -285,11 +286,13 @@ authorization, before step 6, and cannot waive it.
 
 **Purpose / decision:** optional application checks on a run's content at its
 boundaries: the input, every outbound model request, every tool call and the
-output. They add
+output, and every plan before
+[`ctx.run_plan`](orchestration.md#runcontextrun_plan) sends a step. They add
 to authorization and never replace it, and they are not a universal prompt
 injection detector.
 
-**Signature status:** implemented in M7 (#77; tool checks #78) as a frozen,
+**Signature status:** implemented in M7 (#77; tool checks #78; plan checks
+M10 #174) as a frozen,
 keyword-only dataclass, configured with `Runtime(policy=...)` or
 `AgentApp(policy=...)`.
 
@@ -299,6 +302,7 @@ ExecutionPolicy(
     input_checks: Sequence[InputCheck] = (),
     model_request_checks: Sequence[ModelRequestCheck] = (),
     tool_checks: Sequence[ToolCheck] = (),
+    plan_checks: Sequence[PlanCheck] = (),
     output_checks: Sequence[OutputCheck] = (),
 )
 ```
@@ -308,10 +312,12 @@ ExecutionPolicy(
 | `input_checks` | `Sequence[InputCheck]` | Optional; default none | Run after argument validation and the [`AuthorizationPolicy`](#authorizationpolicy), before services are resolved or the skill runs. Receive the validated arguments, read-only. |
 | `model_request_checks` | `Sequence[ModelRequestCheck]` | Optional; default none | Run before every model request is sent and before its tokens are reserved: text, structured output, each tool-loop continuation and every [`ModelRouter`](hosting.md#modelrouter) or custom-router `RoutingContext.generate` call (with `skill=None`). Checked once per logical request, not again when a transient failure is retried. |
 | `tool_checks` | `Sequence[ToolCheck]` | Optional; default none | Run for every tool call the model asks for, in every tool-loop continuation: after argument validation and the [`ToolAuthorizationPolicy`](#toolauthorizationpolicy), before the tool's services are resolved or the tool runs. Receive the tool's name and validated arguments, read-only. Tool calls are never retried, so no path runs a tool without its checks. |
+| `plan_checks` | `Sequence[PlanCheck]` | Optional; default none | Run once by [`ctx.run_plan`](orchestration.md#runcontextrun_plan), after the plan is checked against the catalog and the caller's permissions and before any step counts as a tool call or is sent. Receive a deep copy of the whole [`Plan`](orchestration.md#plan): every step's entry, arguments, text and references (not their values, which do not exist yet). Tool checks still run for every step. See [plan checks and the approval pattern](orchestration.md#plan-checks-and-the-approval-pattern). |
 | `output_checks` | `Sequence[OutputCheck]` | Optional; default none | Run after the skill's value is validated, before it is returned or published. |
 
 Each check is an async callable taking positional arguments, the skill, the
-principal and the content (for tool checks, the tool name and its arguments),
+principal and the content (for tool checks, the tool name and its arguments;
+for plan checks, the plan),
 and returning `bool`. Any async function or
 object with a matching `__call__` works; no inheritance is needed:
 
@@ -322,6 +328,8 @@ ModelRequestCheck: (skill: SkillDefinition | None, principal: Principal | None,
                     request: ModelRequest) -> bool
 ToolCheck:         (skill: SkillDefinition, principal: Principal | None,
                     tool: str, arguments: Mapping[str, Any]) -> bool
+PlanCheck:         (skill: SkillDefinition, principal: Principal | None,
+                    plan: Plan) -> bool
 OutputCheck:       (skill: SkillDefinition, principal: Principal | None,
                     value: Any) -> bool
 ```
@@ -376,7 +384,9 @@ runtime = Runtime(
 **Order in a run:** declared permissions -> argument validation ->
 authorization policy -> **input checks** -> skill (every model request ->
 **model-request checks**; every tool call -> tool argument validation ->
-tool authorization -> **tool checks** -> tool) -> output validation ->
+tool authorization -> **tool checks** -> tool; `ctx.run_plan` -> catalog and
+permission check -> **plan checks** -> per step: **tool checks** -> send) ->
+output validation ->
 **output checks**. Hosted free-text requests pass their routing model
 requests through the same model-request checks first.
 
@@ -386,12 +396,13 @@ first failure; the run fails closed.
 - Only an explicit `True` allows. Any other value, including truthy ones,
   raises `PermissionDeniedError` ("Skill 'x' was blocked by an execution
   policy check"; "The request was blocked ..." while routing; "Tool 't' was
-  blocked ..." for a tool call). A denied model request is never sent and
-  reserves no tokens; a denied tool call never runs; a denied output is never
+  blocked ..." for a tool call; "The plan was blocked ..." for a plan). A
+  denied model request is never sent and reserves no tokens; a denied tool
+  call never runs; a denied plan sends no step; a denied output is never
   returned. Over A2A a denial ends the task `REJECTED`.
 - A check that raises, or is still running at the run's deadline, raises
   `PolicyUnavailableError` (A2A task `FAILED`); a blocked model request is
-  never sent and a blocked tool never runs.
+  never sent, a blocked tool never runs and a blocked plan sends no step.
 - A blocked tool call fails the whole run; it is never fed back to the model
   as a tool result, so a model cannot probe the policy.
 - Check time counts against the run's timeout. Messages name only the skill

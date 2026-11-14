@@ -32,6 +32,18 @@ changelog.
   `tests/integration/test_evaluation_release.py` is the M9 release
   acceptance suite, with opt-in Ollama and Foundry runs of the example in
   `tests/integration/test_providers.py` (#163).
+- **Orchestration (M10):** `ExecutionPolicy(plan_checks=[...])`: async
+  `(skill, principal, plan) -> bool` checks (new `PlanCheck` protocol) that
+  `ctx.run_plan` runs once, after the catalog and permission re-check and
+  before any step counts as a tool call or is sent. Each check gets its own
+  deep copy of the plan. Fail-closed like the other checks: anything but
+  `True` raises `PermissionDeniedError` ("The plan was blocked by an execution
+  policy check"); a raise or the run's deadline `PolicyUnavailableError`.
+  Per-step tool checks still run. New `examples/plan_approval.py` and docs
+  show the propose/execute approval pattern (one skill returns `ctx.plan`,
+  a `requires_permissions`-protected skill runs the plan the caller sends
+  back, which is checked again as untrusted input), with the open-proxy
+  warning for `Service` identity (#174).
 - **Evaluation (M9):** `agentframe eval module:function [--json PATH]
   [--min-pass-rate RATE] [--max-errors N] [--max-total-tokens N]
   [--allow-not-run] [--allow-over-budget] [--capture-content]` runs the

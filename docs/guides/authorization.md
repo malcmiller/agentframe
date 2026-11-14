@@ -424,6 +424,13 @@ types), so for consequential entries:
 4. prefer `OnBehalfOf` with Entra callers, so the remote agent authorizes the
    original user and the orchestrator can never exceed that user's authority.
 
+**Plans** ([`ctx.run_plan`](../api/orchestration.md#runcontextrun_plan)) get
+the same per-step checks, plus `ExecutionPolicy.plan_checks` on the whole plan
+before any step is sent. A skill that runs caller-supplied plans, as in the
+[propose/execute approval pattern](../api/orchestration.md#propose-review-execute),
+is an open proxy for the orchestrator's identity unless it has
+`requires_permissions`, a narrowed catalog and, where possible, `OnBehalfOf`.
+
 Every remote agent still authenticates and authorizes each request itself;
 orchestrator checks add to that, never replace it.
 
