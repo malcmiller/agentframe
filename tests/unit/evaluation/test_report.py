@@ -177,6 +177,69 @@ def test_the_summary_lists_totals_and_failing_cases_first() -> None:
     ]
 
 
+def repeated_report() -> EvalReport:
+    tokens = Usage(10, 5, 15, estimated=False)
+    return EvalReport(
+        results=(
+            CaseResult(case_id="a", attempt=1, status=CaseStatus.PASSED, usage=tokens),
+            CaseResult(
+                case_id="a",
+                attempt=2,
+                status=CaseStatus.ERRORED,
+                error_type="ValueError",
+                tags=("slow",),
+            ),
+            CaseResult(case_id="b", attempt=1, status=CaseStatus.PASSED, usage=tokens),
+            CaseResult(
+                case_id="b",
+                attempt=2,
+                status=CaseStatus.NOT_RUN,
+                error_message="The evaluation's timeout expired before this attempt.",
+                tags=("slow",),
+            ),
+        ),
+        max_total_tokens=20,
+    )
+
+
+def test_not_run_attempts_are_counted_apart_from_every_other_aggregate() -> None:
+    report = repeated_report()
+
+    assert report.not_run_count == 1
+    assert report.pass_rate == 2 / 3
+    assert report.tag_pass_rates == {"slow": 0.0}
+    assert report.total_usage.unknown_cases == 1
+    assert report.flaky_cases == ["a"]
+
+
+def test_reported_usage_over_the_budget_is_flagged() -> None:
+    report = repeated_report()
+
+    assert report.over_budget
+    assert not EvalReport(results=report.results).over_budget
+
+
+def test_the_summary_shows_attempts_not_run_budget_and_flaky_cases() -> None:
+    lines = str(repeated_report()).splitlines()
+
+    assert lines[0] == (
+        "Evaluation: 2 cases, 4 attempts, 2 passed, 0 failed, 1 errored, "
+        "1 not run (pass rate 66.7%)"
+    )
+    assert lines[2] == (
+        "Budget: 20 tokens, over budget (30 reported), "
+        "not fully enforced (1 attempts with unknown usage)"
+    )
+    assert "Flaky: a" in lines
+    table = lines[lines.index("") + 1 :]
+    assert [row.split() for row in table[1:]] == [
+        ["a", "#2", "errored", "error=ValueError", "unknown", "-"],
+        ["b", "#2", "not_run", "-", "-", "-"],
+        ["a", "#1", "passed", "-", "15", "-"],
+        ["b", "#1", "passed", "-", "15", "-"],
+    ]
+
+
 @agent(version="1.0.0")
 class Echo(Agent):
     """Echoes text."""
