@@ -10,6 +10,16 @@ changelog.
 
 ### Added
 
+- **Orchestration (M10):** `ctx.run_plan(..., on_failure="continue")` keeps a
+  step's remote `RemoteAgentError` or `ClarificationNeededError` as its result
+  instead of raising: `StepResult.status` widens to `"completed"`, `"failed"`,
+  `"cancelled"`, `"input_required"` and `"skipped"`, with new `error_type`,
+  `error_message` (class name and safe message only) and `question` fields.
+  Steps depending on an unfinished step are skipped and never sent; independent
+  steps still run. New `PlanResult.complete`; `PlanResult.value` is `None` when
+  the `result` step did not complete. Limits, authorization, policy, invalid
+  references and cancellation always stop the plan; nothing is retried. The
+  default stays `"stop"` (#172).
 - **Evaluation (M9):** `examples/evaluation.py` evaluates
   `examples/assistant.py`: `create_evaluation()` checks the model-free
   `count_words` skill (runnable with `agentframe eval`), and
@@ -22,7 +32,6 @@ changelog.
   `tests/integration/test_evaluation_release.py` is the M9 release
   acceptance suite, with opt-in Ollama and Foundry runs of the example in
   `tests/integration/test_providers.py` (#163).
-
 - **Evaluation (M9):** `agentframe eval module:function [--json PATH]
   [--min-pass-rate RATE] [--max-errors N] [--max-total-tokens N]
   [--allow-not-run] [--allow-over-budget] [--capture-content]` runs the

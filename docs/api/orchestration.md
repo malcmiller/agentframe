@@ -512,11 +512,10 @@ class Orchestrator(Agent):
 ## `RunContext.run_plan`
 
 **Purpose / signature:** `await ctx.run_plan(plan, skills, *, max_parallel=4,
-max_tokens_per_step=None, max_steps=8) -> PlanResult`. Checks a
-[`Plan`](#plan) against the catalog again, then runs its steps as remote calls,
-in parallel where their dependencies allow. No model sees any result between
-steps. Implemented (M10 #171); the `on_failure="continue"` option (#172) is
-planned.
+max_tokens_per_step=None, max_steps=8, on_failure="stop") -> PlanResult`.
+Checks a [`Plan`](#plan) against the catalog again, then runs its steps as
+remote calls, in parallel where their dependencies allow. No model sees any
+result between steps. Implemented (M10 #171, `on_failure` #172).
 
 | Parameter | Type | Required / default | Meaning |
 | --- | --- | --- | --- |
@@ -525,6 +524,7 @@ planned.
 | `max_parallel` | `int` | `4` | The most steps running at once, a whole number above 0. |
 | `max_tokens_per_step` | `int \| None` | `None` | The tokens each step holds while it runs. `None` shares the tokens the run has left when the plan starts equally among its steps. Set by trusted code, never by the model. |
 | `max_steps` | `int` | `8` | As for [`SkillCatalog.check`](#skillcatalogcheck): the most steps the plan may have, never above the tool calls the run has left. Pass the same value given to `ctx.plan`. |
+| `on_failure` | `Literal["stop", "continue"]` | `"stop"` | The [failure policy](#failure-policy): `"stop"` raises a remote agent's failure or question; `"continue"` keeps it as that step's result and returns a partial `PlanResult`. Anything else raises `DefinitionError`. |
 
 ```python
 from agentframe import Agent, Plan, RunContext, agent, skill
@@ -579,11 +579,11 @@ token budget; the peer's reported usage replaces the hold, and a peer that
 does not report usage holds nothing and makes the step's and the run's usage
 unknown, never zero.
 
-**Failures.** The first failing step stops the plan: running steps are
-cancelled, each sending its agent a best-effort `CancelTask`, later steps are
-never sent, and the failing step's error is raised as itself, never as an
-`ExceptionGroup`. No step is retried. Messages name steps, fields and entries,
-never argument values or results; nothing is logged with them.
+**Failures.** By default the first failing step stops the plan: running
+steps are cancelled, each sending its agent a best-effort `CancelTask`, later
+steps are never sent, and the failing step's error is raised as itself, never
+as an `ExceptionGroup`. No step is retried. Messages name steps, fields and
+entries, never argument values or results; nothing is logged with them.
 
 | Situation | Result |
 | --- | --- |
@@ -595,11 +595,60 @@ never argument values or results; nothing is logged with them.
 | A step's tokens do not fit what the run has left, or fewer tokens are left than the plan has steps (default share) | `TokenLimitExceededError` before that step (or any step) is sent |
 | The run's deadline passes | `TimeoutLimitExceededError`; running steps are cancelled |
 | The run is at its `max_remote_hops` depth | `LimitExceededError`; nothing is sent |
-| A remote agent fails, refuses or cannot be reached, or asks a question | `RemoteAgentError` or `ClarificationNeededError`, as for [`Remote.call`](discovery.md#remotecall) |
+| A remote agent fails, refuses or cannot be reached, or asks a question | `RemoteAgentError` or `ClarificationNeededError`, as for [`Remote.call`](discovery.md#remotecall); with `on_failure="continue"`, kept as the step's result instead |
 
 An `OnBehalfOf` identity (per name or as `default_remote`) without a
 signed-in user raises `PermissionDeniedError` when the catalog is built, before
 any plan runs.
+
+### Failure policy
+
+Decided (#172): `"stop"` is the default; partial results are an explicit
+choice. With `on_failure="continue"`, only an error the step's own remote
+agent caused ends that step without stopping the plan:
+
+| The step's agent... | Step `status` | Kept on the [`StepResult`](#stepresult) |
+| --- | --- | --- |
+| Fails, refuses, cannot be reached or answers with an unexpected result (`RemoteAgentError`) | `"failed"` | `error_type`, `error_message`, `remote_task_id` when there was a task |
+| Cancels the step's task (`RemoteAgentError` with task state `TASK_STATE_CANCELED`) | `"cancelled"` | As for `"failed"` |
+| Asks a question (`ClarificationNeededError`) | `"input_required"` | `question`, `error_type`, `error_message`, `remote_task_id`. Nothing answers it. |
+
+Every step that depends on a step that did not complete, directly or through
+another skipped step, is `"skipped"`: never counted as a tool call,
+substituted, checked or sent. Independent steps still run.
+`PlanResult.complete` is `False` and `PlanResult.value` is `None` when the
+`result` step did not complete; it still holds the `result` step's value when
+only another step failed.
+
+Every other error stops the plan whatever `on_failure` says, cancelling
+running steps and raising the original error: limits (`LimitExceededError`
+and its subclasses, including the run's deadline), authorization
+(`PermissionDeniedError`, including tool check denials, and
+`AuthenticationError`), policy (`PolicyUnavailableError`), an invalid `.field`
+reference (`InputValidationError`) and cancellation of the run
+(`asyncio.CancelledError`). They protect the whole run, not one step. No step
+is retried under either policy: cards do not say whether a skill has side
+effects.
+
+```python
+from agentframe import Agent, Plan, RunContext, agent, skill
+
+
+@agent(name="Orchestrator", description="Runs reviewed plans.", version="0.1.0")
+class Orchestrator(Agent):
+    @skill(id="execute", description="Run a reviewed plan.", tags=["orchestration"])
+    async def execute(self, plan: Plan, ctx: RunContext) -> str:
+        skills = await ctx.remote_skills()
+        result = await ctx.run_plan(plan, skills, on_failure="continue")
+        if not result.complete:
+            failed = [
+                step_id
+                for step_id, step in result.steps.items()
+                if step.status != "completed"
+            ]
+            return f"Partial answer; unfinished steps: {failed}"
+        return str(result.value)
+```
 
 **Related:** [design: running a plan](../design/orchestration.md#running-a-plan),
 [limits: cross-agent budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8),
@@ -608,25 +657,29 @@ any plan runs.
 ## `PlanResult`
 
 **Purpose / signature:** what [`ctx.run_plan`](#runcontextrun_plan) returns.
-A frozen dataclass. Implemented (#171); `complete` and the plan's total
-`usage` are planned with #172 and #173.
+A frozen dataclass. Implemented (#171, `complete` #172); the plan's total
+`usage` is planned with #173.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `value` | `Any` | The value of the plan's `result` step. |
+| `value` | `Any` | The value of the plan's `result` step, or `None` when it did not complete (only with `on_failure="continue"`). |
 | `steps` | `Mapping[str, StepResult]` | Every step's [`StepResult`](#stepresult), by step ID, in the order the steps were checked to run. |
+| `complete` | `bool` | Whether every step completed. Always `True` under the default `"stop"` policy. |
 
 ## `StepResult`
 
 **Purpose / signature:** one step's result in a [`PlanResult`](#planresult).
-A frozen dataclass. Implemented (#171).
+A frozen dataclass. Implemented (#171, statuses and error fields #172).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `status` | `Literal["completed"]` | Under the default `stop` policy every step of a returned plan completed. Other statuses come with `on_failure="continue"` (#172). |
-| `value` | `Any` | The step's result: the remote skill's decoded JSON result (`str` for a text result), or the `ask` answer's text. Untrusted content from another agent. |
-| `usage` | `Usage \| None` | The usage the agent reported for the step; `None` when unknown, for example because the agent does not report usage. |
-| `remote_task_id` | `str \| None` | The remote agent's task ID, which ties the step to that agent's logs; `None` when it answered without a task. |
+| `status` | `Literal["completed", "failed", "skipped", "cancelled", "input_required"]` | Under the default `"stop"` policy every step of a returned plan is `"completed"`; the others come only with `on_failure="continue"` ([failure policy](#failure-policy)). |
+| `value` | `Any` | The step's result, or `None` unless it completed: the remote skill's decoded JSON result (`str` for a text result), or the `ask` answer's text. Untrusted content from another agent. |
+| `usage` | `Usage \| None` | The usage the agent reported for the step; `None` when unknown, for example because the agent does not report usage or the step did not complete. |
+| `remote_task_id` | `str \| None` | The remote agent's task ID, which ties the step to that agent's logs; `None` when there was no task. |
+| `error_type` | `str \| None` | The class name of the error that ended a `"failed"`, `"cancelled"` or `"input_required"` step (`"RemoteAgentError"` or `"ClarificationNeededError"`); otherwise `None`. |
+| `error_message` | `str \| None` | That error's safe message, never the remote agent's own status text; otherwise `None`. |
+| `question` | `str \| None` | An `"input_required"` step's question; otherwise `None`. Untrusted content from another agent: check it before showing it to anyone. |
 
 ## Remote skills as model tools
 

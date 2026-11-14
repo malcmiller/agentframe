@@ -17,7 +17,7 @@ from a2a.types import TaskState
 from pydantic import BaseModel
 
 from a2a_client import call_skill, connect
-from a2a_peer import PeerExecutor, a2a_peer
+from a2a_peer import PEER_QUESTION, PeerExecutor, a2a_peer
 from agentframe import (
     Agent,
     AgentApp,
@@ -26,6 +26,7 @@ from agentframe import (
     AgentReference,
     AgentRegistry,
     AllowAnonymous,
+    ClarificationNeededError,
     DefinitionError,
     ExecutionPolicy,
     FinishReason,
@@ -45,6 +46,7 @@ from agentframe import (
     RunResult,
     Runtime,
     SkillCatalog,
+    StepResult,
     TimeoutLimitExceededError,
     TokenLimitExceededError,
     Usage,
@@ -549,3 +551,206 @@ async def test_a_catalog_from_elsewhere_is_refused(agents: Agents) -> None:
             await Runtime(directory=directory).run(
                 Stray(), skill="execute", arguments={"plan": plan.model_dump()}
             )
+
+
+async def test_continue_keeps_the_independent_branch_and_skips_dependents_of_a_failure(
+    agents: Agents, research: Research
+) -> None:
+    recorder = Recorder()
+    orchestrator = Orchestrator(on_failure="continue")
+    plan = Plan(
+        steps=[
+            find("tides", "tides"),
+            find("bad", "fail"),
+            find("later", "later", after=["bad"]),
+            brief("tides.sources", "bad.sources"),
+        ],
+        result="brief",
+    )
+
+    result = await execute(
+        agents, orchestrator, plan, policy=ExecutionPolicy(tool_checks=[recorder])
+    )
+
+    assert orchestrator.result is not None
+    assert orchestrator.result.complete is False
+    assert orchestrator.result.value is None
+    steps = orchestrator.result.steps
+    assert {name: step.status for name, step in steps.items()} == {
+        "tides": "completed",
+        "bad": "failed",
+        "later": "skipped",
+        "brief": "skipped",
+    }
+    assert steps["tides"].value == {"topic": "tides", "sources": ["tides source"]}
+    bad = steps["bad"]
+    assert bad.value is None and bad.usage is None and bad.remote_task_id
+    assert bad.error_type == "RemoteAgentError"
+    assert bad.error_message == "Agent 'research' did not complete its task"
+    assert steps["later"] == StepResult("skipped", None, None, None)
+    # Skipped steps are never counted, checked or sent.
+    assert result.tool_calls == 2
+    assert [name for name, _ in recorder.seen] == ["research.find_sources"] * 2
+    assert [arguments for _, arguments in research.calls] == [
+        {"topic": "tides"},
+        {"topic": "fail"},
+    ]
+
+
+async def test_continue_returns_the_result_value_when_another_step_fails(
+    agents: Agents, peer: PeerExecutor
+) -> None:
+    orchestrator = Orchestrator(on_failure="continue")
+    plan = Plan(
+        steps=[find("tides", "tides"), PlanStep(id="post", use="peer", text="fail")],
+        result="tides",
+    )
+
+    await execute(agents, orchestrator, plan)
+
+    assert orchestrator.result is not None
+    assert orchestrator.result.complete is False
+    assert orchestrator.result.value == {
+        "topic": "tides",
+        "sources": ["tides source"],
+    }
+    post = orchestrator.result.steps["post"]
+    assert post.status == "failed"
+    assert post.error_message is not None
+    assert "secret" not in post.error_message
+
+
+async def test_continue_keeps_a_remote_question_and_a_remote_cancellation(
+    agents: Agents, peer: PeerExecutor
+) -> None:
+    orchestrator = Orchestrator(on_failure="continue")
+    plan = Plan(
+        steps=[
+            PlanStep(id="asked", use="peer", text="question"),
+            PlanStep(id="stopped", use="peer", text="cancel"),
+        ],
+        result="asked",
+    )
+
+    await execute(agents, orchestrator, plan)
+
+    assert orchestrator.result is not None
+    asked = orchestrator.result.steps["asked"]
+    assert asked.status == "input_required"
+    assert asked.question == PEER_QUESTION
+    assert asked.error_type == "ClarificationNeededError"
+    assert asked.error_message is not None
+    assert PEER_QUESTION not in asked.error_message
+    assert asked.remote_task_id
+    stopped = orchestrator.result.steps["stopped"]
+    assert stopped.status == "cancelled"
+    assert stopped.error_type == "RemoteAgentError"
+    # Nothing answers the question: the peer got exactly one request each.
+    assert len(peer.requests) == 2
+
+
+async def test_stop_raises_a_remote_question(
+    agents: Agents, peer: PeerExecutor
+) -> None:
+    plan = Plan(
+        steps=[PlanStep(id="asked", use="peer", text="question")], result="asked"
+    )
+
+    with pytest.raises(ClarificationNeededError) as raised:
+        await execute(agents, Orchestrator(), plan)
+
+    assert raised.value.question == PEER_QUESTION
+
+
+async def test_continue_still_stops_at_a_token_limit(
+    agents: Agents, research: Research
+) -> None:
+    plan = Plan(steps=[find("tides", "tides"), find("waves", "waves")], result="tides")
+
+    with pytest.raises(TokenLimitExceededError, match="needs up to 600 tokens"):
+        await execute(
+            agents,
+            Orchestrator(max_tokens_per_step=600, on_failure="continue"),
+            plan,
+            limits=RunLimits(max_total_tokens=1000),
+        )
+
+
+async def test_continue_still_stops_at_a_tool_check_denial(
+    agents: Agents, research: Research, peer: PeerExecutor
+) -> None:
+    async def no_peer(
+        skill: SkillDefinition,
+        principal: Principal | None,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> bool:
+        return tool_name != "peer"
+
+    plan = Plan(
+        steps=[find("slow", "slow"), PlanStep(id="post", use="peer", text="hello")],
+        result="slow",
+    )
+
+    with pytest.raises(PermissionDeniedError, match="Tool 'peer'"):
+        await execute(
+            agents,
+            Orchestrator(on_failure="continue"),
+            plan,
+            policy=ExecutionPolicy(tool_checks=[no_peer]),
+        )
+
+    assert peer.requests == []
+    async with asyncio.timeout(5):
+        await research.cancelled.wait()
+
+
+async def test_continue_still_stops_at_a_missing_field(
+    agents: Agents, research: Research
+) -> None:
+    plan = Plan(
+        steps=[
+            find("tides", "tides"),
+            find("waves", "waves"),
+            brief("tides.missing", "waves.sources"),
+        ],
+        result="brief",
+    )
+
+    with pytest.raises(InputValidationError, match="has no such field"):
+        await execute(agents, Orchestrator(on_failure="continue"), plan)
+
+
+async def test_continue_still_stops_when_the_run_is_cancelled(
+    agents: Agents, research: Research
+) -> None:
+    orchestrator = Orchestrator(on_failure="continue")
+    plan = Plan(steps=[find("slow", "slow"), find("tides", "tides")], result="tides")
+
+    async with agents() as directory:
+        running = asyncio.create_task(
+            Runtime(directory=directory).run(
+                orchestrator, skill="execute", arguments={"plan": plan.model_dump()}
+            )
+        )
+        async with asyncio.timeout(5):
+            while ("find_sources", {"topic": "slow"}) not in research.calls:
+                await asyncio.sleep(0.01)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        async with asyncio.timeout(5):
+            await research.cancelled.wait()
+
+    assert orchestrator.result is None
+
+
+async def test_on_failure_must_be_stop_or_continue(
+    agents: Agents, research: Research
+) -> None:
+    plan = Plan(steps=[find("tides", "tides")], result="tides")
+
+    with pytest.raises(DefinitionError, match="on_failure="):
+        await execute(agents, Orchestrator(on_failure="ignore"), plan)
+
+    assert research.calls == []

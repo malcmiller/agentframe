@@ -483,12 +483,19 @@ argument names, so the top-level argument check still holds. Implemented, the
   `.field` reference into a value that is not an object or lacks the field
   fails its step with `InputValidationError` naming the step and field, never
   the value.
-- `on_failure="continue"` ([#172](https://github.com/malcmiller/agentframe/issues/172)):
-  dependents of a failed step are `skipped` and never sent, independent steps
-  still run, and the partial `PlanResult` is returned. A remote question marks
-  its step `input_required`; nothing answers it automatically.
-- Limits, authorization, policy and cancellation always stop the plan,
-  whatever `on_failure` says.
+- `on_failure="continue"` (implemented
+  [#172](https://github.com/malcmiller/agentframe/issues/172)): only a
+  `RemoteAgentError` or `ClarificationNeededError` from the step's own remote
+  agent is kept as that step's result (`failed`, `cancelled` when the agent
+  cancelled its task, or `input_required` with the question). Dependents of a
+  step that did not complete are `skipped`: never counted, substituted,
+  checked or sent. Independent steps still run, and the partial `PlanResult`
+  is returned with `complete=False`, and `value=None` when the `result` step
+  did not complete. A step's error is kept as its class name and safe message
+  only. Nothing answers a remote question automatically.
+- Limits, authorization (including tool check denials and authentication),
+  policy, invalid `.field` references and cancellation always stop the plan,
+  whatever `on_failure` says, raising the original error.
 - No step is retried automatically. Cards do not say whether a skill has side
   effects, so every remote step is treated as one.
 

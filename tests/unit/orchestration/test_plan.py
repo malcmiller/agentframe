@@ -445,3 +445,15 @@ def test_placeholders_insert_strings_as_they_are_and_other_values_as_json() -> N
     values = {"title": "Tides", "found": {"b": "é", "a": None}, "count": 2}
 
     assert substituted_text(step, values) == 'Tides: {"a":null,"b":"é"} 2 {literal}'
+
+
+def test_an_upstream_value_that_looks_like_a_reference_is_inserted_literally() -> None:
+    found = {"$ref": "secret"}
+    values = {"found": found, "title": "{secret}", "secret": "never inserted"}
+    reference = PlanStep(
+        id="brief", use="research-agent.brief", arguments={"all": {"$ref": "found"}}
+    )
+    placeholder = PlanStep(id="post", use="writer-agent", text="{title} {found}")
+
+    assert substituted_arguments(reference, values) == {"all": {"$ref": "secret"}}
+    assert substituted_text(placeholder, values) == '{secret} {"$ref":"secret"}'

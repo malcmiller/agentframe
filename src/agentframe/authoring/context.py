@@ -11,6 +11,7 @@ from agentframe.errors import DefinitionError
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, build_catalog
 from agentframe.orchestration.execution import (
     DEFAULT_MAX_PARALLEL,
+    OnFailure,
     PlanResult,
     run_plan,
 )
@@ -349,6 +350,7 @@ class RunContext:
         max_parallel: int = DEFAULT_MAX_PARALLEL,
         max_tokens_per_step: int | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
+        on_failure: OnFailure = "stop",
     ) -> PlanResult:
         """Check ``plan`` against ``skills`` again, then run it.
 
@@ -382,11 +384,19 @@ class RunContext:
         runs, replaced by the usage its agent reports; an agent that does
         not report usage holds nothing and makes the run's usage unknown.
 
-        The first failing step stops the plan: running steps are cancelled
-        (their agents get a best-effort ``CancelTask``), later steps are
-        never sent and its error is raised as itself, never as an
-        ``ExceptionGroup``. No step is retried. Errors name steps, fields
-        and entries, never values.
+        By default the first failing step stops the plan: running steps are
+        cancelled (their agents get a best-effort ``CancelTask``), later
+        steps are never sent and its error is raised as itself, never as an
+        ``ExceptionGroup``. With ``on_failure="continue"``, a step whose
+        agent fails (``RemoteAgentError``) or asks a question
+        (``ClarificationNeededError``) is kept as a ``"failed"``,
+        ``"cancelled"`` or ``"input_required"`` step result, the steps
+        depending on it are ``"skipped"`` and never sent, and the other
+        steps still run. Every other error, including limits, permissions,
+        tool checks, invalid references, authentication and cancellation,
+        always stops the plan: they protect the whole run, not one step.
+        No step is retried. Errors name steps, fields and entries, never
+        values.
 
         Args:
             plan: The plan, from ``ctx.plan`` or built or received by the
@@ -399,14 +409,21 @@ class RunContext:
             max_steps: The most steps the plan may have, as for
                 ``SkillCatalog.check``; never above the tool calls the run
                 has left.
+            on_failure: ``"stop"`` raises a remote agent's failure or
+                question; ``"continue"`` keeps it as its step's result and
+                returns a partial result.
 
         Returns:
-            The ``result`` step's value and every step's result.
+            The ``result`` step's value and every step's result. With
+            ``on_failure="continue"``, ``complete`` is ``False`` when a step
+            did not complete, and ``value`` is ``None`` when the ``result``
+            step did not.
 
         Raises:
             DefinitionError: ``skills`` was not built by this run, or
                 ``max_parallel``, ``max_tokens_per_step`` or ``max_steps``
-                is not a whole number above 0. Nothing is sent.
+                is not a whole number above 0, or ``on_failure`` is neither
+                ``"stop"`` nor ``"continue"``. Nothing is sent.
             InputValidationError: The plan is invalid for the entries the
                 caller may use (see ``SkillCatalog.check``; nothing is sent),
                 or a step refers to a field that the referenced step's value
@@ -421,8 +438,10 @@ class RunContext:
             ToolCallLimitExceededError: The run has made ``max_tool_calls``.
             LimitExceededError: The run is at its ``max_remote_hops`` depth,
                 or another limit of the run stopped a step.
-            RemoteAgentError: A step's agent failed, as for ``Remote.call``.
-            ClarificationNeededError: A step's agent asked a question.
+            RemoteAgentError: A step's agent failed, as for ``Remote.call``
+                (only with ``on_failure="stop"``).
+            ClarificationNeededError: A step's agent asked a question (only
+                with ``on_failure="stop"``).
             AuthenticationError: A credential could not provide its headers.
         """
         return await run_plan(
@@ -435,4 +454,5 @@ class RunContext:
             max_parallel=max_parallel,
             max_tokens_per_step=max_tokens_per_step,
             max_steps=max_steps,
+            on_failure=on_failure,
         )
