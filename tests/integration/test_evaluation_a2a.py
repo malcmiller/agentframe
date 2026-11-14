@@ -266,3 +266,52 @@ async def test_the_case_token_ceiling_is_sent_to_the_peer(
 
     assert result.status is CaseStatus.ERRORED
     assert result.error_type == "RemoteAgentError"
+
+
+async def test_concurrent_repeats_fit_the_budget_with_the_peers_usage(
+    directory: AgentDirectory,
+) -> None:
+    # Each attempt holds 5000 and settles at the 42 the peer reports, so four
+    # attempts fit a budget that holds only two at once.
+    options = RunOptions(limits=RunLimits(max_total_tokens=5000))
+    target = A2ATarget(directory, "writer", identity=IDENTITY, options=options)
+    evaluation = Evaluation(
+        cases=[Case(id="a", text="a"), Case(id="b", text="b")],
+        target=target,
+        scorers=[contains("answer")],
+        concurrency=2,
+        repeats=2,
+        max_total_tokens=10_000,
+    )
+
+    report = await evaluation.run()
+
+    assert [(r.case_id, r.attempt) for r in report.results] == [
+        ("a", 1),
+        ("a", 2),
+        ("b", 1),
+        ("b", 2),
+    ]
+    assert report.passed_count == 4
+    assert report.total_usage.total_tokens == 4 * 42
+
+
+async def test_unknown_usage_keeps_the_whole_hold_so_later_cases_do_not_run(
+    serve: ServeLocally,
+) -> None:
+    options = RunOptions(limits=RunLimits(max_total_tokens=1000))
+    async with (
+        serve(a2a_peer(PeerExecutor())) as url,
+        AgentDirectory(sources=[OneAgent(url)]) as directory,
+    ):
+        evaluation = Evaluation(
+            cases=[Case(id=name, text=name) for name in ("a", "b", "c")],
+            target=A2ATarget(directory, "writer", options=options),
+            scorers=[contains("Echo")],
+            concurrency=1,
+            max_total_tokens=2000,
+        )
+        report = await evaluation.run()
+
+    statuses = [result.status for result in report.results]
+    assert statuses == [CaseStatus.PASSED, CaseStatus.PASSED, CaseStatus.NOT_RUN]
