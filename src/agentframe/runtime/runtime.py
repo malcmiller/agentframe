@@ -21,6 +21,7 @@ from agentframe.discovery.identity import (
     OnBehalfOf,
     Service,
     UserToken,
+    checked_default_remote,
     checked_remotes,
 )
 from agentframe.discovery.remote import find_remote
@@ -96,10 +97,19 @@ class Runtime:
             without credentials, which only works when its card declares no
             security. ``OnBehalfOf`` needs a signed-in Entra user, so it
             works only in runs hosted by an ``AgentApp`` with ``EntraIDAuth``.
+        default_remote: How to authenticate to skill-catalog agents
+            (``ctx.remote_skills()``) that have no ``remotes=`` entry. It is
+            sent only to agents whose card requires credentials it meets;
+            others whose card requires credentials are skipped. It is never
+            used for ``Remote`` parameters. Every such registered agent
+            receives it, so use it only when each is trusted with it.
+            ``None`` (the default) includes only open agents and agents with
+            ``remotes=`` entries.
 
     Raises:
         DefinitionError: ``remotes`` is not a mapping of names to ``Service``
-            or ``OnBehalfOf``.
+            or ``OnBehalfOf``, or ``default_remote`` is neither of them nor
+            ``None``.
     """
 
     def __init__(
@@ -111,6 +121,7 @@ class Runtime:
         policy: ExecutionPolicy | None = None,
         directory: AgentDirectory | None = None,
         remotes: Mapping[str, Service | OnBehalfOf] | None = None,
+        default_remote: Service | OnBehalfOf | None = None,
     ) -> None:
         self._services = services or Services()
         self._authorization = authorization
@@ -118,6 +129,7 @@ class Runtime:
         self._policy = policy
         self._directory = directory
         self._remotes = checked_remotes(remotes)
+        self._default_remote = checked_default_remote(default_remote)
 
     def validate(self, agent: Agent) -> None:
         """Check that ``agent`` can run here before accepting any work.
@@ -423,6 +435,7 @@ class Runtime:
                     run_remotes = RunRemotes(
                         self._directory,
                         self._remotes,
+                        default=self._default_remote,
                         deadline=deadline,
                         correlation=correlation,
                         principal=principal,

@@ -183,15 +183,20 @@ class AgentApp:
             need ``host.auth`` to be ``EntraIDAuth`` with ``client_id=`` and
             ``client_credential=``; each request's verified user token is
             then exchanged for them, never forwarded.
+        default_remote: How to authenticate to skill-catalog agents without
+            a ``remotes=`` entry, when ``runtime`` is not given; see
+            ``Runtime``. An ``OnBehalfOf`` default needs the same
+            ``EntraIDAuth`` as ``OnBehalfOf`` remotes.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
             not registered, a skill takes a ``Remote`` parameter and there
             is no directory, an agent or skill limit is explicitly set above
             ``host.limits_ceiling``, ``runtime`` is combined with ``services``,
-            ``authorization``, ``policy``, ``directory`` or ``remotes``,
-            ``remotes`` is not a mapping of names to ``Service`` or
-            ``OnBehalfOf``, an ``OnBehalfOf`` remote's host does not
+            ``authorization``, ``policy``, ``directory``, ``remotes`` or
+            ``default_remote``, ``remotes`` is not a mapping of names to
+            ``Service`` or ``OnBehalfOf`` (or ``default_remote`` is neither),
+            an ``OnBehalfOf`` remote's or default's host does not
             authenticate with ``EntraIDAuth`` configured for on-behalf-of
             (API-key and anonymous callers support only ``Service``), the authenticator
             cannot describe its security on the Agent Card, or a
@@ -211,6 +216,7 @@ class AgentApp:
         a2a: A2AConfig | None = None,
         directory: AgentDirectory | None = None,
         remotes: Mapping[str, Service | OnBehalfOf] | None = None,
+        default_remote: Service | OnBehalfOf | None = None,
     ) -> None:
         if runtime is not None and (
             services is not None
@@ -218,11 +224,12 @@ class AgentApp:
             or policy is not None
             or directory is not None
             or remotes is not None
+            or default_remote is not None
         ):
             raise DefinitionError(
-                "Pass services, authorization, policy, directory and remotes "
-                "either to AgentApp or to its Runtime, not both; the runtime is "
-                "the single source of them."
+                "Pass services, authorization, policy, directory, remotes and "
+                "default_remote either to AgentApp or to its Runtime, not both; "
+                "the runtime is the single source of them."
             )
         if runtime is None:
             runtime = Runtime(
@@ -231,6 +238,7 @@ class AgentApp:
                 policy=policy,
                 directory=directory,
                 remotes=remotes,
+                default_remote=default_remote,
             )
         runtime.validate(agent)
         user_token_exchange = _user_token_exchange(runtime, host)
@@ -329,16 +337,19 @@ def _user_token_exchange(
     """Return what exchanges user tokens, when a remote is called on behalf of one.
 
     Raises:
-        DefinitionError: An ``OnBehalfOf`` remote's host does not
-            authenticate users with ``EntraIDAuth`` configured for it.
+        DefinitionError: An ``OnBehalfOf`` remote's or default's host does
+            not authenticate users with ``EntraIDAuth`` configured for it.
     """
     # noinspection PyProtectedMember
-    names = on_behalf_of_names(runtime._remotes)
-    if not names:
+    users = [f"Remote '{name}'" for name in on_behalf_of_names(runtime._remotes)]
+    # noinspection PyProtectedMember
+    if isinstance(runtime._default_remote, OnBehalfOf):
+        users.append("default_remote")
+    if not users:
         return None
     if not isinstance(host.auth, UserTokenExchange):
         raise DefinitionError(
-            f"Remote '{names[0]}' is called OnBehalfOf the signed-in user, which "
+            f"{users[0]} is called OnBehalfOf the signed-in user, which "
             "needs EntraIDAuth callers; with API-key or anonymous callers, use "
             "Service(credential=...)."
         )

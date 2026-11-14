@@ -489,7 +489,7 @@ def _usable(
         return None
     if result.interface_url == run.own_interface_url:
         return None  # The orchestrator itself.
-    identity = run.identity(name)
+    identity = run.identity(name, result.card)
     try:
         check_identity(name, result.card, identity)
     except DefinitionError:

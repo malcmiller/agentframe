@@ -7,11 +7,12 @@ catalog** (M10 [#166](https://github.com/malcmiller/agentframe/issues/166)),
 offering its entries to a model as **tools**
 ([#167](https://github.com/malcmiller/agentframe/issues/167)) and
 [permissions and tool checks](#permissions-and-tool-checks) for model-chosen
-calls ([#168](https://github.com/malcmiller/agentframe/issues/168)), and
+calls ([#168](https://github.com/malcmiller/agentframe/issues/168)),
 typed [plans](#plan) checked by [`SkillCatalog.check`](#skillcatalogcheck)
-([#169](https://github.com/malcmiller/agentframe/issues/169)). Planning and
-running plans (#170-#174) and the optional `default_remote` identity (#175)
-are planned, not implemented.
+([#169](https://github.com/malcmiller/agentframe/issues/169)), and the
+optional [`default_remote`](#default_remote) identity for registered agents
+([#175](https://github.com/malcmiller/agentframe/issues/175)). Planning and
+running plans (#170-#174) are planned, not implemented.
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
@@ -70,7 +71,8 @@ included only when:
    size and time bounds, cache and stale rules; at most eight fetches at a
    time), and
 2. its card's security is open, or met by its `remotes=` entry (the same check
-   `Remote` parameters get at startup).
+   `Remote` parameters get at startup), or, for an agent without an entry, by
+   [`default_remote`](#default_remote).
 
 Any other agent is **skipped, not fatal**, with one WARNING log naming only the
 agent and the reason: `card unavailable`, `card invalid`,
@@ -121,12 +123,102 @@ it never calls a model or sends an A2A message.
 - `RemoteAgentError`: a declared `Remote`'s card cannot be fetched (raised
   while binding the parameter, as in M8+), has an unsafe or repeated skill ID,
   or its argument schema is missing or over 8 KiB.
-- `PermissionDeniedError`: an included agent's `remotes=` entry is
-  `OnBehalfOf`, and the run has no signed-in user.
+- `PermissionDeniedError`: an included agent's `remotes=` entry, or the
+  `default_remote` it uses, is `OnBehalfOf`, and the run has no signed-in
+  user. There is no fallback to another identity or to skipping the agent.
 
 **Related:** [remote skill catalog design](../design/orchestration.md#remote-skill-catalog),
 [catalog size](../design/orchestration.md#catalog-size),
 [`AgentDirectory`](discovery.md#agentdirectory).
+
+## `default_remote`
+
+**Purpose / signature:** an optional outbound identity for registered agents
+that have no `remotes=` entry, so secured specialists join the
+[catalog](#runcontextremote_skills) by being registered, without one entry per
+agent. Implemented (#175).
+
+```text
+Runtime(..., remotes=None, default_remote: Service | OnBehalfOf | None = None)
+AgentApp(..., remotes=None, default_remote: Service | OnBehalfOf | None = None)
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `default_remote` | [`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)` \| None` | Optional; default `None` | How to authenticate to catalog agents without a `remotes=` entry. On `AgentApp`, only without `runtime=`. Anything else raises `DefinitionError`. |
+
+```python
+from azure.identity.aio import ManagedIdentityCredential
+
+from agentframe import (
+    AgentApp,
+    AgentDirectory,
+    APIKeyCredential,
+    EntraAppCredential,
+    FileAgentRegistry,
+    HostConfig,
+    Service,
+)
+
+# Application-supplied placeholders: the orchestrator agent, its host and keys.
+directory = AgentDirectory(sources=[FileAgentRegistry("agents.yaml")])
+app = AgentApp(
+    agent=orchestrator,
+    host=host,
+    directory=directory,
+    remotes={"partner-agent": Service(credential=APIKeyCredential(partner_key))},
+    default_remote=Service(
+        credential=EntraAppCredential(
+            ManagedIdentityCredential(), scope="api://agents/.default"
+        )
+    ),
+)
+```
+
+**Identity order** for each registered agent the catalog considers:
+
+1. its `remotes=` entry, whenever it has one; the default is never sent to it;
+2. otherwise `default_remote`, only when the agent's card requires
+   credentials and the default meets its security (the same check `remotes=`
+   entries get);
+3. otherwise no credentials, which works only for open cards. Open agents
+   never receive the default.
+
+An agent none of these satisfies is skipped with the usual
+`security not satisfied` warning, and the default is never sent to it. Without
+`default_remote`, only open agents and agents with `remotes=` entries are
+included.
+
+**Scope.** The default applies only to catalog agents (`ctx.remote_skills()`
+without `Remote` arguments). Declared [`Remote`](discovery.md#remoteliteralname)
+parameters, including ones passed to `remote_skills`, keep the M8+ rules: only
+their `remotes=` entry counts, checked at startup.
+
+**Behavior / failures:**
+
+- Credentials go per request only to the card's validated interface origin,
+  never across redirects; a redirect-following directory client raises
+  `DefinitionError` when the default would be used (#84, #92).
+- An `OnBehalfOf` default needs `AgentApp` with
+  `auth=EntraIDAuth(client_id=..., client_credential=...)`; any other
+  authenticator raises `DefinitionError` at construction, as for `OnBehalfOf`
+  entries (#93). A run without a signed-in user (app-only token, API-key or
+  anonymous caller, or a local run) raises `PermissionDeniedError` when an
+  agent using the default is included, and a failed exchange fails the call
+  with `AuthenticationError`; neither falls back.
+
+**Security:** the default goes to **every registered agent whose card asks for
+its scheme**. With an Entra default, each such agent receives a token for the
+default's audience that it could replay against any other API accepting that
+audience; with an `APIKeyCredential` default, each receives the same key and
+could use it against any agent accepting it (a confused-deputy risk).
+Configure a default only when every registered agent is trusted with that
+audience or key, keep the registry narrow, and give sensitive or less-trusted
+agents their own `remotes=` entries. See
+[cross-agent identity](../guides/authorization.md#cross-agent-identity-propagation-m8).
+
+**Related:** [identity design](../design/orchestration.md#identity),
+[`Runtime`](runtime.md#runtime), [`AgentApp`](hosting.md#agentapp).
 
 ## `RemoteSkill`
 
