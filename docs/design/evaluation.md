@@ -359,6 +359,10 @@ max_total_tokens=None, timeout_seconds=None, capture_content=False)`:
 | latency | p50, p95 and max of case durations. |
 | errors by class | For example `{"TimeoutLimitExceededError": 2}`. |
 
+The aggregates and `str(report)` are implemented (#155); see
+[`EvalReport`](../api/evaluation.md#evalreport). `judge_usage`, `not_run`,
+attempts and `flaky` arrive with the judge (#160) and controls (#157).
+
 Output formats:
 
 - `str(report)` / `print(report)`: a plain-text summary table (no new

@@ -16,6 +16,13 @@ changelog.
   `json.loads` only) whose `DefinitionError`s name the file and line but never
   the case content. `import agentframe` does not load the package, and it adds
   no dependency.
+- **Evaluation (M9):** `EvalReport` aggregates: `passed_count`,
+  `failed_count` and `errored_count`, `pass_rate`, per-scorer and per-tag pass
+  rates, `total_usage` (`UsageTotals`: sums only when every case reported
+  usage, otherwise `None` plus the reported lower bound and the number of
+  unknown cases), `latency` (`Latency`: p50, p95 and max) and
+  `errors_by_class`. `str(report)` is a plain-text summary table, failing
+  cases first, with no case content unless `capture_content=True` (#155).
 - **Multi-agent:** `AgentDirectory(max_reply_bytes=8_388_608)` bounds the
   A2A replies `Remote.ask` and `Remote.call` read (`SendMessage`, `GetTask`,
   `CancelTask`). Bodies are streamed and cut off at the limit, with or without
