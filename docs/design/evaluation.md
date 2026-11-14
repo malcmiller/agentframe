@@ -1,8 +1,10 @@
 # Evaluation
 
 **Status: planned (M9), in progress.** Only [`Case` and
-`load_cases`](#cases-and-datasets) are implemented (#152); everything else on
-this page does not exist in `agentframe` yet. The design choices listed under
+`load_cases`](#cases-and-datasets) (#152) and `LocalSkill`, `Evaluation.run`
+with function scorers, `Score` and `CaseResult` (#153; see the
+[reference](../api/evaluation.md)) are implemented; everything else on this
+page does not exist in `agentframe` yet. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
 exact signatures and remaining details are settled while building the stories
 of the [M9 overview](https://github.com/malcmiller/agentframe/issues/164).
@@ -198,6 +200,9 @@ fails fast instead of producing a confusing score.
 
 ### Targets
 
+`LocalSkill` is implemented (#153; [reference](../api/evaluation.md#localskill));
+`A2ATarget` is proposed.
+
 A target runs one case and returns its output plus metadata. M9 has two:
 
 | Target | Runs | Output and metadata |
@@ -232,11 +237,15 @@ authentication without a network) is not part of M9: run the app with
 
 ### Scorers
 
+Function scorers and `Score` are implemented (#153;
+[reference](../api/evaluation.md#score)); the built-ins and `Judge` are
+proposed.
+
 A scorer is any sync or async callable taking the case and the output and
 returning `bool` or a `Score`:
 
 ```python
-# proposed, not implemented
+# implemented in agentframe.evaluation (#153)
 @dataclass(frozen=True, kw_only=True)
 class Score:
     passed: bool

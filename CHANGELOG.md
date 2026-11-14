@@ -34,6 +34,21 @@ changelog.
   characters, 10 tags, no control characters or `examples`), skill IDs must be
   safe and unique, entry names must be unique, and a hosted
   orchestrator leaves itself out. No model is called (#166).
+- **Evaluation (M9):** `Evaluation(cases=..., target=LocalSkill(agent,
+  skill=...), scorers=[...])` runs each case's arguments through
+  `Runtime.run` (validation, permissions, policies, limits; a protected skill
+  needs an explicit `principal=`) and scores the output with plain sync or
+  async functions returning `bool` or `Score`. Each `CaseResult` is `passed`,
+  `failed` or `errored` (target or scorer raised, or a scorer returned a bare
+  number) with the error class and safe message and the run's metadata; errors
+  never stop the run. Duplicate case IDs, `text` cases and `expected` values
+  that are not valid skill results fail before any case runs. Results hold no
+  inputs, outputs or reasons unless `capture_content=True`, and the harness
+  never logs content.
+
+### Fixed
+
+- `load_cases` accepts a JSONL file that starts with a UTF-8 byte order mark.
 
 ## [0.2.0] - 2026-11-14
 

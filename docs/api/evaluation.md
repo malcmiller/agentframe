@@ -4,7 +4,9 @@
 cases against an agent and scoring the results; see the
 [evaluation design](../design/evaluation.md) for rationale and the rest of the
 proposed API. Implemented so far: [`Case`](#case) and
-[`load_cases`](#load_cases) (#152). Everything else in the design is
+[`load_cases`](#load_cases) (#152); [`Evaluation`](#evaluation),
+[`LocalSkill`](#localskill), [`Score`](#score), [`CaseResult`](#caseresult) and
+a minimal [`EvalReport`](#evalreport) (#153). Everything else in the design is
 unimplemented.
 
 Import from `agentframe.evaluation`, not `agentframe`. The package ships in the
@@ -67,7 +69,8 @@ load_cases(path: str | os.PathLike[str]) -> list[Case[Any]]
 | --- | --- | --- | --- |
 | `path` | `str \| os.PathLike[str]` | Required | A UTF-8 JSONL file of at most 10 MiB. |
 
-Each non-blank line is one JSON object with only the `Case` fields; `tags` is a
+A leading UTF-8 byte order mark is ignored. Each non-blank line is one JSON
+object with only the `Case` fields; `tags` is a
 JSON list of strings:
 
 ```json
@@ -96,3 +99,179 @@ line number, without repeating the line's content:
 
 **Related:** [cases and datasets](../design/evaluation.md#cases-and-datasets),
 [security and privacy](../design/evaluation.md#security-and-privacy).
+
+## `Evaluation`
+
+**Purpose / decision:** run fixed cases against a target and score every
+output with plain functions. A case passes when every scorer passes
+([decisions 5-7](../design/evaluation.md#decisions-confirmed-2026-11-13)).
+
+**Signature status:** implemented in M9 #153. Concurrency, repeats and an
+evaluation-wide budget (#157) and A2A targets (#158) are proposed.
+
+```text
+Evaluation(*, cases: Iterable[Case[Any]], target: LocalSkill,
+           scorers: Iterable[Scorer], capture_content: bool = False)
+async Evaluation.run() -> EvalReport
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `cases` | `Iterable[Case[Any]]` | Required | At least one case; IDs must be unique. |
+| `target` | [`LocalSkill`](#localskill) | Required | What runs each case. |
+| `scorers` | `Iterable[Scorer]` | Required | At least one sync or async callable `(case, output) -> bool \| Score`. |
+| `capture_content` | `bool` | Optional; default `False` | Keep case inputs, expected values, outputs and score reasons in results. A report with content is sensitive. |
+
+```python
+from agentframe.evaluation import Case, Evaluation, LocalSkill, Score
+
+
+def is_three(case: Case[int], output: int) -> bool:
+    return output == 3
+
+
+async def at_least_two(case: Case[int], output: int) -> Score:
+    return Score(passed=output >= 2, value=float(output))
+
+
+evaluation = Evaluation(
+    cases=[Case(id="short", arguments={"text": "one two three"})],
+    target=LocalSkill(Assistant(), skill="count_words"),  # application agent
+    scorers=[is_three, at_least_two],
+)
+report = await evaluation.run()
+```
+
+**Behavior / failures:** construction raises `DefinitionError`, before any case
+runs, when there are no cases or no scorers, a scorer is not callable, two
+cases share an ID (the message names positions, not the ID), or a case does not
+suit the target (see [`LocalSkill`](#localskill)). `run` runs cases one at a
+time in order and returns one [`CaseResult`](#caseresult) per case:
+
+- `passed` when every scorer passes, `failed` when any scorer fails;
+- `errored` when the target raises (for example `InputValidationError`,
+  `PermissionDeniedError` or a `LimitExceededError`), a scorer raises, or a
+  scorer returns anything but a `bool` or `Score`. A bare number is refused
+  with `DefinitionError`, so thresholds are explicit:
+  `Score(passed=value >= 0.8, value=value)`. Scorers after one that raised do
+  not run. There is no `expected_error=`: any target error errors the case.
+
+Errors never stop the run; `asyncio.CancelledError` propagates. A scorer's
+name is its `__name__`, or its class name for callable objects. The harness
+logs one INFO line per case (case ID, status, invocation ID) and, for
+exceptions that are not AgentFrame errors, their traceback under logger
+`agentframe.evaluation.harness`; it never logs case content or outputs.
+
+**Related:** [scorers](../design/evaluation.md#scorers),
+[running](../design/evaluation.md#running-concurrency-and-cost).
+
+## `LocalSkill`
+
+**Purpose / decision:** the local target: runs each case's `arguments` through
+one skill with [`Runtime.run`](runtime.md), so every case gets argument
+validation, permissions, authorization and execution policies, and limits.
+
+**Signature status:** implemented in M9 #153.
+
+```text
+LocalSkill(agent: Agent, *, skill: str, runtime: Runtime | None = None,
+           principal: Principal | None = None,
+           options: RunOptions | None = None)
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `agent` | `Agent` | Required | Instance of an `@agent`-decorated class. |
+| `skill` | `str` | Required | ID of the skill to run. |
+| `runtime` | `Runtime \| None` | Optional; default `None` | Runtime with the application's services and policies; `None` creates `Runtime()`. |
+| `principal` | `Principal \| None` | Optional; default `None` | Verified caller identity from trusted code, used for every case. Never invented. |
+| `options` | `RunOptions \| None` | Optional; default `None` | Limits and model settings for every case's run. |
+
+```python
+from agentframe import Principal, RunLimits, RunOptions
+from agentframe.evaluation import LocalSkill
+
+target = LocalSkill(
+    Assistant(model=model),  # application agent and model
+    skill="answer",
+    principal=Principal(id="evaluator", permissions=frozenset({"orders.read"})),
+    options=RunOptions(limits=RunLimits(max_total_tokens=20_000)),
+)
+```
+
+**Behavior / failures:** construction raises `DefinitionError` when the agent
+is not decorated or has no such skill. When an `Evaluation` is created, a case
+with `text` instead of `arguments` is refused, and each case's `expected` is
+validated against the skill's return type and converted to it (a JSONL object
+becomes the skill's Pydantic model, so scorers compare like with like); an
+invalid `expected` raises `DefinitionError` naming the case ID and fields but
+not the values. Each run gets a deep copy of the case's arguments, so a skill
+cannot change the dataset. A protected skill without `principal=` errors the
+case with `PermissionDeniedError`.
+
+**Related:** [targets](../design/evaluation.md#targets).
+
+## `Score`
+
+**Purpose / decision:** a scorer's verdict with optional detail; return a plain
+`bool` when pass or fail is all there is to say.
+
+**Signature status:** implemented in M9 #153 as a frozen, keyword-only
+dataclass.
+
+```text
+Score(*, passed: bool, value: float | None = None, reason: str | None = None)
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `passed` | `bool` | Required | Whether the output passes this check. |
+| `value` | `float \| None` | Optional; default `None` | A number for reports, such as a similarity of 0.83. |
+| `reason` | `str \| None` | Optional; default `None` | An explanation; may quote the output, so results keep it only with `capture_content=True`. |
+
+```python
+from agentframe.evaluation import Case, Score
+
+
+def similar(case: Case[str], output: str) -> Score:
+    value = similarity(output, case.expected)  # application function
+    return Score(passed=value >= 0.8, value=value)
+```
+
+**Behavior / failures:** raises `DefinitionError` when `passed` is not a `bool`
+or `value` is not a number.
+
+**Related:** [scorers](../design/evaluation.md#scorers).
+
+## `CaseResult`
+
+**Purpose / decision:** the outcome of one case. Content is off by default
+([decision 13](../design/evaluation.md#decisions-confirmed-2026-11-13)).
+
+**Signature status:** implemented in M9 #153 as a frozen dataclass; built by
+the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
+`failed` and `errored` (`not_run` arrives with #157).
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `case_id` | `str` | The case's ID. |
+| `status` | `CaseStatus` | `passed`, `failed` or `errored`. |
+| `scores` | `tuple[ScoreResult, ...]` | Each scorer's `scorer` name, `passed`, `value` and `reason` (`None` unless captured), in scorer order. |
+| `error_type` | `str \| None` | Class name of the error that errored the case. |
+| `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. |
+| `invocation_id` | `str \| None` | The run's ID, also when it failed with an AgentFrame error. |
+| `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` | from `RunResult` | `None` when the target raised; usage fields may be `None` (unknown, not zero). |
+| `tags` | `tuple[str, ...]` | The case's tags. |
+| `arguments`, `text`, `expected`, `output` | content | `None` unless `capture_content=True`. |
+
+**Related:** [reports](../design/evaluation.md#reports).
+
+## `EvalReport`
+
+**Purpose / decision:** the results of one evaluation run.
+
+**Signature status:** implemented in M9 #153 with only `results:
+tuple[CaseResult, ...]`, one per case in case order. Aggregates and the console
+summary (#155), JSON and `require` (#156) are proposed.
+
+**Related:** [reports](../design/evaluation.md#reports).
