@@ -76,6 +76,7 @@ from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.request_size import read_body_within, with_body
 from agentframe.hosting.routing import SkillRouter, routing_limits
+from agentframe.hosting.task_store import FinalStateStore
 from agentframe.runtime.correlation import (
     TRACEPARENT_HEADER,
     TRACESTATE_HEADER,
@@ -148,9 +149,10 @@ class AgentApp:
     succeeded and until shutdown starts. Shutdown then refuses new messages
     with HTTP 503 and ``Retry-After: 1``, while task reads and cancels keep
     working; waits up to ``host.shutdown_grace_seconds`` for running runs to
-    finish; and cancels the rest, so their tasks end ``CANCELED`` and their
-    per-run services are cleaned up. Shutdown starts at ASGI lifespan
-    shutdown, or on the shutdown signal under ``agentframe run``.
+    finish and their final task states to be stored; and cancels the rest,
+    so their tasks end ``CANCELED`` and their per-run services are cleaned
+    up. Shutdown starts at ASGI lifespan shutdown, or on the shutdown signal
+    under ``agentframe run``.
 
     Args:
         agent: Instance of an ``@agent``-decorated class.
@@ -237,6 +239,7 @@ class AgentApp:
         if isinstance(router, ModelRouter):
             router.validate_skills(definition.skills.values())
         card = build_agent_card(definition, host)
+        task_store = FinalStateStore(InMemoryTaskStore())
         handler = _RequestHandler(
             router=router,
             agent_executor=RuntimeExecutor(
@@ -246,8 +249,9 @@ class AgentApp:
                 host.limits_ceiling,
                 host.max_response_bytes,
                 own_interface_url=card.supported_interfaces[0].url,
+                final_states=task_store,
             ),
-            task_store=InMemoryTaskStore(),
+            task_store=task_store,
             agent_card=card,
             request_context_builder=_ClaimedTaskIdBuilder(),
         )
@@ -275,7 +279,7 @@ class AgentApp:
                 await router.validate_model(routing_limits(agent, host.limits_ceiling))
             lifecycle.mark_started()
             yield
-            await lifecycle.wait_for_runs(admission)
+            await lifecycle.wait_for_runs(admission, task_store)
             await handler.cancel_running_tasks()
             # Models are application-owned, so they are never closed here.
             await handler.aclose()

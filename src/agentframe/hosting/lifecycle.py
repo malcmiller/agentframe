@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from agentframe.hosting.admission import RunAdmission
+from agentframe.hosting.task_store import FinalStateStore
 
 _POLL_SECONDS = 0.05
 """How often draining checks whether the running runs have finished."""
@@ -68,14 +69,18 @@ class Lifecycle:
         finally:
             self._open_sends -= 1
 
-    async def wait_for_runs(self, admission: RunAdmission) -> None:
+    async def wait_for_runs(
+        self, admission: RunAdmission, task_store: FinalStateStore
+    ) -> None:
         """Wait until runs and sends are done or the grace period has ended.
 
-        Starts shutdown first if nothing has yet.
+        A run is done once its final state is saved, which the SDK does
+        just after the run releases its slot. Starts shutdown first if
+        nothing has yet.
         """
         self.begin_shutdown()
         assert self._shutdown_deadline is not None
-        while (admission.running or self._open_sends) and (
-            time.monotonic() < self._shutdown_deadline
-        ):
+        while (
+            admission.running or self._open_sends or task_store.unsaved_final_states
+        ) and time.monotonic() < self._shutdown_deadline:
             await asyncio.sleep(_POLL_SECONDS)

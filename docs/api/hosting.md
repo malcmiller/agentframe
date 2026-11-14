@@ -165,7 +165,8 @@ authenticator; no remote host starts without a choice.
   with `Retry-After: 1` and `{"error": "The agent is shutting down; retry
   later."}`, with no task; `GetTask`, `ListTasks`, `CancelTask` and the card
   keep working. Running runs that finish within the grace period complete
-  normally, and the app's shutdown ends as soon as none is left. Runs still
+  normally, and the app's shutdown ends as soon as none is left and each
+  finished run's final task state is stored (#128). Runs still
   going after it are cancelled as `CancelTask` would: their tasks end
   `CANCELED` and their per-run services are cleaned up. Tasks waiting for
   input have no run and are left as they are. Shutdown starts on the shutdown

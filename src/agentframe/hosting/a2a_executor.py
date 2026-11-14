@@ -102,6 +102,7 @@ from agentframe.hosting.skill_call import (
     depth_exceeded,
     read_caller_context,
 )
+from agentframe.hosting.task_store import FinalStateStore
 from agentframe.runtime.correlation import RunCorrelation, TraceContext
 from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import RunLimits
@@ -224,6 +225,9 @@ class RuntimeExecutor(AgentExecutor):
         own_interface_url: The A2A interface URL the agent's card
             advertises, which leaves it out of its own skill catalog.
             ``None`` leaves nothing out.
+        final_states: The app's task store, told about each run so that
+            shutdown can wait for its final state to be saved. ``None``
+            tells nothing.
     """
 
     def __init__(
@@ -234,6 +238,7 @@ class RuntimeExecutor(AgentExecutor):
         limits_ceiling: RunLimits | None = None,
         max_response_bytes: int | None = None,
         own_interface_url: str | None = None,
+        final_states: FinalStateStore | None = None,
     ) -> None:
         self._agent = agent
         self._own_interface_url = own_interface_url
@@ -241,6 +246,7 @@ class RuntimeExecutor(AgentExecutor):
         self._router = router
         self._limits_ceiling = limits_ceiling
         self._max_response_bytes = max_response_bytes
+        self._final_states = final_states
         # Each running task, so a cancel can report its usage and a shutdown
         # can cancel it on behalf of the caller who started it.
         self._running: dict[str, _RunningTask] = {}
@@ -279,6 +285,8 @@ class RuntimeExecutor(AgentExecutor):
         )
         assert task_id is not None and context_id is not None
         assert message is not None
+        if self._final_states is not None:
+            self._final_states.expect_final_state(task_id)
         if context.current_task is None:
             await event_queue.enqueue_event(
                 new_task(

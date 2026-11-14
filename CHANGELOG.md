@@ -51,6 +51,14 @@ changelog.
 
 - `load_cases` accepts a JSONL file that starts with a UTF-8 byte order mark.
 
+### Fixed
+
+- **Hosting:** a run that finishes while `AgentApp` is shutting down now always
+  has its final task state stored before the app closes its task queues. It
+  could stay `WORKING` before, because a run frees its slot just before the
+  SDK saves that state, which matters for a persistent task store. Shutdown is
+  still bounded by `shutdown_grace_seconds` plus the cancel wait (#128).
+
 ## [0.2.0] - 2026-11-14
 
 The multi-agent release (M8+): independently deployed AgentFrame agents find
