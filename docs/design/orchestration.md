@@ -3,7 +3,12 @@
 **Status: M10 in progress.** The [remote skill catalog](#remote-skill-catalog)
 ([#166](https://github.com/malcmiller/agentframe/issues/166)) and
 [remote skills as model tools](#remote-skills-as-model-tools)
-([#167](https://github.com/malcmiller/agentframe/issues/167)) are implemented
+([#167](https://github.com/malcmiller/agentframe/issues/167), permissions
+[#168](https://github.com/malcmiller/agentframe/issues/168)), typed
+[plans](#plan-shape) with static checking
+([#169](https://github.com/malcmiller/agentframe/issues/169)) and the
+[planning call](#planning-call)
+([#170](https://github.com/malcmiller/agentframe/issues/170)) are implemented
 (reference: [orchestration API](../api/orchestration.md)); everything else on
 this page is planned, not implemented. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
@@ -402,21 +407,31 @@ permitted entries (#170), and to each step, which re-checks permissions and
 
 ### Planning call
 
-`await ctx.plan(goal, skills, max_steps=8, instructions=None)`
-([#170](https://github.com/malcmiller/agentframe/issues/170)) makes one
+Implemented ([#170](https://github.com/malcmiller/agentframe/issues/170);
+[API](../api/orchestration.md#runcontextplan)):
+`await ctx.plan(goal, skills, max_steps=8, instructions=None)` makes one
 structured-output call with the agent's model, charged to the run's model calls
 and tokens, with `model_request_checks` applied:
 
 - Library-owned planning instructions (plus optional trusted author
   `instructions=`) are system messages. The goal and the catalog go in the user
-  message as quoted data.
+  message as quoted JSON data, never in system instructions.
+- Only entries the caller may use are shown and accepted; a hidden entry in the
+  plan fails exactly like an unknown name.
 - The model-facing schema lists entry names as an enum and carries each step's
   arguments as a JSON string, so it converts for Foundry strict mode and Ollama
-  `format`, the same technique as M6 routing. The reply is parsed, then checked.
-- The model may decline with a reason; `ctx.plan` then raises
-  `InputValidationError("No plan for this goal with the available skills")`
-  without the model's text. An invalid plan raises `OutputValidationError` and
-  is never repaired or re-requested, like `output=`.
+  `format`. An `ask` entry's arguments are `{"text": ...}`, as for remote
+  tools, rather than a separate `text` field: with one, small models kept
+  filling `text` for structured entries. The reply is parsed, then checked with
+  `SkillCatalog.check`.
+- The model may decline by returning no steps and a short reason; `ctx.plan`
+  then raises `InputValidationError("No plan for this goal with the available
+  skills")` without the model's text. (A nullable `plan` object was tried
+  first; `llama3.2:3b` under Ollama's constrained decoding answered `null`
+  every time.) An invalid plan raises `OutputValidationError` with the check's
+  message and is never repaired or re-requested, like `output=`.
+- An empty catalog, or one whose every entry is hidden, raises
+  `InputValidationError` before any model call.
 
 ## Running a plan
 
