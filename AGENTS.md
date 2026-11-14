@@ -124,7 +124,7 @@ run locally and through `examples/orders.py` over A2A (skipped if the model
 lacks tool support), a model calling a localhost agent's skill as a remote
 tool (M10 #167, checking only that the entry was called; skipped without tool
 support), a rubric `Judge` grading one model-free case in an `Evaluation`
-(M9 #160), a Foundry one-tool round trip that replays encrypted
+by majority of `votes=3` (M9 #160, #161), a Foundry one-tool round trip that replays encrypted
 reasoning items and one unambiguous free-text request routed by
 `examples/routed_assistant.py` over A2A (checking only the selected skill and
 that its argument is present, since routing is nondeterministic). They are marked

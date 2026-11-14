@@ -543,14 +543,20 @@ locations as its `reason` (never the invalid values), kept only with
 written rubric, for open-ended answers exact checks cannot score. The verdict
 is binary `passed` plus `reason`, not a numeric scale, and `ModelSettings`
 gets no temperature or seed: use a clear rubric, `expected` references and
-(later) votes
+majority `votes`
 ([decisions 10, 11 and 13](../design/evaluation.md#decisions-confirmed-2026-11-13)).
 
 **Signature status:** implemented in M9 #160 as a class whose instances are
-scorers named `judge` in reports. `votes=` is proposed (#161).
+scorers named `judge` in reports; `votes=` added in #161.
 
 ```text
-Judge(model: Model, *, rubric: str, options: RunOptions | None = None)
+Judge(
+    model: Model,
+    *,
+    rubric: str,
+    votes: int = 1,
+    options: RunOptions | None = None,
+)
 Judge.token_ceiling -> int
 async Judge(case, output) -> Score
 ```
@@ -559,6 +565,7 @@ async Judge(case, output) -> Score
 | --- | --- | --- | --- |
 | `model` | `Model` | Required | Any AgentFrame model with structured output, such as `FoundryModel` or `OllamaModel`. The application owns and closes it. |
 | `rubric` | `str` | Required | Trusted instructions saying what passes; must not be blank. Never put untrusted content here. |
+| `votes` | `int` | Optional; default `1` | The most verdicts to ask for: an odd number from 1 to 15. The majority wins; asking stops once a majority is certain. Each vote is a separate judge run with its own cost and budget hold. |
 | `options` | `RunOptions \| None` | Optional; default `None` (library defaults) | Limits and model settings for every judge run. Its resolved `max_total_tokens` is `token_ceiling`, which each judge run holds against the evaluation's budget. |
 
 ```python
@@ -568,6 +575,7 @@ from agentframe.evaluation import Evaluation, Judge, LocalSkill
 judge = Judge(
     judge_model,  # application model, different from the target's
     rubric="The summary is one sentence and states only facts in the text.",
+    votes=3,  # up to three judge runs per case
     options=RunOptions(
         limits=RunLimits(max_total_tokens=5_000),
         model_settings=ModelSettings(max_output_tokens=512),
@@ -581,7 +589,8 @@ evaluation = Evaluation(
 )
 ```
 
-**Behavior / failures:** a blank `rubric` raises `DefinitionError` at once.
+**Behavior / failures:** a blank `rubric`, or `votes` that is not an odd
+`int` from 1 to 15 (including `True`), raises `DefinitionError` at once.
 Each judgement is one ordinary run of a small model-backed skill through
 `Runtime`, so it gets `RunLimits`, retries and usage accounting. The model is
 asked for `Verdict(passed: bool, reason: str)` through `output=`; the scorer
@@ -597,7 +606,18 @@ model without structured output; nothing is sent), `OutputValidationError` (an
 invalid verdict, never parsed from prose) or `ModelRefusalError`; output that
 is not JSON-serializable errors it too.
 
-In an `Evaluation`, each judge run holds `token_ceiling` against
+**Votes and their cost.** With `votes` above 1 the judge runs one vote at a
+time and passes on a majority, stopping as soon as the majority is certain:
+`votes=3` takes two runs when they agree and three when they split, so it
+costs up to three times one vote. The `Score`'s `value` is the fraction of
+the votes asked that passed (for example `0.666667` for a 2-1 split, shown as
+`judge=pass(0.666667)` and in the JSON `scores`), so a split vote is visible;
+with `votes=1` `value` stays `None`. The `reason` is the first reason on the
+winning side. Any vote that errors, or that the budget cannot fit, errors the
+case; it is never scored on fewer votes. Votes do not run concurrently, so a
+case holds at most one judge ceiling at a time.
+
+In an `Evaluation`, each judge run (each vote) holds `token_ceiling` against
 `max_total_tokens` just before it starts, separately from the case's hold, and
 when the budget cannot fit it the case is `errored` with
 `TokenLimitExceededError` and nothing is sent. Judge usage is reported in
@@ -634,7 +654,7 @@ the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
 | `error_type` | `str \| None` | Class name of the error that errored the case. |
 | `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. For `not_run`, why it did not run. |
 | `invocation_id` | `str \| None` | The run's ID, also when it failed with an AgentFrame error. |
-| `judge_usage` | `Usage \| None` | The [`Judge`](#judge) runs' usage for this attempt, summed apart from the target's (#160). `None` when no judge ran; a judge run that failed makes its counts unknown. |
+| `judge_usage` | `Usage \| None` | The [`Judge`](#judge) runs' usage for this attempt (every vote), summed apart from the target's (#160). `None` when no judge ran; a judge run that failed makes its counts unknown. |
 | `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` | from [`TargetResult`](#targetresult) | `None` when the target raised or the attempt did not run; `model_calls`, `tool_calls` and `finish_reason` are always `None` for `A2ATarget`; usage fields may be `None` (unknown, not zero). |
 | `tags` | `tuple[str, ...]` | The case's tags. |
 | `arguments`, `text`, `expected`, `output` | content | `None` unless `capture_content=True`. |

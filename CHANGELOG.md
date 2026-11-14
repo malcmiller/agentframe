@@ -10,6 +10,13 @@ changelog.
 
 ### Added
 
+- **Evaluation (M9):** `Judge(..., votes=1)` takes the majority of up to
+  `votes` verdicts (an odd number from 1 to 15, else `DefinitionError`), run
+  one at a time and stopping once the majority is certain. Each vote is a
+  separate judge run with its own budget hold and usage; a vote that errors or
+  that the budget cannot fit errors the case rather than scoring it on fewer
+  votes. With `votes` above 1 the score's `value` is the fraction of votes
+  that passed, so a split vote is visible in reports (#161).
 - **Evaluation (M9):** `Judge(model, rubric=..., options=None)`, a scorer
   (named `judge` in reports) that asks any AgentFrame `Model` with structured
   output for a binary `Verdict(passed, reason)` through an ordinary `Runtime`

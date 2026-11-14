@@ -275,3 +275,91 @@ async def test_a_judge_also_works_as_a_plain_scorer() -> None:
 def test_a_judge_needs_a_rubric(rubric: str) -> None:
     with pytest.raises(DefinitionError, match="rubric"):
         Judge(judge_model(), rubric=rubric)
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "passed", "value", "asked"),
+    [
+        pytest.param([PASS, PASS], True, 1.0, 2, id="agree-stops-early"),
+        pytest.param([FAIL, FAIL], False, 0.0, 2, id="agree-on-fail"),
+        pytest.param([PASS, FAIL, PASS], True, 2 / 3, 3, id="split-pass"),
+        pytest.param([FAIL, PASS, FAIL], False, 1 / 3, 3, id="split-fail"),
+    ],
+)
+async def test_three_votes_take_the_majority_and_show_a_split(
+    verdicts: list[str], passed: bool, value: float, asked: int
+) -> None:
+    model = judge_model(*verdicts, PASS)  # A spare reply that must go unused.
+
+    score = await Judge(model, rubric=RUBRIC, votes=3)(Case(id="c", text="hi"), "hi")
+
+    assert score.passed is passed
+    assert score.value == pytest.approx(value)
+    assert score.reason == (
+        "It repeats the text." if passed else "It changes the text."
+    )
+    assert len(model.requests) == asked
+
+
+async def test_five_votes_stop_once_three_agree() -> None:
+    model = judge_model(PASS, FAIL, PASS, PASS, FAIL)
+
+    score = await Judge(model, rubric=RUBRIC, votes=5)(Case(id="c", text="hi"), "hi")
+
+    assert (score.passed, score.value) == (True, 0.75)
+    assert len(model.requests) == 4
+
+
+async def test_each_vote_is_charged_and_split_votes_show_in_the_report() -> None:
+    model = judge_model(reply(PASS, 10), reply(FAIL, 20), reply(PASS, 30))
+
+    report = await evaluate(Judge(model, rubric=RUBRIC, votes=3), max_total_tokens=None)
+
+    result = only(report)
+    assert result.status is CaseStatus.PASSED
+    assert result.scores[0].value == pytest.approx(2 / 3)
+    assert result.judge_usage == Usage(57, 3, 60, estimated=False)
+    assert "judge=pass(0.666667)" in str(report)
+
+
+async def test_a_failed_vote_errors_the_case_and_keeps_judge_usage_unknown() -> None:
+    model = judge_model(reply(PASS, 10), '{"passed": "maybe"}', PASS)
+
+    result = only(await evaluate(Judge(model, rubric=RUBRIC, votes=3)))
+
+    assert result.status is CaseStatus.ERRORED
+    assert result.error_type == "OutputValidationError"
+    assert result.judge_usage == Usage(None, None, None, estimated=False)
+    assert len(model.requests) == 2
+
+
+async def test_a_vote_the_budget_cannot_fit_errors_the_case_not_fewer_votes() -> None:
+    # The budget fits the target and one judge run, not the second vote.
+    model = judge_model(reply(PASS, 40), reply(PASS, 40))
+    judge = Judge(
+        model,
+        rubric=RUBRIC,
+        votes=3,
+        options=RunOptions(limits=RunLimits(max_total_tokens=5000)),
+    )
+    small = RunOptions(limits=RunLimits(max_total_tokens=100))
+    evaluation = Evaluation(
+        cases=[Case(id="hello", arguments={"text": "hello"})],
+        target=LocalSkill(Echo(), skill="echo", options=small),
+        scorers=[judge],
+        max_total_tokens=5020,
+    )
+
+    result = only(await evaluation.run())
+
+    assert result.status is CaseStatus.ERRORED
+    assert result.error_type == "TokenLimitExceededError"
+    assert result.scores == ()
+    assert len(model.requests) == 1
+    assert result.judge_usage == Usage(39, 1, 40, estimated=False)
+
+
+@pytest.mark.parametrize("votes", [0, -1, 2, 4, 17, True, 3.0])
+def test_votes_must_be_a_small_odd_number(votes: Any) -> None:
+    with pytest.raises(DefinitionError, match="votes"):
+        Judge(judge_model(), rubric=RUBRIC, votes=votes)
