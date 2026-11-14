@@ -108,12 +108,17 @@ line number, without repeating the line's content:
 output with plain functions. A case passes when every scorer passes
 ([decisions 5-7](../design/evaluation.md#decisions-confirmed-2026-11-13)).
 
-**Signature status:** implemented in M9 #153. Concurrency, repeats and an
-evaluation-wide budget (#157) and A2A targets (#158) are proposed.
+**Signature status:** implemented in M9 #153; concurrency, repeats, the
+evaluation-wide budget and timeout in #157
+([decisions 8, 9 and 12](../design/evaluation.md#decisions-confirmed-2026-11-13)).
+A2A targets (#158) and judge holds (#160) are proposed.
 
 ```text
 Evaluation(*, cases: Iterable[Case[Any]], target: LocalSkill,
-           scorers: Iterable[Scorer], capture_content: bool = False)
+           scorers: Iterable[Scorer], capture_content: bool = False,
+           concurrency: int = 4, repeats: int = 1,
+           max_total_tokens: int | None = None,
+           timeout_seconds: float | None = None)
 async Evaluation.run() -> EvalReport
 ```
 
@@ -123,6 +128,10 @@ async Evaluation.run() -> EvalReport
 | `target` | [`LocalSkill`](#localskill) | Required | What runs each case. |
 | `scorers` | `Iterable[Scorer]` | Required | At least one sync or async callable `(case, output) -> bool \| Score`. |
 | `capture_content` | `bool` | Optional; default `False` | Keep case inputs, expected values, outputs and score reasons in results. A report with content is sensitive. |
+| `concurrency` | `int` | Optional; default `4` | Most attempts running at once, at least 1. `1` runs them in order. |
+| `repeats` | `int` | Optional; default `1` | Attempts per case, at least 1. Pass rates count every attempt; cases whose attempts end differently are `flaky`. |
+| `max_total_tokens` | `int \| None` | Optional; default `None` (no budget) | Token budget for the whole evaluation, greater than 0. Each attempt holds its full per-run ceiling ([`LocalSkill.token_ceiling`](#localskill)) before it starts. |
+| `timeout_seconds` | `float \| None` | Optional; default `None` (no limit) | Wall-clock limit for the whole evaluation, greater than 0. |
 
 ```python
 from agentframe.evaluation import Case, Evaluation, LocalSkill, Score
@@ -146,9 +155,12 @@ report = await evaluation.run()
 
 **Behavior / failures:** construction raises `DefinitionError`, before any case
 runs, when there are no cases or no scorers, a scorer is not callable, two
-cases share an ID (the message names positions, not the ID), or a case does not
-suit the target (see [`LocalSkill`](#localskill)). `run` runs cases one at a
-time in order and returns one [`CaseResult`](#caseresult) per case:
+cases share an ID (the message names positions, not the ID), a case does not
+suit the target (see [`LocalSkill`](#localskill)), `concurrency` or `repeats`
+is not an integer of 1 or more, or `max_total_tokens` or `timeout_seconds` is
+not greater than 0. `run` runs up to `concurrency` attempts at once, started in
+case order, and returns one [`CaseResult`](#caseresult) per attempt, in case
+order, then attempt order, however they finish:
 
 - `passed` when every scorer passes, `failed` when any scorer fails;
 - `errored` when the target raises (for example `InputValidationError`,
@@ -157,10 +169,49 @@ time in order and returns one [`CaseResult`](#caseresult) per case:
   with `DefinitionError`, so thresholds are explicit:
   `Score(passed=value >= 0.8, value=value)`. Scorers after one that raised do
   not run. There is no `expected_error=`: any target error errors the case.
+- `not_run` when the attempt never started (below); `error_message` says why.
 
-Errors never stop the run; `asyncio.CancelledError` propagates. A scorer's
+**Budget and timeout.** Per-case limits are never raised. With
+`max_total_tokens`, an attempt holds its per-run token ceiling before it
+starts, so the holds of running attempts never add up to more than the budget.
+An attempt that does not fit waits while others run (they may use less than
+they hold); once nothing is running and it still does not fit, it and later
+attempts that do not fit are `not_run`. A finished attempt's reported usage
+replaces its hold, even when higher, so an overrun is reported
+(`EvalReport.over_budget`) rather than prevented. Unknown usage, including any
+attempt whose target raised, keeps its whole hold charged and is counted in
+`total_usage.unknown_cases`. Holds are full ceilings: with the default 100 000
+tokens per run, a 200 000-token budget runs only two attempts at a time, so set
+a smaller per-case limit with `LocalSkill(options=RunOptions(limits=RunLimits(
+max_total_tokens=...)))` to use the configured concurrency. When
+`timeout_seconds` expires, running attempts are cancelled and marked `errored`
+with `TimeoutLimitExceededError`, and attempts not yet started are `not_run`.
+
+```python
+from agentframe import RunLimits, RunOptions
+from agentframe.evaluation import Evaluation, LocalSkill
+
+evaluation = Evaluation(
+    cases=cases,  # application cases
+    target=LocalSkill(
+        Assistant(model=model),  # application agent and model
+        skill="answer",
+        options=RunOptions(limits=RunLimits(max_total_tokens=5_000)),
+    ),
+    scorers=[mentions_order],  # application scorer
+    concurrency=4,
+    repeats=3,
+    max_total_tokens=200_000,
+    timeout_seconds=600,
+)
+report = await evaluation.run()
+print(report.pass_rate, report.flaky_cases, report.not_run_count)
+```
+
+Errors never stop the run; an outside `asyncio.CancelledError` cancels the
+running attempts and propagates. A scorer's
 name is its `__name__`, or its class name for callable objects. The harness
-itself logs only one INFO line per case (case ID, status, invocation ID)
+itself logs only one INFO line per attempt (case ID, attempt, status, invocation ID)
 under logger `agentframe.evaluation.harness`, never case inputs or outputs.
 Tracebacks of target and scorer exceptions that are not AgentFrame errors go
 to the operator log with their messages (results never keep those messages),
@@ -175,7 +226,7 @@ so keep content out of exception messages, as for skills.
 one skill with [`Runtime.run`](runtime.md), so every case gets argument
 validation, permissions, authorization and execution policies, and limits.
 
-**Signature status:** implemented in M9 #153.
+**Signature status:** implemented in M9 #153; `token_ceiling` in #157.
 
 ```text
 LocalSkill(agent: Agent, *, skill: str, runtime: Runtime | None = None,
@@ -212,6 +263,11 @@ invalid `expected` raises `DefinitionError` naming the case ID and fields but
 not the values. Each run gets a deep copy of the case's arguments, so a skill
 cannot change the dataset. A protected skill without `principal=` errors the
 case with `PermissionDeniedError`.
+
+The read-only property `token_ceiling: int` is the most tokens one case's run
+may use: its `max_total_tokens` resolved like the run's limits (library default
+100 000, then the agent, the skill and `options`). An evaluation-wide budget
+holds this much per attempt.
 
 **Related:** [targets](../design/evaluation.md#targets).
 
@@ -342,22 +398,23 @@ locations as its `reason` (never the invalid values), kept only with
 
 ## `CaseResult`
 
-**Purpose / decision:** the outcome of one case. Content is off by default
+**Purpose / decision:** the outcome of one attempt at a case. Content is off by default
 ([decision 13](../design/evaluation.md#decisions-confirmed-2026-11-13)).
 
 **Signature status:** implemented in M9 #153 as a frozen dataclass; built by
 the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
-`failed` and `errored` (`not_run` arrives with #157).
+`failed`, `errored` and `not_run` (#157).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `case_id` | `str` | The case's ID. |
-| `status` | `CaseStatus` | `passed`, `failed` or `errored`. |
+| `attempt` | `int` | Which attempt this is, from 1 to `repeats` (#157). |
+| `status` | `CaseStatus` | `passed`, `failed`, `errored` or `not_run` (never started: budget or timeout). |
 | `scores` | `tuple[ScoreResult, ...]` | Each scorer's `scorer` name, `passed`, `value` and `reason` (`None` unless captured), in scorer order. |
 | `error_type` | `str \| None` | Class name of the error that errored the case. |
-| `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. |
+| `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. For `not_run`, why it did not run. |
 | `invocation_id` | `str \| None` | The run's ID, also when it failed with an AgentFrame error. |
-| `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` | from `RunResult` | `None` when the target raised; usage fields may be `None` (unknown, not zero). |
+| `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` | from `RunResult` | `None` when the target raised or the attempt did not run; usage fields may be `None` (unknown, not zero). |
 | `tags` | `tuple[str, ...]` | The case's tags. |
 | `arguments`, `text`, `expected`, `output` | content | `None` unless `capture_content=True`. |
 
@@ -369,18 +426,28 @@ the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
 a readable console summary.
 
 **Signature status:** `results` implemented in M9 #153; aggregates and
-`str(report)` in #155. JSON and `require` (#156) are proposed.
+`str(report)` in #155; `max_total_tokens`, `not_run_count`, `flaky_cases` and
+`over_budget` in #157. JSON and `require` (#156) are proposed.
+
+Every aggregate counts attempts: with `repeats=3` each case adds three results.
+`not_run` attempts are counted only by `not_run_count` and left out of every
+other aggregate (rates, usage, latency, errors), so they never shrink or pad a
+rate unseen; check `not_run_count` alongside `pass_rate`.
 
 | Field or property | Type | Meaning |
 | --- | --- | --- |
-| `results` | `tuple[CaseResult, ...]` | One [`CaseResult`](#caseresult) per case, in case order. |
-| `passed_count`, `failed_count`, `errored_count` | `int` | Cases per status; errored (target or scorer raised) is counted apart from failed (a scorer failed). |
-| `pass_rate` | `float` | Passed cases / cases that ran, from `0.0` to `1.0`; errored cases count against it. `0.0` with no cases. |
-| `scorer_pass_rates` | `dict[str, float]` | Each scorer's pass rate over the cases it scored, in scorer order. A scorer that did not run for a case (the target or an earlier scorer raised) does not count for it. |
-| `tag_pass_rates` | `dict[str, float]` | Pass rate of the cases carrying each tag, in first-seen order. |
-| `total_usage` | [`UsageTotals`](#usagetotals) | Summed tokens; unknown is never counted as zero. |
-| `latency` | [`Latency`](#latency) `\| None` | p50, p95 and max case duration; `None` when no case has a duration ([decision 1 of #155](https://github.com/malcmiller/agentframe/issues/155)). |
-| `errors_by_class` | `dict[str, int]` | Errored cases per error class, for example `{"TimeoutLimitExceededError": 2}`. |
+| `results` | `tuple[CaseResult, ...]` | One [`CaseResult`](#caseresult) per attempt, in case order, then attempt order. |
+| `max_total_tokens` | `int \| None` | The evaluation-wide token budget, or `None`. |
+| `passed_count`, `failed_count`, `errored_count` | `int` | Attempts per status; errored (target or scorer raised) is counted apart from failed (a scorer failed). |
+| `not_run_count` | `int` | Attempts that never started (budget or timeout). |
+| `pass_rate` | `float` | Passed attempts / attempts that ran, from `0.0` to `1.0`; errored attempts count against it, `not_run` ones are counted by `not_run_count` instead. `0.0` when none ran. |
+| `scorer_pass_rates` | `dict[str, float]` | Each scorer's pass rate over the attempts it scored, in scorer order. A scorer that did not run for an attempt (the target or an earlier scorer raised) does not count for it. |
+| `tag_pass_rates` | `dict[str, float]` | Pass rate of the attempts carrying each tag, in first-seen order. |
+| `flaky_cases` | `list[str]` | IDs of cases whose attempts that ran ended differently (for example one passed and one failed), in case order. |
+| `total_usage` | [`UsageTotals`](#usagetotals) | Summed tokens over attempts that ran; unknown is never counted as zero. |
+| `over_budget` | `bool` | Whether reported tokens (`total_usage.known_total_tokens`) exceed `max_total_tokens`. `total_usage.unknown_cases` above 0 means the budget could not be fully enforced. |
+| `latency` | [`Latency`](#latency) `\| None` | p50, p95 and max attempt duration; `None` when no attempt has a duration ([decision 1 of #155](https://github.com/malcmiller/agentframe/issues/155)). |
+| `errors_by_class` | `dict[str, int]` | Errored attempts per error class, for example `{"TimeoutLimitExceededError": 2}`. |
 
 All aggregates are read-only properties computed from `results`.
 
@@ -390,7 +457,7 @@ from agentframe.evaluation import EvalReport
 
 def check(report: EvalReport) -> None:
     print(report)
-    if report.errored_count or report.pass_rate < 0.9:
+    if report.errored_count or report.not_run_count or report.pass_rate < 0.9:
         raise SystemExit(1)
 ```
 
@@ -399,7 +466,11 @@ dependency: one line each for counts and pass rate, tokens, latency, errors,
 scorer and tag pass rates, then a table of case ID, status, scorer verdicts
 (`name=pass` / `name=fail`, with the value in brackets, or `error=<class>`),
 tokens (`~` marks estimates, `unknown` when not reported) and duration,
-failing cases first (errored, then failed, then passed):
+failing cases first (errored, then failed, then not run, then passed). With a
+budget, a `Budget:` line shows it and any overrun or unknown usage; with
+`repeats`, the header counts attempts, the table names each `case #attempt`
+and a `Flaky:` line lists flaky cases; `not run` appears in the header when any
+attempt did not run:
 
 ```text
 Evaluation: 3 cases, 1 passed, 1 failed, 1 errored (pass rate 33.3%)
@@ -421,6 +492,24 @@ score reasons or error messages. With `capture_content=True`, a "Failure
 reasons" section lists each failing scorer's reason; treat that output as
 sensitive.
 
+For example, with `repeats=2` and `max_total_tokens=20`:
+
+```text
+Evaluation: 2 cases, 4 attempts, 2 passed, 0 failed, 1 errored, 1 not run (pass rate 66.7%)
+Tokens: unknown; 30 reported, 1 cases with unknown usage
+Budget: 20 tokens, over budget (30 reported), not fully enforced (1 attempts with unknown usage)
+Latency: -
+Flaky: a
+Errors: ValueError 1
+Tags: slow 0.0%
+
+case  status   scores            tokens   duration
+a #2  errored  error=ValueError  unknown  -
+b #2  not_run  -                 -        -
+a #1  passed   -                 15       -
+b #1  passed   -                 15       -
+```
+
 **Related:** [reports](../design/evaluation.md#reports).
 
 ## `UsageTotals`
@@ -433,9 +522,9 @@ treating unknown usage as zero.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `input_tokens`, `output_tokens`, `total_tokens` | `int \| None` | Sums over every case, or `None` when any case has no usage or that count unknown. |
-| `known_total_tokens` | `int` | Sum of the total token counts cases did report; a lower bound when `unknown_cases` is not zero. |
-| `unknown_cases` | `int` | Cases with no usage (the target raised) or any unknown count. |
+| `input_tokens`, `output_tokens`, `total_tokens` | `int \| None` | Sums over every attempt that ran, or `None` when any has no usage or that count unknown. `not_run` attempts used nothing and are left out. |
+| `known_total_tokens` | `int` | Sum of the total token counts attempts did report; a lower bound when `unknown_cases` is not zero. |
+| `unknown_cases` | `int` | Attempts that ran with no usage (the target raised or was cancelled) or any unknown count. |
 | `estimated` | `bool` | Whether any reported usage is an estimate. |
 
 **Related:** [`Usage`](runtime.md), [reports](../design/evaluation.md#reports).

@@ -10,6 +10,20 @@ changelog.
 
 ### Added
 
+- **Evaluation (M9):** `Evaluation(concurrency=4, repeats=1,
+  max_total_tokens=None, timeout_seconds=None)`. Up to `concurrency` attempts
+  run at once, started and reported in case order. `repeats` runs each case
+  several times: every `CaseResult` has an `attempt`, rates count attempts and
+  `EvalReport.flaky_cases` lists cases whose attempts ended differently. With
+  a token budget, each attempt holds its full per-run ceiling
+  (`LocalSkill.token_ceiling`) before starting, so holds never exceed the
+  budget; reported usage then replaces the hold (unknown usage keeps it), and
+  attempts that cannot fit are `not_run`. `EvalReport.over_budget` flags
+  reported overruns. When the timeout expires, running attempts are cancelled
+  and `errored` with `TimeoutLimitExceededError` and the rest are `not_run`.
+  New `CaseStatus.NOT_RUN` and `EvalReport.not_run_count`; `not_run` attempts
+  are left out of every other aggregate, and the summary shows them, the
+  budget and flaky cases (#157).
 - **Evaluation (M9):** `agentframe.evaluation` with `Case`, one fixed input
   (exactly one of skill `arguments` or free `text`, optional `expected` and
   `tags`), and `load_cases`, a strict JSONL loader (UTF-8, at most 10 MiB,

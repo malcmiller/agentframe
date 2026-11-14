@@ -315,7 +315,9 @@ one output meets a written rubric:
 ### Running, concurrency and cost
 
 `Evaluation(cases, target, scorers, concurrency=4, repeats=1,
-max_total_tokens=None, timeout_seconds=None, capture_content=False)`:
+max_total_tokens=None, timeout_seconds=None, capture_content=False)`.
+Concurrency, repeats, the budget and the timeout are implemented (#157; see
+[`Evaluation`](../api/evaluation.md#evaluation)); judge holds arrive with #160.
 
 - **Per case,** the target's normal limits apply: `LocalSkill(options=
   RunOptions(limits=...))` or the agent/skill/library defaults (120 s, 100 000
@@ -324,8 +326,11 @@ max_total_tokens=None, timeout_seconds=None, capture_content=False)`:
 - **Concurrency** runs at most `concurrency` cases at once with
   `asyncio.TaskGroup`, so provider rate limits and the target's
   `max_concurrent_runs` are respected. `concurrency=1` runs cases in order.
+  Attempts start in case order and results stay in case order however they
+  finish.
 - **Repeats** run every case `repeats` times to measure nondeterminism. The pass
-  rate counts every attempt; a case whose attempts disagree is marked `flaky`.
+  rate counts every attempt; a case whose attempts disagree is marked `flaky`
+  (`EvalReport.flaky_cases`).
 - **Evaluation-wide budget.** `max_total_tokens` covers target and judge calls
   together. Each case holds its per-case ceiling against it before starting,
   and each judge run holds its own ceiling before it starts (the same
@@ -337,11 +342,14 @@ max_total_tokens=None, timeout_seconds=None, capture_content=False)`:
   it exceeds the budget. Because holds are full per-case ceilings, the default
   100 000-token ceiling lets a 200 000-token budget admit only two cases at a
   time; set smaller per-case limits (`options=RunOptions(limits=RunLimits(
-  max_total_tokens=...))`) to use the configured concurrency. Cases whose usage is unknown (peers that
-  report none) are counted as unknown, and the report says the budget could not
-  be fully enforced. `timeout_seconds` bounds the whole evaluation: on expiry,
-  running cases are cancelled (best effort, as for remote calls) and the rest are
-  `not_run`.
+  max_total_tokens=...))`) to use the configured concurrency. An attempt
+  that does not fit waits while others run, since they may use less than they
+  hold, and is `not_run` only once nothing else is running. Cases whose usage
+  is unknown (peers that report none, or a failed run) keep their whole hold
+  charged, are counted as unknown, and the report says the budget could not be
+  fully enforced. `timeout_seconds` bounds the whole evaluation: on expiry,
+  running cases are cancelled (best effort, as for remote calls) and marked
+  `errored` with `TimeoutLimitExceededError`, and the rest are `not_run`.
 - **Failures don't stop the run.** A target error (for example
   `TokenLimitExceededError` or `RemoteAgentError`) marks that case `errored` with
   the error class and AgentFrame's safe message; `asyncio.CancelledError` still
@@ -364,8 +372,8 @@ max_total_tokens=None, timeout_seconds=None, capture_content=False)`:
 | errors by class | For example `{"TimeoutLimitExceededError": 2}`. |
 
 The aggregates and `str(report)` are implemented (#155); see
-[`EvalReport`](../api/evaluation.md#evalreport). `judge_usage`, `not_run`,
-attempts and `flaky` arrive with the judge (#160) and controls (#157).
+[`EvalReport`](../api/evaluation.md#evalreport). `not_run`, attempts and
+`flaky` are implemented (#157); `judge_usage` arrives with the judge (#160).
 
 Output formats:
 
