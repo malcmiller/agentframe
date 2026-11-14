@@ -19,8 +19,7 @@ from agentframe.evaluation.report import (
     ScoreResult,
 )
 from agentframe.evaluation.scoring import Scorer, run_scorer, scorer_name
-from agentframe.evaluation.targets import LocalSkill
-from agentframe.runtime.runtime import RunResult
+from agentframe.evaluation.targets import Target, TargetResult
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +54,7 @@ class Evaluation:
 
     Args:
         cases: The cases, each with a unique ID.
-        target: What runs each case.
+        target: What runs each case, such as ``LocalSkill`` or ``A2ATarget``.
         scorers: Sync or async callables ``(case, output) -> bool | Score``.
         capture_content: Whether results keep case inputs, expected values,
             outputs and score reasons. Off by default; a report with content
@@ -85,7 +84,7 @@ class Evaluation:
     Raises:
         DefinitionError: There are no cases or no scorers, two cases share an
             ID, a scorer is not callable, a case does not suit the target
-            (see ``LocalSkill.check_case``), ``concurrency`` or ``repeats`` is
+            (see the target's ``check_case``), ``concurrency`` or ``repeats`` is
             not a positive integer, or ``max_total_tokens`` or
             ``timeout_seconds`` is set but not greater than 0.
     """
@@ -94,7 +93,7 @@ class Evaluation:
         self,
         *,
         cases: Iterable[Case[Any]],
-        target: LocalSkill,
+        target: Target,
         scorers: Iterable[Scorer],
         capture_content: bool = False,
         concurrency: int = 4,
@@ -231,9 +230,9 @@ class Evaluation:
         error: Exception,
         source: str,
         scores: tuple[ScoreResult, ...],
-        run: RunResult[Any] | None,
+        run: TargetResult[Any] | None,
     ) -> CaseResult:
-        # A failed run has no RunResult, but its AgentFrame error carries the ID.
+        # A failed run has no result, but its AgentFrame error carries the ID.
         invocation_id = run.invocation_id if run else None
         if isinstance(error, AgentFrameError):
             message = error.message
@@ -266,7 +265,7 @@ class Evaluation:
         attempt: int,
         status: CaseStatus,
         scores: tuple[ScoreResult, ...],
-        run: RunResult[Any] | None,
+        run: TargetResult[Any] | None,
         *,
         error_type: str | None = None,
         error_message: str | None = None,
