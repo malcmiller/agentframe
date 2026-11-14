@@ -29,6 +29,7 @@ from agentframe import (
     ModelSettings,
     OutputSchema,
     ProviderError,
+    RemoteSkill,
     RunContext,
     RunResult,
     Runtime,
@@ -41,6 +42,7 @@ from agentframe import (
     tool,
 )
 from agentframe.authoring.definitions import tool_definition
+from agentframe.orchestration.planning import plan_reply
 from agentframe.runtime.tools import tool_spec
 
 ENDPOINT = "https://example.openai.azure.com/openai/v1/"
@@ -1115,3 +1117,34 @@ async def test_encrypted_reasoning_stays_out_of_results_errors_and_logs(
     assert ENCRYPTED not in repr(result)
     assert ENCRYPTED not in str(caught.value)
     assert ENCRYPTED not in caplog.text
+
+
+async def test_the_planning_reply_schema_converts_to_a_strict_format(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+    entries = (
+        RemoteSkill("research-agent.find_sources", "research-agent", "x", "", ()),
+        RemoteSkill("writer-agent", "writer-agent", None, "", ()),
+    )
+
+    async with foundry() as model:
+        await model.generate(ask_for(plan_reply(entries)))
+
+    [body] = server.bodies()
+    schema = body["text"]["format"]["schema"]
+    assert body["text"]["format"]["name"] == "PlanReply"
+    assert body["text"]["format"]["strict"] is True
+    assert schema["required"] == ["steps", "result", "reason"]
+    assert schema["properties"]["reason"] == {
+        "anyOf": [{"type": "string"}, {"type": "null"}],
+        "title": "Reason",
+    }
+    step = schema["$defs"]["PlannedStep"]
+    assert step["additionalProperties"] is False
+    assert step["required"] == ["id", "use", "arguments", "after"]
+    assert step["properties"]["use"]["enum"] == [
+        "research-agent.find_sources",
+        "writer-agent",
+    ]

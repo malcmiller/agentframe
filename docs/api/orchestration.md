@@ -9,10 +9,12 @@ offering its entries to a model as **tools**
 [permissions and tool checks](#permissions-and-tool-checks) for model-chosen
 calls ([#168](https://github.com/malcmiller/agentframe/issues/168)),
 typed [plans](#plan) checked by [`SkillCatalog.check`](#skillcatalogcheck)
-([#169](https://github.com/malcmiller/agentframe/issues/169)), and the
+([#169](https://github.com/malcmiller/agentframe/issues/169)), model-made
+plans from [`RunContext.plan`](#runcontextplan)
+([#170](https://github.com/malcmiller/agentframe/issues/170)) and the
 optional [`default_remote`](#default_remote) identity for registered agents
-([#175](https://github.com/malcmiller/agentframe/issues/175)). Planning and
-running plans (#170-#174) are planned, not implemented.
+([#175](https://github.com/malcmiller/agentframe/issues/175)). Running plans
+(#171-#174) is planned, not implemented.
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
@@ -354,7 +356,7 @@ Substituting values happens when the plan runs (#171).
 **Purpose / signature:** `catalog.check(plan, *, max_steps=8) ->
 tuple[tuple[PlanStep, ...], ...]`. Checks that a [`Plan`](#plan) only calls the
 catalog's entries, correctly, without any network or model call. Implemented
-(#169); `ctx.plan` and `ctx.run_plan` will run it too.
+(#169); [`ctx.plan`](#runcontextplan) runs it too, and `ctx.run_plan` will.
 
 | Parameter | Type | Required / default | Meaning |
 | --- | --- | --- | --- |
@@ -401,11 +403,103 @@ field, for example `Plan step 'brief' field 'arguments.sources' refers to no
 step of the plan`. Messages never include argument values, unknown entry
 names, malformed IDs or reference targets; an argument name is included only
 when it is 1-64 letters, digits, `_` or `-`. A `max_steps` that is not a whole
-number above 0 raises `DefinitionError`. Checking says nothing about
-permissions: entries a caller lacks are filtered before planning (#170) and
-re-checked with `tool_checks` before each step runs (#171).
+number above 0 raises `DefinitionError`. A deeply nested plan built with
+`model_construct` (validation refuses one) raises `InputValidationError`
+rather than `RecursionError`. Checking says nothing about permissions:
+entries a caller lacks are hidden from [`ctx.plan`](#runcontextplan) and will
+be re-checked with `tool_checks` before each step runs (#171).
 
 **Related:** [validation before execution](../design/orchestration.md#validation-before-execution).
+
+## `RunContext.plan`
+
+**Purpose / signature:** let the agent's model turn a goal into a checked
+[`Plan`](#plan) over a catalog, in one call, before anything is sent to
+another agent. Implemented (#170).
+
+```python
+async def plan(
+    self,
+    goal: str,
+    skills: SkillCatalog,
+    *,
+    max_steps: int = 8,
+    instructions: str | None = None,
+) -> Plan
+```
+
+| Parameter | Type | Required / default | Meaning |
+| --- | --- | --- | --- |
+| `goal` | `str` | Required | What the plan should achieve. Untrusted content, such as caller input; sent only as user-message data. |
+| `skills` | `SkillCatalog` | Required | A catalog from [`ctx.remote_skills`](#runcontextremote_skills). Anything else raises `DefinitionError`. |
+| `max_steps` | `int` | `8` | The most steps, a whole number above 0, never more than the tool calls the run has left (as [`check`](#skillcatalogcheck)). The model is told the effective limit. |
+| `instructions` | `str \| None` | `None` | Extra trusted planning instructions, such as domain hints, sent after the library's planning instructions. Never put untrusted content here. |
+
+```python
+from typing import Literal
+
+from agentframe import Agent, Plan, Remote, RunContext, agent, skill
+
+type Research = Remote[Literal["research-agent"]]
+type Writer = Remote[Literal["writer-agent"]]
+
+
+@agent(name="Orchestrator", version="0.1.0")
+class Orchestrator(Agent):
+    """Plans goals over two specialists."""
+
+    @skill(id="propose", tags=["orchestration"])
+    async def propose(
+        self, goal: str, research: Research, writer: Writer, ctx: RunContext
+    ) -> Plan:
+        """Return a checked plan for review; nothing runs yet."""
+        skills = await ctx.remote_skills(research, writer)
+        return await ctx.plan(goal, skills, max_steps=6)
+```
+
+**Behavior:**
+
+- **One structured-output call** with the agent's model, like
+  `ctx.generate(output=...)`: it counts toward `max_model_calls` and the
+  run's tokens, uses the agent's `model_settings` (including
+  `max_output_tokens`, which bounds the reply) and transient-failure retries,
+  and the execution policy's `model_request_checks` see it.
+- **Trusted and untrusted text stay apart.** The `system` messages are the
+  agent's `instructions`, then the library's planning instructions plus
+  `instructions=`. The goal and the catalog go together in the one `user`
+  message as JSON data: `{"goal": ..., "skills": [...]}`, each skill with
+  its `name`, bounded `description` and `tags`, `takes` (`"arguments"` or
+  `"text"`) and `arguments_schema`. Card text is never in a `system`
+  message. This keeps roles separate; it does not guarantee resistance to
+  prompt injection.
+- **Permissions.** Only entries the caller holds every
+  `requires_permissions` for (see [permissions](#permissions-and-tool-checks))
+  are shown to the model or accepted in its plan. A step using a hidden entry
+  fails exactly like one using an unknown name, so the error reveals nothing.
+- **Model-facing shape.** The reply schema converts for Foundry strict mode
+  and Ollama `format`: `{"steps": [{"id", "use", "arguments", "after"}],
+  "result", "reason"}`, with `use` an enum of the visible entry names and
+  `arguments` a JSON object written as a string. An `ask` entry's arguments
+  are `{"text": ...}`, as when it is offered as a tool; that text becomes the
+  step's `text`. To decline, the model returns no steps and a short `reason`.
+- **Checked, never repaired.** The reply is parsed into a `Plan` and checked
+  with [`SkillCatalog.check`](#skillcatalogcheck) against the visible
+  entries. It is never repaired or re-requested; to try again (for example
+  after a failed run), call `ctx.plan` again, perhaps with a reviewed summary
+  in the goal. There is no automatic replanning.
+
+**Failures** (none sends anything to another agent):
+
+| Error | When |
+| --- | --- |
+| `DefinitionError` | `skills` is not a `SkillCatalog`, or `max_steps` is not a whole number above 0. Before the model call. |
+| `InputValidationError` | The catalog has no entry the caller may use (`"No skills are available to plan with"`), before the model call; or the model declined: always `"No plan for this goal with the available skills"`, never the model's reason. |
+| `OutputValidationError` | The reply is not the requested JSON, a step's `arguments` is not a JSON object (or not exactly `{"text": string}` for an `ask` entry), or `check` rejects the plan, with `check`'s message. Messages name the step and field, never values. No second model call. |
+| `UnsupportedCapabilityError` | The agent has no model, or its model does not support structured output. Before sending. |
+| Others | As `ctx.generate`: `LimitExceededError` subclasses, `PermissionDeniedError` or `PolicyUnavailableError` from a model-request check, `ModelRefusalError`, `IncompleteOutputError`, `ProviderError`. |
+
+**Related:** [planning call](../design/orchestration.md#planning-call),
+[replanning](../design/orchestration.md#replanning).
 
 ## Remote skills as model tools
 

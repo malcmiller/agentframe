@@ -21,7 +21,7 @@ unresolved defaults or interfaces.
 | Security and protocols | [Authenticators, authorization and content policy](api/authorization.md), [hosting/protection defaults](api/hosting.md) |
 | Next core multi-agent release | [Read-first registries, managed directory and remote A2A client](api/discovery.md) |
 | Evaluation (M9, in progress) | [Cases, JSONL datasets, local skill targets and scorers](api/evaluation.md) |
-| Model-planned orchestration (M10, in progress) | [Remote skill catalog: `remote_skills`, `RemoteSkill`, `SkillCatalog`; remote skills as model tools; `Plan`, `PlanStep`, `SkillCatalog.check`](api/orchestration.md) |
+| Model-planned orchestration (M10, in progress) | [Remote skill catalog: `remote_skills`, `RemoteSkill`, `SkillCatalog`; remote skills as model tools; `Plan`, `PlanStep`, `SkillCatalog.check`; `RunContext.plan`](api/orchestration.md) |
 | Future streaming | [Optional AG-UI adapter and runtime event boundary](api/streaming.md) |
 
 ## Roadmap, guides and design discussion
@@ -55,7 +55,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [Base classes](design/base-classes.md) | Complete annotation/subclass/composition decision table, interfaces, and small proposed API examples. |
 | [Evaluation](design/evaluation.md) | Planned M9 evaluation harness: typed cases, local and A2A targets, scorers and rubric judge, budgets, private-by-default reports and CI use; decisions confirmed 2026-11-13. |
 | [Discovery](design/discovery.md) | M8+ core registry/directory and remote A2A composition, cross-hop context, local/container deployment direction and acceptance; not a workflow/graph engine. |
-| [Orchestration](design/orchestration.md) | M10, in progress (catalog implemented, #166): remote skill catalog from Agent Cards, remote skills as model tools, model-made validated execution plans run with existing limits, identity and policy; revisits two M8+ scope cuts; decisions confirmed 2026-11-13. |
+| [Orchestration](design/orchestration.md) | M10, in progress (catalog, remote tools, typed plans and `ctx.plan` implemented, #166-#170): remote skill catalog from Agent Cards, remote skills as model tools, model-made validated execution plans run with existing limits, identity and policy; revisits two M8+ scope cuts; decisions confirmed 2026-11-13. |
 | [MCP skills](design/mcp-skills.md) | Optional allowlisted skill publication, shared A2A/MCP hosting, schema mapping, and protocol boundaries. |
 | [Prompt safeguarding](design/prompt-safeguarding.md) | Shared responsibilities, content-policy hooks, data egress, and prompt-injection limitations. |
 | [Streaming and AG-UI](design/streaming.md) | Future scoped frontend-protocol adapter, primary-source event/transport research, trust/policy boundaries and open delivery contracts. |

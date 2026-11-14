@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from agentframe.discovery.remote import Remote
 from agentframe.errors import DefinitionError
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, build_catalog
+from agentframe.orchestration.plan import DEFAULT_MAX_STEPS, Plan
+from agentframe.orchestration.planning import make_plan
 from agentframe.orchestration.remote_tools import remote_tools
 from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.remotes import RunRemotes
@@ -276,3 +278,60 @@ class RunContext:
             max_tokens_per_call=max_tokens_per_call,
             permissions=permissions,
         )
+
+    async def plan(
+        self,
+        goal: str,
+        skills: SkillCatalog,
+        *,
+        max_steps: int = DEFAULT_MAX_STEPS,
+        instructions: str | None = None,
+    ) -> Plan:
+        """Ask the agent's model for a checked plan to reach ``goal`` with ``skills``.
+
+        Makes one structured-output call with the agent's model, like
+        ``generate(output=...)``: it counts toward the run's model calls and
+        tokens, and the execution policy's model-request checks see it.
+        Library-owned planning instructions, then ``instructions``, are the
+        trusted ``system`` messages. The goal and the catalog (entry names,
+        bounded descriptions and tags, argument schemas) go together in the
+        untrusted ``user`` message as JSON data, never in instructions.
+
+        Only entries the caller may use (see ``remote_skills(permissions=
+        ...)``) are shown to the model and accepted in its plan; a step
+        using any other entry fails exactly as one using an unknown name.
+        The plan is checked with ``SkillCatalog.check`` and never repaired
+        or re-requested: call ``plan`` again, perhaps with a reviewed
+        summary of what went wrong, to try again. Nothing is sent to
+        another agent.
+
+        Args:
+            goal: What the plan should achieve. Untrusted content, such as
+                caller input.
+            skills: A catalog this run built with ``remote_skills``.
+            max_steps: The most steps the plan may have, never more than the
+                tool calls the run has left. The model is told the limit.
+            instructions: Extra trusted planning instructions, such as
+                domain hints. Never put untrusted content here.
+
+        Returns:
+            The checked plan.
+
+        Raises:
+            DefinitionError: ``max_steps`` is not a whole number above 0.
+                Raised before anything is sent.
+            InputValidationError: The catalog has no entry the caller may
+                use, raised before anything is sent; or the model declined
+                to plan: the message is always "No plan for this goal with
+                the available skills", without the model's reason.
+            OutputValidationError: The model's reply is not a valid plan:
+                not the requested JSON, a step's arguments not a JSON object,
+                or a plan ``SkillCatalog.check`` rejects. The message names
+                the step and field, never a value.
+            UnsupportedCapabilityError: The agent has no model, or the model
+                does not support structured output. Raised before sending.
+
+        Raises everything ``generate`` raises for its model call, such as
+        ``LimitExceededError``, ``ModelRefusalError`` or ``ProviderError``.
+        """
+        return await make_plan(self, goal, skills, max_steps, instructions)

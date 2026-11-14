@@ -75,6 +75,22 @@ changelog.
   order. Failures raise `InputValidationError` naming the step and field,
   never values. New `SkillCatalog.get(name)` looks an entry up by name. No
   plan runs yet (#169).
+- **Orchestration (M10):** model-made plans. `await ctx.plan(goal, skills,
+  max_steps=8, instructions=None)` makes one structured-output call with the
+  agent's model (counted toward the run's model calls and tokens, seen by
+  `model_request_checks`) and returns a `Plan` checked with
+  `SkillCatalog.check`. The goal and the catalog are JSON data in the user
+  message, never in system instructions; only entries the caller may use are
+  shown or accepted, and a hidden one fails like an unknown name. The model
+  sees entry names as an enum and each step's arguments as a JSON string
+  (`{"text": ...}` for `ask` entries), which converts for Foundry strict mode
+  and Ollama `format`. A declined goal raises `InputValidationError("No plan
+  for this goal with the available skills")` without the model's reason; an
+  invalid plan raises `OutputValidationError` and is never repaired or
+  re-requested; an empty catalog raises `InputValidationError` before any
+  model call. `SkillCatalog.check` now raises `InputValidationError` instead
+  of `RecursionError` for a too-deeply nested plan built with
+  `model_construct`. Nothing runs yet (#170).
 - **Evaluation (M9):** `Evaluation(concurrency=4, repeats=1,
   max_total_tokens=None, timeout_seconds=None)`. Up to `concurrency` attempts
   run at once, started and reported in case order. `repeats` runs each case

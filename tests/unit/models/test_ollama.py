@@ -25,6 +25,7 @@ from agentframe import (
     OutputSchema,
     OutputValidationError,
     ProviderError,
+    RemoteSkill,
     RunContext,
     Runtime,
     ToolCall,
@@ -34,6 +35,7 @@ from agentframe import (
     skill,
     tool,
 )
+from agentframe.orchestration.planning import plan_reply
 
 type Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -613,3 +615,33 @@ async def test_failed_structured_replies_raise_typed_errors_with_usage(
     assert result.value == error
     assert result.model_calls == 1
     assert result.usage.total_tokens == 15
+
+
+async def test_the_planning_reply_schema_is_sent_as_format_with_its_enum(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    server = FakeOllama()
+    use_server(server)
+    entries = (
+        RemoteSkill("research-agent.find_sources", "research-agent", "x", "", ()),
+        RemoteSkill("writer-agent", "writer-agent", None, "", ()),
+    )
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        reply = plan_reply(entries)
+        schema = OutputSchema(name="PlanReply", json_schema=reply.model_json_schema())
+        await model.generate(
+            ModelRequest(
+                messages=(Message(role="user", content="Plan"),),
+                settings=ModelSettings(max_output_tokens=100),
+                output=schema,
+            )
+        )
+
+    [body] = server.chat_bodies()
+    step = body["format"]["$defs"]["PlannedStep"]
+    assert step["properties"]["use"]["enum"] == [
+        "research-agent.find_sources",
+        "writer-agent",
+    ]
+    assert step["properties"]["arguments"] == {"title": "Arguments", "type": "string"}
