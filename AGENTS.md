@@ -94,6 +94,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`; `strict_schema.py` (OpenAI strict JSON-schema converter). |
 | `src/agentframe/hosting/` | `AgentApp`, `HostConfig`, Agent Card, A2A executor, routing. |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
+| `src/agentframe/orchestration/` | `RemoteSkill`, `SkillCatalog` and bounding of untrusted card text (M10). |
 | `src/agentframe/discovery/` | `AgentRegistry`, `AgentReference`, `AgentQuery`, file and environment registries (M8+). |
 | `src/agentframe/evaluation/` | Evaluation harness (M9): `cases.py` (`Case`, `load_cases`). Imported as `agentframe.evaluation`, not re-exported from `agentframe`, so its `__init__.py` re-exports its own public names. |
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |

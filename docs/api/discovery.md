@@ -609,9 +609,12 @@ more than one source, or no filter raises `DefinitionError`; an unreachable,
 invalid or refused card raises `RemoteAgentError` unless `allow_stale=True`
 can serve its previous card. There is no pagination: `find` reads every listed
 agent, so it is meant for small curated sources. A found card cannot be called
-yet; orchestrators call configured remotes, and dynamic invocation of found
-agents is deferred to a later story (decided 2026-11-12). Matching is not
-authorization.
+itself; orchestrators call configured remotes (decided 2026-11-12). Since M10
+#166, which revisits that decision, every registered agent is also callable
+through the skill catalog: [`RunContext.remote_skills`](orchestration.md#runcontextremote_skills)
+builds entries from the cards of registered agents, skipping (with a warning)
+those whose card is unusable or whose security cannot be satisfied. Matching is
+not authorization.
 
 **Related:** [`AgentDirectory`](#agentdirectory),
 [search boundaries](../design/discovery.md#query-matching-and-card-enrichment).

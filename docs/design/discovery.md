@@ -188,6 +188,13 @@ returns cards, and dynamic invocation of a found agent is deferred to a later
 story driven by real usage (orchestrators call configured `Remote[Literal["name"]]`
 bindings); no pagination in M8+, since `find` reads every listed agent and is
 meant for small curated sources.
+**Revisited in M10 (#166):** decision 2 is lifted as an opt-in. Registered
+agents are now usable without a declared `Remote` through the skill catalog:
+`ctx.remote_skills(...)` turns every registered agent whose card is valid and
+whose security can be satisfied into catalog entries (the registry is the
+allowlist), skipping the others with a warning. `find` itself still returns
+cards only; see [orchestration](orchestration.md#remote-skill-catalog) and
+[`RunContext.remote_skills`](../api/orchestration.md#runcontextremote_skills).
 Restrict eligible discovery candidates using caller policy; matching is never
 authorization.
 

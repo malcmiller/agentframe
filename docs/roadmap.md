@@ -576,7 +576,7 @@ pytest plugin. Foundry evaluation export is a later optional adapter.
 
 ### M10: Model-planned orchestration (planned)
 
-Planned, not built (#177). The design and its decisions, confirmed on
+In progress (#177): the catalog (#166) is implemented; the rest is planned. The design and its decisions, confirmed on
 2026-11-13, are in [orchestration](design/orchestration.md). It deliberately revisits two M8+ scope
 cuts from #17, "orchestration helpers" and "dynamic invocation of agents found
 at run time" (also #85 decision 2), as opt-in features; plain `await` and

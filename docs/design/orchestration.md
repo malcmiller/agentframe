@@ -1,7 +1,9 @@
 # Model-planned orchestration
 
-**Status: planned (M10), not implemented.** Nothing on this page exists in
-`agentframe` yet. The design choices listed under
+**Status: M10 in progress.** The [remote skill catalog](#remote-skill-catalog)
+is implemented ([#166](https://github.com/malcmiller/agentframe/issues/166);
+reference: [orchestration API](../api/orchestration.md)); everything else on
+this page is planned, not implemented. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
 exact signatures and remaining details are settled while building the stories
 of the [M10 overview](https://github.com/malcmiller/agentframe/issues/177).
@@ -182,8 +184,10 @@ flowchart LR
 
 ## Remote skill catalog
 
-`await ctx.remote_skills(*remotes, agents=None, skill=None, tags=(), ask=False,
-permissions=None, max_tokens_per_call=None)` returns a `SkillCatalog`
+Implemented (#166) as `await ctx.remote_skills(*remotes, agents=None,
+skill=None, tags=(), ask=False)`; `permissions=` (#168) and
+`max_tokens_per_call=` (#167) are planned additions, and so is the
+`default_remote` identity below (#175). It returns a `SkillCatalog`
 ([#166](https://github.com/malcmiller/agentframe/issues/166)): an immutable list
 of `RemoteSkill` entries plus the run's bindings.
 
@@ -286,7 +290,8 @@ still bounded by `max_remote_hops`.
 Card names, descriptions, tags and schemas come from other parties. The catalog:
 
 - cuts descriptions to 500 characters, keeps at most 10 tags, removes control
-  characters and does not copy card `examples`; `description` strings inside
+  and format characters (whitespace ones become spaces) and does not copy card
+  `examples`; `description` strings inside
   argument schemas are cut to 500 characters too;
 - holds at most 20 entries ([catalog size](#catalog-size)) and skips, with a
   warning, an agent whose schema is over 8 KiB, keeping tool-selection accuracy
