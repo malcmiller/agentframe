@@ -16,6 +16,7 @@ import json
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -57,6 +58,7 @@ from agentframe.models.foundry import FOUNDRY_SCOPE
 from agentframe.models.ollama import DEFAULT_ENDPOINT
 from agentframe.orchestration.plan import dependencies
 from examples.assistant import Summary, create_app
+from examples.evaluation import create_answer_evaluation
 from examples.orders import create_app as create_orders_app
 from examples.routed_assistant import create_app as create_routed_app
 from local_server import ServeLocally
@@ -286,6 +288,24 @@ async def test_a_rubric_judge_grades_a_case_by_majority_vote(model: Model) -> No
     assert result.status is CaseStatus.PASSED
     assert result.scores[0].value is not None and result.scores[0].value > 0.5
     assert result.judge_usage is not None and result.judge_usage.total_tokens
+
+
+async def test_the_example_answers_pass_a_rubric_judge(
+    model: Model, tmp_path: Path
+) -> None:
+    # The same model judges its own answers here only to keep the test cheap;
+    # the guide recommends a different judge model.
+    evaluation = create_answer_evaluation(model, model, votes=1)
+
+    report = await evaluation.run()
+    report.write_json(tmp_path / "eval-report.json")
+
+    print(report)  # Numbers only: no prompts or answers by default.
+    # Small judge models occasionally fail a correct answer; errors still fail.
+    report.require(min_pass_rate=0.5)
+    aggregates = json.loads((tmp_path / "eval-report.json").read_text())["aggregates"]
+    assert aggregates["total_usage"]["total_tokens"]
+    assert aggregates["total_judge_usage"]["total_tokens"]
 
 
 # Structured output
