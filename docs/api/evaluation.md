@@ -341,7 +341,10 @@ each `expected` is validated against `output` (or `str` for free text) and
 converted to it, as for `LocalSkill`. The read-only property
 `token_ceiling: int` is the resolved per-case `max_total_tokens`; an
 evaluation-wide budget holds it per attempt. A peer that does not advertise
-usage reports it as unknown, so its whole hold stays charged.
+usage reports it as unknown, so its whole hold stays charged. The read-only
+property `description: dict[str, str]` names it in reports as
+`{"type": "a2a", "agent": <name>, "skill": <skill ID or "">, "mode": "call"
+or "ask"}`, never its URL, identity or credentials (#156).
 
 Each case is its own short root run with a new invocation ID: the binding
 holds `max_total_tokens` and sends it as the case's ceiling to peers that
@@ -364,15 +367,19 @@ never remote content.
 structural protocol, so `LocalSkill`, `A2ATarget` and application targets need
 no base class.
 
-**Signature status:** implemented in M9 #158 as a `typing.Protocol`.
+**Signature status:** implemented in M9 #158 as a `typing.Protocol`;
+`description` in #156.
 
 ```text
+Target.description -> dict[str, str]  # read-only property
 Target.token_ceiling -> int  # read-only property
 Target.check_case(case: Case[Any]) -> Case[Any]
 async Target.run(case: Case[Any]) -> TargetResult[Any]
 ```
 
-**Behavior / failures:** `token_ceiling` is the most tokens one case may use;
+**Behavior / failures:** `description` names the target in reports
+(`EvalReport.target` and the JSON `target`), with names only, never URLs,
+identities or credentials. `token_ceiling` is the most tokens one case may use;
 an evaluation-wide `max_total_tokens` holds it per attempt. `Evaluation` calls
 `check_case` for every case before any case runs; it returns the case (possibly with `expected` converted) or
 raises `DefinitionError`. `run` returns a [`TargetResult`](#targetresult); an
@@ -568,7 +575,7 @@ rate unseen; check `not_run_count` alongside `pass_rate`.
 | --- | --- | --- |
 | `results` | `tuple[CaseResult, ...]` | One [`CaseResult`](#caseresult) per attempt, in case order, then attempt order. |
 | `max_total_tokens` | `int \| None` | The evaluation-wide token budget, or `None`. |
-| `target` | `Mapping[str, str]` | The target's [`description`](#localskill), for example `{"type": "local_skill", "agent": "Assistant", "skill": "count_words"}`. |
+| `target` | `Mapping[str, str]` | The target's [`description`](#target), for example `{"type": "local_skill", "agent": "Assistant", "skill": "count_words"}`. |
 | `scorers` | `tuple[str, ...]` | The scorers' names, in scorer order. |
 | `capture_content` | `bool` | Whether the results keep case content. |
 | `passed_count`, `failed_count`, `errored_count` | `int` | Attempts per status; errored (target or scorer raised) is counted apart from failed (a scorer failed). |

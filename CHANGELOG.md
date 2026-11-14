@@ -22,7 +22,8 @@ changelog.
   listing each missed threshold above the summary; unknown usage never passes a
   token threshold and a pass-rate threshold fails when nothing ran. New
   `EvalReport.target`, `scorers` and `capture_content` and
-  `LocalSkill.description`. No pytest plugin; see the new
+  `Target.description` (`LocalSkill` and `A2ATarget`, names only, never URLs
+  or credentials). No pytest plugin; see the new
   [evaluation guide](docs/guides/evaluation.md) (#156).
 - **Evaluation (M9):** `Evaluation(concurrency=4, repeats=1,
   max_total_tokens=None, timeout_seconds=None)`. Up to `concurrency` attempts

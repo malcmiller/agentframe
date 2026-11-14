@@ -60,6 +60,12 @@ class Target(Protocol):
     ``A2ATarget``."""
 
     @property
+    def description(self) -> dict[str, str]:
+        """What the target runs, for reports: names only, never URLs, identities
+        or credentials."""
+        ...
+
+    @property
     def token_ceiling(self) -> int:
         """The most tokens one case may use; an evaluation-wide budget holds
         this much for each case before it starts."""
@@ -295,6 +301,18 @@ class A2ATarget:
         self._limits = merge_settings(
             DEFAULT_LIMITS, options.limits if options else None
         )
+
+    @property
+    def description(self) -> dict[str, str]:
+        """What this target calls, for reports: its type, the agent's
+        configured name, the skill ID (``""`` for free text) and the mode,
+        ``"call"`` or ``"ask"``. Never the URL, identity or credentials."""
+        return {
+            "type": "a2a",
+            "agent": self._name,
+            "skill": self._skill or "",
+            "mode": "ask" if self._skill is None else "call",
+        }
 
     @property
     def token_ceiling(self) -> int:

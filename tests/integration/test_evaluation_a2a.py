@@ -168,6 +168,12 @@ async def test_structured_cases_call_the_skill_and_validate_the_output(
         ),
     )
 
+    assert report.target == {
+        "type": "a2a",
+        "agent": "writer",
+        "skill": "summarize",
+        "mode": "call",
+    }
     passed, failed = report.results
     assert passed.status is CaseStatus.PASSED
     assert failed.status is CaseStatus.FAILED
@@ -185,8 +191,15 @@ async def test_free_text_cases_ask_and_report_the_peers_usage(
         scorers=[contains("answer")],
     )
 
-    [result] = (await evaluation.run()).results
+    report = await evaluation.run()
 
+    assert report.target == {
+        "type": "a2a",
+        "agent": "writer",
+        "skill": "",
+        "mode": "ask",
+    }
+    [result] = report.results
     assert result.status is CaseStatus.PASSED
     assert result.usage == Usage(
         input_tokens=30, output_tokens=12, total_tokens=42, estimated=False
