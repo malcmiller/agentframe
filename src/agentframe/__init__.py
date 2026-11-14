@@ -101,7 +101,7 @@ if TYPE_CHECKING:
     from agentframe.models.ollama import OllamaModel as OllamaModel
     from agentframe.security.entra import EntraIDAuth as EntraIDAuth
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "A2AConfig",

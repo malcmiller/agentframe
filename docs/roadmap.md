@@ -511,9 +511,9 @@ Foundry discovery uses the chosen projects agents API, but release acceptance
 must prove A2A-enabled filtering, card mapping, authentication/RBAC and pagination;
 model deployments are not agent endpoints.
 
-**Status (2026-11-13):** the M8+ build stories (#83-#97) are complete on
-`main`; no multi-agent release has been published yet, and 0.1.0 remains the
-latest release. `tests/integration/test_multi_agent_release.py` (#97) runs
+**Status (2026-11-14):** the M8+ build stories (#83-#97) are complete on
+`main`, and version 0.2.0 is the multi-agent release, prepared for publishing
+with the [changelog](../CHANGELOG.md) entry. `tests/integration/test_multi_agent_release.py` (#97) runs
 the [`examples/multi_agent`](../examples/multi_agent) planner and research
 agent as separate `agentframe run` processes and calls the planner with the
 official A2A client: discovery by name, a validated structured `call`, a
@@ -525,15 +525,16 @@ plain SDK peer receiving the caller's `traceparent` unchanged. In CI, identity
 is service mode; `test_multi_agent_interop.py` proves both interop directions
 with official-SDK peers.
 
-Pending the maintainer's runs against real resources (opt-in tests written,
-not yet run):
+The maintainer's opt-in runs against real resources passed on
+**2026-11-14**:
 
 - Foundry agent registry, invocation and interop: `test_foundry_agents.py`
-  (`AGENTFRAME_TEST_FOUNDRY_AGENTS=1`), which proves A2A-enabled filtering and
-  card mapping against a real project.
+  (`AGENTFRAME_TEST_FOUNDRY_AGENTS=1`) listed a real project, fetched an
+  A2A-enabled agent's card, `ask`ed it once and saw `call` refused before
+  sending (#86, after the fix in #179).
 - Entra on-behalf-of with two app registrations: the opt-in `entra` test in
-  `test_on_behalf_of.py`.
-- Containers: `test_compose_containers.py` (`AGENTFRAME_TEST_DOCKER=1`).
+  `test_on_behalf_of.py` (#93).
+- Containers: `test_compose_containers.py` (`AGENTFRAME_TEST_DOCKER=1`, #96).
 
 No durable workflow engine, built-in approval workflow, federation or deployment
 service is included. Checkpointed multistep flows, pause/resume and crash

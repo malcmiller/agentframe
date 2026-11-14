@@ -17,7 +17,8 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 ## Status
 
 AgentFrame 0.1.0, the first usable single-agent release (milestones M0 to M7),
-is [published on PyPI](https://pypi.org/project/agentframe-py/0.1.0/). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
+is [published on PyPI](https://pypi.org/project/agentframe-py/0.1.0/), and 0.2.0
+adds multi-agent composition (M8+; see the [changelog](CHANGELOG.md)). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
 permission checks and a timeout. M2 native A2A hosting is complete: `AgentApp`
 serves an agent as an ASGI application with its Agent Card and an authenticated
@@ -46,9 +47,8 @@ M7 hardening is in place: host limit ceilings, run admission, request and
 response size limits, graceful shutdown with `/health` and `/ready`, A2A
 message deduplication, `EntraIDAuth` and `ExecutionPolicy` checks, proven end
 to end by `tests/integration/test_hardening.py`.
-M8+ multi-agent composition is built on `main` but not yet released (0.1.0
-remains the latest release): registries and a managed `AgentDirectory`,
-`Remote[Literal["name"]]` bindings with `call` and `ask`, deadline, token,
+M8+ multi-agent composition, version 0.2.0, is complete: registries and a
+managed `AgentDirectory`, `Remote[Literal["name"]]` bindings with `call` and `ask`, deadline, token,
 hop-depth and correlation propagation, service and Entra on-behalf-of
 identity, `agentframe dev` and `agentframe compose` (see
 [multi-agent composition](#multi-agent-composition)). MCP, telemetry and
@@ -70,12 +70,13 @@ Optional extras add what a deployment needs:
 
 | Extra | Adds |
 | --- | --- |
-| `server` | Uvicorn, for the `agentframe run` command. |
+| `server` | Uvicorn, for the `agentframe run` and `agentframe dev` commands. |
 | `ollama` | `OllamaModel`, for local Llama through Ollama. |
-| `foundry` | `FoundryModel`, for Microsoft Foundry GPT deployments. |
-| `entra` | `EntraIDAuth`, for Microsoft Entra ID caller authentication. |
+| `foundry` | `FoundryModel`, for Microsoft Foundry GPT deployments, and `FoundryAgentRegistry`, for Foundry agents. |
+| `entra` | `EntraIDAuth`, for Microsoft Entra ID caller authentication, and `OnBehalfOf` remote calls. |
 
-For example, `pip install "agentframe-py[server,ollama]"`.
+For example, `pip install "agentframe-py[server,ollama]"`. Discovery and remote
+A2A calls need no extra.
 
 **Stability:** Pre-1.0: public APIs may change in minor releases; changes are
 listed in the [changelog](CHANGELOG.md).
