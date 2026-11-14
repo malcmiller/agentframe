@@ -68,6 +68,7 @@ from agentframe.models.base import (
     ToolCall,
     ToolSpec,
 )
+from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
 from agentframe.runtime.runtime import RunResult, Runtime
@@ -160,6 +161,7 @@ __all__ = [
     "ProviderError",
     "Remote",
     "RemoteAgentError",
+    "RemoteSkill",
     "Role",
     "RoutingContext",
     "RunContext",
@@ -170,6 +172,7 @@ __all__ = [
     "Service",
     "Services",
     "SkillCall",
+    "SkillCatalog",
     "SkillDefinition",
     "SkillRouter",
     "TimeoutLimitExceededError",

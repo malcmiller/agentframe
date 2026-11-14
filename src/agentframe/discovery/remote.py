@@ -794,6 +794,19 @@ async def find_remote(
     """
     found = await directory.get(name)
     check_identity(name, found.card, identity)
+    check_no_redirects(directory, name, identity)
+    return found
+
+
+def check_no_redirects(
+    directory: AgentDirectory, name: str, identity: RemoteIdentity | None
+) -> None:
+    """Check that credentials for ``name`` cannot follow a redirect elsewhere.
+
+    Raises:
+        DefinitionError: ``identity`` is set and the directory's HTTP client
+            follows redirects, or the directory is not open.
+    """
     # noinspection PyProtectedMember
     if identity is not None and directory._open_client().follow_redirects:
         raise DefinitionError(
@@ -801,7 +814,6 @@ async def find_remote(
             "http_client follows redirects; credentials are only sent to the "
             "card's own origin, so pass a client with follow_redirects=False."
         )
-    return found
 
 
 async def bind_remote(
@@ -831,6 +843,42 @@ async def bind_remote(
         RemoteAgentError: As for ``find_remote``.
     """
     found = await find_remote(directory, name, identity)
+    return new_binding(
+        directory,
+        found,
+        deadline=deadline,
+        correlation=correlation,
+        principal=principal,
+        credential=credential,
+        hops=hops,
+        max_hops=max_hops,
+        accounting=accounting,
+        max_total_tokens=max_total_tokens,
+    )
+
+
+def new_binding(
+    directory: AgentDirectory,
+    found: DiscoveredAgent,
+    *,
+    deadline: float,
+    correlation: RunCorrelation,
+    principal: Principal | None,
+    credential: OutboundCredential | None,
+    hops: int,
+    max_hops: int,
+    accounting: RunAccounting,
+    max_total_tokens: int,
+) -> Remote[Any]:
+    """Create a run's binding to an agent whose card is already checked.
+
+    The binding sends its requests with the directory's HTTP client. The
+    caller must have checked ``credential`` against the card first, as
+    ``find_remote`` does.
+
+    Raises:
+        DefinitionError: The directory is not open.
+    """
     # noinspection PyProtectedMember
     client = directory._open_client()
     transport = BoundedJsonRpcTransport(

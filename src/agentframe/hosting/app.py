@@ -245,6 +245,7 @@ class AgentApp:
                 router,
                 host.limits_ceiling,
                 host.max_response_bytes,
+                own_interface_url=card.supported_interfaces[0].url,
             ),
             task_store=InMemoryTaskStore(),
             agent_card=card,
