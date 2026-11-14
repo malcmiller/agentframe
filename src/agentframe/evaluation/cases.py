@@ -82,7 +82,8 @@ def load_cases(path: str | os.PathLike[str]) -> list[Case[Any]]:
         }
 
     Loading is strict: the file is read with ``json.loads`` only, never
-    executed, and must be UTF-8 and at most 10 MiB. Error messages name the
+    executed, and must be UTF-8 (a leading byte order mark is ignored) and at
+    most 10 MiB. Error messages name the
     file and line but never repeat its content.
 
     Args:
@@ -128,7 +129,7 @@ def _read_text(path: Path, source: str) -> str:
     if len(data) > _MAX_FILE_BYTES:
         raise DefinitionError(f"{source} is larger than {_MAX_FILE_BYTES} bytes.")
     try:
-        return data.decode("utf-8")
+        return data.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise DefinitionError(f"{source} is not UTF-8 text.") from None
 

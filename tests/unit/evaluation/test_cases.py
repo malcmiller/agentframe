@@ -109,6 +109,13 @@ def test_oversize_file_fails_before_parsing(tmp_path: Path) -> None:
         load_cases(path)
 
 
+def test_a_leading_utf8_byte_order_mark_is_accepted(tmp_path: Path) -> None:
+    path = tmp_path / "bom.jsonl"
+    path.write_bytes('{"id": "short", "text": "hi"}\n'.encode("utf-8-sig"))
+
+    assert [case.id for case in load_cases(path)] == ["short"]
+
+
 def test_file_problems_are_definition_errors(tmp_path: Path) -> None:
     empty = write(tmp_path, "")
     not_utf8 = tmp_path / "latin1.jsonl"
