@@ -19,6 +19,9 @@ from agentframe.errors import DefinitionError, RemoteAgentError
 logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_FETCHES = 8
+DEFAULT_MAX_REPLY_BYTES = 8_388_608
+"""Twice a host's default ``max_response_bytes``, leaving room for the
+task's history and JSON-RPC framing around a result."""
 
 
 @dataclass(frozen=True)
@@ -86,11 +89,16 @@ class AgentDirectory:
             credentials in its default headers or cookies, nor follow
             redirects when a remote has credentials. When omitted, the
             directory creates one on ``async with`` and closes it on exit.
+        max_reply_bytes: The largest A2A reply body a ``Remote`` call reads
+            from an agent found here; a larger one fails the call with
+            ``RemoteAgentError``. Defaults to 8388608 (8 MiB). Raise it for
+            agents whose ``max_response_bytes`` is above the default.
 
     Raises:
         DefinitionError: ``sources`` is empty or not registries,
-            ``card_ttl_seconds`` is negative or not finite, or
-            ``allow_http_hosts`` is a single string.
+            ``card_ttl_seconds`` is negative or not finite,
+            ``allow_http_hosts`` is a single string, or ``max_reply_bytes``
+            is not a whole number greater than 0.
     """
 
     def __init__(
@@ -101,12 +109,14 @@ class AgentDirectory:
         allow_stale: bool = False,
         allow_http_hosts: Collection[str] = (),
         http_client: httpx.AsyncClient | None = None,
+        max_reply_bytes: int = DEFAULT_MAX_REPLY_BYTES,
     ) -> None:
         self._sources = _checked_sources(sources)
         self._card_ttl_seconds = _checked_ttl(card_ttl_seconds)
         self._allow_stale = allow_stale
         self._allow_http_hosts = _checked_hosts(allow_http_hosts)
         self._client = http_client
+        self._max_reply_bytes = _checked_max_reply_bytes(max_reply_bytes)
         self._owns_client = False
         self._cards: dict[str, _CachedCard] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -374,3 +384,16 @@ def _checked_hosts(allow_http_hosts: Collection[str]) -> frozenset[str]:
             "not a single string."
         )
     return frozenset(host.lower() for host in allow_http_hosts)
+
+
+def _checked_max_reply_bytes(max_reply_bytes: int) -> int:
+    # bool is an int subclass, but True is not a byte count.
+    if (
+        isinstance(max_reply_bytes, bool)
+        or not isinstance(max_reply_bytes, int)
+        or max_reply_bytes < 1
+    ):
+        raise DefinitionError(
+            "AgentDirectory max_reply_bytes must be a whole number greater than 0."
+        )
+    return max_reply_bytes
