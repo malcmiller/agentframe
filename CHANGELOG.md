@@ -10,6 +10,19 @@ changelog.
 
 ### Added
 
+- **Evaluation (M9):** `examples/evaluation.py` evaluates
+  `examples/assistant.py`: `create_evaluation()` checks the model-free
+  `count_words` skill (runnable with `agentframe eval`), and
+  `create_answer_evaluation(model, judge_model, votes=1)` checks the `answer`
+  skill with `contains()` and a rubric `Judge` under an evaluation-wide budget.
+  `examples/smoke.py` runs both against the installed wheel. The
+  [evaluation guide](docs/guides/evaluation.md) now walks through datasets,
+  targets, scorers, the judge and the cost of votes, budgets, reports, CI
+  gating with `require` or `agentframe eval`, and privacy;
+  `tests/integration/test_evaluation_release.py` is the M9 release
+  acceptance suite, with opt-in Ollama and Foundry runs of the example in
+  `tests/integration/test_providers.py` (#163).
+
 - **Evaluation (M9):** `agentframe eval module:function [--json PATH]
   [--min-pass-rate RATE] [--max-errors N] [--max-total-tokens N]
   [--allow-not-run] [--allow-over-budget] [--capture-content]` runs the

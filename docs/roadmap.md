@@ -93,7 +93,7 @@ framework base class.
 | Human approvals | Application-owned workflows; no built-in approval pause/resume in first release. Required tool/action authorization remains enforced. | Application integration/decision types; protocol tasks are not durable approval workflows. |
 | Multi-agent composition | M8+: `Remote[Literal["name"]]` injection, structured `call`, plain `ask`, input-required error; multi-source directory/find, YAML files, 300-second stale-refresh cache, OBO/service identity, deadline/token/depth controls (5 hops), plain Python orchestration, dev CLI/containers. | Detailed extension schema/identity config, source conflicts/card mapping/search pagination, accounting trust and dev config; typed class proxy only later, no initial orchestration helpers. |
 | Durable workflows | Revisit after multi-agent usage; no design now. Long work uses native tasks, in-memory default/persistent store pluggable; approvals application-owned. If added, optional separate package (candidate `agentframe-workflows`). | Future evidence/scope; task persistence is not Python crash recovery or durable approval resume. |
-| Evaluation | Planned M9 ([evaluation](design/evaluation.md), decided 2026-11-13): an AgentFrame-owned harness for local skills and A2A agents in `agentframe.evaluation` in the main wheel, no new dependency or extra; `Case` from Python/JSONL, plain-function scorers, binary rubric judge, concurrency 4, optional evaluation-wide budget, private-by-default reports, no pytest plugin. | Exact signatures and report fields while building; Foundry export is a later adapter. |
+| Evaluation | Built M9, not yet released ([evaluation](design/evaluation.md), decided 2026-11-13): an AgentFrame-owned harness for local skills and A2A agents in `agentframe.evaluation` in the main wheel, no new dependency or extra; `Case` from Python/JSONL, plain-function scorers, binary rubric judge, concurrency 4, optional evaluation-wide budget, private-by-default reports, no pytest plugin. | Foundry export is a later adapter. |
 | Model-planned orchestration | Planned M10 ([orchestration](design/orchestration.md), decided 2026-11-13, #177): a catalog of remote skills from the Agent Cards of every registered agent whose card is valid and whose security can be satisfied (the registry is the allowlist), remote skills as model tools, and a model-made, validated execution plan (flat DAG with data references) run with `asyncio.TaskGroup` and the existing deadline, hop, token, identity and policy controls. Revisits #17's orchestration-helper and dynamic-invocation cuts as opt-in features. | Exact signatures, model-facing plan schema and log fields while building. |
 | Streaming | Later `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`, same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Version/binding, native event mapping, bounds/backpressure and typed final serialization; frontend tools/shared state later opt-in only. |
 
@@ -542,9 +542,9 @@ the same trusted-publishing workflow from the GitHub release
 [v0.2.0](https://github.com/malcmiller/agentframe/releases/tag/v0.2.0); the
 [release run](https://github.com/malcmiller/agentframe/actions/runs/43629699658)
 passed the TestPyPI rehearsal and the PyPI installs on Python 3.13, 3.14 and
-3.15. The M8+ overview (#17) is closed. M9 [evaluation](#m9-evaluation-planned)
-(#164) and M10 [model-planned orchestration](#m10-model-planned-orchestration-planned)
-(#177) are next.
+3.15. The M8+ overview (#17) is closed. M9 [evaluation](#m9-evaluation-built) is
+built, not yet released (#164); M10 [model-planned orchestration](#m10-model-planned-orchestration-planned)
+(#177) is next.
 
 No durable workflow engine, built-in approval workflow, federation or deployment
 service is included. Checkpointed multistep flows, pause/resume and crash
@@ -553,13 +553,18 @@ optional separate package (candidate `agentframe-workflows`). Long work uses
 A2A tasks with an in-memory default and pluggable persistent store; no built-in
 approval workflow or promise of recovering skill execution from persisted tasks.
 
-### M9: Evaluation (planned)
+### M9: Evaluation (built)
 
-Planned, in progress (#164): `Case` and `load_cases` (#152) and `LocalSkill`,
-`Evaluation.run` with function scorers (#153), the built-in scorers `equals`,
-`contains` and `valid` (#154), report aggregates with a console summary
-(#155) and `A2ATarget` for deployed A2A agents (#158), proven against
-non-AgentFrame and Foundry agents (#159), are implemented.
+Built, not yet released (#164): every story (#152-#163) is implemented.
+`Case` and `load_cases` (#152), `LocalSkill` and `Evaluation.run` with
+function scorers (#153), the built-in scorers `equals`, `contains` and `valid`
+(#154), report aggregates with a console summary (#155), the versioned JSON
+report and `report.require` (#156), concurrency, repeats and an
+evaluation-wide budget and timeout (#157), `A2ATarget` (#158), proven against
+non-AgentFrame and Foundry agents (#159), the rubric `Judge` (#160) with
+majority votes (#161), the `agentframe eval` command (#162) and the
+[evaluation guide](guides/evaluation.md), `examples/evaluation.py` and the
+release acceptance tests (#163).
 The design and its decisions, confirmed on
 2026-11-13, are in [evaluation](design/evaluation.md). M9 follows the M8+
 release and has no imposed order relative to the optional adapters below.

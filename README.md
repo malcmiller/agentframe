@@ -445,8 +445,8 @@ run it yourself from the repository root with `uv run python -m examples.smoke`.
 - [Future streaming and the optional AG-UI adapter](docs/design/streaming.md)
 - [Execution limits and token accounting](docs/guides/limits.md)
 - [Tracing and correlation](docs/design/tracing.md)
-- [Evaluation harness (planned M9)](docs/design/evaluation.md) and
-  [evaluation in pytest and CI](docs/guides/evaluation.md)
+- [Evaluation harness (built M9, not yet released)](docs/design/evaluation.md) and
+  [evaluating agents](docs/guides/evaluation.md)
 - [Model-planned orchestration (planned M10)](docs/design/orchestration.md)
 - [A2A hosting and optional MCP skill configuration](docs/design/mcp-skills.md)
 - [Skill authorization and caller identity](docs/guides/authorization.md)
