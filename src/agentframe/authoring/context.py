@@ -1,6 +1,6 @@
 """Per-run context passed to skills."""
 
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, overload
 
@@ -114,14 +114,15 @@ class RunContext:
                 for text cut short at the limit, the error's ``partial_text``
                 holds what arrived, and a skill may catch it and use it.
             ProviderError: The model provider call failed.
-            PermissionDeniedError: The model called a tool the caller lacks
-                a required permission for, or the runtime's tool
-                authorization policy denied a call. The model is never told.
+            PermissionDeniedError: The model called a tool or remote entry
+                the caller lacks a required permission for, the runtime's
+                tool authorization policy denied a call, or an execution
+                policy tool check denied a call. The model is never told.
                 Also raised, before anything is sent, when an execution
                 policy model-request check blocks a request.
             PolicyUnavailableError: The tool authorization policy or an
-                execution policy model-request check raised an error or did
-                not answer before the run's deadline.
+                execution policy model-request or tool check raised an error
+                or did not answer before the run's deadline.
             LimitExceededError: A model call does not fit the run's limits,
                 the run has made ``max_tool_calls`` tool calls, or the run's
                 timeout expired during a model or tool call.
@@ -135,9 +136,16 @@ class RunContext:
         becomes ``"research-agent_find_sources"``), the entry's bounded
         description and a copy of its argument schema (``{"text": string}``
         for an ``ask`` entry). A call runs ``Remote.call`` or ``Remote.ask``
-        on the catalog's binding, so the run's deadline, depth, identity,
-        correlation and token budget apply; it holds the catalog's
-        ``max_tokens_per_call``, or everything the run has left. Calls run
+        on the catalog's binding, after the same permission and execution
+        policy tool checks as a ``@tool`` call: entries whose
+        ``requires_permissions`` the caller lacks are not offered, and
+        before every call the permissions are checked again and each tool
+        check gets the entry's name (``"agent.skill"`` or ``"agent"``, not
+        the tool name) and the arguments about to be sent. The tool
+        authorization policy is for ``@tool`` functions only. The run's
+        deadline, depth, identity, correlation and token budget apply; a
+        call holds the catalog's ``max_tokens_per_call``, or everything the
+        run has left. Calls run
         one at a time, count toward ``max_tool_calls`` and are never retried.
         The result goes back to the model as untrusted tool output: the
         remote result as JSON, or the ``ask`` answer as text. A
@@ -152,7 +160,14 @@ class RunContext:
         selected = list(tools)  # May be a one-shot iterator.
         functions = [item for item in selected if not isinstance(item, RemoteSkill)]
         entries = [item for item in selected if isinstance(item, RemoteSkill)]
-        remote = remote_tools(entries, self._remotes)
+        remote = remote_tools(
+            entries,
+            self._remotes,
+            principal=self.principal,
+            policy=self._generation.policy,
+            skill=self._generation.skill,
+            deadline=self.deadline,
+        )
         if output is None:
             return await self._generation.generate_text(
                 self, text, instructions, functions, remote
@@ -169,6 +184,7 @@ class RunContext:
         tags: Collection[str] = (),
         ask: bool = False,
         max_tokens_per_call: int | None = None,
+        permissions: Mapping[str, Collection[str]] | None = None,
     ) -> SkillCatalog:
         """Return a catalog of the remote skills this run may offer a model.
 
@@ -206,6 +222,23 @@ class RunContext:
                 an entry may use (see ``generate``). ``None`` holds
                 everything the run has left, which is safe because those
                 calls run one at a time.
+            permissions: Permissions a caller must hold to use an entry, by
+                entry name, for example ``{"billing-agent.refund":
+                {"refunds:write"}}``: the caller needs all of them, as for
+                ``@tool(requires_permissions=...)``. Entries the caller
+                lacks are never shown to a model, and a call naming one
+                fails the run with ``PermissionDeniedError`` before anything
+                is sent. An agent's ``ask`` entry also requires every
+                permission given for that agent's skills, since free text
+                can ask for anything they do. Keys are entry names, not
+                tool names: a tool name raises ``DefinitionError``, as does
+                a key of a declared ``Remote`` that names none of its card's
+                entries. Any other key matching no entry in this catalog
+                (for example because its agent is down) logs one WARNING;
+                use tool checks as defense in depth for consequential
+                entries. Hidden entries still count toward the 20-entry
+                limit, so whether a catalog is too large never depends on
+                the caller.
 
         Returns:
             The catalog, holding the run's binding to each of its agents.
@@ -218,7 +251,10 @@ class RunContext:
                 argument is not a ``Remote``, two entries share a name, or
                 more than 20 entries remain after narrowing and skipping. A
                 catalog is never truncated. Also raised when
-                ``max_tokens_per_call`` is not a whole number above 0.
+                ``max_tokens_per_call`` is not a whole number above 0, or
+                ``permissions`` is not a mapping of names to lists of
+                strings, has a tool name as a key, or has a key of a
+                declared agent that names none of its entries.
             RemoteAgentError: A ``Remote`` parameter's card has an unsafe
                 or repeated skill ID, or a missing or over-8-KiB argument
                 schema.
@@ -238,4 +274,5 @@ class RunContext:
             tags=tags,
             ask=ask,
             max_tokens_per_call=max_tokens_per_call,
+            permissions=permissions,
         )

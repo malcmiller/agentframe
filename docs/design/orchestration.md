@@ -186,10 +186,10 @@ flowchart LR
 
 ## Remote skill catalog
 
-Implemented (#166, `max_tokens_per_call=` #167) as `await
+Implemented (#166, `max_tokens_per_call=` #167, `permissions=` #168) as `await
 ctx.remote_skills(*remotes, agents=None, skill=None, tags=(), ask=False,
-max_tokens_per_call=None)`; `permissions=` (#168) is a planned addition, and so
-is the `default_remote` identity below (#175). It returns a `SkillCatalog`
+max_tokens_per_call=None, permissions=None)`; the `default_remote` identity
+below (#175) is a planned addition. It returns a `SkillCatalog`
 ([#166](https://github.com/malcmiller/agentframe/issues/166)): an immutable list
 of `RemoteSkill` entries plus the run's bindings.
 
@@ -335,6 +335,9 @@ copy of its argument schema (`{"text": string}` for `ask`).
 - Results return to the model as untrusted tool output. A `RemoteAgentError` or
   `ClarificationNeededError` becomes a safe tool error naming only the class, so
   the model can try something else; limits, authorization and policy fail the run.
+- Entries the caller lacks permissions for are hidden, and every call passes
+  the per-entry permissions and tool checks
+  ([authorization and approval](#authorization-and-approval), #168).
 
 This is ReAct over remote agents: adaptive, but every result is read by the
 model before it chooses the next call, so injected content in one agent's
@@ -474,11 +477,14 @@ bounded by `max_model_calls` like any other.
 
 ### Authorization and approval
 
-- **Per-entry permissions** ([#168](https://github.com/malcmiller/agentframe/issues/168)):
+- **Per-entry permissions** (implemented, [#168](https://github.com/malcmiller/agentframe/issues/168);
+  [reference](../api/orchestration.md#permissions-and-tool-checks)):
   `remote_skills(..., permissions={"billing-agent.refund": {"refunds:write"}})`.
   Entries the caller lacks are hidden from the model and refused if named.
-- **Per-call checks:** before every remote call, for tools and for every plan
-  step, the entry's permissions are re-checked and the existing
+  The 20-entry limit counts entries before hiding, so whether a catalog is
+  too large never depends on the caller.
+- **Per-call checks** (implemented for tools, #168; plan steps #171): before
+  every remote call, for tools and for every plan step, the entry's permissions are re-checked and the existing
   `ExecutionPolicy.tool_checks` run with `tool_name` set to the entry name and
   the arguments about to be sent: for plan steps, after `$ref` and placeholder
   substitution. This is the data-exfiltration gate: a check sees exactly which

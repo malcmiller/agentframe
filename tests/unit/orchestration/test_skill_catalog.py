@@ -521,3 +521,92 @@ async def test_at_most_eight_cards_are_fetched_at_a_time() -> None:
 
     assert len(await catalog_names(directory)) == 10
     assert server.most_in_flight == 8
+
+
+# permissions= names (#168)
+
+
+@agent(name="Protected", description="Protects declared entries.", version="0.1.0")
+class Protected(Agent):
+    """Builds a catalog of its declared remote with the given options."""
+
+    def __init__(self, **options: Any) -> None:
+        super().__init__()
+        self.options = options
+        self.built: SkillCatalog | None = None
+
+    @skill(id="catalog", description="List remote skills.", tags=["orchestration"])
+    async def catalog(self, research: Research, ctx: RunContext) -> list[str]:
+        self.built = await ctx.remote_skills(research, **self.options)
+        return [entry.name for entry in self.built]
+
+
+def research_runtime() -> Runtime:
+    server = CardServer({"research": specialist("research", "find", "brief")})
+    return Runtime(directory=server.directory(ListRegistry("research")))
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "research.fnd",  # A typo.
+        "research",  # No ask entry without ask=True.
+    ],
+)
+async def test_a_permissions_key_naming_no_entry_of_a_declared_agent_raises(
+    key: str,
+) -> None:
+    orchestrator = Protected(permissions={key: ["research:run"]})
+
+    with pytest.raises(DefinitionError, match=f"names '{key}', which is not"):
+        await research_runtime().invoke(orchestrator, skill="catalog")
+
+
+async def test_a_tool_name_as_a_permissions_key_raises(
+    registry: AgentDirectory,
+) -> None:
+    with pytest.raises(DefinitionError, match=r"use the entry name 'research\.find'"):
+        await catalog_names(registry, permissions={"research_find": ["x"]})
+
+
+async def test_a_declared_key_narrowed_away_is_not_an_error() -> None:
+    orchestrator = Protected(skill="find", permissions={"research.brief": ["x"]})
+
+    assert await research_runtime().invoke(orchestrator, skill="catalog") == [
+        "research.find"
+    ]
+
+
+async def test_each_unmatched_permissions_key_logs_one_warning(
+    registry: AgentDirectory, caplog: pytest.LogCaptureFixture
+) -> None:
+    permissions = {"research.find": ["a"], "reserch.find": ["b"], "nobody": ["c"]}
+
+    with caplog.at_level(logging.WARNING, logger=CATALOG_LOGGER):
+        await catalog_names(registry, permissions=permissions)
+
+    assert [record.getMessage().split(" (")[0] for record in caplog.records] == [
+        "remote_skills permissions= key 'reserch.find' matched no catalog entry",
+        "remote_skills permissions= key 'nobody' matched no catalog entry",
+    ]
+
+
+async def test_an_ask_entry_requires_every_permission_of_its_agents_skills(
+    registry: AgentDirectory,
+) -> None:
+    catalog = await build(
+        registry,
+        agents=["research"],
+        skill="find",
+        ask=True,
+        permissions={
+            "research.find": ["web"],
+            "research.brief": ["briefs"],  # Narrowed away, still protects ask.
+            "research": ["chat"],
+        },
+    )
+
+    assert {entry.name: entry.requires_permissions for entry in catalog} == {
+        "research.find": {"web"},
+        "research": {"web", "briefs", "chat"},
+    }

@@ -69,6 +69,22 @@ changelog.
   limits, authentication and authorization fail the run. Tool-name
   collisions, repeated entries and entries from another run raise
   `DefinitionError` before any model call (#167).
+- **Orchestration (M10):** permissions and tool checks for model-chosen
+  remote calls. `remote_skills(..., permissions={"billing-agent.refund":
+  {"refunds:write"}})` sets an entry's `requires_permissions`: entries the
+  caller lacks are never offered to the model, and a call naming one fails the
+  run with `PermissionDeniedError` before sending. Every remote call then
+  passes the existing `ExecutionPolicy.tool_checks` with `tool_name` set to the
+  entry name (`"agent.skill"` or `"agent"`), the arguments about to be sent and
+  the same skill object as `@tool` calls; denial raises `PermissionDeniedError`,
+  a raising or late check `PolicyUnavailableError`, nothing is sent and the
+  model is never told. An agent's `ask` entry also requires every permission
+  given for its skills. A tool name as a key, or a declared remote's key that
+  names none of its card's entries, raises `DefinitionError`; other keys
+  matching no entry log one WARNING. The 20-entry limit counts entries
+  before hiding. Docs
+  warn that `Service` identity makes the orchestrator a confused deputy
+  without permissions (#168).
 - **Evaluation (M9):** `Evaluation(cases=..., target=LocalSkill(agent,
   skill=...), scorers=[...])` runs each case's arguments through
   `Runtime.run` (validation, permissions, policies, limits; a protected skill

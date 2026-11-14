@@ -353,6 +353,56 @@ explicitly under the configured mode rather than silently switching identity.
 The app registration and consent steps, and the opt-in real test, are in
 [`OnBehalfOf`](../api/authorization.md#onbehalfof).
 
+## Model-chosen remote calls
+
+**Implemented (M10 #168).** When an orchestrator offers
+[remote skills as model tools](../api/orchestration.md#remote-skills-as-model-tools),
+the model, and anything that can inject instructions into it through user
+input, retrieved text, tool results or card descriptions, chooses which agent
+to call and with what arguments. Every such call is checked like an `@tool`
+call ([details](../api/orchestration.md#permissions-and-tool-checks)):
+
+```python
+from agentframe import RunContext
+
+
+async def answer(goal: str, ctx: RunContext) -> str:
+    skills = await ctx.remote_skills(
+        permissions={"billing-agent.refund": {"refunds:write"}},
+    )
+    return await ctx.generate(goal, tools=[*skills])
+```
+
+- `permissions=` sets an entry's `requires_permissions`. Entries the caller
+  lacks are hidden from the model, and a call naming one fails the run with
+  `PermissionDeniedError` before anything is sent. An agent's free-text `ask`
+  entry requires every permission given for that agent's skills. Keys are
+  entry names: a tool name or, for declared remotes, a name that is not an
+  entry raises `DefinitionError`; in registry mode an unmatched key only
+  logs a warning, so back consequential entries with a tool check too.
+- `ExecutionPolicy.tool_checks` run before every remote call with `tool_name`
+  set to the entry name (`"billing-agent.refund"`, or the agent's name for
+  `ask`) and the arguments about to be sent, so a check can refuse a refund
+  over a limit or data going to the wrong agent. Denial, an error or a missed
+  deadline fails the run and is never fed back to the model.
+
+**Service identity is a confused deputy risk.** With `Service` identity the
+remote agent sees the orchestrator, not the caller, and authorizes the
+orchestrator's authority. Without permissions, any caller who reaches the
+orchestrator can make its model call any catalog entry with that authority,
+including callers using `APIKeyAuth` or `AllowAnonymous` ingress. AgentFrame
+does not refuse service identity (it is the only mode for those ingress
+types), so for consequential entries:
+
+1. give them `permissions=` matching what the caller must hold;
+2. add tool checks for argument-level rules (amounts, destinations, tenants);
+3. narrow the catalog with `agents=`, `skill=`, `tags=` or declared remotes;
+4. prefer `OnBehalfOf` with Entra callers, so the remote agent authorizes the
+   original user and the orchestrator can never exceed that user's authority.
+
+Every remote agent still authenticates and authorizes each request itself;
+orchestrator checks add to that, never replace it.
+
 ## Checks required before release
 
 Next-core-release [agent discovery](../design/discovery.md) must restrict eligible candidates,

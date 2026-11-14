@@ -26,11 +26,15 @@ from agentframe import (
     AgentReference,
     AgentRegistry,
     AllowAnonymous,
+    APIKey,
+    APIKeyAuth,
+    ExecutionPolicy,
     FinishReason,
     HostConfig,
     ModelCapabilities,
     ModelResponse,
     ModelSettings,
+    PermissionDeniedError,
     ProviderError,
     RunContext,
     RunLimits,
@@ -166,11 +170,14 @@ def agents(serve: ServeLocally, research: Research, peer: PeerExecutor) -> Agent
 
 
 async def run(
-    agents: Agents, orchestrator: Orchestrator, limits: RunLimits | None = None
+    agents: Agents,
+    orchestrator: Orchestrator,
+    limits: RunLimits | None = None,
+    policy: ExecutionPolicy | None = None,
 ) -> RunResult[str]:
     """Run the orchestrator locally, with 100-token model answers."""
     async with agents() as directory:
-        return await Runtime(directory=directory).run(
+        return await Runtime(directory=directory, policy=policy).run(
             orchestrator,
             skill="answer",
             arguments={"goal": "Write about tides"},
@@ -304,3 +311,63 @@ async def test_a_hosted_orchestrator_calls_remote_skills_for_an_a2a_caller(
     assert task.status.state == TaskState.TASK_STATE_COMPLETED
     assert get_text_parts(task.artifacts[0].parts) == ["Found tides."]
     assert research.topics == ["tides"]
+
+
+# Permissions and tool checks (#168)
+
+
+async def test_a_tool_check_sees_each_entry_name_and_a_denied_call_is_never_sent(
+    agents: Agents, research: Research, peer: PeerExecutor
+) -> None:
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    async def only_ask(
+        skill: Any, principal: Any, tool_name: str, arguments: Any
+    ) -> bool:
+        seen.append((tool_name, dict(arguments)))
+        return tool_name == "peer"
+
+    orchestrator = Orchestrator(reply(ask_peer("hello"), find("tides")), "unsent")
+
+    with pytest.raises(PermissionDeniedError):
+        await run(agents, orchestrator, policy=ExecutionPolicy(tool_checks=[only_ask]))
+
+    assert seen == [
+        ("peer", {"text": "hello"}),
+        ("research.find_sources", {"topic": "tides"}),
+    ]
+    assert [r.message.parts[0].text for r in peer.requests] == ["hello"]
+    assert research.topics == []
+    # The denial failed the run; the model was never told.
+    assert len(orchestrator.scripted.requests) == 1
+
+
+async def test_a_hosted_caller_without_permission_never_sees_or_reaches_an_entry(
+    serve: ServeLocally, agents: Agents, research: Research
+) -> None:
+    orchestrator = Orchestrator(
+        reply(find("tides")),
+        permissions={"research.find_sources": {"research:run"}},
+    )
+    keys = {"visitor-key": APIKey("visitor")}
+
+    async with agents() as directory:
+
+        def orchestrator_app(public_url: str) -> AgentApp:
+            host = HostConfig(public_url=public_url, auth=APIKeyAuth(keys=keys))
+            return AgentApp(agent=orchestrator, host=host, directory=directory)
+
+        async with (
+            serve(orchestrator_app) as url,
+            await connect(url, "visitor-key") as client,
+        ):
+            task = await call_skill(client, "answer", {"goal": "Write about tides"})
+
+    # A permission denial rejects the task, as for any PermissionDeniedError.
+    assert task.status.state == TaskState.TASK_STATE_REJECTED
+    assert get_text_parts(task.status.message.parts) == [
+        "Remote skill 'research.find_sources' requires permissions the caller "
+        "does not hold"
+    ]
+    assert [spec.name for spec in orchestrator.scripted.requests[0].tools] == ["peer"]
+    assert research.topics == []

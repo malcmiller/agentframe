@@ -2,12 +2,14 @@
 
 Model-planned orchestration ([M10](../design/orchestration.md)) lets an
 orchestrator's model choose which registered agent and skill to call. This
-page covers its first two pieces, both implemented: the **remote skill
-catalog** (M10 [#166](https://github.com/malcmiller/agentframe/issues/166))
-and offering its entries to a model as **tools**
-([#167](https://github.com/malcmiller/agentframe/issues/167)). Permissions and
-tool checks for model-chosen calls (#168), plans (#169-#174) and the optional
-`default_remote` identity (#175) are planned, not implemented.
+page covers its first pieces, all implemented: the **remote skill
+catalog** (M10 [#166](https://github.com/malcmiller/agentframe/issues/166)),
+offering its entries to a model as **tools**
+([#167](https://github.com/malcmiller/agentframe/issues/167)) and
+[permissions and tool checks](#permissions-and-tool-checks) for model-chosen
+calls ([#168](https://github.com/malcmiller/agentframe/issues/168)). Plans
+(#169-#174) and the optional `default_remote` identity (#175) are planned, not
+implemented.
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
@@ -27,6 +29,7 @@ async def remote_skills(
     tags: Collection[str] = (),
     ask: bool = False,
     max_tokens_per_call: int | None = None,
+    permissions: Mapping[str, Collection[str]] | None = None,
 ) -> SkillCatalog: ...
 ```
 
@@ -38,6 +41,7 @@ async def remote_skills(
 | `tags` | `Collection[str]` | Optional; default `()` | Keep only card skills carrying all of these tags, matched with `skill` on the same card skill, as [`AgentDirectory.find`](discovery.md#agentdirectoryfind). A single string raises `DefinitionError`. |
 | `ask` | `bool` | Optional; default `False` | Also add a free-text `ask` entry for agents with the skill-call extension. |
 | `max_tokens_per_call` | `int \| None` | Optional; default `None` | The most tokens each [model-chosen call](#remote-skills-as-model-tools) to an entry may use, held against the run's `max_total_tokens` and sent to peers that advertise it, as `Remote.call(max_total_tokens=...)`. `None` holds everything the run has left, which is safe because those calls run one at a time. Anything but a whole number above 0 raises `DefinitionError`. Implemented (#167). |
+| `permissions` | `Mapping[str, Collection[str]] \| None` | Optional; default `None` | Permissions a caller must hold to use an entry, by entry name: `{"billing-agent.refund": {"refunds:write"}}`. The caller needs all of them, as for `@tool(requires_permissions=...)`; they become the entry's `requires_permissions`, and an agent's `ask` entry also requires every permission given for that agent's skills. Keys are entry names; see [unmatched keys](#unmatched-permissions-keys). Anything but a mapping of strings to collections of strings (a single string included) raises `DefinitionError`. See [permissions and tool checks](#permissions-and-tool-checks). Implemented (#168). |
 | Result | [`SkillCatalog`](#skillcatalog) | On success | The entries, in source and card order, plus this run's binding to each agent. May be empty. |
 
 ```python
@@ -110,7 +114,8 @@ it never calls a model or sends an A2A message.
   as a single string, a positional argument that is not a `Remote`, credentials
   with a redirect-following HTTP client, two entries with the same name (for
   example agent `a.b`'s `ask` entry and agent `a`'s skill `b`), more than
-  20 entries, or an invalid `max_tokens_per_call`.
+  20 entries (counted before any caller's permissions hide entries), or an
+  invalid `max_tokens_per_call` or `permissions`.
 - `RemoteAgentError`: a declared `Remote`'s card cannot be fetched (raised
   while binding the parameter, as in M8+), has an unsafe or repeated skill ID,
   or its argument schema is missing or over 8 KiB.
@@ -135,7 +140,7 @@ remote structured skill or free-text `ask`. A frozen dataclass. Implemented
 | `description` | `str` | The card's description of the skill (of the agent, for `ask`), bounded. |
 | `tags` | `tuple[str, ...]` | At most ten of the card's tags, bounded. For `ask`, the tags of the agent's card skills. |
 | `arguments_schema` | `dict[str, Any] \| None` | The skill's argument JSON Schema from the card's skill-call extension, bounded; `None` for `ask`. Treat it as read-only. |
-| `requires_permissions` | `frozenset[str]` | Permissions a caller needs to use the entry. Empty until `permissions=` arrives with #168. |
+| `requires_permissions` | `frozenset[str]` | Permissions a caller needs to use the entry, from `remote_skills(permissions=...)`; empty by default. |
 
 ```python
 from agentframe import RemoteSkill, SkillCatalog
@@ -161,7 +166,7 @@ application code. Implemented (#166).
 | `entries` | `tuple[RemoteSkill, ...]` | The entries, in source and card order. |
 | `max_tokens_per_call` | `int \| None` | The tokens each model-chosen call to an entry may use; `None` means everything the run has left. |
 | `iter(catalog)` | `Iterator[RemoteSkill]` | Iterates the entries. |
-| `len(catalog)` | `int` | The number of entries, at most 20. |
+| `len(catalog)` | `int` | The number of entries, at most 20, including entries hidden from callers without their permissions. |
 
 ```python
 from agentframe import RunContext
@@ -232,7 +237,9 @@ a transient failure: remote side effects are unknown.
 | `RemoteAgentError` (unreachable, refused, failed, oversized reply) or `ClarificationNeededError` | The model gets `{"error": "The remote call failed: <class name>"}` and can try something else; one WARNING log names the entry, the class and its safe message |
 | `max_tool_calls` reached | `ToolCallLimitExceededError` before the call |
 | `max_tokens_per_call` (or any token) does not fit what the run has left | `TokenLimitExceededError`; nothing is sent |
-| Any other error: limits (deadline, hop depth), `AuthenticationError`, `PermissionDeniedError`, policy | Fails the run; the model is never told |
+| The caller lacks the entry's `requires_permissions`, or a tool check denies the call | `PermissionDeniedError`; nothing is sent ([permissions and tool checks](#permissions-and-tool-checks)) |
+| A tool check raises or is still running at the run's deadline | `PolicyUnavailableError`; nothing is sent |
+| Any other error: limits (deadline, hop depth), `AuthenticationError`, `PermissionDeniedError` from the remote agent | Fails the run; the model is never told |
 
 **Refused before any model call** (`DefinitionError`): an entry whose tool name
 matches a selected `@tool` or another entry's, an entry selected twice, or an
@@ -241,16 +248,130 @@ from another run, or constructed by hand, is refused). An argument schema the
 model's provider cannot use, such as a free-form object for Foundry's strict
 mode, raises `UnsupportedCapabilityError` before sending.
 
-**Not yet:** `requires_permissions` on entries and `ExecutionPolicy.tool_checks`
-for model-chosen remote calls arrive with
-[#168](https://github.com/malcmiller/agentframe/issues/168). Until then, with
-`Service` identity every caller of the orchestrator can make the model call any
-catalog entry with the orchestrator's identity; narrow the catalog, or use
-`OnBehalfOf` so remote agents authorize the original user.
-
 `@tool` functions still cannot take `Remote` parameters (#87): catalog entries
 are the supported way to give a model remote agents.
 
 **Related:** [design: remote skills as model tools](../design/orchestration.md#remote-skills-as-model-tools),
 [tool calling](agents.md#implemented-tool-calling-m5-61),
 [`Remote`](discovery.md#remoteliteralname).
+
+## Permissions and tool checks
+
+**Purpose / signature:** check every model-chosen remote call against the
+caller's permissions and the application's policy, so a model, or a prompt
+injection, cannot make the orchestrator act beyond the caller's authority.
+Configured with `remote_skills(permissions=...)` and the existing
+[`ExecutionPolicy.tool_checks`](authorization.md#executionpolicy); no new
+policy protocol. Implemented (M10 #168).
+
+```python
+from collections.abc import Mapping
+from typing import Any
+
+from agentframe import (
+    Agent,
+    ExecutionPolicy,
+    Principal,
+    RunContext,
+    SkillDefinition,
+    agent,
+    skill,
+)
+
+
+@agent(name="Orchestrator", description="Delegates to specialists.", version="0.1.0")
+class Orchestrator(Agent):
+    @skill(id="answer", description="Answer a goal.", tags=["orchestration"])
+    async def answer(self, goal: str, ctx: RunContext) -> str:
+        skills = await ctx.remote_skills(
+            agents=["research-agent", "billing-agent"],
+            permissions={"billing-agent.refund": {"refunds:write"}},
+        )
+        return await ctx.generate(goal, tools=[*skills])
+
+
+async def no_refunds_over_100(
+    skill: SkillDefinition,
+    principal: Principal | None,
+    tool_name: str,
+    arguments: Mapping[str, Any],
+) -> bool:
+    return tool_name != "billing-agent.refund" or arguments.get("amount", 0) <= 100
+
+
+policy = ExecutionPolicy(tool_checks=[no_refunds_over_100])
+```
+
+Pass `policy=policy` to `AgentApp` (or `Runtime`) next to `directory=`.
+
+The same rules as for [`@tool` functions](authorization.md#toolauthorizationpolicy):
+
+1. **Hidden.** An entry whose `requires_permissions` the caller (the run's
+   verified `principal`) does not all hold is left out of the tools sent to
+   the model. A caller with no principal holds no permissions. The model, and
+   anyone reading its request, sees no hint of what other callers can do.
+   Model-request checks see the request without it.
+2. **Re-checked before every call.** A model-chosen call naming a hidden entry
+   (as a scripted or injected call could) fails the run with
+   `PermissionDeniedError`. The permissions are checked before the arguments,
+   so a malformed call to a hidden entry fails the run too, and the model
+   learns nothing about the entry.
+3. **Tool checks.** After the arguments are parsed, and immediately before
+   sending, every `ExecutionPolicy.tool_checks` check runs, in order, with:
+   the running skill's `SkillDefinition` (the same object `@tool` calls pass),
+   the principal, `tool_name` set to the **entry name** (`"agent.skill"` or,
+   for `ask`, `"agent"`; never the provider-safe tool name) and the read-only
+   arguments about to be sent (`{"text": ...}` for `ask`). Only an explicit
+   `True` sends the call. Anything else raises `PermissionDeniedError`; a
+   check that raises or is still running at the run's deadline raises
+   `PolicyUnavailableError`. Either way nothing is sent, the run fails and the
+   model is never told.
+
+Checks run for every model-chosen call, each of which counts toward
+`max_tool_calls` as before. A denied call is never turned into a tool error,
+since that would let the model probe the policy. Errors name only the entry,
+never the arguments; nothing is logged with arguments or results. The
+runtime's `ToolAuthorizationPolicy` is for `@tool` functions only, because its
+`check_tool` receives a `ToolDefinition`; use tool checks for remote entries.
+
+**`ask` entries inherit their agent's skill permissions.** Free text can ask
+an agent for anything its skills do, so an agent's `ask` entry (from
+`ask=True`, or the only entry of an agent without the skill-call extension)
+requires the union of the permissions given for that agent's skills, plus any
+given for the `ask` entry itself, even for skills that `skill=`/`tags=` left
+out. Protecting `"billing-agent.refund"` therefore protects free text to
+`billing-agent` too.
+
+### Unmatched `permissions` keys
+
+A key that protects nothing would leave the entry it meant callable by anyone,
+so mistakes are reported:
+
+| Key | Result |
+| --- | --- |
+| An entry's provider-safe tool name instead of its name (`"billing-agent_refund"`) | `DefinitionError` naming the entry name to use |
+| With declared `Remote` parameters: the agent's name, or its name followed by `.`, that names no entry of its card (a typo, or the agent's name without `ask=True`) | `DefinitionError`. Entries `skill=`/`tags=` left out still count as entries, so they are not errors |
+| Any other key matching no entry in this run's catalog | One WARNING log per key, naming only the key: `remote_skills permissions= key '<key>' matched no catalog entry` |
+
+In registry mode keys are matched only against the entries present in this
+run's catalog: an agent that is down or skipped, or a registry that changed,
+legitimately removes entries, so a typo there is a warning, not an error. For
+consequential entries add an `ExecutionPolicy` tool check on the entry name
+as defense in depth: it runs on every call whatever the catalog holds.
+
+**The 20-entry limit counts hidden entries.** The catalog's size is checked
+when it is built, before any caller's permissions hide entries, so whether a
+catalog is too large never depends on who calls.
+
+**Remote agents still decide.** Each remote agent authenticates and authorizes
+the request itself. With `OnBehalfOf` it sees the original user; with
+`Service` it sees the orchestrator. With `Service` identity, any caller who
+reaches the orchestrator could otherwise make its model call any catalog entry
+with the orchestrator's identity (a confused deputy): give consequential
+entries `permissions=`, add tool checks, narrow the catalog, or prefer
+`OnBehalfOf`. See the
+[authorization guide](../guides/authorization.md#model-chosen-remote-calls).
+
+**Related:** [design: authorization and approval](../design/orchestration.md#authorization-and-approval),
+[`ExecutionPolicy`](authorization.md#executionpolicy),
+[OWASP LLM06 Excessive Agency](https://genai.owasp.org/llmrisk/llm062025-excessive-agency/).
