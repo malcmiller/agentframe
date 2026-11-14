@@ -68,10 +68,11 @@ Do these once, before the first release.
 ## Publish a release
 
 1. Merge a pull request to `main` that sets the new version in
-   `pyproject.toml` and `agentframe.__version__`, and adds its
-   [changelog](../../CHANGELOG.md) entry, with the release date in its heading
-   (`## [0.1.0] - YYYY-MM-DD`); set the date before tagging. Wait for CI to
-   pass on `main`.
+   `pyproject.toml` and `agentframe.__version__` (and the test asserting it),
+   runs `uv lock` so `uv.lock` records it (CI uses `uv sync --locked`), and
+   adds its [changelog](../../CHANGELOG.md) entry, with the release date in
+   its heading (`## [0.2.0] - YYYY-MM-DD`) and a release link at the bottom;
+   set the date before tagging. Wait for CI to pass on `main`.
 2. Create a GitHub release: **Releases → Draft a new release**, create the tag
    (for example `v0.1.0`) on `main`, title it with the version, and link the
    changelog entry in the notes, for example

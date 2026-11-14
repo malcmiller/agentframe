@@ -8,6 +8,16 @@ changelog.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-14
+
+The multi-agent release (M8+): independently deployed AgentFrame agents find
+each other through registries and an `AgentDirectory`, and orchestrator skills
+call them over A2A with `Remote.call` and `Remote.ask`, carrying deadlines,
+token budgets, hop limits, correlation and caller identity across hops.
+`agentframe dev` and `agentframe compose` run several agents locally or in
+containers. Calls interoperate with non-AgentFrame A2A agents, including
+Microsoft Foundry agents.
+
 ### Added
 
 - **Multi-agent (M8+):** `examples/multi_agent`, a planner orchestrator and a
@@ -59,7 +69,6 @@ changelog.
   app-only callers and local runs fail with `PermissionDeniedError`, failed
   exchanges with `AuthenticationError`, never falling back to `Service`. The
   `entra` extra now pins `azure-identity==1.27.0` and `aiohttp==3.14.5`.
-
 - **Multi-agent (M8+):** cross-agent correlation. Hosted runs log `Run
   started` / `Run completed` at `INFO`, and their log records carry `agent`,
   `invocation_id`, `root_invocation_id` and `parent_invocation_id` in
@@ -71,7 +80,6 @@ changelog.
   `traceparent` (and valid `tracestate`) is forwarded unchanged to every peer;
   invalid ones are dropped. None of it authenticates or grants access, and
   task metadata is unchanged.
-
 - **Multi-agent (M8+):** `Remote.ask` sends the run's remaining time
   (`agentframe.deadline_ms`) and depth (`agentframe.hops`) to peers whose card
   lists them in the skill-call extension's new `params.context`; others get
@@ -80,7 +88,6 @@ changelog.
   at that depth fails before sending. New `RunContext.hops`. With the
   extension activated, a message without `agentframe.skill` is now free text
   instead of an `InvalidParams` error.
-
 - **Discovery (M8+):** read-only `AgentRegistry` base with `AgentReference`
   (agent name and Agent Card URL) and `AgentQuery` (name filter), plus
   `FileAgentRegistry` (YAML `name`/`url` list) and `EnvironmentAgentRegistry`
@@ -184,4 +191,5 @@ and imported as `agentframe`.
 - **Examples:** runnable examples in `examples/`, each checked against the
   installed wheel by `python -m examples.smoke`.
 
+[0.2.0]: https://github.com/malcmiller/agentframe/releases/tag/v0.2.0
 [0.1.0]: https://github.com/malcmiller/agentframe/releases/tag/v0.1.0
