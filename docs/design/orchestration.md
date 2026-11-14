@@ -1,8 +1,10 @@
 # Model-planned orchestration
 
 **Status: M10 in progress.** The [remote skill catalog](#remote-skill-catalog)
-is implemented ([#166](https://github.com/malcmiller/agentframe/issues/166);
-reference: [orchestration API](../api/orchestration.md)); everything else on
+([#166](https://github.com/malcmiller/agentframe/issues/166)) and
+[remote skills as model tools](#remote-skills-as-model-tools)
+([#167](https://github.com/malcmiller/agentframe/issues/167)) are implemented
+(reference: [orchestration API](../api/orchestration.md)); everything else on
 this page is planned, not implemented. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
 exact signatures and remaining details are settled while building the stories
@@ -184,10 +186,10 @@ flowchart LR
 
 ## Remote skill catalog
 
-Implemented (#166) as `await ctx.remote_skills(*remotes, agents=None,
-skill=None, tags=(), ask=False)`; `permissions=` (#168) and
-`max_tokens_per_call=` (#167) are planned additions, and so is the
-`default_remote` identity below (#175). It returns a `SkillCatalog`
+Implemented (#166, `max_tokens_per_call=` #167) as `await
+ctx.remote_skills(*remotes, agents=None, skill=None, tags=(), ask=False,
+max_tokens_per_call=None)`; `permissions=` (#168) is a planned addition, and so
+is the `default_remote` identity below (#175). It returns a `SkillCatalog`
 ([#166](https://github.com/malcmiller/agentframe/issues/166)): an immutable list
 of `RemoteSkill` entries plus the run's bindings.
 
@@ -315,10 +317,13 @@ and checks below.
 
 ## Remote skills as model tools
 
-The first usable step ([#167](https://github.com/malcmiller/agentframe/issues/167)):
+The first usable step, implemented ([#167](https://github.com/malcmiller/agentframe/issues/167);
+[reference](../api/orchestration.md#remote-skills-as-model-tools)):
 `ctx.generate(goal, tools=[*skills])` offers catalog entries next to ordinary
-`@tool` functions. Each entry becomes one model tool with a provider-safe name,
-its bounded description and its argument schema (`{"text": string}` for `ask`).
+`@tool` functions. Each entry becomes one model tool with a provider-safe name
+(characters other than letters, digits, `_` and `-` become `_`; collisions fail
+with `DefinitionError` before any model call), its bounded description and a
+copy of its argument schema (`{"text": string}` for `ask`).
 
 - A tool call runs `Remote.call` or `Remote.ask` on the catalog's per-run binding (declared remote or registry agent), so deadline,
   depth, identity, correlation and token reconciliation are unchanged. Calls

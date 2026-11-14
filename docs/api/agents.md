@@ -140,11 +140,12 @@ registered tools. The accepted `tools` collection type remains open; the names
 await ctx.generate(text, instructions=...) -> str       # implemented (M3 #35)
 await ctx.generate(text, output=Summary) -> Summary     # implemented (M4 #53)
 await ctx.generate(text, tools=[lookup_order]) -> str   # implemented (M5 #60, #61)
+await ctx.generate(text, tools=[*skills]) -> str        # implemented (M10 #167)
 ```
 
-**Implemented signature (M3 #35, M4 #53, `tools` M5 #60/#61):** two
-`typing.overload`s, so type checkers infer `str` without `output` and the
-requested class with it.
+**Implemented signature (M3 #35, M4 #53, `tools` M5 #60/#61, remote skills
+M10 #167):** two `typing.overload`s, so type checkers infer `str` without
+`output` and the requested class with it.
 
 ```text
 async def generate(
@@ -152,7 +153,7 @@ async def generate(
     text: str,
     *,
     instructions: str | None = None,
-    tools: Iterable[Callable[..., Any]] = (),
+    tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
 ) -> str
 async def generate[T: BaseModel](
     self,
@@ -160,7 +161,7 @@ async def generate[T: BaseModel](
     *,
     instructions: str | None = None,
     output: type[T],
-    tools: Iterable[Callable[..., Any]] = (),
+    tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
 ) -> T
 ```
 
@@ -174,7 +175,7 @@ message. This separation does not guarantee resistance to prompt injection.
 | `text` | `str` | Required in current text proposal | Untrusted user content, never promoted to privileged instructions. |
 | `instructions` | `str \| None` | Optional; default `None` sends no call instructions | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
 | `output` | `type[T]`, `T` a Pydantic `BaseModel` subclass (implemented, M4 #53) | Optional; `None` returns text | Sends the class's JSON schema as [`OutputSchema`](models.md#outputschema) and returns the reply validated with `model_validate_json` in Pydantic's default (lax) mode; a model's own `ConfigDict(strict=True)` is respected. `RootModel`, `list[...]` and other types raise `DefinitionError` before sending: wrap lists in a model field. Provider schema subsets are documented per adapter ([Foundry](models.md#structured-output), [Ollama](models.md#structured-output-ollama)). With `tools`, the final answer after the tool calls is validated (M5 #61). |
-| `tools` | `Iterable[Callable[..., Any]]` of `@tool` functions registered on the agent (selection implemented, M5 #60) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent, or selected twice, raises `DefinitionError` naming the tool before anything is sent. The model's tool calls run within the run's limits until it answers; see [tool calling](#implemented-tool-calling-m5-61) and the [Foundry mapping](models.md#tool-calling). Decoration or a model suggestion alone does not grant execution. |
+| `tools` | `Iterable[Callable[..., Any] \| RemoteSkill]`: `@tool` functions registered on the agent (selection implemented, M5 #60), and [`RemoteSkill`](orchestration.md#remoteskill) entries from this run's catalogs (M10 #167) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent, or selected twice, raises `DefinitionError` naming the tool before anything is sent. The model's tool calls run within the run's limits until it answers; see [tool calling](#implemented-tool-calling-m5-61), the [Foundry mapping](models.md#tool-calling) and [remote skills as tools](orchestration.md#remote-skills-as-model-tools). Decoration or a model suggestion alone does not grant execution. |
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -326,7 +327,9 @@ against the annotation and sent as JSON text.
 | An [`ExecutionPolicy`](authorization.md#executionpolicy) model-request check blocks a request, including a continuation (M7 #77) | Nothing is sent and no tokens are reserved; `PermissionDeniedError` (`PolicyUnavailableError` when the check raises) |
 
 Tools are never automatically retried; a model retry re-sends the same request,
-which already holds earlier tool results. Each call is authorized after its
+which already holds earlier tool results. Remote skill catalog entries run
+through the same loop; their naming, results and failures are described in
+[remote skills as model tools](orchestration.md#remote-skills-as-model-tools). Each call is authorized after its
 arguments are validated and before services are resolved or the tool runs; see
 [`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy).
 

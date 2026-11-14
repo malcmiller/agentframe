@@ -286,6 +286,17 @@ class Remote[N: str]:
             pydantic_core.PydanticSerializationError: An argument cannot be
                 represented as JSON. Nothing is sent.
         """
+        value = await self._call_with(skill, arguments, max_total_tokens)
+        return value if output is None else self._validated(value, output)
+
+    async def _call_with(
+        self, skill: str, arguments: dict[str, Any], max_total_tokens: int | None
+    ) -> Any:
+        """Run ``skill`` with ``arguments`` as ``call`` does, without ``output``.
+
+        Takes the arguments as one dictionary, so any argument name works,
+        including ``output`` and ``max_total_tokens``. Raises as ``call``.
+        """
         self._check_depth()
         self._check_card_offers(skill)
         message = self._skill_call_message(skill, arguments)
@@ -293,10 +304,8 @@ class Remote[N: str]:
             message, max_total_tokens, extensions=[SKILL_CALL_EXTENSION_URI]
         )
         if isinstance(reply, Message):
-            value = self._result_value(reply.parts)
-        else:
-            value = self._result_value(self._result_parts(reply), reply)
-        return value if output is None else self._validated(value, output)
+            return self._result_value(reply.parts)
+        return self._result_value(self._result_parts(reply), reply)
 
     def _check_card_offers(self, skill: str) -> None:
         card = self._found.card

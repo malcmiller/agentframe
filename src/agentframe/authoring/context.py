@@ -8,7 +8,8 @@ from pydantic import BaseModel
 
 from agentframe.discovery.remote import Remote
 from agentframe.errors import DefinitionError
-from agentframe.orchestration.catalog import SkillCatalog, build_catalog
+from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, build_catalog
+from agentframe.orchestration.remote_tools import remote_tools
 from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.security.principal import Principal
@@ -43,7 +44,7 @@ class RunContext:
         text: str,
         *,
         instructions: str | None = None,
-        tools: Iterable[Callable[..., Any]] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
     ) -> str: ...
 
     @overload
@@ -53,7 +54,7 @@ class RunContext:
         *,
         instructions: str | None = None,
         output: type[T],
-        tools: Iterable[Callable[..., Any]] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
     ) -> T: ...
 
     async def generate(
@@ -62,7 +63,7 @@ class RunContext:
         *,
         instructions: str | None = None,
         output: type[BaseModel] | None = None,
-        tools: Iterable[Callable[..., Any]] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
     ) -> str | BaseModel:
         """Generate text, or a validated ``output`` instance, with the agent's model.
 
@@ -88,6 +89,8 @@ class RunContext:
                 arguments, runs nothing; the model is told what was wrong.
                 Tools whose ``requires_permissions`` the caller lacks are
                 not offered, and every call is authorized before it runs.
+                ``RemoteSkill`` entries from this run's ``remote_skills``
+                catalogs may be mixed in: see "Remote skills" below.
 
         Returns:
             The model's complete answer, or an ``output`` instance when
@@ -125,11 +128,37 @@ class RunContext:
 
         Exceptions raised by a tool propagate unchanged and fail the run;
         their text is never sent to the model.
+
+        Remote skills: each catalog entry becomes one model tool named after
+        ``entry.name``, with every character other than letters, digits,
+        ``_`` and ``-`` replaced by ``_`` (``"research-agent.find_sources"``
+        becomes ``"research-agent_find_sources"``), the entry's bounded
+        description and a copy of its argument schema (``{"text": string}``
+        for an ``ask`` entry). A call runs ``Remote.call`` or ``Remote.ask``
+        on the catalog's binding, so the run's deadline, depth, identity,
+        correlation and token budget apply; it holds the catalog's
+        ``max_tokens_per_call``, or everything the run has left. Calls run
+        one at a time, count toward ``max_tool_calls`` and are never retried.
+        The result goes back to the model as untrusted tool output: the
+        remote result as JSON, or the ``ask`` answer as text. A
+        ``RemoteAgentError`` or ``ClarificationNeededError`` goes back as a
+        tool error naming only its class (and is logged); limit,
+        authentication and other errors fail the run. A remote tool whose
+        name matches another tool, an entry selected twice, or an entry
+        from another run's catalog raises ``DefinitionError`` before
+        anything is sent; an argument schema the model's provider cannot use
+        raises ``UnsupportedCapabilityError`` before sending.
         """
+        selected = list(tools)  # May be a one-shot iterator.
+        functions = [item for item in selected if not isinstance(item, RemoteSkill)]
+        entries = [item for item in selected if isinstance(item, RemoteSkill)]
+        remote = remote_tools(entries, self._remotes)
         if output is None:
-            return await self._generation.generate_text(self, text, instructions, tools)
+            return await self._generation.generate_text(
+                self, text, instructions, functions, remote
+            )
         return await self._generation.generate_output(
-            self, text, instructions, output, tools
+            self, text, instructions, output, functions, remote
         )
 
     async def remote_skills(
@@ -139,6 +168,7 @@ class RunContext:
         skill: str | None = None,
         tags: Collection[str] = (),
         ask: bool = False,
+        max_tokens_per_call: int | None = None,
     ) -> SkillCatalog:
         """Return a catalog of the remote skills this run may offer a model.
 
@@ -172,6 +202,10 @@ class RunContext:
                 ``AgentDirectory.find``; an ``ask`` entry is kept when any of
                 its agent's card skills matches.
             ask: Also add an ``ask`` entry for agents with the extension.
+            max_tokens_per_call: The most tokens each model-chosen call to
+                an entry may use (see ``generate``). ``None`` holds
+                everything the run has left, which is safe because those
+                calls run one at a time.
 
         Returns:
             The catalog, holding the run's binding to each of its agents.
@@ -183,7 +217,8 @@ class RunContext:
                 ``agents`` or ``tags`` is a single string, a positional
                 argument is not a ``Remote``, two entries share a name, or
                 more than 20 entries remain after narrowing and skipping. A
-                catalog is never truncated.
+                catalog is never truncated. Also raised when
+                ``max_tokens_per_call`` is not a whole number above 0.
             RemoteAgentError: A ``Remote`` parameter's card has an unsafe
                 or repeated skill ID, or a missing or over-8-KiB argument
                 schema.
@@ -196,5 +231,11 @@ class RunContext:
                 "Runtime or AgentApp"
             )
         return await build_catalog(
-            self._remotes, remotes, agents=agents, skill=skill, tags=tags, ask=ask
+            self._remotes,
+            remotes,
+            agents=agents,
+            skill=skill,
+            tags=tags,
+            ask=ask,
+            max_tokens_per_call=max_tokens_per_call,
         )

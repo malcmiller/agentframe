@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     # Imported only for type checking: these modules import this one.
     from agentframe.authoring.context import RunContext
     from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
+    from agentframe.orchestration.remote_tools import RemoteTool
     from agentframe.security.authorization import ToolAuthorizationPolicy
 
 NO_USAGE = Usage(input_tokens=0, output_tokens=0, total_tokens=0, estimated=False)
@@ -74,6 +75,8 @@ MAX_BACKOFF_SECONDS = 8.0
 """Longest wait before any retry when the provider gives no hint."""
 
 TRUNCATED_MESSAGE = "The model's output was cut short at its output token limit"
+
+NO_REMOTE_TOOLS: "Mapping[str, RemoteTool]" = MappingProxyType({})
 
 
 @dataclass
@@ -221,11 +224,13 @@ class GenerationState:
         text: str | Sequence[Message],
         instructions: str | None,
         tools: Iterable[Callable[..., Any]] = (),
+        remote_tools: "Mapping[str, RemoteTool]" = NO_REMOTE_TOOLS,
     ) -> str:
         """Send ``text`` to the model and return its complete answer.
 
-        When ``tools`` are given, the model's tool calls are run and their
-        results sent back until the model answers (see ``_generate``).
+        When ``tools`` or ``remote_tools`` are given, the model's tool calls
+        are run and their results sent back until the model answers (see
+        ``_generate``).
 
         Args:
             ctx: The run's context: its deadline, and what tools receive.
@@ -234,11 +239,14 @@ class GenerationState:
             instructions: Trusted call-specific instructions, sent after the
                 agent's own instructions as a separate ``system`` message.
             tools: Registered ``@tool`` functions to offer the model.
+            remote_tools: Remote skill catalog entries to offer the model,
+                bound to this run, by tool name.
 
         Raises:
             DefinitionError: A selected tool is not registered on the agent
-                or is selected twice, or the model reports no context window
-                and no ``max_input_tokens`` is set.
+                or is selected twice, a remote tool has the same name as a
+                selected tool, or the model reports no context window and no
+                ``max_input_tokens`` is set.
             UnsupportedCapabilityError: The agent has no model, or the model
                 lacks something the request needs.
             TokenLimitExceededError: A call does not fit the input limit,
@@ -255,7 +263,9 @@ class GenerationState:
             TimeoutLimitExceededError: The run's deadline passed during a
                 model or tool call.
         """
-        response = await self._generate(ctx, text, instructions, None, tools)
+        response = await self._generate(
+            ctx, text, instructions, None, tools, remote_tools
+        )
         if response.finish_reason is FinishReason.LENGTH and response.text:
             # Only text keeps what arrived before the limit, so a skill can
             # catch the error and choose to use it. Structured output never does.
@@ -269,6 +279,7 @@ class GenerationState:
         instructions: str | None,
         output: type[T],
         tools: Iterable[Callable[..., Any]] = (),
+        remote_tools: "Mapping[str, RemoteTool]" = NO_REMOTE_TOOLS,
     ) -> T:
         """Send ``text`` to the model and return its reply validated as ``output``.
 
@@ -285,6 +296,8 @@ class GenerationState:
                 ``generate_text``).
             output: The Pydantic model class the reply must validate as.
             tools: Registered ``@tool`` functions to offer the model.
+            remote_tools: Remote skill catalog entries to offer the model
+                (see ``generate_text``).
 
         Raises:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
@@ -295,7 +308,9 @@ class GenerationState:
                 match ``output``. The message lists field locations only.
         """
         schema = output_schema(output)
-        response = await self._generate(ctx, text, instructions, schema, tools)
+        response = await self._generate(
+            ctx, text, instructions, schema, tools, remote_tools
+        )
         return validate_output(text_from(response), output)
 
     async def _generate(
@@ -305,6 +320,7 @@ class GenerationState:
         instructions: str | None,
         output: OutputSchema | None,
         tools: Iterable[Callable[..., Any]],
+        remote_tools: "Mapping[str, RemoteTool]",
     ) -> ModelResponse:
         """Run the model and the tools it calls within the run's deadline.
 
@@ -312,13 +328,14 @@ class GenerationState:
             The model's final response: the first one that calls no tools.
         """
         selected_tools = self.select_tools(tools)
+        check_unique_tool_names(selected_tools, remote_tools)
         if self.model is None:
             raise UnsupportedCapabilityError("This agent has no model configured")
         messages = build_messages(self.instructions, instructions, text)
         try:
             async with asyncio.timeout_at(ctx.deadline) as timeout:
                 return await self._tool_loop(
-                    self.model, ctx, messages, output, selected_tools
+                    self.model, ctx, messages, output, selected_tools, remote_tools
                 )
         except TimeoutError:
             if not timeout.expired():
@@ -334,6 +351,7 @@ class GenerationState:
         messages: tuple[Message, ...],
         output: OutputSchema | None,
         tools: Mapping[str, "ToolDefinition"],
+        remote_tools: "Mapping[str, RemoteTool]",
     ) -> ModelResponse:
         """Call the model, run the tools it asks for, and repeat until it answers.
 
@@ -341,7 +359,7 @@ class GenerationState:
         ``max_model_calls`` and the token budget. Tool calls in one response
         run one at a time, in the model's order, and each counts toward
         ``max_tool_calls`` before it runs. The loop ends because those limits
-        are finite. A tool call is never retried.
+        are finite. A tool call, local or remote, is never retried.
 
         Tools the caller lacks a required permission for are left out of the
         request, and every call is authorized again, then passes the
@@ -353,7 +371,7 @@ class GenerationState:
             tool_spec(tool)
             for tool in tools.values()
             if is_permitted(tool, ctx.principal)
-        )
+        ) + tuple(remote.spec() for remote in remote_tools.values())
         while True:
             request = ModelRequest(
                 messages=messages, settings=self.settings, output=output, tools=specs
@@ -366,15 +384,21 @@ class GenerationState:
             messages += (assistant_message(response),)
             for call in response.tool_calls:
                 self.accounting.count_tool_call(self.limits)
-                result = await run_tool_call(
-                    call,
-                    tools,
-                    self.services,
-                    ctx,
-                    self.tool_authorization,
-                    self.policy,
-                    self.skill,
-                )
+                # Looked up by name: the model's name never reaches a binding
+                # on its own.
+                remote = remote_tools.get(call.name)
+                if remote is not None:
+                    result = await remote.run(call.arguments)
+                else:
+                    result = await run_tool_call(
+                        call,
+                        tools,
+                        self.services,
+                        ctx,
+                        self.tool_authorization,
+                        self.policy,
+                        self.skill,
+                    )
                 messages += (tool_message(call, result),)
 
     async def _check_request(self, request: ModelRequest, ctx: "RunContext") -> None:
@@ -474,6 +498,22 @@ class GenerationState:
             ),
         )
         return response
+
+
+def check_unique_tool_names(
+    tools: Mapping[str, "ToolDefinition"], remote_tools: Mapping[str, "RemoteTool"]
+) -> None:
+    """Refuse a remote tool named like a selected ``@tool``, before any model call.
+
+    Raises:
+        DefinitionError: A name is used by both.
+    """
+    for name, remote in remote_tools.items():
+        if name in tools:
+            raise DefinitionError(
+                f"Remote skill '{remote.entry.name}' and tool '{name}' both "
+                f"become the model tool '{name}'; pass only one of them."
+            )
 
 
 def backoff_seconds(error: ProviderError, retry: int) -> float:
