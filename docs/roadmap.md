@@ -512,8 +512,8 @@ must prove A2A-enabled filtering, card mapping, authentication/RBAC and paginati
 model deployments are not agent endpoints.
 
 **Status (2026-11-14):** the M8+ build stories (#83-#97) are complete on
-`main`, and version 0.2.0 is the multi-agent release, prepared for publishing
-with the [changelog](../CHANGELOG.md) entry. `tests/integration/test_multi_agent_release.py` (#97) runs
+`main`, and version 0.2.0 is the multi-agent release, described in the
+[changelog](../CHANGELOG.md). `tests/integration/test_multi_agent_release.py` (#97) runs
 the [`examples/multi_agent`](../examples/multi_agent) planner and research
 agent as separate `agentframe run` processes and calls the planner with the
 official A2A client: discovery by name, a validated structured `call`, a
@@ -535,6 +535,16 @@ The maintainer's opt-in runs against real resources passed on
 - Entra on-behalf-of with two app registrations: the opt-in `entra` test in
   `test_on_behalf_of.py` (#93).
 - Containers: `test_compose_containers.py` (`AGENTFRAME_TEST_DOCKER=1`, #96).
+
+M8+ was completed on **2026-11-14** with the multi-agent release: AgentFrame
+[0.2.0](https://pypi.org/project/agentframe-py/0.2.0/) was published to PyPI by
+the same trusted-publishing workflow from the GitHub release
+[v0.2.0](https://github.com/malcmiller/agentframe/releases/tag/v0.2.0); the
+[release run](https://github.com/malcmiller/agentframe/actions/runs/43629699658)
+passed the TestPyPI rehearsal and the PyPI installs on Python 3.13, 3.14 and
+3.15. The M8+ overview (#17) is closed. M9 [evaluation](#m9-evaluation-planned)
+(#164) and M10 [model-planned orchestration](#m10-model-planned-orchestration-planned)
+(#177) are next.
 
 No durable workflow engine, built-in approval workflow, federation or deployment
 service is included. Checkpointed multistep flows, pause/resume and crash
