@@ -545,7 +545,8 @@ approval workflow or promise of recovering skill execution from persisted tasks.
 
 ### M9: Evaluation (planned)
 
-Planned, not built (#164). The design and its decisions, confirmed on
+Planned, in progress (#164): `Case` and `load_cases` are implemented (#152).
+The design and its decisions, confirmed on
 2026-11-13, are in [evaluation](design/evaluation.md). M9 follows the M8+
 release and has no imposed order relative to the optional adapters below.
 

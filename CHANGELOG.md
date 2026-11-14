@@ -8,6 +8,15 @@ changelog.
 
 ## [Unreleased]
 
+### Added
+
+- **Evaluation (M9):** `agentframe.evaluation` with `Case`, one fixed input
+  (exactly one of skill `arguments` or free `text`, optional `expected` and
+  `tags`), and `load_cases`, a strict JSONL loader (UTF-8, at most 10 MiB,
+  `json.loads` only) whose `DefinitionError`s name the file and line but never
+  the case content. `import agentframe` does not load the package, and it adds
+  no dependency.
+
 ## [0.2.0] - 2026-11-14
 
 The multi-agent release (M8+): independently deployed AgentFrame agents find
