@@ -48,5 +48,9 @@ def create_invalid_evaluation() -> Evaluation:
     )
 
 
+def create_broken_evaluation() -> Evaluation:
+    raise RuntimeError("secret case content")
+
+
 def create_nothing() -> None:
     return None

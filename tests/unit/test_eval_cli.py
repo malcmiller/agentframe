@@ -83,6 +83,7 @@ def test_thresholds_are_passed_straight_to_require() -> None:
         ("eval_targets:WordCounter", "returned WordCounter, not an Evaluation"),
         ("eval_targets:create_nothing", "returned NoneType, not an Evaluation"),
         ("eval_targets:create_invalid_evaluation", "needs at least one case"),
+        ("eval_targets:create_broken_evaluation", "raised RuntimeError."),
         ("eval_targets:create_capturing_evaluation", "pass --capture-content"),
     ],
 )
@@ -96,6 +97,7 @@ def test_a_bad_target_prints_one_line_and_exits_with_2(
     assert result.stderr.startswith("agentframe: error: ")
     assert result.stderr.count("\n") == 1
     assert message in result.stderr
+    assert "secret" not in result.stderr
 
 
 def test_an_unwritable_report_path_exits_with_2(tmp_path: Path) -> None:
@@ -137,3 +139,12 @@ def test_content_is_printed_only_with_capture_content(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "classified" in report_path.read_text(encoding="utf-8")
+
+
+def test_other_commands_do_not_load_the_evaluation_package() -> None:
+    code = "import sys, agentframe.cli; print('agentframe.evaluation' in sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+
+    assert result.stdout.strip() == "False"

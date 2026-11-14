@@ -959,10 +959,13 @@ agentframe eval evals.word_counts:create_evaluation --json eval-report.json \
 Configuration errors are a target that is not `module:name`, a module that
 cannot be found, a missing attribute, a target that is not callable, a factory
 returning anything but an `Evaluation`, an invalid evaluation
-(`DefinitionError` from `Evaluation`), an evaluation that captures content
-without `--capture-content`, and a `--json` path that cannot be written.
-Invalid threshold values are argparse usage errors, also exit code 2. Errors
-raised by the application's own code keep their traceback. Output holds no case
+(`DefinitionError` from `Evaluation`), a factory that raises any other
+exception (only its class name is printed, since its message may hold case
+content), an evaluation that captures content without `--capture-content`, and
+a `--json` path that cannot be written. Invalid threshold values are argparse
+usage errors, also exit code 2. Errors raised while importing the target
+module keep their traceback. Other commands never import
+`agentframe.evaluation`. Output holds no case
 content (the summary and JSON never do) unless the evaluation captured it and
 `--capture-content` allowed that. Failing, errored and not-run attempts never
 stop the run; they are counted against the thresholds.

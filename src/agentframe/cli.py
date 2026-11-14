@@ -38,17 +38,22 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import TYPE_CHECKING
 
 from agentframe.authoring.agent import Agent
 from agentframe.compose import write_compose
 from agentframe.dev import DEV_VARIABLE
 from agentframe.dev_server import DEFAULT_STARTUP_TIMEOUT_SECONDS, DevError, run_dev
 from agentframe.errors import AgentFrameError
-from agentframe.evaluation import EvalReport, Evaluation
 from agentframe.hosting.app import AgentApp
 from agentframe.hosting.host import HostConfig, is_loopback_host
 from agentframe.project import PROJECT_FILE
 from agentframe.security.authentication import AllowAnonymous
+
+if TYPE_CHECKING:
+    # Imported at run time only by agentframe eval, so other commands never
+    # load the evaluation package.
+    from agentframe.evaluation import EvalReport, Evaluation
 
 logger = logging.getLogger("agentframe")
 
@@ -371,7 +376,7 @@ def evaluate(settings: EvalSettings) -> int:
         0 when every threshold is met; 1 when one is missed, after printing
         each miss above the summary; 2 when the target cannot be loaded, is not
         an ``Evaluation``, captures content without ``capture_content``, its
-        factory raises an AgentFrame error, or the report cannot be written.
+        factory raises, or the report cannot be written.
     """
     try:
         evaluation = load_evaluation(settings)
@@ -398,7 +403,7 @@ def evaluate(settings: EvalSettings) -> int:
     return 0
 
 
-def load_evaluation(settings: EvalSettings) -> Evaluation:
+def load_evaluation(settings: EvalSettings) -> "Evaluation":
     """Build the ``Evaluation`` that ``settings`` names, without running it.
 
     Args:
@@ -409,17 +414,28 @@ def load_evaluation(settings: EvalSettings) -> Evaluation:
 
     Raises:
         CommandError: The target cannot be loaded, is not a function returning
-            an ``Evaluation``, or captures content without
-            ``capture_content``.
+            an ``Evaluation``, its factory raised an exception that is not an
+            AgentFrame error (only the class name is reported), or it captures
+            content without ``capture_content``.
         AgentFrameError: The application's evaluation is invalid.
     """
+    from agentframe.evaluation import Evaluation
+
     _import_from_working_directory()
     factory = _load(settings.target)
     if not callable(factory):
         raise CommandError(
             f"'{settings.target}' is not a function that returns an Evaluation."
         )
-    evaluation = factory()
+    try:
+        evaluation = factory()
+    except AgentFrameError:
+        raise
+    except Exception as error:
+        # The message may hold case content, so only the class name is shown.
+        raise CommandError(
+            f"'{settings.target}' raised {type(error).__name__}."
+        ) from error
     if not isinstance(evaluation, Evaluation):
         raise CommandError(
             f"'{settings.target}' returned {type(evaluation).__name__}, "
@@ -434,7 +450,7 @@ def load_evaluation(settings: EvalSettings) -> Evaluation:
     return evaluation
 
 
-def _write_report(report: EvalReport, path: str) -> None:
+def _write_report(report: "EvalReport", path: str) -> None:
     try:
         report.write_json(path)
     except OSError as error:
