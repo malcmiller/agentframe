@@ -1,4 +1,5 @@
-"""``SkillCatalog.check`` validates a ``Plan`` against the catalog, without I/O."""
+"""``SkillCatalog.check`` validates a ``Plan`` against the catalog, without I/O,
+and references are substituted when a step runs."""
 
 from typing import Any
 
@@ -25,6 +26,7 @@ from agentframe import (
     skill,
 )
 from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI
+from agentframe.orchestration.plan import substituted_arguments, substituted_text
 from agentframe.testing import ScriptedModel
 
 FIND_SOURCES = RemoteSkill(
@@ -394,3 +396,52 @@ def test_arguments_nested_too_deeply_are_refused(depth: int) -> None:
 
     with pytest.raises(InputValidationError, match="nested too deeply"):
         CATALOG.check(plan)
+
+
+def test_references_at_any_depth_become_copies_of_earlier_values() -> None:
+    step = PlanStep(
+        id="brief",
+        use="research-agent.brief",
+        arguments={
+            "all": {"$ref": "found"},
+            "nested": [{"topic": {"$ref": "found.topic"}}, 3],
+            "literal": "kept",
+        },
+    )
+    found = {"topic": "tides", "sources": ["a"]}
+
+    arguments = substituted_arguments(step, {"found": found})
+
+    assert arguments == {
+        "all": found,
+        "nested": [{"topic": "tides"}, 3],
+        "literal": "kept",
+    }
+    arguments["all"]["sources"].append("changed")
+    assert found["sources"] == ["a"]
+
+
+@pytest.mark.parametrize("value", ["text", ["a"], {"other": 1}])
+def test_a_field_of_a_value_without_it_fails_without_naming_the_value(
+    value: Any,
+) -> None:
+    step = PlanStep(id="brief", use="writer-agent", text="Use {found.topic}")
+
+    with pytest.raises(InputValidationError) as raised:
+        substituted_text(step, {"found": value})
+
+    assert raised.value.message == (
+        "Plan step 'brief' field 'text' refers to field 'topic' of 'found', "
+        "whose result has no such field"
+    )
+
+
+def test_placeholders_insert_strings_as_they_are_and_other_values_as_json() -> None:
+    step = PlanStep(
+        id="post",
+        use="writer-agent",
+        text="{title}: {found} {count} {{literal}}",
+    )
+    values = {"title": "Tides", "found": {"b": "é", "a": None}, "count": 2}
+
+    assert substituted_text(step, values) == 'Tides: {"a":null,"b":"é"} 2 {literal}'
