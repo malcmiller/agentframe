@@ -293,6 +293,9 @@ Card names, descriptions, tags and schemas come from other parties. The catalog:
   and format characters (whitespace ones become spaces) and does not copy card
   `examples`; `description` strings inside
   argument schemas are cut to 500 characters too;
+- accepts only skill IDs of 1-64 letters, digits, `_` or `-`, each listed once
+  (otherwise the card is invalid), and requires unique entry names, since
+  names become tool names and plan references;
 - holds at most 20 entries ([catalog size](#catalog-size)) and skips, with a
   warning, an agent whose schema is over 8 KiB, keeping tool-selection accuracy
   and prompt cost bounded;

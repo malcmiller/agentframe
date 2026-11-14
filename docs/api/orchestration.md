@@ -75,7 +75,10 @@ gives one entry per (matching) card skill, with the argument schema from the
 extension's `params.skills`. Any other agent, such as a non-AgentFrame A2A
 agent, gives one `ask` entry describing the agent, kept when any of its card
 skills matches the narrowing; its card skills are descriptive only, because
-base A2A has no standard way to select a skill.
+base A2A has no standard way to select a skill. Entry names become model tool
+names and plan references, so an extension card whose skill IDs are not 1-64
+letters, digits, `_` or `-`, or that lists an ID twice, counts as
+`card invalid`, and entry names must be unique within a catalog.
 
 **Untrusted card text.** Descriptions (including `description` and `title`
 strings inside schemas) lose their control and format characters (whitespace
@@ -101,10 +104,12 @@ it never calls a model or sends an A2A message.
 - `DefinitionError`: no directory, the directory is not open, a name listed by
   more than one source, an unknown name in `agents`, `agents` or `tags` given
   as a single string, a positional argument that is not a `Remote`, credentials
-  with a redirect-following HTTP client, or more than 20 entries.
+  with a redirect-following HTTP client, two entries with the same name (for
+  example agent `a.b`'s `ask` entry and agent `a`'s skill `b`), or more than
+  20 entries.
 - `RemoteAgentError`: a declared `Remote`'s card cannot be fetched (raised
-  while binding the parameter, as in M8+), or its argument schema is missing or
-  over 8 KiB.
+  while binding the parameter, as in M8+), has an unsafe or repeated skill ID,
+  or its argument schema is missing or over 8 KiB.
 - `PermissionDeniedError`: an included agent's `remotes=` entry is
   `OnBehalfOf`, and the run has no signed-in user.
 

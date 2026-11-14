@@ -31,7 +31,8 @@ changelog.
   one warning each. Declared `Remote` parameters restrict the catalog and
   raise on failure. `agents=`, `skill=` and `tags=` narrow it; more than 20
   entries raise `DefinitionError`, never truncated. Card text is bounded (500
-  characters, 10 tags, no control characters or `examples`), and a hosted
+  characters, 10 tags, no control characters or `examples`), skill IDs must be
+  safe and unique, entry names must be unique, and a hosted
   orchestrator leaves itself out. No model is called (#166).
 
 ## [0.2.0] - 2026-11-14

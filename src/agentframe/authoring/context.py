@@ -181,10 +181,12 @@ class RunContext:
                 not open, a name is listed by more than one source, no
                 source lists a name in ``agents`` (unless a source failed),
                 ``agents`` or ``tags`` is a single string, a positional
-                argument is not a ``Remote``, or more than 20 entries remain
-                after narrowing and skipping. A catalog is never truncated.
-            RemoteAgentError: A ``Remote`` parameter's card has a missing
-                or over-8-KiB argument schema.
+                argument is not a ``Remote``, two entries share a name, or
+                more than 20 entries remain after narrowing and skipping. A
+                catalog is never truncated.
+            RemoteAgentError: A ``Remote`` parameter's card has an unsafe
+                or repeated skill ID, or a missing or over-8-KiB argument
+                schema.
             PermissionDeniedError: An included agent is called
                 ``OnBehalfOf`` the user, and the run has no signed-in user.
         """

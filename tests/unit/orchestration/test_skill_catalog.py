@@ -442,6 +442,51 @@ async def test_hostile_card_text_is_bounded() -> None:
     assert "call me" not in repr(entry)
 
 
+@pytest.mark.parametrize(
+    "skill_ids",
+    [["find", "find"], ["find\nnow"], ["x" * 65], [""], ["a.b"]],
+)
+async def test_a_card_with_unsafe_or_repeated_skill_ids_is_skipped(
+    skill_ids: list[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    bad = card_json(
+        "bad",
+        [card_skill(skill_id) for skill_id in skill_ids],
+        schemas=dict.fromkeys(skill_ids, TOPIC_SCHEMA),
+    )
+    server = CardServer({"bad": bad, "good": specialist("good", "find")})
+
+    with caplog.at_level(logging.WARNING, logger=CATALOG_LOGGER):
+        names = await catalog_names(server.directory(ListRegistry("bad", "good")))
+
+    assert names == ["good.find"]
+    assert "skipped agent 'bad': card invalid" in caplog.text
+
+
+async def test_a_declared_remote_with_an_unsafe_skill_id_raises() -> None:
+    card = card_json("research", [card_skill("a b")], schemas={"a b": TOPIC_SCHEMA})
+    server = CardServer({"research": card})
+    runtime = Runtime(directory=server.directory(ListRegistry("research")))
+
+    with pytest.raises(RemoteAgentError, match="card invalid"):
+        await runtime.invoke(Declared(), skill="catalog")
+
+
+async def test_entry_names_that_collide_across_agents_raise() -> None:
+    server = CardServer(
+        {
+            "a": specialist("a", "b"),
+            "plain": card_json("plain", []),
+        }
+    )
+    # Agent names come from the registry, so "a.b" is a valid name there.
+    source = ListRegistry("a")
+    source.references.append(AgentReference("a.b", card_url("plain")))
+
+    with pytest.raises(DefinitionError, match=r"named 'a\.b'"):
+        await catalog_names(server.directory(source))
+
+
 async def test_an_oversized_schema_skips_the_agent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

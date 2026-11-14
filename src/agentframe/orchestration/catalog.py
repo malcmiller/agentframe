@@ -7,6 +7,7 @@ Later stages offer the entries to a model; building a catalog never calls one.
 """
 
 import logging
+import re
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 MAX_ENTRIES = 20
 """The most entries a catalog may hold; more raise rather than truncate."""
+
+_SKILL_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,64}")
+"""Card skill IDs a structured entry accepts: the same safe characters as
+AgentFrame skill and tool names, since entry names become model tool names."""
 
 CARD_UNAVAILABLE = "card unavailable"
 CARD_INVALID = "card invalid"
@@ -151,6 +156,7 @@ async def build_catalog(
             continue
         entries += agent_entries
         bindings[name] = declared[name] if remotes else run.bind_found(found)
+    _check_unique_names(entries)
     _check_size(entries)
     return SkillCatalog(entries, bindings)
 
@@ -253,19 +259,36 @@ def _entries(
     and all of ``tags`` on the same card skill, as ``AgentDirectory.find``.
 
     Raises:
-        _UnusableCardError: A matching skill's schema is missing or too large.
+        _UnusableCardError: The card has the extension and a skill ID that is
+            unsafe or listed twice, or a matching skill's schema is missing
+            or too large.
     """
+    schemas = _skill_schemas(card)
+    if schemas is not None:
+        _check_skill_ids(card)
     matching = [s for s in card.skills if _matches(s, skill, tags)]
     narrowed = skill is not None or bool(tags)
     if narrowed and not matching:
         return []
-    schemas = _skill_schemas(card)
     entries = []
     if schemas is not None:
         entries = [_skill_entry(agent, s, schemas.get(s.id)) for s in matching]
     if schemas is None or ask:
         entries.append(_ask_entry(agent, card))
     return entries
+
+
+def _check_skill_ids(card: AgentCard) -> None:
+    """Refuse card skill IDs that cannot name a unique, safe entry.
+
+    Raises:
+        _UnusableCardError: An ID is not 1-64 letters, digits, ``_`` or
+            ``-``, or the card lists it twice.
+    """
+    ids = [card_skill.id for card_skill in card.skills]
+    unsafe = any(not _SKILL_ID_PATTERN.fullmatch(skill_id) for skill_id in ids)
+    if unsafe or len(set(ids)) != len(ids):
+        raise _UnusableCardError(CARD_INVALID)
 
 
 def _matches(card_skill: AgentSkill, skill: str | None, tags: frozenset[str]) -> bool:
@@ -318,6 +341,23 @@ def _check_known(names: frozenset[str], known: Collection[str]) -> None:
         raise DefinitionError(
             f"remote_skills agents= names agents it cannot use: {', '.join(unknown)}"
         )
+
+
+def _check_unique_names(entries: Sequence[RemoteSkill]) -> None:
+    """Refuse two entries with one name, such as agent ``a.b``'s ``ask`` entry
+    and agent ``a``'s skill ``b``: plans and tools refer to entries by name.
+
+    Raises:
+        DefinitionError: Two entries share a name.
+    """
+    seen: set[str] = set()
+    for entry in entries:
+        if entry.name in seen:
+            raise DefinitionError(
+                f"Two skill catalog entries are named '{entry.name}'; narrow "
+                "the catalog with agents= or rename one of the agents."
+            )
+        seen.add(entry.name)
 
 
 def _check_size(entries: Sequence[RemoteSkill]) -> None:
