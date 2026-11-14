@@ -2,7 +2,8 @@
 
 **Status: planned (M9), in progress.** Only [`Case` and
 `load_cases`](#cases-and-datasets) (#152) and `LocalSkill`, `Evaluation.run`
-with function scorers, `Score` and `CaseResult` (#153; see the
+with function scorers, `Score` and `CaseResult` (#153) and the built-in scorers
+`equals`, `contains` and `valid` (#154; see the
 [reference](../api/evaluation.md)) are implemented; everything else on this
 page does not exist in `agentframe` yet. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
@@ -238,8 +239,8 @@ authentication without a network) is not part of M9: run the app with
 ### Scorers
 
 Function scorers and `Score` are implemented (#153;
-[reference](../api/evaluation.md#score)); the built-ins and `Judge` are
-proposed.
+[reference](../api/evaluation.md#score)), as are the built-ins `equals`,
+`contains` and `valid` (#154); `Judge` is proposed.
 
 A scorer is any sync or async callable taking the case and the output and
 returning `bool` or a `Score`:
@@ -270,9 +271,12 @@ Built-ins:
 | Scorer | Passes when |
 | --- | --- |
 | `equals` | `output == case.expected` (Pydantic models compare field by field). |
-| `contains(text, case_sensitive=False)` | Text output contains `text`; `contains()` with no argument uses `case.expected`. |
-| `valid(T)` | The output validates as `T` with Pydantic. Useful for A2A results and free-text targets; local typed skills are already validated. |
+| `contains(text=None, case_sensitive=False)` | Text output contains `text`; `contains()` with no argument uses `case.expected`. Non-text output or expected values error the case. |
+| `valid(T)` | The output validates as `T` with Pydantic. Useful for A2A results and free-text targets; local typed skills are already validated. Text that does not validate as is is also tried as JSON. |
 | `Judge(model, rubric=..., votes=1)` | The [judge](#judge) returns a passing verdict. |
+
+Scorers that need `expected` (`equals`, `contains()`) error a case without one
+with a clear message.
 
 ### Judge
 

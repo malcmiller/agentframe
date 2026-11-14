@@ -6,9 +6,10 @@ cases against an agent and scoring the results; see the
 proposed API. Implemented so far: [`Case`](#case) and
 [`load_cases`](#load_cases) (#152); [`Evaluation`](#evaluation),
 [`LocalSkill`](#localskill), [`Score`](#score) and [`CaseResult`](#caseresult)
-(#153); [`EvalReport`](#evalreport) aggregates and console summary,
-[`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155). Everything else
-in the design is unimplemented.
+(#153); the built-in scorers [`equals`](#equals), [`contains`](#contains) and
+[`valid`](#valid) (#154); [`EvalReport`](#evalreport) aggregates and console
+summary, [`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155).
+Everything else in the design is unimplemented.
 
 Import from `agentframe.evaluation`, not `agentframe`. The package ships in the
 main wheel with no extra dependency, and `import agentframe` does not load it.
@@ -243,6 +244,99 @@ def similar(case: Case[str], output: str) -> Score:
 
 **Behavior / failures:** raises `DefinitionError` when `passed` is not a `bool`
 or `value` is not a number.
+
+**Related:** [scorers](../design/evaluation.md#scorers).
+
+## `equals`
+
+**Purpose / decision:** built-in scorer that passes when the output equals the
+case's `expected` value
+([decision 1 of #154](https://github.com/malcmiller/agentframe/issues/154)).
+
+**Signature status:** implemented in M9 #154 as a plain scorer function, named
+`equals` in reports.
+
+```text
+equals(case: Case[Any], output: Any) -> bool
+```
+
+```python
+from agentframe.evaluation import Evaluation, LocalSkill, equals
+
+evaluation = Evaluation(
+    cases=cases,  # application-supplied
+    target=LocalSkill(Writer(), skill="summarize"),
+    scorers=[equals],
+)
+```
+
+**Behavior / failures:** `LocalSkill` converts each `expected` to the skill's
+return type before any case runs, so Pydantic models compare field by field
+and an `expected` that does not fit fails the `Evaluation` constructor with
+`DefinitionError`. A case without `expected` is `errored` with
+`"Scorer 'equals' needs case '<id>' to have an expected value."`.
+
+**Related:** [scorers](../design/evaluation.md#scorers).
+
+## `contains`
+
+**Purpose / decision:** built-in scorer factory for text output containing a
+given text, or each case's `expected` text.
+
+**Signature status:** implemented in M9 #154; the returned scorer is named
+`contains` in reports.
+
+```text
+contains(text: str | None = None, *, case_sensitive: bool = False) -> Scorer
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `text` | `str \| None` | Optional; default `None` | The text to look for; `None` uses each case's `expected`, which must then be a string. |
+| `case_sensitive` | `bool` | Optional; default `False` | Whether case must match; otherwise both sides are compared with `str.casefold()`. |
+
+```python
+from agentframe.evaluation import contains
+
+scorers = [contains("refund"), contains()]
+```
+
+**Behavior / failures:** a `text` that is not a string raises `DefinitionError`
+at once. Output that is not a string, a missing `expected` (without `text`) or
+an `expected` that is not a string errors the case with a `DefinitionError`
+naming the case ID and type, never the content.
+
+**Related:** [scorers](../design/evaluation.md#scorers).
+
+## `valid`
+
+**Purpose / decision:** built-in scorer factory that checks the output
+validates as a type with Pydantic; useful for A2A results and free-text
+targets, since local typed skills are already validated. It does not use
+`expected`.
+
+**Signature status:** implemented in M9 #154; the returned scorer is named
+`valid` in reports and returns a `Score`.
+
+```text
+valid(output_type: Any) -> Scorer
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `output_type` | any type Pydantic validates | Required | For example a Pydantic model or `list[int]`. |
+
+```python
+from agentframe.evaluation import valid
+
+scorers = [valid(Summary)]  # Summary: an application Pydantic model
+```
+
+**Behavior / failures:** a type Pydantic cannot validate raises
+`DefinitionError` at once. Output is validated as Python data first; string
+output that fails is also tried as JSON text. A failing `Score` has the problem
+locations as its `reason` (never the invalid values), kept only with
+`capture_content=True`.
 
 **Related:** [scorers](../design/evaluation.md#scorers).
 
