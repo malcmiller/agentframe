@@ -138,6 +138,12 @@ changelog.
   `X-API-Key`) are dropped from the A2A SDK's call context after
   authentication, so the SDK's debug logs no longer contain bearer tokens or
   API keys.
+- `FoundryAgentRegistry` finds A2A-enabled agents again: the live Foundry API
+  lists them as `agent_endpoint.protocols: ["a2a", ...]`, which
+  `azure-ai-projects` 2.11.0 does not model, and its list response omits
+  `agent_endpoint` entirely, so every agent was skipped and lookups raised.
+  `list` now reads each queried agent's details (one call per agent), and the
+  `protocol_configuration.a2a` shape is still accepted.
 
 ## [0.1.0] - 2026-11-13
 

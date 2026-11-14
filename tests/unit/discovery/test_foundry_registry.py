@@ -31,8 +31,20 @@ from agentframe import (
 
 PROJECT = "https://contoso.services.ai.azure.com/api/projects/research"
 SOURCE_TOKEN = "source-token"
-A2A_ENABLED: dict[str, Any] = {"protocol_configuration": {"responses": {}, "a2a": {}}}
-RESPONSES_ONLY: dict[str, Any] = {"protocol_configuration": {"responses": {}}}
+# The shape the live Foundry API returns (checked 2026-11-14).
+A2A_ENABLED: dict[str, Any] = {
+    "protocols": ["a2a", "responses"],
+    "authorization_schemes": [{"type": "Entra"}],
+}
+RESPONSES_ONLY: dict[str, Any] = {
+    "protocols": ["responses"],
+    "authorization_schemes": [{"type": "Entra"}],
+}
+# The shape azure-ai-projects 2.11.0 models, still accepted.
+LEGACY_A2A_ENABLED: dict[str, Any] = {
+    "protocol_configuration": {"responses": {}, "a2a": {}}
+}
+LEGACY_RESPONSES_ONLY: dict[str, Any] = {"protocol_configuration": {"responses": {}}}
 
 
 def card_url(name: str) -> str:
@@ -60,6 +72,7 @@ class FakeFoundry(AsyncHttpTransport):  # type: ignore[type-arg]
         self.pages = list(pages)
         self.requests: list[HttpRequest] = []
         self.fail_page: int | None = None
+        self.deleted: set[str] = set()
 
     async def send(self, request: HttpRequest, **kwargs: Any) -> AsyncHttpResponseImpl:
         self.requests.append(request)
@@ -67,6 +80,8 @@ class FakeFoundry(AsyncHttpTransport):  # type: ignore[type-arg]
         if path == "/agents":
             return self.page(request)
         name = path.removeprefix("/agents/")
+        if name in self.deleted:
+            return reply(request, 404, {"error": {"code": "not_found"}})
         for agent in (agent for page in self.pages for agent in page):
             if agent["name"] == name:
                 return reply(request, 200, agent)
@@ -81,7 +96,12 @@ class FakeFoundry(AsyncHttpTransport):  # type: ignore[type-arg]
             return reply(request, 403, {"error": {"code": "forbidden"}})
         data = self.pages[index] if index < len(self.pages) else []
         last_id = data[-1]["id"] if data else None
-        return reply(request, 200, {"data": data, "last_id": last_id})
+        # Like the live API, listed agents omit their endpoint.
+        summaries = [
+            {key: value for key, value in agent.items() if key != "agent_endpoint"}
+            for agent in data
+        ]
+        return reply(request, 200, {"data": summaries, "last_id": last_id})
 
     async def open(self) -> None:
         pass
@@ -169,7 +189,8 @@ async def test_list_reads_every_page_and_keeps_only_a2a_enabled_agents() -> None
         AgentReference("research-agent", card_url("research-agent")),
         AgentReference("review-agent", card_url("review-agent")),
     ]
-    assert len(foundry.requests) == 3  # two pages, then an empty one
+    # Two pages, an empty one, then each listed agent's details.
+    assert len(foundry.requests) == 3 + 4
     assert all(
         r.headers["Authorization"] == "Bearer source-token" for r in foundry.requests
     )
@@ -181,6 +202,20 @@ async def test_list_keeps_only_the_queried_names_from_any_page() -> None:
     found = await registry(foundry).list(
         AgentQuery(names=["review-agent", "chat-only", "missing"])
     )
+
+    assert found == [AgentReference("review-agent", card_url("review-agent"))]
+    details = [urlsplit(r.url).path for r in foundry.requests[3:]]
+    assert details == [
+        "/api/projects/research/agents/chat-only",
+        "/api/projects/research/agents/review-agent",
+    ]
+
+
+async def test_list_skips_an_agent_deleted_after_the_listing() -> None:
+    foundry = FakeFoundry(*TWO_PAGES.pages)
+    foundry.deleted.add("research-agent")
+
+    found = await registry(foundry).list(AgentQuery())
 
     assert found == [AgentReference("review-agent", card_url("review-agent"))]
 
@@ -224,6 +259,21 @@ async def test_get_returns_an_a2a_enabled_agent_with_one_call() -> None:
 async def test_get_refuses_an_agent_without_incoming_a2a() -> None:
     with pytest.raises(DefinitionError, match="'chat-only' does not have incoming A2A"):
         await registry(FakeFoundry(*TWO_PAGES.pages)).get("chat-only")
+
+
+async def test_get_accepts_the_protocol_configuration_shape_too() -> None:
+    foundry = FakeFoundry(
+        [
+            foundry_agent("legacy-agent", LEGACY_A2A_ENABLED),
+            foundry_agent("legacy-chat", LEGACY_RESPONSES_ONLY),
+        ]
+    )
+
+    assert await registry(foundry).get("legacy-agent") == AgentReference(
+        "legacy-agent", card_url("legacy-agent")
+    )
+    with pytest.raises(DefinitionError, match="does not have incoming A2A"):
+        await registry(foundry).get("legacy-chat")
 
 
 async def test_get_of_an_unknown_agent_names_it() -> None:

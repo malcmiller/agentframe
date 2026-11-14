@@ -54,11 +54,16 @@ def required_env(name: str) -> str:
     return value
 
 
+def cli_credential() -> AzureCliCredential:
+    # The default 10 s timeout can expire while a cold ``az`` starts.
+    return AzureCliCredential(process_timeout=60)
+
+
 async def test_a_real_project_lists_its_a2a_agent_and_serves_its_card() -> None:
     project_endpoint = required_env("AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT")
     agent_name = required_env("AGENTFRAME_FOUNDRY_A2A_AGENT")
 
-    async with AzureCliCredential() as credential:
+    async with cli_credential() as credential:
         source = FoundryAgentRegistry(
             project_endpoint=project_endpoint, credential=credential
         )
@@ -86,7 +91,7 @@ async def test_an_orchestrator_asks_a_real_foundry_agent_with_its_app_token() ->
         async def plan(self, goal: str, peer: target, ctx: RunContext) -> str:
             return await peer.ask(goal)
 
-    async with AzureCliCredential() as credential:
+    async with cli_credential() as credential:
         source = FoundryAgentRegistry(
             project_endpoint=project_endpoint, credential=credential
         )
@@ -118,7 +123,7 @@ async def test_call_to_a_real_foundry_agent_is_refused_before_sending() -> None:
             answer: str = await peer.call("any_skill", goal=goal, output=str)
             return answer
 
-    async with AzureCliCredential() as credential:
+    async with cli_credential() as credential:
         source = FoundryAgentRegistry(
             project_endpoint=project_endpoint, credential=credential
         )
