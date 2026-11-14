@@ -361,8 +361,13 @@ async def foundry_card_name(agent_name: str) -> str:
 
 - Construction does no I/O. Each `get`/`list` creates and closes its own async
   `AIProjectClient`, so there is nothing to close.
-- `list` follows every page of the project's agents (100 per page) and keeps
-  agents whose `agent_endpoint.protocol_configuration.a2a` is set, the setting
+- `list` follows every page of the project's agents (100 per page). Listed
+  agents omit their endpoint, so it then reads each queried agent's details
+  with one more call (sequentially; an agent deleted in between is skipped)
+  and keeps agents whose `agent_endpoint.protocols` list includes `"a2a"` (the shape the
+  live API returns; `azure-ai-projects` 2.11.0 does not model it, so it is read
+  from the response JSON) or, for compatibility, whose
+  `agent_endpoint.protocol_configuration.a2a` is set: the setting
   Foundry's [incoming A2A guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint)
   enables. `get` uses the single-agent call and raises `DefinitionError` for an
   unknown agent or one without incoming A2A.
@@ -382,7 +387,9 @@ async def foundry_card_name(agent_name: str) -> str:
   token, never the caller's; every caller sees the same card. Remote calls
   never reuse it: configure their identity with `remotes=` (#92), for example
   [`EntraAppCredential`](authorization.md#entraappcredential) with this same
-  scope.
+  scope. Foundry cards declare no security scheme even though the endpoint
+  requires Entra ID, so startup cannot catch a missing entry: without one,
+  calls are sent without credentials and Foundry rejects them.
 - Preview hosted-agent A2A passthrough and Foundry's
   [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
   are not read. A model deployment is not an agent endpoint; see

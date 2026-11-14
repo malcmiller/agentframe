@@ -95,11 +95,16 @@ opt-in real-project test awaits a project with an A2A-enabled agent:
 - `azure-ai-projects==2.11.0` is exactly pinned in the `foundry` extra. Each
   call creates and closes its own async `AIProjectClient`, so the registry
   holds no connections and has nothing to close.
-- `list` follows every page of `agents.list()` (100 per page) and `get` uses
-  the single-agent call. Any failed page or credential failure raises
-  `DefinitionError`; a partial first page is never returned.
-- An agent is A2A-enabled when `agent_endpoint.protocol_configuration.a2a` is
-  set (decision 1). In `azure-ai-projects` 2.11.0 that configuration has no
+- `list` follows every page of `agents.list()` (100 per page), then reads
+  each queried agent with `agents.get`, because listed agents omit
+  `agent_endpoint`; `get` uses the single-agent call. Any failed page or
+  credential failure raises `DefinitionError`; a partial first page is never
+  returned.
+- An agent is A2A-enabled when `agent_endpoint.protocols` includes `"a2a"`,
+  the shape the live API returns (read from the response JSON, since
+  `azure-ai-projects` 2.11.0 does not model it), or
+  `agent_endpoint.protocol_configuration.a2a` is set, the shape the SDK models
+  (decision 1). In `azure-ai-projects` 2.11.0 that configuration has no
   version field: Foundry serves GA 1.0 and the 0.3 preview from the same
   setting, so the registry always maps to the v1.0 card,
   `{project_endpoint}/agents/{name}/endpoint/protocols/a2a/agentCard/v1.0`,

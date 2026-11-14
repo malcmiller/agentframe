@@ -40,8 +40,10 @@ class FoundryAgentRegistry(AgentRegistry):
     """The agents in a Foundry project that have incoming A2A enabled.
 
     Every call reads the project's agents again through the Foundry project
-    agents API, following every page. Only agents whose endpoint enables the
-    A2A protocol are listed; each maps to its A2A 1.0 Agent Card URL,
+    agents API, following every page, then reads each queried agent's
+    details, since listed agents omit their endpoint. Only agents whose
+    endpoint enables the A2A protocol are listed; each maps to its A2A 1.0
+    Agent Card URL,
     ``{project_endpoint}/agents/{name}/endpoint/protocols/a2a/agentCard/v1.0``.
     The registry is read-only: it never enables A2A, publishes or deploys.
 
@@ -124,8 +126,19 @@ class FoundryAgentRegistry(AgentRegistry):
         references = []
         try:
             async with self._client() as client:
-                async for details in client.agents.list(limit=_PAGE_SIZE):
-                    if _a2a_enabled(details) and _wanted(details.name, query):
+                # Listed agents omit their endpoint, so each wanted agent's
+                # details are read with one more call.
+                names = [
+                    summary.name
+                    async for summary in client.agents.list(limit=_PAGE_SIZE)
+                    if _wanted(summary.name, query)
+                ]
+                for name in names:
+                    try:
+                        details = await client.agents.get(name)
+                    except ResourceNotFoundError:
+                        continue  # deleted since the listing
+                    if _a2a_enabled(details):
                         references.append(self._reference(details.name))
         except AzureError as error:
             raise self._read_error(error) from None
@@ -202,8 +215,17 @@ def _checked_endpoint(project_endpoint: str) -> str:
 
 def _a2a_enabled(details: AgentDetails) -> bool:
     endpoint = details.agent_endpoint
-    protocols = endpoint.protocol_configuration if endpoint is not None else None
-    return protocols is not None and protocols.a2a is not None
+    if endpoint is None:
+        return False
+    # The live API lists enabled protocols as ``protocols: ["a2a", ...]``, a
+    # field azure-ai-projects 2.11.0 does not model; SDK models are mappings
+    # over the raw JSON, so it is read from there. ``protocol_configuration``
+    # is the shape the SDK models and is still accepted.
+    protocols = endpoint.get("protocols")
+    if isinstance(protocols, list) and "a2a" in protocols:
+        return True
+    configuration = endpoint.protocol_configuration
+    return configuration is not None and configuration.a2a is not None
 
 
 def _wanted(name: str, query: AgentQuery) -> bool:
