@@ -93,13 +93,19 @@ class SkillCatalog:
     Args:
         entries: The catalog's entries, in order.
         bindings: The run's binding to each entry's agent, by agent name.
+        max_tokens_per_call: The tokens each call to an entry may use, or
+            ``None`` for everything the run has left.
     """
 
     def __init__(
-        self, entries: Iterable[RemoteSkill], bindings: Mapping[str, Remote[Any]]
+        self,
+        entries: Iterable[RemoteSkill],
+        bindings: Mapping[str, Remote[Any]],
+        max_tokens_per_call: int | None = None,
     ) -> None:
         self._entries = tuple(entries)
         self._bindings = MappingProxyType(dict(bindings))
+        self._max_tokens_per_call = max_tokens_per_call
 
     @property
     def entries(self) -> tuple[RemoteSkill, ...]:
@@ -115,6 +121,22 @@ class SkillCatalog:
     def __repr__(self) -> str:
         return f"SkillCatalog({[entry.name for entry in self._entries]!r})"
 
+    @property
+    def max_tokens_per_call(self) -> int | None:
+        """The tokens each call to an entry may use; ``None`` means everything
+        the run has left."""
+        return self._max_tokens_per_call
+
+    def _binding(self, entry: RemoteSkill) -> Remote[Any] | None:
+        """Return the binding for ``entry`` if it is this very catalog's entry.
+
+        Matched by identity, not equality, so an entry from another run's
+        catalog, or one built by hand, is never bound to this run.
+        """
+        if any(own is entry for own in self._entries):
+            return self._bindings[entry.agent]
+        return None
+
 
 class _UnusableCardError(Exception):
     """A card that was fetched but cannot contribute entries; ``args[0]`` is
@@ -129,8 +151,11 @@ async def build_catalog(
     skill: str | None,
     tags: Collection[str],
     ask: bool,
+    max_tokens_per_call: int | None,
 ) -> SkillCatalog:
-    """Build a run's catalog; see ``RunContext.remote_skills``."""
+    """Build a run's catalog and remember it on ``run``; see
+    ``RunContext.remote_skills``."""
+    _check_max_tokens(max_tokens_per_call)
     names = _checked_collection("agents", agents)
     wanted_tags = _checked_collection("tags", tags) or frozenset()
     declared = _declared(remotes, names) if remotes else {}
@@ -158,7 +183,22 @@ async def build_catalog(
         bindings[name] = declared[name] if remotes else run.bind_found(found)
     _check_unique_names(entries)
     _check_size(entries)
-    return SkillCatalog(entries, bindings)
+    catalog = SkillCatalog(entries, bindings, max_tokens_per_call)
+    run.catalogs.append(catalog)
+    return catalog
+
+
+def _check_max_tokens(max_tokens_per_call: int | None) -> None:
+    # bool is an int subclass, but True is not a token count.
+    if max_tokens_per_call is not None and (
+        not isinstance(max_tokens_per_call, int)
+        or isinstance(max_tokens_per_call, bool)
+        or max_tokens_per_call < 1
+    ):
+        raise DefinitionError(
+            "remote_skills max_tokens_per_call= must be a whole number "
+            "greater than 0, or None"
+        )
 
 
 def _declared(

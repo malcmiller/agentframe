@@ -3,7 +3,7 @@ the skill catalog."""
 
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
 from agentframe.discovery.identity import (
@@ -21,6 +21,10 @@ from agentframe.runtime.correlation import RunCorrelation
 from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import RunLimits
 from agentframe.security.principal import Principal
+
+if TYPE_CHECKING:
+    # Imported only for type checking: the catalog module imports this one.
+    from agentframe.orchestration.catalog import SkillCatalog
 
 
 class RunRemotes:
@@ -44,6 +48,10 @@ class RunRemotes:
         stack: Closes the on-behalf-of credential when the run ends.
         own_interface_url: The A2A interface URL the hosting app advertises,
             or ``None`` for a local run.
+
+    Attributes:
+        catalogs: The skill catalogs this run built, so ``ctx.generate`` can
+            find the binding of each entry it is given.
     """
 
     def __init__(
@@ -76,6 +84,7 @@ class RunRemotes:
         self._user_token = user_token
         self._stack = stack
         self._on_behalf_of: UserTokenCredential | None = None
+        self.catalogs: list[SkillCatalog] = []
 
     def identity(self, name: str) -> RemoteIdentity | None:
         """Return the agent's ``remotes=`` entry, if it has one."""
