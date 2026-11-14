@@ -38,7 +38,6 @@ changelog.
   order. Failures raise `InputValidationError` naming the step and field,
   never values. New `SkillCatalog.get(name)` looks an entry up by name. No
   plan runs yet (#169).
-
 - **Evaluation (M9):** `Evaluation(concurrency=4, repeats=1,
   max_total_tokens=None, timeout_seconds=None)`. Up to `concurrency` attempts
   run at once, started and reported in case order. `repeats` runs each case
