@@ -8,7 +8,14 @@ Later stages offer the entries to a model; building a catalog never calls one.
 
 import logging
 import re
-from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
@@ -31,6 +38,13 @@ from agentframe.orchestration.card_text import (
     bounded_tags,
     bounded_text,
     schema_size,
+)
+from agentframe.orchestration.plan import (
+    DEFAULT_MAX_STEPS,
+    Plan,
+    StepGroups,
+    check_plan,
+    checked_max_steps,
 )
 from agentframe.runtime.remotes import RunRemotes
 
@@ -99,6 +113,9 @@ class SkillCatalog:
         bindings: The run's binding to each entry's agent, by agent name.
         max_tokens_per_call: The tokens each call to an entry may use, or
             ``None`` for everything the run has left.
+        tool_calls_left: Returns the tool calls the run has left, which
+            caps a plan's steps; ``None`` for no cap. Read on every check,
+            since the run may make tool calls after building the catalog.
     """
 
     def __init__(
@@ -106,10 +123,13 @@ class SkillCatalog:
         entries: Iterable[RemoteSkill],
         bindings: Mapping[str, Remote[Any]],
         max_tokens_per_call: int | None = None,
+        tool_calls_left: Callable[[], int] | None = None,
     ) -> None:
         self._entries = tuple(entries)
+        self._by_name = {entry.name: entry for entry in self._entries}
         self._bindings = MappingProxyType(dict(bindings))
         self._max_tokens_per_call = max_tokens_per_call
+        self._tool_calls_left = tool_calls_left
 
     @property
     def entries(self) -> tuple[RemoteSkill, ...]:
@@ -130,6 +150,47 @@ class SkillCatalog:
         """The tokens each call to an entry may use; ``None`` means everything
         the run has left."""
         return self._max_tokens_per_call
+
+    def get(self, name: str) -> RemoteSkill | None:
+        """Return the entry called ``name``, or ``None`` if there is none."""
+        return self._by_name.get(name)
+
+    def check(self, plan: Plan, *, max_steps: int = DEFAULT_MAX_STEPS) -> StepGroups:
+        """Check that ``plan`` only calls this catalog's entries, correctly.
+
+        Makes no network or model call. It checks: step IDs are unique and
+        match ``^[a-z][a-z0-9_]{0,31}$``; every ``use`` names an entry;
+        ``arguments`` are given only to structured entries and ``text``
+        only, and always, to ``ask`` entries; every reference, placeholder
+        and ``after`` names a step, and a ``.field`` is never taken from an
+        ``ask`` step's text; there is no dependency cycle; ``result`` names
+        a step; the plan has at most ``max_steps`` steps and is at most
+        64 KiB as JSON. Literal arguments are checked against the entry's
+        schema's top level only: required properties present (literal or
+        referenced) and no unknown ones when the schema forbids them. The
+        receiving agent validates the rest when the step runs.
+
+        Args:
+            plan: The plan to check.
+            max_steps: The most steps the plan may have. It never raises the
+                limit above the tool calls the run has left, since each step
+                is one tool call.
+
+        Returns:
+            The plan's steps in groups: each group's steps depend only on
+            steps in earlier groups, so they may run in parallel. Steps keep
+            their plan order within a group.
+
+        Raises:
+            InputValidationError: The plan is invalid. The message names the
+                step (by ID, or by position when the ID is malformed) and the
+                field, never an argument value.
+            DefinitionError: ``max_steps`` is not a whole number above 0.
+        """
+        limit = checked_max_steps(max_steps)
+        if self._tool_calls_left is not None:
+            limit = min(limit, self._tool_calls_left())
+        return check_plan(plan, self.get, limit)
 
     def _binding(self, entry: RemoteSkill) -> Remote[Any] | None:
         """Return the binding for ``entry`` if it is this very catalog's entry.
@@ -197,7 +258,7 @@ async def build_catalog(
         _check_permission_names(required, cards, ask)
     _warn_unmatched(run, required, entries)
     entries = [_with_permissions(entry, required) for entry in entries]
-    catalog = SkillCatalog(entries, bindings, max_tokens_per_call)
+    catalog = SkillCatalog(entries, bindings, max_tokens_per_call, run.tool_calls_left)
     run.catalogs.append(catalog)
     return catalog
 
