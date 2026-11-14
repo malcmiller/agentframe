@@ -2,8 +2,8 @@
 
 **Status: planned (M9), in progress.** Only [`Case` and
 `load_cases`](#cases-and-datasets) (#152) and `LocalSkill`, `Evaluation.run`
-with function scorers, `Score` and `CaseResult` (#153) and the built-in scorers
-`equals`, `contains` and `valid` (#154; see the
+with function scorers, `Score` and `CaseResult` (#153), the built-in scorers
+`equals`, `contains` and `valid` (#154) and `A2ATarget` (#158; see the
 [reference](../api/evaluation.md)) are implemented; everything else on this
 page does not exist in `agentframe` yet. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
@@ -141,7 +141,7 @@ The same cases against a deployed agent over A2A, using the existing directory
 and outbound identity:
 
 ```python
-# proposed, not implemented
+# implemented (#158); cases, Summary and api_key are application-supplied
 from agentframe import AgentDirectory, APIKeyCredential, FileAgentRegistry, Service
 from agentframe.evaluation import A2ATarget, Evaluation, load_cases, valid
 
@@ -201,15 +201,18 @@ fails fast instead of producing a confusing score.
 
 ### Targets
 
-`LocalSkill` is implemented (#153; [reference](../api/evaluation.md#localskill));
-`A2ATarget` is proposed.
+`LocalSkill` (#153; [reference](../api/evaluation.md#localskill)) and
+`A2ATarget` (#158; [reference](../api/evaluation.md#a2atarget)) are
+implemented. Both return a [`TargetResult`](../api/evaluation.md#targetresult)
+and satisfy the small [`Target`](../api/evaluation.md#target) protocol
+(`check_case`, `run`) that `Evaluation` accepts.
 
 A target runs one case and returns its output plus metadata. M9 has two:
 
 | Target | Runs | Output and metadata |
 | --- | --- | --- |
 | `LocalSkill(agent, skill=..., runtime=None, principal=None, options=None)` | `Runtime.run` with the case's `arguments`. A default `Runtime()` is created when none is given. | The validated value; `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` and `invocation_id` from `RunResult`. |
-| `A2ATarget(directory, name, skill=None, output=None, identity=None, options=None)` | `Remote.call(skill, **arguments)` when `skill` is set, otherwise `Remote.ask(text)`, through the same internal binding a skill's `Remote` uses. | The decoded (and, with `output=`, validated) result; usage from the peer's task snapshot when it advertises it, otherwise unknown; wall-clock latency measured by the harness. |
+| `A2ATarget(directory, name, skill=None, output=None, identity=None, options=None)` | `Remote.call(skill, **arguments)` when `skill` is set, otherwise `Remote.ask(text)`, through the same internal binding a skill's `Remote` uses. | The decoded (and, with `output=`, validated) result; usage from the peer's task snapshot when it advertises it, otherwise unknown; wall-clock duration of the case. `model_calls`, `tool_calls` and `finish_reason` are `None`: only the peer knows them. |
 
 Because `A2ATarget` reuses the `Remote` binding, every per-case request gets the
 same deadline, `max_total_tokens` hold, outbound identity, same-origin and
