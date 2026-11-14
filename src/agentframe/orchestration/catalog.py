@@ -47,6 +47,8 @@ from agentframe.orchestration.plan import (
     checked_max_steps,
 )
 from agentframe.runtime.remotes import RunRemotes
+from agentframe.runtime.tools import is_permitted
+from agentframe.security.principal import Principal
 
 logger = logging.getLogger(__name__)
 
@@ -187,10 +189,31 @@ class SkillCatalog:
                 field, never an argument value.
             DefinitionError: ``max_steps`` is not a whole number above 0.
         """
+        return check_plan(plan, self.get, self._step_limit(max_steps))
+
+    def _step_limit(self, max_steps: int) -> int:
+        """Return ``max_steps``, lowered to the tool calls the run has left.
+
+        Raises:
+            DefinitionError: ``max_steps`` is not a whole number above 0.
+        """
         limit = checked_max_steps(max_steps)
         if self._tool_calls_left is not None:
             limit = min(limit, self._tool_calls_left())
-        return check_plan(plan, self.get, limit)
+        return limit
+
+    def _visible_to(self, principal: Principal | None) -> "SkillCatalog":
+        """Return a catalog of only the entries ``principal`` may use.
+
+        A planning model sees only these, and checking its plan against
+        them makes a hidden entry look exactly like a missing one.
+        """
+        return SkillCatalog(
+            [entry for entry in self._entries if is_permitted(entry, principal)],
+            self._bindings,
+            self._max_tokens_per_call,
+            self._tool_calls_left,
+        )
 
     def _binding(self, entry: RemoteSkill) -> Remote[Any] | None:
         """Return the binding for ``entry`` if it is this very catalog's entry.
