@@ -55,6 +55,7 @@ from agentframe import (
 from agentframe.evaluation import Case, CaseStatus, Evaluation, Judge, LocalSkill
 from agentframe.models.foundry import FOUNDRY_SCOPE
 from agentframe.models.ollama import DEFAULT_ENDPOINT
+from agentframe.orchestration.plan import dependencies
 from examples.assistant import Summary, create_app
 from examples.orders import create_app as create_orders_app
 from examples.routed_assistant import create_app as create_routed_app
@@ -496,6 +497,98 @@ async def test_a_model_calls_a_remote_skill_as_a_tool(
 
     # The model is nondeterministic: only check that it called the entry.
     assert records.looked_up
+
+
+# Planning: a real model plans a two-step goal over registered agents
+
+
+@agent(name="Research", description="Finds sources on a topic.", version="1.0.0")
+class Research(Agent):
+    """A model-free specialist the planner can plan to call."""
+
+    @skill(id="find_sources", tags=["research"])
+    async def find_sources(self, topic: str, ctx: RunContext) -> list[str]:
+        """Find the titles of sources about a topic."""
+        return []
+
+
+@agent(name="Writer", description="Writes blog posts.", version="1.0.0")
+class Writer(Agent):
+    """A model-free specialist the planner can plan to call."""
+
+    @skill(id="write_post", tags=["writing"])
+    async def write_post(self, sources: list[str], ctx: RunContext) -> str:
+        """Write a short blog post from a list of source titles."""
+        return ""
+
+
+@agent(version="1.0.0")
+class Planner(Agent):
+    """Plans goals over the skills of registered agents, without running them."""
+
+    # Reasoning models spend output tokens on thinking before the plan.
+    model_settings = ModelSettings(max_output_tokens=2048)
+    limits = RunLimits(max_input_tokens=4000)
+
+    @skill("plan_goal", tags=["planning"])
+    async def plan_goal(self, goal: str, ctx: RunContext) -> dict[str, list[str]]:
+        """Plan a goal; return each step's entry with the entries it waits for."""
+        skills = await ctx.remote_skills()
+        plan = await ctx.plan(goal, skills, max_steps=4)
+        uses = {step.id: step.use for step in plan.steps}
+        return {
+            step.use: sorted(uses[name] for name in dependencies(step))
+            for step in plan.steps
+        }
+
+
+class Agents(AgentRegistry):
+    """Lists agents by name, each served at its base URL."""
+
+    def __init__(self, base_urls: dict[str, str]) -> None:
+        self.base_urls = base_urls
+
+    async def get(self, agent_id: str) -> AgentReference:
+        raise NotImplementedError
+
+    async def list(self, query: AgentQuery) -> list[AgentReference]:
+        return [
+            AgentReference(name, f"{url}/.well-known/agent-card.json")
+            for name, url in self.base_urls.items()
+        ]
+
+
+async def test_a_model_plans_a_two_step_goal(serve: ServeLocally, model: Model) -> None:
+    def app_for(specialist: Agent) -> Callable[[str], AgentApp]:
+        def make_app(public_url: str) -> AgentApp:
+            host = HostConfig(public_url=public_url, auth=AllowAnonymous())
+            return AgentApp(agent=specialist, host=host)
+
+        return make_app
+
+    async with (
+        serve(app_for(Research())) as research_url,
+        serve(app_for(Writer())) as writer_url,
+    ):
+        registry = Agents({"research": research_url, "writer": writer_url})
+        async with AgentDirectory(sources=[registry]) as directory:
+            result = await Runtime(directory=directory).run(
+                Planner(model=model),
+                skill="plan_goal",
+                arguments={
+                    "goal": "Find sources about tides, then write a blog post "
+                    "from those sources."
+                },
+            )
+
+    # Planning is nondeterministic: only the entries and the dependency are
+    # checked, not step IDs or argument values.
+    assert result.value == {
+        "research.find_sources": [],
+        "writer.write_post": ["research.find_sources"],
+    }
+    assert result.model_calls == 1
+    print(f"planning usage: {result.usage}")
 
 
 # Model routing: free text over A2A, routed by the built-in router
