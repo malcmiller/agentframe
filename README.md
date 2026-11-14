@@ -19,8 +19,7 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 AgentFrame 0.2.0, the multi-agent release (M8+), is
 [published on PyPI](https://pypi.org/project/agentframe-py/0.2.0/); it builds on
 0.1.0, the first usable single-agent release (milestones M0 to M7). See the
-[changelog](CHANGELOG.md). Pre-1.0: public APIs may change in minor releases;
-changes are listed in the changelog. You can define agents with `@agent` / `@skill`, inject services, and run skills locally
+[changelog](CHANGELOG.md). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
 permission checks and a timeout. M2 native A2A hosting is complete: `AgentApp`
 serves an agent as an ASGI application with its Agent Card and an authenticated
