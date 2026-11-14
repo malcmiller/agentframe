@@ -1,0 +1,535 @@
+"""``ctx.run_plan`` runs a checked plan over real localhost A2A.
+
+The specialist is an ``AgentApp`` whose skills record when they run, and the
+plain peer is a bare official-SDK server (``tests/support/a2a_peer.py``);
+both are listed in one registry. The orchestrator runs a caller-supplied
+plan locally, except in the depth test, which hosts it.
+"""
+
+import asyncio
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any
+
+import pytest
+from a2a.helpers import get_message_text
+from a2a.types import TaskState
+from pydantic import BaseModel
+
+from a2a_client import call_skill, connect
+from a2a_peer import PeerExecutor, a2a_peer
+from agentframe import (
+    Agent,
+    AgentApp,
+    AgentDirectory,
+    AgentQuery,
+    AgentReference,
+    AgentRegistry,
+    AllowAnonymous,
+    DefinitionError,
+    ExecutionPolicy,
+    FinishReason,
+    HostConfig,
+    InputValidationError,
+    ModelResponse,
+    ModelSettings,
+    PermissionDeniedError,
+    Plan,
+    PlanResult,
+    PlanStep,
+    Principal,
+    RemoteAgentError,
+    RunContext,
+    RunLimits,
+    RunOptions,
+    RunResult,
+    Runtime,
+    SkillCatalog,
+    TimeoutLimitExceededError,
+    TokenLimitExceededError,
+    Usage,
+    agent,
+    skill,
+)
+from agentframe.authoring.definitions import SkillDefinition
+from agentframe.testing import ScriptedModel
+from local_server import ServeLocally
+
+STEP_SECONDS = 0.3
+
+
+class Found(BaseModel):
+    topic: str
+    sources: list[str]
+
+
+def fifty_tokens() -> ModelResponse:
+    usage = Usage(input_tokens=40, output_tokens=10, total_tokens=50, estimated=False)
+    return ModelResponse(text="ok", usage=usage, finish_reason=FinishReason.COMPLETED)
+
+
+@agent(name="Research", description="Finds sources.", version="0.1.0")
+class Research(Agent):
+    """Records every call, how many run at once and which were cancelled.
+
+    ``find_sources`` uses one 50-token model call, then waits
+    ``STEP_SECONDS``; the topic ``"slow"`` waits until cancelled and
+    ``"fail"`` fails.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(model=ScriptedModel(fifty_tokens() for _ in range(20)))
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.spans: dict[str, tuple[float, float]] = {}
+        self.running = 0
+        self.most_at_once = 0
+        self.cancelled = asyncio.Event()
+
+    @skill(
+        id="find_sources",
+        description="Find sources on a topic.",
+        tags=["research"],
+        model_settings=ModelSettings(max_output_tokens=100),
+    )
+    async def find_sources(self, topic: str, ctx: RunContext) -> Found:
+        self.calls.append(("find_sources", {"topic": topic}))
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        self.running += 1
+        self.most_at_once = max(self.most_at_once, self.running)
+        try:
+            await ctx.generate(topic)
+            if topic == "slow":
+                await asyncio.sleep(60)
+            await asyncio.sleep(STEP_SECONDS)
+            if topic == "fail":
+                raise RuntimeError("secret failure detail")
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        finally:
+            self.running -= 1
+        self.spans[topic] = (started, loop.time())
+        return Found(topic=topic, sources=[f"{topic} source"])
+
+    @skill(id="brief", description="Brief from sources.", tags=["research"])
+    async def brief(
+        self, sources: list[str], more_sources: list[str], ctx: RunContext
+    ) -> str:
+        self.calls.append(("brief", {"sources": sources, "more_sources": more_sources}))
+        self.spans["brief"] = (asyncio.get_running_loop().time(), 0.0)
+        return " + ".join(sources + more_sources)
+
+
+@agent(name="Orchestrator", description="Runs reviewed plans.", version="0.1.0")
+class Orchestrator(Agent):
+    """Runs the plan it is given over every registered agent's skills."""
+
+    def __init__(
+        self,
+        permissions: Mapping[str, set[str]] | None = None,
+        **run_options: Any,
+    ) -> None:
+        super().__init__()
+        self.permissions = permissions
+        self.run_options = run_options
+        self.result: PlanResult | None = None
+        self.error: Exception | None = None
+
+    @skill(id="execute", description="Run a reviewed plan.", tags=["orchestration"])
+    async def execute(self, plan: Plan, ctx: RunContext) -> str:
+        skills = await ctx.remote_skills(permissions=self.permissions)
+        try:
+            self.result = await ctx.run_plan(plan, skills, **self.run_options)
+        except Exception as error:
+            self.error = error
+            raise
+        return str(self.result.value)
+
+
+class Registered(AgentRegistry):
+    """Lists the agents served for one test by name."""
+
+    def __init__(self, **urls: str) -> None:
+        self.urls = urls
+
+    async def get(self, agent_id: str) -> AgentReference:
+        raise NotImplementedError
+
+    async def list(self, query: AgentQuery) -> list[AgentReference]:
+        return [
+            AgentReference(name, f"{url}/.well-known/agent-card.json")
+            for name, url in self.urls.items()
+        ]
+
+
+def anonymous(public_url: str) -> HostConfig:
+    return HostConfig(public_url=public_url, auth=AllowAnonymous())
+
+
+type Agents = Callable[[], AbstractAsyncContextManager[AgentDirectory]]
+
+
+@pytest.fixture
+def research() -> Research:
+    return Research()
+
+
+@pytest.fixture
+def peer() -> PeerExecutor:
+    return PeerExecutor()
+
+
+@pytest.fixture
+def agents(serve: ServeLocally, research: Research, peer: PeerExecutor) -> Agents:
+    """Serve the specialist and the plain peer; yield a directory listing both."""
+
+    @asynccontextmanager
+    async def serving() -> AsyncIterator[AgentDirectory]:
+        def research_app(public_url: str) -> AgentApp:
+            return AgentApp(agent=research, host=anonymous(public_url))
+
+        async with (
+            serve(research_app) as research_url,
+            serve(a2a_peer(peer)) as peer_url,
+            AgentDirectory(
+                sources=[Registered(research=research_url, peer=peer_url)]
+            ) as directory,
+        ):
+            yield directory
+
+    return serving
+
+
+async def execute(
+    agents: Agents,
+    orchestrator: Orchestrator,
+    plan: Plan,
+    *,
+    limits: RunLimits | None = None,
+    policy: ExecutionPolicy | None = None,
+    principal: Principal | None = None,
+) -> RunResult[str]:
+    """Run the orchestrator's ``execute`` skill locally with ``plan``."""
+    async with agents() as directory:
+        return await Runtime(directory=directory, policy=policy).run(
+            orchestrator,
+            skill="execute",
+            arguments={"plan": plan.model_dump()},
+            principal=principal,
+            options=RunOptions(limits=limits),
+        )
+
+
+def find(step_id: str, topic: str, **options: Any) -> PlanStep:
+    return PlanStep(
+        id=step_id, use="research.find_sources", arguments={"topic": topic}, **options
+    )
+
+
+def brief(first: str, second: str) -> PlanStep:
+    return PlanStep(
+        id="brief",
+        use="research.brief",
+        arguments={"sources": {"$ref": first}, "more_sources": {"$ref": second}},
+    )
+
+
+TIDES_AND_WAVES = Plan(
+    steps=[
+        find("tides", "tides"),
+        find("waves", "waves"),
+        brief("tides.sources", "waves.sources"),
+    ],
+    result="brief",
+)
+
+
+class Recorder:
+    """A tool check that allows everything and records what it saw."""
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, dict[str, Any]]] = []
+
+    async def __call__(
+        self,
+        skill: SkillDefinition,
+        principal: Principal | None,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> bool:
+        self.seen.append((tool_name, dict(arguments)))
+        return True
+
+
+async def test_independent_steps_overlap_and_the_dependent_step_waits_for_both(
+    agents: Agents, research: Research
+) -> None:
+    recorder = Recorder()
+    orchestrator = Orchestrator()
+
+    result = await execute(
+        agents,
+        orchestrator,
+        TIDES_AND_WAVES,
+        policy=ExecutionPolicy(tool_checks=[recorder]),
+    )
+
+    tides, waves = research.spans["tides"], research.spans["waves"]
+    assert tides[0] < waves[1] and waves[0] < tides[1]
+    assert research.spans["brief"][0] >= max(tides[1], waves[1])
+    assert result.value == "tides source + waves source"
+    # The values reached the dependent step, and its tool check, exactly.
+    expected = {"sources": ["tides source"], "more_sources": ["waves source"]}
+    assert research.calls[-1] == ("brief", expected)
+    assert ("research.brief", expected) in recorder.seen
+    assert orchestrator.result is not None
+    assert list(orchestrator.result.steps) == ["tides", "waves", "brief"]
+    steps = orchestrator.result.steps
+    assert all(
+        step.status == "completed" and step.remote_task_id for step in steps.values()
+    )
+    assert steps["tides"].value == {"topic": "tides", "sources": ["tides source"]}
+    assert steps["tides"].usage is not None
+    assert steps["tides"].usage.total_tokens == 50
+    # The run's usage is the steps' reported usage: two 50-token model calls.
+    assert result.usage.total_tokens == 100
+    assert result.tool_calls == 3
+
+
+async def test_at_most_max_parallel_steps_run_at_once(
+    agents: Agents, research: Research
+) -> None:
+    topics = ["a", "b", "c", "d", "e"]
+    plan = Plan(steps=[find(topic, topic) for topic in topics], result="a")
+
+    await execute(agents, Orchestrator(max_parallel=2), plan)
+
+    assert research.most_at_once == 2
+    assert len(research.calls) == 5
+
+
+async def test_four_steps_run_at_once_by_default(
+    agents: Agents, research: Research
+) -> None:
+    topics = ["a", "b", "c", "d", "e", "f"]
+    plan = Plan(steps=[find(topic, topic) for topic in topics], result="a")
+
+    await execute(agents, Orchestrator(), plan)
+
+    assert research.most_at_once == 4
+
+
+async def test_a_tool_check_sees_an_upstream_value_and_stops_it_leaving(
+    agents: Agents, research: Research, peer: PeerExecutor
+) -> None:
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    async def no_payroll_to_peer(
+        skill: SkillDefinition,
+        principal: Principal | None,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> bool:
+        seen.append((tool_name, dict(arguments)))
+        return not (tool_name == "peer" and "payroll" in arguments["text"])
+
+    plan = Plan(
+        steps=[
+            find("secret", "payroll"),
+            PlanStep(id="leak", use="peer", text="Publish {secret.sources}"),
+        ],
+        result="leak",
+    )
+
+    with pytest.raises(PermissionDeniedError, match="Tool 'peer'"):
+        await execute(
+            agents,
+            Orchestrator(),
+            plan,
+            policy=ExecutionPolicy(tool_checks=[no_payroll_to_peer]),
+        )
+
+    assert seen == [
+        ("research.find_sources", {"topic": "payroll"}),
+        ("peer", {"text": 'Publish ["payroll source"]'}),
+    ]
+    assert peer.requests == []
+
+
+async def test_permissions_are_checked_again_for_a_caller_supplied_plan(
+    agents: Agents, research: Research
+) -> None:
+    orchestrator = Orchestrator(permissions={"research.find_sources": {"research:use"}})
+    plan = Plan(steps=[find("tides", "tides")], result="tides")
+
+    with pytest.raises(PermissionDeniedError, match=r"research\.find_sources"):
+        await execute(agents, orchestrator, plan, principal=Principal("caller"))
+
+    assert research.calls == []
+
+
+async def test_placeholders_insert_text_and_json_and_a_plain_peer_makes_usage_unknown(
+    agents: Agents, peer: PeerExecutor
+) -> None:
+    orchestrator = Orchestrator()
+    plan = Plan(
+        steps=[
+            find("found", "tides"),
+            PlanStep(id="post", use="peer", text="Post on {found.topic}: {found} {{}}"),
+        ],
+        result="post",
+    )
+
+    result = await execute(agents, orchestrator, plan)
+
+    # Objects are rendered as compact JSON with sorted keys.
+    sent = 'Post on tides: {"sources":["tides source"],"topic":"tides"} {}'
+    assert [get_message_text(request.message) for request in peer.requests] == [sent]
+    assert result.value == f"Echo: {sent}"
+    assert orchestrator.result is not None
+    assert orchestrator.result.steps["post"].usage is None
+    assert result.usage.total_tokens is None
+
+
+async def test_a_missing_field_fails_its_step_without_naming_the_value(
+    agents: Agents, research: Research
+) -> None:
+    plan = Plan(
+        steps=[
+            find("tides", "tides"),
+            find("waves", "waves"),
+            brief("tides.missing", "waves.sources"),
+        ],
+        result="brief",
+    )
+
+    with pytest.raises(InputValidationError) as raised:
+        await execute(agents, Orchestrator(), plan)
+
+    assert raised.value.message == (
+        "Plan step 'brief' field 'arguments.sources' refers to field 'missing' "
+        "of 'tides', whose result has no such field"
+    )
+    assert [name for name, _ in research.calls] == ["find_sources", "find_sources"]
+
+
+async def test_a_failing_step_cancels_its_running_sibling_and_raises_itself(
+    agents: Agents, research: Research
+) -> None:
+    orchestrator = Orchestrator()
+    plan = Plan(
+        steps=[
+            find("slow", "slow"),
+            find("bad", "fail"),
+            find("later", "later", after=["bad"]),
+        ],
+        result="later",
+    )
+
+    with pytest.raises(RemoteAgentError, match="did not complete its task"):
+        await execute(agents, orchestrator, plan)
+
+    assert type(orchestrator.error) is RemoteAgentError
+    assert "secret" not in str(orchestrator.error)
+    # The slow step's task was cancelled at the specialist.
+    async with asyncio.timeout(5):
+        await research.cancelled.wait()
+    assert ("find_sources", {"topic": "later"}) not in research.calls
+
+
+async def test_the_plan_stops_at_the_run_deadline(
+    agents: Agents, research: Research
+) -> None:
+    plan = Plan(steps=[find("slow", "slow")], result="slow")
+
+    with pytest.raises(TimeoutLimitExceededError):
+        await execute(agents, Orchestrator(), plan, limits=RunLimits(timeout_seconds=1))
+
+    async with asyncio.timeout(5):
+        await research.cancelled.wait()
+
+
+async def test_steps_count_toward_max_tool_calls(
+    agents: Agents, research: Research
+) -> None:
+    with pytest.raises(InputValidationError, match="more than the 2 this run allows"):
+        await execute(
+            agents,
+            Orchestrator(),
+            TIDES_AND_WAVES,
+            limits=RunLimits(max_tool_calls=2),
+        )
+
+    assert research.calls == []
+
+
+async def test_step_token_holds_cannot_exceed_the_run_budget(
+    agents: Agents, research: Research
+) -> None:
+    plan = Plan(steps=[find("tides", "tides"), find("waves", "waves")], result="tides")
+
+    with pytest.raises(TokenLimitExceededError, match="needs up to 600 tokens"):
+        await execute(
+            agents,
+            Orchestrator(max_tokens_per_step=600),
+            plan,
+            limits=RunLimits(max_total_tokens=1000),
+        )
+
+
+async def test_the_plan_fails_when_too_few_tokens_are_left_to_share(
+    agents: Agents, research: Research
+) -> None:
+    plan = Plan(steps=[find("tides", "tides"), find("waves", "waves")], result="tides")
+
+    with pytest.raises(TokenLimitExceededError, match="too few to share"):
+        await execute(
+            agents, Orchestrator(), plan, limits=RunLimits(max_total_tokens=1)
+        )
+
+    assert research.calls == []
+
+
+async def test_a_step_never_goes_deeper_than_max_remote_hops(
+    serve: ServeLocally, agents: Agents, research: Research
+) -> None:
+    orchestrator = Orchestrator()
+
+    async with agents() as directory:
+
+        def orchestrator_app(public_url: str) -> AgentApp:
+            return AgentApp(
+                agent=orchestrator, host=anonymous(public_url), directory=directory
+            )
+
+        async with serve(orchestrator_app) as url:
+            client = await connect(url)
+            plan = Plan(steps=[find("tides", "tides")], result="tides")
+            task = await call_skill(
+                client,
+                "execute",
+                {"plan": plan.model_dump()},
+                metadata={"agentframe.hops": 5},
+            )
+
+    assert task.status.state == TaskState.TASK_STATE_FAILED
+    assert "Maximum remote call depth of 5 exceeded" in str(orchestrator.error)
+    assert research.calls == []
+
+
+async def test_a_catalog_from_elsewhere_is_refused(agents: Agents) -> None:
+    @agent(name="Stray", description="Uses a hand-built catalog.", version="0.1.0")
+    class Stray(Agent):
+        @skill(id="execute", description="Run a plan.", tags=["orchestration"])
+        async def execute(self, plan: Plan, ctx: RunContext) -> str:
+            await ctx.run_plan(plan, SkillCatalog([], {}))
+            return "unreachable"
+
+    plan = Plan(steps=[find("tides", "tides")], result="tides")
+
+    async with agents() as directory:
+        with pytest.raises(DefinitionError, match="catalog this run built"):
+            await Runtime(directory=directory).run(
+                Stray(), skill="execute", arguments={"plan": plan.model_dump()}
+            )

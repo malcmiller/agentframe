@@ -69,6 +69,7 @@ from agentframe.models.base import (
     ToolSpec,
 )
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog
+from agentframe.orchestration.execution import PlanResult, StepResult
 from agentframe.orchestration.plan import Plan, PlanStep
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
@@ -158,6 +159,7 @@ __all__ = [
     "OutputValidationError",
     "PermissionDeniedError",
     "Plan",
+    "PlanResult",
     "PlanStep",
     "PolicyUnavailableError",
     "Principal",
@@ -178,6 +180,7 @@ __all__ = [
     "SkillCatalog",
     "SkillDefinition",
     "SkillRouter",
+    "StepResult",
     "TimeoutLimitExceededError",
     "TokenLimitExceededError",
     "ToolAuthorizationPolicy",
