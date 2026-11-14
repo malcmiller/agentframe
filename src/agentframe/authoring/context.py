@@ -228,11 +228,17 @@ class RunContext:
                 ``@tool(requires_permissions=...)``. Entries the caller
                 lacks are never shown to a model, and a call naming one
                 fails the run with ``PermissionDeniedError`` before anything
-                is sent. Names that match no entry are ignored, since
-                narrowing and skipped agents change which entries exist;
-                spell them as ``entry.name``. Hidden entries still count
-                toward the 20-entry limit, so whether a catalog is too
-                large never depends on the caller.
+                is sent. An agent's ``ask`` entry also requires every
+                permission given for that agent's skills, since free text
+                can ask for anything they do. Keys are entry names, not
+                tool names: a tool name raises ``DefinitionError``, as does
+                a key of a declared ``Remote`` that names none of its card's
+                entries. Any other key matching no entry in this catalog
+                (for example because its agent is down) logs one WARNING;
+                use tool checks as defense in depth for consequential
+                entries. Hidden entries still count toward the 20-entry
+                limit, so whether a catalog is too large never depends on
+                the caller.
 
         Returns:
             The catalog, holding the run's binding to each of its agents.
@@ -247,7 +253,8 @@ class RunContext:
                 catalog is never truncated. Also raised when
                 ``max_tokens_per_call`` is not a whole number above 0, or
                 ``permissions`` is not a mapping of names to lists of
-                strings.
+                strings, has a tool name as a key, or has a key of a
+                declared agent that names none of its entries.
             RemoteAgentError: A ``Remote`` parameter's card has an unsafe
                 or repeated skill ID, or a missing or over-8-KiB argument
                 schema.

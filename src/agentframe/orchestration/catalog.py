@@ -43,6 +43,8 @@ _SKILL_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,64}")
 """Card skill IDs a structured entry accepts: the same safe characters as
 AgentFrame skill and tool names, since entry names become model tool names."""
 
+_UNSAFE_TOOL_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]")
+
 CARD_UNAVAILABLE = "card unavailable"
 CARD_INVALID = "card invalid"
 SECURITY_NOT_SATISFIED = "security not satisfied"
@@ -189,6 +191,11 @@ async def build_catalog(
     # Counted before any caller's permissions hide entries, so whether a
     # catalog is too large never depends on who calls.
     _check_size(entries)
+    _check_not_tool_names(required, entries)
+    if remotes:
+        cards = {name: candidates[name].card for name in declared}
+        _check_permission_names(required, cards, ask)
+    _warn_unmatched(run, required, entries)
     entries = [_with_permissions(entry, required) for entry in entries]
     catalog = SkillCatalog(entries, bindings, max_tokens_per_call)
     run.catalogs.append(catalog)
@@ -230,10 +237,109 @@ def _checked_permissions(
 def _with_permissions(
     entry: RemoteSkill, permissions: Mapping[str, frozenset[str]]
 ) -> RemoteSkill:
-    required = permissions.get(entry.name)
+    """Return ``entry`` with its permissions from ``permissions``.
+
+    An ``ask`` entry also requires every permission of its agent's skills,
+    since free text can ask the agent for anything its skills do. That holds
+    even for skills narrowing left out. A key of another agent whose name
+    starts with ``"<agent>."`` adds its permissions too, which over-protects
+    but never under-protects.
+    """
+    required = permissions.get(entry.name, frozenset())
+    if entry.skill is None:
+        prefix = f"{entry.agent}."
+        for name, skill_permissions in permissions.items():
+            if name.startswith(prefix):
+                required |= skill_permissions
     if not required:
         return entry
     return replace(entry, requires_permissions=required)
+
+
+def safe_tool_name(name: str) -> str:
+    """Return ``name`` with every character other than letters, digits, ``_``
+    and ``-`` replaced by ``_``, as model tool names need."""
+    return _UNSAFE_TOOL_CHARACTERS.sub("_", name)
+
+
+def _check_not_tool_names(
+    permissions: Mapping[str, frozenset[str]], entries: Sequence[RemoteSkill]
+) -> None:
+    """Refuse a ``permissions=`` key that is an entry's tool name, not its name.
+
+    Raises:
+        DefinitionError: A key is the model tool name of an entry whose own
+            name is different, so it would protect nothing.
+    """
+    names = {entry.name for entry in entries}
+    for entry in entries:
+        tool = safe_tool_name(entry.name)
+        if tool in permissions and tool not in names:
+            raise DefinitionError(
+                f"remote_skills permissions= names '{tool}', the model tool "
+                f"name; use the entry name '{entry.name}'."
+            )
+
+
+def _check_permission_names(
+    permissions: Mapping[str, frozenset[str]],
+    cards: Mapping[str, AgentCard],
+    ask: bool,
+) -> None:
+    """Refuse a ``permissions=`` key of a declared agent that names no entry.
+
+    A declared agent's entries are fixed by its card, so a key for that
+    agent (its name, or its name followed by ``.``) that matches none of
+    them is a mistake that would leave an entry unprotected. Entries that
+    ``skill=`` or ``tags=`` narrowing left out still count as entries.
+
+    Raises:
+        DefinitionError: A key belongs to a declared agent but names none of
+            its card's entries.
+    """
+    for key in permissions:
+        owners = [a for a in cards if key == a or key.startswith(f"{a}.")]
+        names = {name for a in owners for name in _possible_names(a, cards[a], ask)}
+        if owners and key not in names:
+            raise DefinitionError(
+                f"remote_skills permissions= names '{key}', which is not an "
+                "entry of the declared agent; use an entry name such as "
+                "'agent.skill', or the agent's name for its ask entry."
+            )
+
+
+def _possible_names(agent: str, card: AgentCard, ask: bool) -> set[str]:
+    """Return the entry names the card gives without ``skill=``/``tags=``."""
+    names: set[str] = set()
+    has_extension = _skill_schemas(card) is not None
+    if has_extension:
+        names = {f"{agent}.{card_skill.id}" for card_skill in card.skills}
+    if not has_extension or ask:
+        names.add(agent)
+    return names
+
+
+def _warn_unmatched(
+    run: RunRemotes,
+    permissions: Mapping[str, frozenset[str]],
+    entries: Sequence[RemoteSkill],
+) -> None:
+    """Log one WARNING per ``permissions=`` key that names no catalog entry.
+
+    The key is the author's own text, so it is safe to log. In registry mode
+    a key may legitimately match nothing in this run, for example when its
+    agent is down; a typo looks the same, hence a warning, not an error.
+    """
+    present = {entry.name for entry in entries}
+    for key in permissions:
+        if key not in present:
+            logger.warning(
+                "remote_skills permissions= key '%s' matched no catalog entry "
+                "(invocation_id=%s)",
+                key,
+                run.correlation.invocation_id,
+                extra=run.correlation.log_extra(),
+            )
 
 
 def _check_max_tokens(max_tokens_per_call: int | None) -> None:

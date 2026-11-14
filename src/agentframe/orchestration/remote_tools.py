@@ -9,7 +9,6 @@ sends the request, with the run's deadline, depth, identity and token budget.
 import copy
 import json
 import logging
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -23,7 +22,7 @@ from agentframe.errors import (
     RemoteAgentError,
 )
 from agentframe.models.base import ToolSpec
-from agentframe.orchestration.catalog import RemoteSkill
+from agentframe.orchestration.catalog import RemoteSkill, safe_tool_name
 from agentframe.runtime.correlation import RunCorrelation
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.tools import error_result, is_permitted
@@ -46,7 +45,6 @@ ASK_SCHEMA: dict[str, Any] = {
 }
 """The arguments of an ``ask`` entry's tool: the free-text request."""
 
-_UNSAFE_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]")
 _MAX_TOOL_NAME = 64
 """Providers accept tool names of 1-64 letters, digits, ``_`` or ``-``."""
 
@@ -247,7 +245,7 @@ def tool_name(entry: RemoteSkill) -> str:
     Raises:
         DefinitionError: The name is longer than 64 characters.
     """
-    name = _UNSAFE_CHARACTERS.sub("_", entry.name)
+    name = safe_tool_name(entry.name)
     if len(name) > _MAX_TOOL_NAME:
         raise DefinitionError(
             f"Remote skill '{entry.name}' cannot be a model tool: its name is "
