@@ -453,17 +453,15 @@ as one tool call, its references are resolved by copying values (placeholders
 in `ask` text insert strings as they are and other values as compact JSON with
 sorted keys), the caller's permissions for the entry are re-checked and the
 `tool_checks` see the substituted arguments. Substitution changes values, not
-argument names, so the top-level argument check still holds. Implemented, the
-`PlanResult` has `value` and `steps` (each `StepResult` has `status`, always
-`completed` under the default `stop` policy, `value`, `usage` and
-`remote_task_id`); the other fields below are planned with #172 and #173:
+argument names, so the top-level argument check still holds. The
+`PlanResult` (implemented, #171-#173):
 
 | Field | Meaning |
 | --- | --- |
 | `value` | The `result` step's value, or `None` when it did not complete. |
 | `complete` | Whether every step completed. |
-| `steps` | Per step: `status` (`completed`, `failed`, `skipped`, `cancelled`, `input_required`), `value`, `error` (class and safe message), `usage` (`Usage \| None`), `remote_task_id`, `duration`. |
-| `usage` | The plan's total; unknown if any step's usage is unknown. |
+| `steps` | Per step: `status` (`completed`, `failed`, `skipped`, `cancelled`, `input_required`), `value`, `error_type` and `error_message` (class and safe message), `question`, `usage` (`Usage \| None`), `remote_task_id`, `use`, `duration_ms`. |
+| `usage` | The total of the steps that were sent; unknown if any of them is unknown. |
 
 ### Budgets, deadlines and depth
 
@@ -512,12 +510,15 @@ bounded by `max_model_calls` like any other.
 
 ## Observability
 
-([#173](https://github.com/malcmiller/agentframe/issues/173))
+([#173](https://github.com/malcmiller/agentframe/issues/173); implemented,
+[reference](../api/orchestration.md#plan-logs-and-usage))
 
 - `Plan created` (step count and entry names), `Plan step started` and
   `Plan step completed` INFO records with `extra`: `agent`, `invocation_id`,
   `root_invocation_id`, `plan_step`, `use`, `status`, `remote_task_id`,
-  `duration_ms`, `total_tokens` (or `None`). No arguments, text or results.
+  `error_type`, `duration_ms`, `total_tokens` (or `None`), plus
+  `parent_invocation_id`. No arguments, text, results, error messages or
+  questions.
 - Peers see the orchestrator invocation as their parent and the same root
   ([tracing](tracing.md)); the remote task ID ties a step to the peer's logs, so
   no new wire field is needed.

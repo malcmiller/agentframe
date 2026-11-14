@@ -155,6 +155,14 @@ because it cannot be validated. AgentFrame never invents trace IDs or creates
 spans; the optional OpenTelemetry adapter (#18) will create real spans later.
 None of these values authenticate, authorize or grant task access.
 
+Plans (M10 [#173](https://github.com/malcmiller/agentframe/issues/173)) log
+`Plan created`, `Plan step started` and `Plan step completed` with the same
+correlation fields plus the step ID, entry name, status, error class name,
+remote task ID, duration and total tokens, never content. No wire field identifies a step:
+each peer run sees the orchestrator's run as its parent, and the remote task
+ID ties a step to the peer's logs. See
+[plan logs and usage](../api/orchestration.md#plan-logs-and-usage).
+
 Authentication failures should be diagnosable without disclosing skill details.
 Telemetry export failure must not become an agent success/failure substitute:
 report exporter health through the observability infrastructure, keep execution

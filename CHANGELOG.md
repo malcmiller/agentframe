@@ -10,6 +10,18 @@ changelog.
 
 ### Added
 
+- **Orchestration (M10):** plans are logged at INFO with the run's correlation
+  fields (`agent`, `invocation_id`, `root_invocation_id`,
+  `parent_invocation_id`) in `extra`: `ctx.plan` logs `Plan created` with
+  `step_count` and the entry names (`uses`), and `ctx.run_plan` logs
+  `Plan step started` and `Plan step completed` with `plan_step`, `use`,
+  `status`, `error_type`, `remote_task_id`, `duration_ms` and `total_tokens`
+  (`None` when unknown); a skipped step gets only `Plan step completed`.
+  Arguments, text, results, error messages and questions are never logged; no
+  new wire field identifies a step. `StepResult` gains `use` and `duration_ms`
+  (`None` when skipped), and `PlanResult.usage` adds up the usage of the steps
+  that were sent, `None` when any of them is unknown; both are views of usage
+  the run charged once (#173).
 - **Orchestration (M10):** `ctx.run_plan(..., on_failure="continue")` keeps a
   step's remote `RemoteAgentError` or `ClarificationNeededError` as its result
   instead of raising: `StepResult.status` widens to `"completed"`, `"failed"`,
