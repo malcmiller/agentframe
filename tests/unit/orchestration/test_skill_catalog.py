@@ -136,9 +136,9 @@ class CardServer:
         finally:
             self.in_flight -= 1
 
-    def directory(self, *sources: AgentRegistry) -> AgentDirectory:
+    def directory(self, *sources: AgentRegistry, **options: Any) -> AgentDirectory:
         client = httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
-        return AgentDirectory(sources=sources, http_client=client)
+        return AgentDirectory(sources=sources, http_client=client, **options)
 
 
 @agent(name="Orchestrator", description="Delegates to specialists.", version="0.1.0")
@@ -228,6 +228,16 @@ async def test_building_a_catalog_makes_no_model_call() -> None:
 
 async def test_an_empty_registry_gives_an_empty_catalog() -> None:
     assert await catalog_names(CardServer({}).directory(ListRegistry())) == []
+
+
+async def test_catalog_bindings_bound_reply_size_like_remote_parameters() -> None:
+    server = CardServer({"research": specialist("research", "find")})
+    directory = server.directory(ListRegistry("research"), max_reply_bytes=1234)
+
+    catalog = await build(directory)
+
+    # noinspection PyProtectedMember
+    assert catalog._bindings["research"]._transport.max_reply_bytes == 1234
 
 
 # Skipped agents and sources
