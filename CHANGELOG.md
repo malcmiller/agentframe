@@ -10,6 +10,20 @@ changelog.
 
 ### Added
 
+- **Evaluation (M9):** `EvalReport.write_json(path)` writes a versioned JSON
+  document (`"schema": "agentframe.evaluation.report/1"`) with the AgentFrame
+  version, target, scorer names, every aggregate (including `not_run_count`,
+  `flaky_cases`, `over_budget` and `budget_fully_enforced`) and one entry per
+  attempt; unknown token counts are `null`, never 0. Case content, score
+  reasons and error messages are left out unless `capture_content=True`
+  (a `not_run` attempt's fixed reason is kept). `EvalReport.require(
+  min_pass_rate=None, max_errors=0, max_total_tokens=None,
+  allow_not_run=False, allow_over_budget=False)` raises `AssertionError`
+  listing each missed threshold above the summary; unknown usage never passes a
+  token threshold and a pass-rate threshold fails when nothing ran. New
+  `EvalReport.target`, `scorers` and `capture_content` and
+  `LocalSkill.description`. No pytest plugin; see the new
+  [evaluation guide](docs/guides/evaluation.md) (#156).
 - **Evaluation (M9):** `Evaluation(concurrency=4, repeats=1,
   max_total_tokens=None, timeout_seconds=None)`. Up to `concurrency` attempts
   run at once, started and reported in case order. `repeats` runs each case
