@@ -1,7 +1,8 @@
 # Evaluation
 
-**Status: planned (M9), not implemented.** Nothing on this page exists in
-`agentframe` yet. The design choices listed under
+**Status: planned (M9), in progress.** Only [`Case` and
+`load_cases`](#cases-and-datasets) are implemented (#152); everything else on
+this page does not exist in `agentframe` yet. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
 exact signatures and remaining details are settled while building the stories
 of the [M9 overview](https://github.com/malcmiller/agentframe/issues/164).
@@ -154,8 +155,11 @@ async with AgentDirectory(sources=[FileAgentRegistry("agents.yaml")]) as directo
 
 ### Cases and datasets
 
+Implemented (#152); reference: [`Case`](../api/evaluation.md#case) and
+[`load_cases`](../api/evaluation.md#load_cases).
+
 ```python
-# proposed, not implemented
+# implemented in agentframe.evaluation (#152)
 @dataclass(frozen=True, kw_only=True)
 class Case[E]:
     id: str
@@ -182,9 +186,12 @@ line with the same fields, for example:
 ```
 
 JSONL matches what Foundry, the OpenAI Evals API and most tools read, diffs
-well and can be appended to. Loading is strict: unknown keys, duplicate IDs,
-invalid JSON or both/neither of `arguments`/`text` fail with the file name and
-line number. Files are read at most 10 MiB, with `json.loads` only (no code
+well and can be appended to. Loading is strict: unknown or repeated keys,
+duplicate IDs, invalid JSON (including `NaN`/`Infinity`), non-object lines,
+both/neither of `arguments`/`text` and a file with no cases fail with
+`DefinitionError` naming the file and line number, never the line's content.
+Blank lines are skipped. Files must be UTF-8 and are read at most 10 MiB (a
+larger file fails before parsing), with `json.loads` only (no code
 execution). When the target knows the skill's output type, each `expected`
 value is validated against it before any case runs, so a typo in a dataset
 fails fast instead of producing a confusing score.

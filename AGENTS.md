@@ -95,6 +95,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/hosting/` | `AgentApp`, `HostConfig`, Agent Card, A2A executor, routing. |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
 | `src/agentframe/discovery/` | `AgentRegistry`, `AgentReference`, `AgentQuery`, file and environment registries (M8+). |
+| `src/agentframe/evaluation/` | Evaluation harness (M9): `cases.py` (`Case`, `load_cases`). Imported as `agentframe.evaluation`, not re-exported from `agentframe`, so its `__init__.py` re-exports its own public names. |
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
 | `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`). |
@@ -105,7 +106,8 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `docs/api/` | Public surface reference. |
 
 Keep subpackage `__init__.py` files to a short docstring; add public exports to
-the top-level `__init__.py` only. Import internal modules by full path, for
+the top-level `__init__.py` only (except `agentframe.evaluation`, which
+`import agentframe` must not load). Import internal modules by full path, for
 example `from agentframe.runtime.limits import RunLimits`. Keep test basenames
 unique, since test folders are not packages.
 
