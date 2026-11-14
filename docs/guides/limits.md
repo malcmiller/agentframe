@@ -367,6 +367,26 @@ async def both(research: Research) -> list[str]:
 Reported usage is the peer's claim: it is used for accounting only, never for
 authorization, and is not a hard billing guarantee.
 
+**Implemented (M10 #171): plans.** [`ctx.run_plan`](../api/orchestration.md#runcontextrun_plan)
+runs a plan's steps as remote calls with every limit above unchanged:
+
+- The whole plan runs within the run's deadline; each step sends the time
+  that remains, and a timeout cancels running steps (best-effort `CancelTask`).
+- Each step is one call at the next hop, so `max_remote_hops` applies to
+  every step; a run already at its depth sends nothing.
+- Each step counts as one tool call toward `max_tool_calls`, and a plan with
+  more steps than the run has tool calls left is refused before anything is
+  sent.
+- Each step holds `max_tokens_per_step` (set by the author, never the model)
+  or, by default, an equal share of the tokens the run has left when the plan
+  starts, so parallel steps never compete for one hold. Holds are taken in
+  one step with no `await`, so concurrent steps cannot both take the same
+  tokens; a hold that does not fit raises `TokenLimitExceededError` before
+  that step is sent. Reported usage replaces each hold, and a peer that does
+  not report usage makes the run's usage unknown, never zero.
+- At most `max_parallel` steps (default 4) run at once, well under a peer's
+  default admission limit of 32.
+
 ## Retries and duplicate requests
 
 Only transient model provider failures (rate limit, provider timeout, server

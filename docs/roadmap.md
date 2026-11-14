@@ -595,7 +595,7 @@ uses M9's harness.
 | Identity | Implemented (#175): per-name `remotes=` entry, else optional `default_remote=` where it satisfies the card, else none for open cards; otherwise skipped. |
 | Remote skills as tools | Implemented (#167): `ctx.generate(goal, tools=[*skills])` lets the model call remote skills through the M5 loop; each call is a tool call, never retried, with the existing remote guarantees. Per-entry `permissions=` hide entries and every call passes `tool_checks` with the entry name (#168). |
 | Plans | `ctx.plan(goal, skills)` makes one structured call returning a typed `Plan` (flat DAG, `{"$ref": "step.field"}` references), checked against the catalog and limits before anything runs. |
-| Running plans | `ctx.run_plan(plan, skills)` runs ready steps in parallel (default 4) under `asyncio.TaskGroup` within the run's deadline, hops and token budget; `stop` or opt-in `continue` failure policy; per-step logs and usage. |
+| Running plans | Implemented (#171): `ctx.run_plan(plan, skills)` re-checks the plan, then runs ready steps in parallel (default 4) under `asyncio.TaskGroup` within the run's deadline, hops, tool calls and token budget (per-step holds), with permissions and `tool_checks` on the substituted arguments of every step and the `stop` failure policy. Planned: opt-in `continue` (#172), per-step logs and usage totals (#173). |
 | Safety | Per-entry permissions, existing `tool_checks` per call and new `plan_checks` before execution; human approval stays application-owned; no automatic replanning. |
 
 Release acceptance: separately deployed AgentFrame agents and a non-AgentFrame
