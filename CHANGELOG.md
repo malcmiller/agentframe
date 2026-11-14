@@ -132,6 +132,16 @@ changelog.
   before hiding. Docs
   warn that `Service` identity makes the orchestrator a confused deputy
   without permissions (#168).
+- **Orchestration (M10):** `default_remote=Service(...) | OnBehalfOf(...)` on
+  `Runtime` and `AgentApp` authenticates skill-catalog agents that have no
+  `remotes=` entry. A per-name entry always wins; the default is sent only to
+  agents whose card requires credentials it meets (never to open agents), and
+  any other secured agent is skipped with a warning. Declared `Remote`
+  parameters never use it. An `OnBehalfOf` default needs `EntraIDAuth` with a
+  client credential (else `DefinitionError` at construction) and a signed-in
+  user (else `PermissionDeniedError`, no fallback). Docs warn that the
+  default's token audience or shared API key reaches every registered agent
+  that asks for it (#175).
 - **Evaluation (M9):** `Evaluation(cases=..., target=LocalSkill(agent,
   skill=...), scorers=[...])` runs each case's arguments through
   `Runtime.run` (validation, permissions, policies, limits; a protected skill

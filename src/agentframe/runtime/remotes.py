@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
+from a2a.types import AgentCard
+
 from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
 from agentframe.discovery.identity import (
     EntraAppCredential,
@@ -14,9 +16,11 @@ from agentframe.discovery.identity import (
     Service,
     UserToken,
     UserTokenCredential,
+    check_identity,
+    requires_credentials,
 )
 from agentframe.discovery.remote import Remote, find_remote, new_binding
-from agentframe.errors import PermissionDeniedError
+from agentframe.errors import DefinitionError, PermissionDeniedError
 from agentframe.runtime.correlation import RunCorrelation
 from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import RunLimits
@@ -32,12 +36,15 @@ class RunRemotes:
 
     Package-internal. Every binding shares the run's deadline, depth, token
     accounting and correlation, and the agent's ``remotes=`` entry decides its
-    credentials. All ``OnBehalfOf`` agents of a run share one on-behalf-of
-    credential, closed when the run ends.
+    credentials. Catalog agents without an entry may use ``default_remote``
+    instead; declared ``Remote`` parameters never do. All ``OnBehalfOf``
+    agents of a run share one on-behalf-of credential, closed when the run
+    ends.
 
     Args:
         directory: Where agents are looked up.
         identities: The ``remotes=`` entries, by agent name.
+        default: The ``default_remote=`` identity for catalog agents, if any.
         deadline: Event-loop time when the run times out.
         correlation: The run and the request it is part of.
         principal: The run's verified caller, if any.
@@ -59,6 +66,7 @@ class RunRemotes:
         directory: AgentDirectory,
         identities: Mapping[str, RemoteIdentity],
         *,
+        default: RemoteIdentity | None,
         deadline: float,
         correlation: RunCorrelation,
         principal: Principal | None,
@@ -76,6 +84,7 @@ class RunRemotes:
         self.correlation = correlation
         self.own_interface_url = own_interface_url
         self._identities = identities
+        self._default = default
         self._deadline = deadline
         self._principal = principal
         self._hops = hops
@@ -92,12 +101,38 @@ class RunRemotes:
         """Return the tool calls the run may still make."""
         return max(self._max_tool_calls - self._accounting.tool_calls, 0)
 
-    def identity(self, name: str) -> RemoteIdentity | None:
-        """Return the agent's ``remotes=`` entry, if it has one."""
-        return self._identities.get(name)
+    def identity(
+        self, name: str, card: AgentCard | None = None
+    ) -> RemoteIdentity | None:
+        """Return how the run authenticates to an agent, or ``None`` for no
+        credentials.
+
+        Args:
+            name: The agent's registered name.
+            card: The agent's card, for a catalog agent. Without it (a
+                declared ``Remote`` parameter) only ``remotes=`` counts.
+
+        Returns:
+            The agent's ``remotes=`` entry; otherwise, for a catalog agent
+            whose card requires credentials, ``default_remote`` when it
+            meets that card's security; otherwise ``None``. Open cards never
+            get the default, so it is sent only to agents that ask for it.
+        """
+        own = self._identities.get(name)
+        if own is not None or card is None or self._default is None:
+            return own
+        if not requires_credentials(card):
+            return None
+        try:
+            check_identity(name, card, self._default)
+        except DefinitionError:
+            return None
+        return self._default
 
     async def bind(self, name: str) -> Remote[Any]:
         """Look a declared remote up, check its identity and bind it.
+
+        Only its ``remotes=`` entry counts, never ``default_remote``.
 
         Raises:
             DefinitionError: As for ``find_remote``.
@@ -105,30 +140,39 @@ class RunRemotes:
             PermissionDeniedError: The agent is called ``OnBehalfOf`` the
                 user and the run has no signed-in user.
         """
-        found = await find_remote(self.directory, name, self.identity(name))
-        return self.bind_found(found)
+        identity = self.identity(name)
+        found = await find_remote(self.directory, name, identity)
+        return self._new_binding(found, identity)
 
     def bind_found(self, found: DiscoveredAgent) -> Remote[Any]:
-        """Bind an agent whose card the caller already checked its identity against.
+        """Bind a catalog agent whose card the caller already checked
+        ``identity(name, card)`` against.
 
         Raises:
             PermissionDeniedError: As for ``bind``.
         """
+        identity = self.identity(found.reference.name, found.card)
+        return self._new_binding(found, identity)
+
+    def _new_binding(
+        self, found: DiscoveredAgent, identity: RemoteIdentity | None
+    ) -> Remote[Any]:
         return new_binding(
             self.directory,
             found,
             deadline=self._deadline,
             correlation=self.correlation,
             principal=self._principal,
-            credential=self._credential(found.reference.name),
+            credential=self._credential(found.reference.name, identity),
             hops=self._hops,
             max_hops=self._max_hops,
             accounting=self._accounting,
             max_total_tokens=self._max_total_tokens,
         )
 
-    def _credential(self, name: str) -> OutboundCredential | None:
-        identity = self.identity(name)
+    def _credential(
+        self, name: str, identity: RemoteIdentity | None
+    ) -> OutboundCredential | None:
         if isinstance(identity, Service):
             return identity.credential
         if isinstance(identity, OnBehalfOf):

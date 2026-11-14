@@ -255,19 +255,47 @@ def checked_remotes(
                 "remotes= maps agent names to Service(credential=...) or "
                 "OnBehalfOf(scope=...) identities."
             )
-        if isinstance(identity, Service) and not isinstance(
-            identity.credential, OutboundCredential
-        ):
-            raise DefinitionError(
-                f"Remote '{name}': Service credential must implement "
-                "OutboundCredential (headers() and satisfies())."
-            )
+        _check_service_credential(f"Remote '{name}'", identity)
     return checked
+
+
+def checked_default_remote(default: RemoteIdentity | None) -> RemoteIdentity | None:
+    """Check a ``default_remote=`` identity and return it.
+
+    Raises:
+        DefinitionError: It is neither ``None``, ``OnBehalfOf`` nor a
+            ``Service`` with an ``OutboundCredential``.
+    """
+    if default is None:
+        return None
+    if not isinstance(default, Service | OnBehalfOf):
+        raise DefinitionError(
+            "default_remote= must be Service(credential=...), "
+            "OnBehalfOf(scope=...) or None."
+        )
+    _check_service_credential("default_remote", default)
+    return default
+
+
+def _check_service_credential(where: str, identity: RemoteIdentity) -> None:
+    if isinstance(identity, Service) and not isinstance(
+        identity.credential, OutboundCredential
+    ):
+        raise DefinitionError(
+            f"{where}: Service credential must implement "
+            "OutboundCredential (headers() and satisfies())."
+        )
 
 
 def on_behalf_of_names(remotes: Mapping[str, RemoteIdentity]) -> list[str]:
     """Return the names of the ``OnBehalfOf`` remotes, sorted."""
     return sorted(n for n, i in remotes.items() if isinstance(i, OnBehalfOf))
+
+
+def requires_credentials(card: AgentCard) -> bool:
+    """Say whether the card's security can only be met with credentials."""
+    alternatives = _security_alternatives(card)
+    return bool(alternatives) and all(schemes for schemes in alternatives)
 
 
 def check_identity(name: str, card: AgentCard, identity: RemoteIdentity | None) -> None:
@@ -282,8 +310,7 @@ def check_identity(name: str, card: AgentCard, identity: RemoteIdentity | None) 
             identity, or its credential meets none of the requirements. The
             message names the remote, never the credential.
     """
-    alternatives = _security_alternatives(card)
-    if not alternatives or any(not schemes for schemes in alternatives):
+    if not requires_credentials(card):
         return
     if identity is None:
         raise DefinitionError(
@@ -292,7 +319,7 @@ def check_identity(name: str, card: AgentCard, identity: RemoteIdentity | None) 
             "Service(credential=...)."
         )
     credential = identity.credential if isinstance(identity, Service) else identity
-    for schemes in alternatives:
+    for schemes in _security_alternatives(card):
         if all(s is not None and credential.satisfies(s) for s in schemes):
             return
     raise DefinitionError(

@@ -12,7 +12,8 @@ adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
 `TimeoutLimitExceededError` subtypes. M5 #61 adds `ToolCallLimitExceededError`
 and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`; M8+ #84 adds `RemoteAgentError` and #87 adds
 `Runtime(directory=...)`, `Runtime.validate_remotes` and `ClarificationNeededError`;
-#92 adds `Runtime(remotes=...)` and #93 its `OnBehalfOf` entries.
+#92 adds `Runtime(remotes=...)` and #93 its `OnBehalfOf` entries. M10 #175
+adds `Runtime(default_remote=...)`.
 The remaining parameters and errors
 arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
@@ -30,6 +31,7 @@ Runtime(
     tool_authorization: ToolAuthorizationPolicy = ...,
     policy: ExecutionPolicy = ..., tracing: TracingConfig = ..., services: Services = ...,
     directory: AgentDirectory = ..., remotes: Mapping[str, Service] = ...,
+    default_remote: Service | OnBehalfOf | None = None,
 )
 ```
 
@@ -42,6 +44,7 @@ Runtime(
 | `services` | `Services` | Explicit when skills need registered dependencies | Resolve `Inject[T]` parameters; missing registration is a startup `DefinitionError`. Same service container contract as `AgentApp`. |
 | `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; required when a skill takes a [`Remote`](discovery.md#remoteliteralname) parameter (M8+ #87) | Where `Remote[Literal["name"]]` parameters find their agents; each run binds them at its start, within its deadline. The application opens and closes it. |
 | `remotes` | `Mapping[str, `[`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)`]` | Optional; default no credentials (M8+ #92, #93) | How to authenticate to each remote agent, by directory name. A remote without an entry is called without credentials, which only works when its card declares no security. Any other value raises `DefinitionError`. Local runs have no signed-in user, so an `OnBehalfOf` remote fails them with `PermissionDeniedError`. |
+| `default_remote` | [`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)` \| None` | Optional; default `None` (M10 #175) | How to authenticate to [skill-catalog](orchestration.md#runcontextremote_skills) agents without a `remotes=` entry, only where their card requires credentials it meets; others are skipped. Never used for `Remote` parameters. Sent to every such registered agent, so read the [security note](orchestration.md#default_remote) first. Any other value raises `DefinitionError`. |
 
 ```python
 from agentframe import Runtime

@@ -592,7 +592,7 @@ uses M9's harness.
 | Capability | Decided direction |
 | --- | --- |
 | Catalog | `ctx.remote_skills(...)` builds `RemoteSkill` entries from the Agent Cards of every agent in the directory's sources (or only declared remotes): card skills with skill-call extension schemas, or one free-text `ask` entry for other A2A agents. Agents with unreachable/invalid cards or unsatisfiable security, and failing sources, are skipped with a warning by name. Bounded untrusted card text; at most 20 entries after `agents=`/`skill=`/`tags=` narrowing, more fails clearly, never truncated. |
-| Identity | Per-name `remotes=` entry, else optional `default_remote=` where it satisfies the card, else none for open cards; otherwise skipped. |
+| Identity | Implemented (#175): per-name `remotes=` entry, else optional `default_remote=` where it satisfies the card, else none for open cards; otherwise skipped. |
 | Remote skills as tools | Implemented (#167): `ctx.generate(goal, tools=[*skills])` lets the model call remote skills through the M5 loop; each call is a tool call, never retried, with the existing remote guarantees. Per-entry `permissions=` hide entries and every call passes `tool_checks` with the entry name (#168). |
 | Plans | `ctx.plan(goal, skills)` makes one structured call returning a typed `Plan` (flat DAG, `{"$ref": "step.field"}` references), checked against the catalog and limits before anything runs. |
 | Running plans | `ctx.run_plan(plan, skills)` runs ready steps in parallel (default 4) under `asyncio.TaskGroup` within the run's deadline, hops and token budget; `stop` or opt-in `continue` failure policy; per-step logs and usage. |

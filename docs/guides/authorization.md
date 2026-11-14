@@ -353,6 +353,30 @@ explicitly under the configured mode rather than silently switching identity.
 The app registration and consent steps, and the opt-in real test, are in
 [`OnBehalfOf`](../api/authorization.md#onbehalfof).
 
+**Implemented default identity for catalog agents (M10 #175):** an
+orchestrator whose model chooses among
+[registered agents](../api/orchestration.md#runcontextremote_skills) can set
+one `default_remote=Service(...)` or `OnBehalfOf(...)` on `Runtime` or
+`AgentApp`, used for catalog agents without a `remotes=` entry. A per-name
+entry always wins; the default is sent only to agents whose card requires
+credentials it meets (never to open agents); any other secured agent is
+skipped with a warning. Declared `Remote` parameters never use it. See
+[`default_remote`](../api/orchestration.md#default_remote).
+
+**The default reaches every registered agent that asks for its scheme.**
+That is a confused-deputy risk:
+
+- with an Entra default (`EntraAppCredential` or `OnBehalfOf`), every such
+  agent receives a token for the default's audience, which it could replay
+  against any other API that accepts that audience;
+- with an `APIKeyCredential` default, every such agent receives the same
+  shared key, which it could use against any other agent that accepts it.
+
+The registry is the allowlist, so configure a default only when every agent
+it lists is trusted with that audience or key. Keep the registry narrow, and
+give sensitive or less-trusted agents their own `remotes=` entries (a
+distinct key or scope per agent) instead of relying on the default.
+
 ## Model-chosen remote calls
 
 **Implemented (M10 #168).** When an orchestrator offers

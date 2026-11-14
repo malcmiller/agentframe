@@ -261,13 +261,17 @@ Each agent's credentials are chosen in order (decision 3):
 1. its own per-name `remotes=` entry (`Service(credential=...)` or
    `OnBehalfOf(scope=...)`);
 2. otherwise the application's optional default,
-   `AgentApp(default_remote=Service(...) | OnBehalfOf(...))`
-   ([#175](https://github.com/malcmiller/agentframe/issues/175)), used only for
-   agents whose card security it satisfies;
-3. otherwise no credentials, which works only for open cards.
+   `default_remote=Service(...) | OnBehalfOf(...)` on `AgentApp` or `Runtime`
+   ([#175](https://github.com/malcmiller/agentframe/issues/175), implemented,
+   [API](../api/orchestration.md#default_remote)), used only for agents whose
+   card requires credentials it satisfies;
+3. otherwise no credentials, which works only for open cards. Open agents
+   never receive the default.
 
 An agent whose security none of these satisfies is skipped. Without a default,
-only open agents and agents with `remotes=` entries are included. Credentials
+only open agents and agents with `remotes=` entries are included. The default
+applies only to catalog agents; declared `Remote` parameters keep the M8+
+startup rules. Credentials
 still go only to the card's validated interface origin, never across
 redirects.
 
