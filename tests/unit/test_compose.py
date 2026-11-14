@@ -15,10 +15,11 @@ from agentframe import (
     dev_settings,
 )
 from agentframe.cli import main
-from agentframe.compose import compose_document, write_compose
+from agentframe.compose import BASE_IMAGE, compose_document, write_compose
 from agentframe.project import ProjectAgent
 
 GOLDEN = Path(__file__).parent / "golden"
+DEVELOPMENT_GUIDE = Path(__file__).parents[2] / "docs" / "guides" / "development.md"
 PROJECT = """\
 agents:
   research-agent:
@@ -52,6 +53,11 @@ def test_generated_files_match_the_golden_files(project: Path) -> None:
     assert compose.read_text() == (GOLDEN / "compose.yaml").read_text()
     assert dockerfile.read_text() == (GOLDEN / "Dockerfile").read_text()
     assert result.variables == list(KEYS)
+
+
+def test_the_development_guide_shows_the_pinned_base_image() -> None:
+    # The scheduled base-image workflow asks for one refresh of every copy.
+    assert f"FROM {BASE_IMAGE}\n" in DEVELOPMENT_GUIDE.read_text()
 
 
 def test_keys_are_only_variable_references() -> None:

@@ -142,6 +142,15 @@ first (for example `uv build`). Update the digest deliberately, after testing:
 `docker image inspect --format '{{index .RepoDigests 0}}' python:3.13-slim`
 prints the new `python@sha256:...` digest to put after `python:3.13-slim@`.
 
+For AgentFrame maintainers, the weekly
+[`Base image digest`](../../.github/workflows/base-image.yml) workflow (also
+runnable by hand) compares the template's pin with the tag's current digest.
+When the tag has moved, it opens one "Refresh the pinned python:3.13-slim
+digest" issue and fails; it never edits the repository. Refresh the pin in
+`src/agentframe/compose.py` (`BASE_IMAGE`), `tests/unit/golden/Dockerfile`
+and the example above together; the unit tests check that all three match.
+Projects that already generated a `Dockerfile` keep their own pin.
+
 Each agent becomes one service named after it. It runs
 `agentframe run APP --host 0.0.0.0 --port PORT` (all interfaces inside its
 container only), publishes the port on the host's `127.0.0.1` only, reports

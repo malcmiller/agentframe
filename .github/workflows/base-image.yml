@@ -1,0 +1,62 @@
+# Weekly check that the python:3.13-slim digest pinned by `agentframe compose`
+# (src/agentframe/compose.py, tests/unit/golden/Dockerfile and
+# docs/guides/development.md) is still the tag's current digest. When it is
+# not, it opens one issue and fails, so a maintainer refreshes the pin
+# deliberately; it never writes to the repository.
+name: Base image digest
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      IMAGE: python
+      TAG: 3.13-slim
+      ISSUE_TITLE: Refresh the pinned python:3.13-slim digest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare the pinned and current digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pinned=$(sed -n 's/^FROM .*@//p' tests/unit/golden/Dockerfile)
+          token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/${IMAGE}:pull" | jq -r .token)
+          current=$(curl -fsSI \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json" \
+            -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+            "https://registry-1.docker.io/v2/library/${IMAGE}/manifests/${TAG}" \
+            | tr -d '\r' | sed -n 's/^docker-content-digest: //Ip')
+          if [[ ! "${current}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not read the current ${IMAGE}:${TAG} digest."
+            exit 1
+          fi
+          echo "Pinned:  ${pinned}"
+          echo "Current: ${current}"
+          if [[ "${pinned}" == "${current}" ]]; then
+            exit 0
+          fi
+          open=$(gh issue list --state open --search "\"${ISSUE_TITLE}\" in:title" --json number --jq length)
+          if [[ "${open}" == "0" ]]; then
+            gh issue create --title "${ISSUE_TITLE}" --body "$(cat <<EOF
+          \`${IMAGE}:${TAG}\` now resolves to \`${current}\`; \`agentframe compose\` pins \`${pinned}\`.
+
+          After testing the new image, update the digest in \`src/agentframe/compose.py\` (\`BASE_IMAGE\`), \`tests/unit/golden/Dockerfile\` and \`docs/guides/development.md\`. See the Containers section of the development guide.
+
+          Opened by the [Base image digest workflow](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).
+          EOF
+          )"
+          fi
+          echo "::error::${IMAGE}:${TAG} moved to ${current}; refresh the pinned digest."
+          exit 1
