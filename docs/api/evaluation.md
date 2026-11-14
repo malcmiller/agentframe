@@ -356,7 +356,9 @@ reports unknown usage, never zero. At the deadline the case errors with
 `RemoteAgentError` (including an oversized reply), `ClarificationNeededError`,
 `OutputValidationError` and card or identity problems (`DefinitionError`)
 error only that case, keeping the error class and AgentFrame's safe message,
-never remote content.
+never remote content. The evaluation never answers a question back. See
+[agents not built with AgentFrame](../guides/evaluation.md#agents-not-built-with-agentframe)
+for other frameworks' and Foundry agents (#159).
 
 **Related:** [targets](../design/evaluation.md#targets),
 [discovery API](discovery.md).

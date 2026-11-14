@@ -413,7 +413,8 @@ skipped unless enabled). It lists the project and fetches the card read-only,
 then, as the real non-AgentFrame server of the
 [interoperability acceptance](#interoperability-with-non-agentframe-agents),
 `ask`s the agent one short message (usage stays unknown) and checks that
-`call` is refused before sending. One-time setup, outside AgentFrame:
+`call` is refused before sending; it also evaluates the agent with one
+[`A2ATarget`](evaluation.md#a2atarget) `ask` case (#159). One-time setup, outside AgentFrame:
 create a prompt agent in a Foundry project, enable incoming A2A as the guide
 shows, and give your `az login` identity Foundry User on the project (or the
 custom role above). Then:

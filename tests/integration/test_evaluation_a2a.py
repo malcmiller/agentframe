@@ -2,7 +2,7 @@
 
 The AgentFrame peer is an ``AgentApp`` served over localhost HTTP, with a
 scripted model that reports usage, an API key and a router for free text.
-The plain peer is a bare official-SDK server that advertises nothing.
+A bare official-SDK peer is evaluated in ``test_evaluation_interop.py``.
 """
 
 import asyncio
@@ -14,7 +14,6 @@ from a2a.helpers import get_message_text
 from a2a.types import Message
 from pydantic import BaseModel
 
-from a2a_peer import PeerExecutor, a2a_peer
 from agentframe import (
     Agent,
     AgentApp,
@@ -206,22 +205,6 @@ async def test_free_text_cases_ask_and_report_the_peers_usage(
     )
 
 
-async def test_a_peer_without_the_extension_reports_unknown_usage(
-    serve: ServeLocally,
-) -> None:
-    async with (
-        serve(a2a_peer(PeerExecutor())) as url,
-        AgentDirectory(sources=[OneAgent(url)]) as directory,
-    ):
-        target = A2ATarget(directory, "writer")
-        report = await evaluate(target, Case(id="hi", text="hi", expected="Echo: hi"))
-
-    [result] = report.results
-    assert result.status is CaseStatus.PASSED
-    assert result.usage is not None and result.usage.total_tokens is None
-    assert report.total_usage.unknown_cases == 1
-
-
 async def test_a_slow_peer_is_cut_off_at_the_case_deadline_and_cancelled(
     directory: AgentDirectory, writer: Writer
 ) -> None:
@@ -307,24 +290,3 @@ async def test_concurrent_repeats_fit_the_budget_with_the_peers_usage(
     ]
     assert report.passed_count == 4
     assert report.total_usage.total_tokens == 4 * 42
-
-
-async def test_unknown_usage_keeps_the_whole_hold_so_later_cases_do_not_run(
-    serve: ServeLocally,
-) -> None:
-    options = RunOptions(limits=RunLimits(max_total_tokens=1000))
-    async with (
-        serve(a2a_peer(PeerExecutor())) as url,
-        AgentDirectory(sources=[OneAgent(url)]) as directory,
-    ):
-        evaluation = Evaluation(
-            cases=[Case(id=name, text=name) for name in ("a", "b", "c")],
-            target=A2ATarget(directory, "writer", options=options),
-            scorers=[contains("Echo")],
-            concurrency=1,
-            max_total_tokens=2000,
-        )
-        report = await evaluation.run()
-
-    statuses = [result.status for result in report.results]
-    assert statuses == [CaseStatus.PASSED, CaseStatus.PASSED, CaseStatus.NOT_RUN]

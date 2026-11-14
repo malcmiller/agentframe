@@ -10,6 +10,13 @@ changelog.
 
 ### Added
 
+- **Evaluation (M9):** `A2ATarget` is proven against agents not built with
+  AgentFrame: CI evaluates a plain official-SDK A2A agent with free-text cases
+  (usage reported as unknown, never 0; a `skill=` case refused before
+  sending; a question back errors the case with `ClarificationNeededError`),
+  and an opt-in `foundry` test evaluates a real Foundry A2A agent through
+  `FoundryAgentRegistry` and `EntraAppCredential`. The evaluation guide has a
+  new "Agents not built with AgentFrame" section (#159).
 - **Evaluation (M9):** `EvalReport.write_json(path)` writes a versioned JSON
   document (`"schema": "agentframe.evaluation.report/1"`) with the AgentFrame
   version, target, scorer names, every aggregate (including `not_run_count`,

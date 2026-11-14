@@ -163,7 +163,10 @@ agent and fetches that agent's card, read-only. It runs only with
 roles are in `docs/api/discovery.md#foundryagentregistry`. The same agent is the
 real non-AgentFrame server for #94: one test `ask`s it once, another checks
 `call` is refused before sending. In CI, `test_multi_agent_interop.py` proves
-both directions against a plain SDK peer (`tests/support/a2a_peer.py`).
+both directions against a plain SDK peer (`tests/support/a2a_peer.py`). For
+#159 the same file evaluates the agent with one `A2ATarget` `ask` case and
+checks a `skill=` case is refused before sending; `test_evaluation_interop.py`
+does the same against the plain SDK peer in CI.
 
 `tests/integration/test_entra_interoperability.py` has one opt-in `entra` test
 using a real token from `az account get-access-token`, enabled with

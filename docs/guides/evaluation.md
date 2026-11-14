@@ -58,6 +58,66 @@ Real-model evaluations follow the repository's opt-in convention: mark the test
 from the documented environment variables. Foundry evaluations cost money, so
 keep datasets and output caps small.
 
+## Agents not built with AgentFrame
+
+[`A2ATarget`](../api/evaluation.md#a2atarget) evaluates any A2A 1.0 agent, so
+one harness scores every agent you depend on, including other frameworks' agents
+and Foundry agents (M9 #159). Such an agent's card does not declare
+AgentFrame's skill-call extension, so:
+
+- Use free-text cases (`text=`) and leave `skill=` unset. A `skill=` target
+  against such an agent errors each case with `RemoteAgentError` before
+  anything is sent, exactly as `Remote.call` does; there is no fallback to
+  free text.
+- Its token usage is unknown, never 0: the report's token cells say `unknown`
+  and the JSON has `null`. With an evaluation-wide `max_total_tokens`, each
+  case keeps its whole per-case hold, so fewer cases fit, and the summary's
+  budget line ends with `not fully enforced (N attempts with unknown usage)`
+  (`budget_fully_enforced` is `false` in the JSON). A `require(
+  max_total_tokens=...)` threshold never passes.
+- A question back (`TASK_STATE_INPUT_REQUIRED`) errors the case with
+  `ClarificationNeededError`. The evaluation never answers back; write cases
+  the agent can answer in one turn.
+
+A Foundry agent is found through
+[`FoundryAgentRegistry`](../api/discovery.md#foundryagentregistry) and needs an
+app token for `https://ai.azure.com/.default`; its card declares that security,
+so a case without a matching identity errors with `DefinitionError`:
+
+```python
+from azure.identity.aio import AzureCliCredential
+
+from agentframe import (
+    AgentDirectory,
+    EntraAppCredential,
+    FoundryAgentRegistry,
+    Service,
+)
+from agentframe.evaluation import A2ATarget, Case, Evaluation, contains
+
+async with AzureCliCredential() as credential:
+    source = FoundryAgentRegistry(
+        project_endpoint=project_endpoint,  # application setting
+        credential=credential,
+    )
+    token = EntraAppCredential(credential, scope="https://ai.azure.com/.default")
+    async with AgentDirectory(sources=[source]) as directory:
+        report = await Evaluation(
+            cases=[Case(id="ready", text="Reply with: ready")],
+            target=A2ATarget(
+                directory, "my-foundry-agent", identity=Service(credential=token)
+            ),
+            scorers=[contains("ready")],
+        ).run()
+```
+
+This repository evaluates a plain official-SDK agent in CI
+(`tests/integration/test_evaluation_interop.py`) and a real Foundry agent in an
+opt-in `foundry` test (`tests/integration/test_foundry_agents.py`, enabled with
+`AGENTFRAME_TEST_FOUNDRY_AGENTS=1`, `AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT` and
+`AGENTFRAME_FOUNDRY_A2A_AGENT` after `az login`). Foundry agents cost money per
+case; keep such datasets to a few short prompts.
+
 ## Keep the report
 
 Upload the [`write_json`](../api/evaluation.md#evalreportwrite_json) file as a
