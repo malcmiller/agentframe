@@ -5,6 +5,7 @@ and fails any other request. Calls that reach real agents are in
 ``tests/integration/test_remote_tools_hosted.py``.
 """
 
+import asyncio
 from collections.abc import Iterable
 from typing import Any
 
@@ -20,13 +21,18 @@ from agentframe import (
     AgentReference,
     AgentRegistry,
     DefinitionError,
+    ExecutionPolicy,
     FoundryModel,
     Model,
     ModelCapabilities,
     PermissionDeniedError,
+    PolicyUnavailableError,
+    Principal,
     Remote,
     RemoteSkill,
     RunContext,
+    RunLimits,
+    RunOptions,
     Runtime,
     SkillCatalog,
     ToolCall,
@@ -134,10 +140,21 @@ class Orchestrator(Agent):
         return await ctx.generate(goal, tools=iter([*self.extra, *entries]))
 
 
-async def answer(cards: Cards, orchestrator: Orchestrator) -> str:
+async def answer(
+    cards: Cards,
+    orchestrator: Orchestrator,
+    *,
+    principal: Principal | None = None,
+    policy: ExecutionPolicy | None = None,
+    limits: RunLimits | None = None,
+) -> str:
     async with cards.directory() as directory:
-        result: str = await Runtime(directory=directory).invoke(
-            orchestrator, skill="answer", arguments={"goal": "Research tides"}
+        result: str = await Runtime(directory=directory, policy=policy).invoke(
+            orchestrator,
+            skill="answer",
+            arguments={"goal": "Research tides"},
+            principal=principal,
+            options=RunOptions(limits=limits),
         )
     return result
 
@@ -290,3 +307,206 @@ async def test_max_tokens_per_call_must_be_a_positive_whole_number(
 
     with pytest.raises(DefinitionError, match="max_tokens_per_call"):
         await answer(Cards({}), Orchestrator(model, max_tokens_per_call=ceiling))
+
+
+# Permissions and tool checks (#168)
+
+REFUND_SCHEMA = {
+    "type": "object",
+    "properties": {"amount": {"type": "number"}},
+    "required": ["amount"],
+}
+BILLING = card("billing-agent", {"refund": REFUND_SCHEMA})
+REFUNDS = {"billing-agent.refund": {"refunds:write"}}
+CLERK = Principal("clerk", frozenset({"refunds:write"}))
+VISITOR = Principal("visitor")
+
+
+def refund(amount: object = 50, call_id: str = "1") -> ToolCall:
+    return ToolCall(call_id, "billing-agent_refund", f'{{"amount": {amount}}}')
+
+
+class Recorder:
+    """A tool check that records what it saw and answers ``decision``."""
+
+    def __init__(self, decision: object = True) -> None:
+        self.decision = decision
+        self.seen: list[tuple[Any, ...]] = []
+
+    async def __call__(self, *checked: Any) -> bool:
+        self.seen.append(checked)
+        return self.decision  # type: ignore[return-value]
+
+
+def offered(model: ScriptedModel) -> list[str]:
+    return [spec.name for spec in model.requests[0].tools]
+
+
+@pytest.mark.parametrize(
+    ("principal", "expected"),
+    [
+        (CLERK, ["lookup", "billing-agent_refund", "plain"]),
+        (VISITOR, ["lookup", "plain"]),
+        (None, ["lookup", "plain"]),
+    ],
+)
+async def test_entries_the_caller_lacks_permissions_for_are_not_offered(
+    principal: Principal | None, expected: list[str]
+) -> None:
+    model = scripted("done")
+    orchestrator = Orchestrator(model, lookup, permissions=REFUNDS)
+
+    await answer(
+        Cards({"billing-agent": BILLING, "plain": PLAIN}),
+        orchestrator,
+        principal=principal,
+    )
+
+    assert offered(model) == expected
+    assert orchestrator.catalog is not None
+    [billing, plain] = orchestrator.catalog.entries
+    assert billing.requires_permissions == {"refunds:write"}
+    assert plain.requires_permissions == frozenset()
+
+
+@pytest.mark.parametrize("arguments", ['{"amount": 50}', "not json"])
+async def test_a_call_to_a_hidden_entry_fails_the_run_without_sending(
+    arguments: str,
+) -> None:
+    cards = Cards({"billing-agent": BILLING})
+    check = Recorder()
+    model = scripted(ToolCall("1", "billing-agent_refund", arguments), "unsent")
+
+    with pytest.raises(PermissionDeniedError) as denied:
+        await answer(
+            cards,
+            Orchestrator(model, permissions=REFUNDS),
+            principal=VISITOR,
+            policy=ExecutionPolicy(tool_checks=[check]),
+        )
+
+    assert str(denied.value) == (
+        "Remote skill 'billing-agent.refund' requires permissions the caller "
+        "does not hold"
+    )
+    # Checked before the arguments, and before any tool check.
+    assert check.seen == []
+    assert len(model.requests) == 1
+    assert cards.posts == 0
+
+
+async def test_a_tool_check_sees_the_entry_name_arguments_and_the_skill() -> None:
+    cards = Cards({"billing-agent": BILLING})
+
+    async def no_refunds_over_100(
+        skill: Any, principal: Any, tool_name: str, arguments: Any
+    ) -> bool:
+        seen.append((skill, principal, tool_name, arguments))
+        return tool_name != "billing-agent.refund" or arguments["amount"] <= 100
+
+    seen: list[tuple[Any, ...]] = []
+    model = scripted(
+        (
+            ToolCall("1", "lookup", '{"text": "policy"}'),
+            refund(500, "2"),
+        ),
+        "unsent",
+    )
+
+    with pytest.raises(PermissionDeniedError) as denied:
+        await answer(
+            cards,
+            Orchestrator(model, lookup, permissions=REFUNDS),
+            principal=CLERK,
+            policy=ExecutionPolicy(tool_checks=[no_refunds_over_100]),
+        )
+
+    assert str(denied.value) == (
+        "Tool 'billing-agent.refund' was blocked by an execution policy check"
+    )
+    [lookup_call, refund_call] = seen
+    # Remote entries get the same skill object as @tool calls.
+    assert refund_call[0] is lookup_call[0]
+    assert lookup_call[0].id == "answer"
+    assert lookup_call[2] == "lookup"
+    assert refund_call[1:] == (CLERK, "billing-agent.refund", {"amount": 500})
+    with pytest.raises(TypeError):
+        refund_call[3]["amount"] = 1
+    assert len(model.requests) == 1
+    assert cards.posts == 0
+
+
+async def test_a_raising_tool_check_fails_the_run_without_sending() -> None:
+    async def broken(*checked: Any) -> bool:
+        raise RuntimeError(f"policy service down while checking {checked!r}")
+
+    cards = Cards({"billing-agent": BILLING})
+    model = scripted(refund(), "unsent")
+
+    with pytest.raises(PolicyUnavailableError) as unavailable:
+        await answer(
+            cards,
+            Orchestrator(model),
+            policy=ExecutionPolicy(tool_checks=[broken]),
+        )
+
+    assert str(unavailable.value) == (
+        "Tool 'billing-agent.refund' could not be checked: an execution policy "
+        "check is unavailable"
+    )
+    assert cards.posts == 0
+
+
+async def test_a_tool_check_still_running_at_the_deadline_fails_closed() -> None:
+    async def hangs(*checked: Any) -> bool:
+        await asyncio.sleep(10)
+        return True
+
+    cards = Cards({"billing-agent": BILLING})
+
+    with pytest.raises(PolicyUnavailableError):
+        await asyncio.wait_for(
+            answer(
+                cards,
+                Orchestrator(scripted(refund(), "unsent")),
+                policy=ExecutionPolicy(tool_checks=[hangs]),
+                limits=RunLimits(timeout_seconds=1),
+            ),
+            3,
+        )
+    assert cards.posts == 0
+
+
+async def test_hidden_entries_still_count_toward_the_catalog_limit() -> None:
+    skills = {f"s{number}": TOPIC_SCHEMA for number in range(21)}
+    permissions = {f"many.s{number}": {"admin"} for number in range(20)}
+    model = scripted()
+
+    with pytest.raises(DefinitionError, match="21 entries"):
+        await answer(
+            Cards({"many": card("many", skills)}),
+            Orchestrator(model, permissions=permissions),
+            principal=VISITOR,
+        )
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        {"billing-agent.refund": "refunds:write"},
+        {"billing-agent.refund": 1},
+        {"billing-agent.refund": [1]},
+        {1: ["refunds:write"]},
+        ["billing-agent.refund"],
+    ],
+)
+async def test_permissions_must_map_names_to_lists_of_strings(
+    permissions: object,
+) -> None:
+    model = scripted()
+
+    with pytest.raises(DefinitionError, match="permissions="):
+        await answer(
+            Cards({"billing-agent": BILLING}),
+            Orchestrator(model, permissions=permissions),
+        )
