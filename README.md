@@ -16,9 +16,10 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 
 ## Status
 
-AgentFrame 0.1.0, the first usable single-agent release (milestones M0 to M7),
-is [published on PyPI](https://pypi.org/project/agentframe-py/0.1.0/), and 0.2.0
-adds multi-agent composition (M8+; see the [changelog](CHANGELOG.md)). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
+AgentFrame 0.2.0, the multi-agent release (M8+), is
+[published on PyPI](https://pypi.org/project/agentframe-py/0.2.0/); it builds on
+0.1.0, the first usable single-agent release (milestones M0 to M7). See the
+[changelog](CHANGELOG.md). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
 permission checks and a timeout. M2 native A2A hosting is complete: `AgentApp`
 serves an agent as an ASGI application with its Agent Card and an authenticated
@@ -47,7 +48,7 @@ M7 hardening is in place: host limit ceilings, run admission, request and
 response size limits, graceful shutdown with `/health` and `/ready`, A2A
 message deduplication, `EntraIDAuth` and `ExecutionPolicy` checks, proven end
 to end by `tests/integration/test_hardening.py`.
-M8+ multi-agent composition, version 0.2.0, is complete: registries and a
+M8+ multi-agent composition, released as 0.2.0, is complete: registries and a
 managed `AgentDirectory`, `Remote[Literal["name"]]` bindings with `call` and `ask`, deadline, token,
 hop-depth and correlation propagation, service and Entra on-behalf-of
 identity, `agentframe dev` and `agentframe compose` (see
