@@ -38,6 +38,7 @@ from agentframe import (
     Plan,
     PlanResult,
     PlanStep,
+    PolicyUnavailableError,
     Principal,
     RemoteAgentError,
     RunContext,
@@ -754,3 +755,133 @@ async def test_on_failure_must_be_stop_or_continue(
         await execute(agents, Orchestrator(on_failure="ignore"), plan)
 
     assert research.calls == []
+
+
+# Plan checks (#174)
+
+
+async def test_a_plan_check_sees_every_step_before_any_and_tool_checks_still_run(
+    agents: Agents, research: Research
+) -> None:
+    seen: list[Plan] = []
+    recorder = Recorder()
+
+    async def allow(
+        skill: SkillDefinition, principal: Principal | None, plan: Plan
+    ) -> bool:
+        assert research.calls == []
+        seen.append(plan.model_copy(deep=True))
+        # Each check gets a copy, so changing it changes nothing that runs.
+        plan.steps[0].arguments["topic"] = "changed"
+        return True
+
+    result = await execute(
+        agents,
+        Orchestrator(),
+        TIDES_AND_WAVES,
+        policy=ExecutionPolicy(plan_checks=[allow, allow], tool_checks=[recorder]),
+    )
+
+    # The second check saw the whole plan, references included, unchanged
+    # by the first.
+    assert seen[1] == TIDES_AND_WAVES
+    assert seen[1].steps[2].arguments["sources"] == {"$ref": "tides.sources"}
+    assert ("find_sources", {"topic": "tides"}) in research.calls
+    assert result.value == "tides source + waves source"
+    assert len(recorder.seen) == 3
+
+
+@pytest.mark.parametrize("decision", [False, None, 1, "yes"])
+@pytest.mark.parametrize("on_failure", ["stop", "continue"])
+async def test_a_denying_plan_check_sends_no_step_under_either_failure_policy(
+    agents: Agents,
+    research: Research,
+    peer: PeerExecutor,
+    decision: object,
+    on_failure: str,
+) -> None:
+    async def deny(
+        skill: SkillDefinition, principal: Principal | None, plan: Plan
+    ) -> Any:
+        return decision
+
+    plan = Plan(
+        steps=[find("tides", "tides"), PlanStep(id="post", use="peer", text="hi")],
+        result="post",
+    )
+
+    with pytest.raises(PermissionDeniedError) as raised:
+        await execute(
+            agents,
+            Orchestrator(on_failure=on_failure),
+            plan,
+            policy=ExecutionPolicy(plan_checks=[deny]),
+        )
+
+    assert raised.value.message == "The plan was blocked by an execution policy check"
+    assert research.calls == []
+    assert peer.requests == []
+
+
+async def test_a_raising_plan_check_fails_closed_without_revealing_the_plan(
+    agents: Agents, research: Research
+) -> None:
+    async def broken(
+        skill: SkillDefinition, principal: Principal | None, plan: Plan
+    ) -> bool:
+        raise RuntimeError(f"secret {plan.steps[0].arguments}")
+
+    with pytest.raises(PolicyUnavailableError) as raised:
+        await execute(
+            agents,
+            Orchestrator(),
+            TIDES_AND_WAVES,
+            policy=ExecutionPolicy(plan_checks=[broken]),
+        )
+
+    assert raised.value.message == (
+        "The plan could not be checked: an execution policy check is unavailable"
+    )
+    assert research.calls == []
+
+
+async def test_a_plan_check_still_running_at_the_deadline_fails_closed(
+    agents: Agents, research: Research
+) -> None:
+    async def slow(
+        skill: SkillDefinition, principal: Principal | None, plan: Plan
+    ) -> bool:
+        await asyncio.sleep(60)
+        return True
+
+    with pytest.raises(PolicyUnavailableError):
+        await execute(
+            agents,
+            Orchestrator(),
+            TIDES_AND_WAVES,
+            limits=RunLimits(timeout_seconds=0.5),
+            policy=ExecutionPolicy(plan_checks=[slow]),
+        )
+
+    assert research.calls == []
+
+
+async def test_plan_checks_run_only_on_a_plan_the_catalog_check_accepted(
+    agents: Agents,
+) -> None:
+    checked: list[Plan] = []
+
+    async def record(
+        skill: SkillDefinition, principal: Principal | None, plan: Plan
+    ) -> bool:
+        checked.append(plan)
+        return True
+
+    plan = Plan(steps=[find("tides", "tides")], result="missing")
+
+    with pytest.raises(InputValidationError):
+        await execute(
+            agents, Orchestrator(), plan, policy=ExecutionPolicy(plan_checks=[record])
+        )
+
+    assert checked == []

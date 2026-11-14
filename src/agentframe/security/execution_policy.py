@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     # Imported only for type checking: the generation layer imports this
     # module, and skill definitions import the generation layer.
     from agentframe.authoring.definitions import SkillDefinition
+    from agentframe.orchestration.plan import Plan
 
 
 class InputCheck(Protocol):
@@ -96,6 +97,31 @@ class ToolCheck(Protocol):
         ...
 
 
+class PlanCheck(Protocol):
+    """Checks a whole plan in ``RunContext.run_plan``, before any step is sent.
+
+    Any async function or callable object taking these three
+    arguments works; they are passed by position.
+    """
+
+    async def __call__(
+        self,
+        skill: "SkillDefinition",
+        principal: Principal | None,
+        plan: "Plan",
+        /,
+    ) -> bool:
+        """Return ``True`` to run the plan; any other value denies it.
+
+        Args:
+            skill: Definition of the skill running the plan.
+            principal: Verified caller identity, or ``None``.
+            plan: A copy of the checked plan: every step's entry, arguments,
+                text and references. Changing it changes nothing that runs.
+        """
+        ...
+
+
 class OutputCheck(Protocol):
     """Checks a skill's validated value before it is returned.
 
@@ -135,12 +161,16 @@ class ExecutionPolicy:
             not again when a transient failure is retried.
         tool_checks: Run before every tool call, after its arguments are
             validated and the call is authorized. Tool calls are never retried.
+        plan_checks: Run once by ``RunContext.run_plan``, after the plan is
+            checked against the catalog and before its first step is sent.
+            Tool checks still run for every step.
         output_checks: Run after the skill's value is validated.
     """
 
     input_checks: Sequence[InputCheck] = ()
     model_request_checks: Sequence[ModelRequestCheck] = ()
     tool_checks: Sequence[ToolCheck] = ()
+    plan_checks: Sequence[PlanCheck] = ()
     output_checks: Sequence[OutputCheck] = ()
 
 
@@ -194,6 +224,28 @@ async def enforce_tool_checks(
     subject = f"Tool '{tool}'"
     for check in checks:
         await ask_check(check, (skill, principal, tool, arguments), subject, deadline)
+
+
+async def enforce_plan_checks(
+    checks: Sequence[PlanCheck],
+    skill: "SkillDefinition",
+    principal: Principal | None,
+    plan: "Plan",
+    deadline: float,
+) -> None:
+    """Run plan ``checks`` in order on ``plan``, failing closed.
+
+    Each check gets its own deep copy, so no check can change what runs or
+    what a later check sees. Errors never describe the plan's content.
+
+    Raises:
+        PermissionDeniedError: A check returned something other than ``True``.
+        PolicyUnavailableError: A check raised, or had not answered by
+            ``deadline``.
+    """
+    for check in checks:
+        arguments = (skill, principal, plan.model_copy(deep=True))
+        await ask_check(check, arguments, "The plan", deadline)
 
 
 async def ask_check(

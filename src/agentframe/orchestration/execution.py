@@ -1,6 +1,7 @@
 """Running a checked plan: the executor behind ``RunContext.run_plan``.
 
-Steps run under one ``asyncio.TaskGroup``. A step waits for the steps it
+The execution policy's plan checks see the whole plan first; then steps run
+under one ``asyncio.TaskGroup``. A step waits for the steps it
 depends on, then for one of ``max_parallel`` slots, then is checked and sent
 through the run's binding to its agent. No model sees any result between
 steps: references are filled in by copying values. By default the first
@@ -36,7 +37,10 @@ from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.tools import is_permitted
 from agentframe.runtime.usage import Usage
-from agentframe.security.execution_policy import enforce_tool_checks
+from agentframe.security.execution_policy import (
+    enforce_plan_checks,
+    enforce_tool_checks,
+)
 from agentframe.security.principal import Principal
 
 DEFAULT_MAX_PARALLEL = 4
@@ -138,6 +142,7 @@ async def run_plan(
     # noinspection PyProtectedMember
     groups = catalog._visible_to(principal).check(plan, max_steps=max_steps)
     steps = [step for group in groups for step in group]
+    await _check_plan(plan, generation, principal, deadline)
     tokens = max_tokens_per_step or _equal_share(generation, len(steps))
     execution = _Execution(
         catalog, generation, principal, deadline, max_parallel, tokens, on_failure
@@ -145,6 +150,27 @@ async def run_plan(
     results = await execution.run(steps)
     complete = all(result.status == "completed" for result in results.values())
     return PlanResult(results[plan.result].value, MappingProxyType(results), complete)
+
+
+async def _check_plan(
+    plan: Plan,
+    generation: GenerationState,
+    principal: Principal | None,
+    deadline: float,
+) -> None:
+    """Run the policy's plan checks on the whole plan, before any step is sent.
+
+    Raises:
+        PermissionDeniedError: A plan check denied the plan.
+        PolicyUnavailableError: A plan check raised or did not answer before
+            the run's deadline.
+    """
+    policy, skill = generation.policy, generation.skill
+    if policy is None or not policy.plan_checks:
+        return
+    # Plans run only inside a skill; routing never runs one.
+    assert skill is not None
+    await enforce_plan_checks(policy.plan_checks, skill, principal, plan, deadline)
 
 
 def _check_whole_number(name: str, value: int) -> None:
