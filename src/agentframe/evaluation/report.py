@@ -1,14 +1,22 @@
 """Evaluation results: a ``CaseResult`` per attempt, in an ``EvalReport``."""
 
+import json
 import math
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
+from pydantic_core import to_jsonable_python
+
+import agentframe
 from agentframe.runtime.usage import FinishReason, Usage
+
+# The JSON report's schema identifier; the number goes up on breaking changes.
+_SCHEMA = "agentframe.evaluation.report/1"
 
 
 class CaseStatus(StrEnum):
@@ -166,10 +174,17 @@ class EvalReport:
     Attributes:
         results: One result per attempt, in case order, then attempt order.
         max_total_tokens: The evaluation-wide token budget, or ``None``.
+        target: What the cases ran against, for example
+            ``{"type": "local_skill", "agent": "assistant", "skill": "count_words"}``.
+        scorers: The scorers' names, in scorer order.
+        capture_content: Whether the results keep case content.
     """
 
     results: tuple[CaseResult, ...]
     max_total_tokens: int | None = None
+    target: Mapping[str, str] = field(default_factory=dict)
+    scorers: tuple[str, ...] = ()
+    capture_content: bool = False
 
     @property
     def passed_count(self) -> int:
@@ -301,6 +316,84 @@ class EvalReport:
         error_types = [result.error_type for result in self._ran]
         return dict(Counter(name for name in error_types if name is not None))
 
+    def write_json(self, path: str | Path) -> None:
+        """Write the report as a versioned JSON document, for CI artifacts.
+
+        The document's ``"schema"`` is ``"agentframe.evaluation.report/1"``.
+        It holds the AgentFrame version, the target, scorer names, every
+        aggregate and one entry per attempt. Unknown token counts are
+        ``null``, never 0. Like the summary, it holds no case content (case
+        inputs, expected values, outputs, score reasons) and no error
+        messages unless the evaluation captured content; a ``not_run``
+        attempt's fixed reason is always kept. Treat a file with content as
+        sensitive.
+
+        Example::
+
+            report.write_json("eval-report.json")
+
+        Args:
+            path: Where to write the file; an existing file is replaced.
+        """
+        document = json.dumps(_report_json(self), indent=2, ensure_ascii=False)
+        Path(path).write_text(document + "\n", encoding="utf-8")
+
+    def require(
+        self,
+        *,
+        min_pass_rate: float | None = None,
+        max_errors: int | None = 0,
+        max_total_tokens: int | None = None,
+        allow_not_run: bool = False,
+        allow_over_budget: bool = False,
+    ) -> None:
+        """Fail, like a test assertion, when the report misses a threshold.
+
+        By default an errored or not-run attempt, or reported usage over the
+        evaluation's budget, fails; ``max_errors=None``, ``allow_not_run=True``
+        and ``allow_over_budget=True`` accept them.
+
+        Example::
+
+            async def test_count_words() -> None:
+                report = await evaluation.run()
+                report.require(min_pass_rate=0.9)
+
+        Args:
+            min_pass_rate: The lowest acceptable ``pass_rate``, from 0.0 to
+                1.0. Missed when no attempt ran, whatever the value.
+            max_errors: The most errored attempts accepted; ``None`` accepts
+                any number.
+            max_total_tokens: The most tokens the evaluation may have used.
+                Missed when any attempt's usage is unknown, since the total
+                cannot be shown to be within it.
+            allow_not_run: Whether attempts that never started are accepted.
+            allow_over_budget: Whether reported usage over
+                ``EvalReport.max_total_tokens`` is accepted.
+
+        Raises:
+            AssertionError: A threshold was missed. The message lists each
+                miss, then the summary (``str(report)``), so it holds no case
+                content unless the evaluation captured it.
+            ValueError: ``min_pass_rate`` is outside 0.0 to 1.0,
+                ``max_errors`` is negative or ``max_total_tokens`` is not
+                greater than 0.
+        """
+        _check_thresholds(min_pass_rate, max_errors, max_total_tokens)
+        misses = _misses(
+            self,
+            min_pass_rate=min_pass_rate,
+            max_errors=max_errors,
+            max_total_tokens=max_total_tokens,
+            allow_not_run=allow_not_run,
+            allow_over_budget=allow_over_budget,
+        )
+        if misses:
+            listed = "\n".join(f"- {miss}" for miss in misses)
+            raise AssertionError(
+                f"Evaluation requirements not met:\n{listed}\n\n{self}"
+            )
+
     @property
     def _ran(self) -> list[CaseResult]:
         # The one place that leaves not_run attempts out of the aggregates.
@@ -330,6 +423,156 @@ def _percentile(sorted_durations: list[timedelta], percent: int) -> timedelta:
     # Nearest rank: the smallest duration with at least `percent`% at or below it.
     rank = math.ceil(percent / 100 * len(sorted_durations))
     return sorted_durations[max(rank, 1) - 1]
+
+
+def _check_thresholds(
+    min_pass_rate: float | None, max_errors: int | None, max_total_tokens: int | None
+) -> None:
+    if min_pass_rate is not None and not 0.0 <= min_pass_rate <= 1.0:
+        raise ValueError("min_pass_rate must be from 0.0 to 1.0.")
+    if max_errors is not None and max_errors < 0:
+        raise ValueError("max_errors must be 0 or more.")
+    if max_total_tokens is not None and not max_total_tokens > 0:
+        raise ValueError("max_total_tokens must be greater than 0.")
+
+
+def _misses(
+    report: EvalReport,
+    *,
+    min_pass_rate: float | None,
+    max_errors: int | None,
+    max_total_tokens: int | None,
+    allow_not_run: bool,
+    allow_over_budget: bool,
+) -> list[str]:
+    # Each miss names only counts and thresholds, never case content.
+    misses: list[str] = []
+    if min_pass_rate is not None:
+        if not report._ran:
+            misses.append("no attempt ran, so the pass rate cannot be checked")
+        elif report.pass_rate < min_pass_rate:
+            misses.append(
+                f"pass rate {_percent(report.pass_rate)} is below "
+                f"{_percent(min_pass_rate)}"
+            )
+    if max_errors is not None and report.errored_count > max_errors:
+        misses.append(
+            f"{report.errored_count} attempts errored; at most {max_errors} allowed"
+        )
+    if not allow_not_run and report.not_run_count:
+        misses.append(f"{report.not_run_count} attempts did not run")
+    usage = report.total_usage
+    if not allow_over_budget and report.over_budget:
+        misses.append(
+            f"{usage.known_total_tokens} reported tokens are over the budget of "
+            f"{report.max_total_tokens}"
+        )
+    if max_total_tokens is not None:
+        if usage.total_tokens is None:
+            misses.append(
+                f"token usage is unknown for {usage.unknown_cases} attempts, so it "
+                f"cannot be shown to be at most {max_total_tokens}"
+            )
+        elif usage.total_tokens > max_total_tokens:
+            misses.append(
+                f"{usage.total_tokens} tokens used; at most {max_total_tokens} allowed"
+            )
+    return misses
+
+
+def _report_json(report: EvalReport) -> dict[str, Any]:
+    usage = report.total_usage
+    budget_fully_enforced = (
+        None if report.max_total_tokens is None else usage.unknown_cases == 0
+    )
+    return {
+        "schema": _SCHEMA,
+        "agentframe_version": agentframe.__version__,
+        "target": dict(report.target),
+        "scorers": list(report.scorers),
+        "capture_content": report.capture_content,
+        "max_total_tokens": report.max_total_tokens,
+        "aggregates": {
+            "attempt_count": len(report.results),
+            "passed_count": report.passed_count,
+            "failed_count": report.failed_count,
+            "errored_count": report.errored_count,
+            "not_run_count": report.not_run_count,
+            "pass_rate": report.pass_rate,
+            "scorer_pass_rates": report.scorer_pass_rates,
+            "tag_pass_rates": report.tag_pass_rates,
+            "flaky_cases": report.flaky_cases,
+            "total_usage": asdict(usage),
+            "over_budget": report.over_budget,
+            "budget_fully_enforced": budget_fully_enforced,
+            "latency": _latency_json(report.latency),
+            "errors_by_class": report.errors_by_class,
+        },
+        "results": [
+            _result_json(result, capture_content=report.capture_content)
+            for result in report.results
+        ],
+    }
+
+
+def _result_json(result: CaseResult, *, capture_content: bool) -> dict[str, Any]:
+    # A not_run reason is one of the harness's fixed strings, never content.
+    keep_message = capture_content or result.status is CaseStatus.NOT_RUN
+    entry: dict[str, Any] = {
+        "case_id": result.case_id,
+        "attempt": result.attempt,
+        "status": str(result.status),
+        "tags": list(result.tags),
+        "scores": [
+            _score_json(score, capture_content=capture_content)
+            for score in result.scores
+        ],
+        "error_type": result.error_type,
+        "error_message": result.error_message if keep_message else None,
+        "invocation_id": result.invocation_id,
+        "usage": asdict(result.usage) if result.usage is not None else None,
+        "duration_seconds": _seconds_json(result.duration),
+        "model_calls": result.model_calls,
+        "tool_calls": result.tool_calls,
+        "finish_reason": result.finish_reason,
+    }
+    if capture_content:
+        entry["arguments"] = _content_json(result.arguments)
+        entry["text"] = result.text
+        entry["expected"] = _content_json(result.expected)
+        entry["output"] = _content_json(result.output)
+    return entry
+
+
+def _score_json(score: ScoreResult, *, capture_content: bool) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "scorer": score.scorer,
+        "passed": score.passed,
+        "value": score.value,
+    }
+    if capture_content:
+        entry["reason"] = score.reason
+    return entry
+
+
+def _latency_json(latency: Latency | None) -> dict[str, float] | None:
+    if latency is None:
+        return None
+    return {
+        "p50_seconds": latency.p50.total_seconds(),
+        "p95_seconds": latency.p95.total_seconds(),
+        "max_seconds": latency.max.total_seconds(),
+    }
+
+
+def _seconds_json(duration: timedelta | None) -> float | None:
+    return duration.total_seconds() if duration is not None else None
+
+
+def _content_json(value: Any) -> Any:
+    # Outputs may be Pydantic models, dataclasses or other types json cannot
+    # write; anything Pydantic cannot convert either is written as its repr.
+    return to_jsonable_python(value, fallback=repr)
 
 
 # Errored, failed and not-run attempts come before passed ones in the table.

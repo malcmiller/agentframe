@@ -376,7 +376,10 @@ Concurrency, repeats, the budget and the timeout are implemented (#157; see
 
 The aggregates and `str(report)` are implemented (#155); see
 [`EvalReport`](../api/evaluation.md#evalreport). `not_run`, attempts and
-`flaky` are implemented (#157); `judge_usage` arrives with the judge (#160).
+`flaky` are implemented (#157); `write_json` and `require` are implemented
+(#156), see [`EvalReport.write_json`](../api/evaluation.md#evalreportwrite_json)
+and the [evaluation guide](../guides/evaluation.md); `judge_usage` arrives with
+the judge (#160).
 
 Output formats:
 

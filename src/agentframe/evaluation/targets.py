@@ -60,6 +60,12 @@ class Target(Protocol):
     ``A2ATarget``."""
 
     @property
+    def description(self) -> dict[str, str]:
+        """What the target runs, for reports: names only, never URLs, identities
+        or credentials."""
+        ...
+
+    @property
     def token_ceiling(self) -> int:
         """The most tokens one case may use; an evaluation-wide budget holds
         this much for each case before it starts."""
@@ -122,10 +128,20 @@ class LocalSkill:
                 f"Agent '{definition.name}' has no skill '{skill}' to evaluate."
             )
         self._agent = agent
+        self._agent_name = definition.name
         self._skill: SkillDefinition = skill_definition
         self._runtime = runtime or Runtime()
         self._principal = principal
         self._options = options
+
+    @property
+    def description(self) -> dict[str, str]:
+        """What this target runs, for reports: its type, agent name and skill ID."""
+        return {
+            "type": "local_skill",
+            "agent": self._agent_name,
+            "skill": self._skill.id,
+        }
 
     @property
     def token_ceiling(self) -> int:
@@ -285,6 +301,18 @@ class A2ATarget:
         self._limits = merge_settings(
             DEFAULT_LIMITS, options.limits if options else None
         )
+
+    @property
+    def description(self) -> dict[str, str]:
+        """What this target calls, for reports: its type, the agent's
+        configured name, the skill ID (``""`` for free text) and the mode,
+        ``"call"`` or ``"ask"``. Never the URL, identity or credentials."""
+        return {
+            "type": "a2a",
+            "agent": self._name,
+            "skill": self._skill or "",
+            "mode": "ask" if self._skill is None else "call",
+        }
 
     @property
     def token_ceiling(self) -> int:

@@ -10,7 +10,10 @@ proposed API. Implemented so far: [`Case`](#case) and
 [`valid`](#valid) (#154); [`EvalReport`](#evalreport) aggregates and console
 summary, [`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155);
 [`A2ATarget`](#a2atarget), [`Target`](#target) and
-[`TargetResult`](#targetresult) (#158).
+[`TargetResult`](#targetresult) (#158);
+[`EvalReport.write_json`](#evalreportwrite_json) and
+[`EvalReport.require`](#evalreportrequire) (#156). See the
+[evaluation guide](../guides/evaluation.md) for pytest and CI use.
 Everything else in the design is unimplemented.
 
 Import from `agentframe.evaluation`, not `agentframe`. The package ships in the
@@ -230,7 +233,8 @@ so keep content out of exception messages, as for skills.
 one skill with [`Runtime.run`](runtime.md), so every case gets argument
 validation, permissions, authorization and execution policies, and limits.
 
-**Signature status:** implemented in M9 #153; `token_ceiling` in #157.
+**Signature status:** implemented in M9 #153; `token_ceiling` in #157;
+`description` in #156.
 
 ```text
 LocalSkill(agent: Agent, *, skill: str, runtime: Runtime | None = None,
@@ -272,6 +276,9 @@ The read-only property `token_ceiling: int` is the most tokens one case's run
 may use: its `max_total_tokens` resolved like the run's limits (library default
 100 000, then the agent, the skill and `options`). An evaluation-wide budget
 holds this much per attempt.
+
+The read-only property `description: dict[str, str]` names the target in
+reports: `{"type": "local_skill", "agent": <agent name>, "skill": <skill ID>}`.
 
 **Related:** [targets](../design/evaluation.md#targets).
 
@@ -334,7 +341,10 @@ each `expected` is validated against `output` (or `str` for free text) and
 converted to it, as for `LocalSkill`. The read-only property
 `token_ceiling: int` is the resolved per-case `max_total_tokens`; an
 evaluation-wide budget holds it per attempt. A peer that does not advertise
-usage reports it as unknown, so its whole hold stays charged.
+usage reports it as unknown, so its whole hold stays charged. The read-only
+property `description: dict[str, str]` names it in reports as
+`{"type": "a2a", "agent": <name>, "skill": <skill ID or "">, "mode": "call"
+or "ask"}`, never its URL, identity or credentials (#156).
 
 Each case is its own short root run with a new invocation ID: the binding
 holds `max_total_tokens` and sends it as the case's ceiling to peers that
@@ -357,15 +367,19 @@ never remote content.
 structural protocol, so `LocalSkill`, `A2ATarget` and application targets need
 no base class.
 
-**Signature status:** implemented in M9 #158 as a `typing.Protocol`.
+**Signature status:** implemented in M9 #158 as a `typing.Protocol`;
+`description` in #156.
 
 ```text
+Target.description -> dict[str, str]  # read-only property
 Target.token_ceiling -> int  # read-only property
 Target.check_case(case: Case[Any]) -> Case[Any]
 async Target.run(case: Case[Any]) -> TargetResult[Any]
 ```
 
-**Behavior / failures:** `token_ceiling` is the most tokens one case may use;
+**Behavior / failures:** `description` names the target in reports
+(`EvalReport.target` and the JSON `target`), with names only, never URLs,
+identities or credentials. `token_ceiling` is the most tokens one case may use;
 an evaluation-wide `max_total_tokens` holds it per attempt. `Evaluation` calls
 `check_case` for every case before any case runs; it returns the case (possibly with `expected` converted) or
 raises `DefinitionError`. `run` returns a [`TargetResult`](#targetresult); an
@@ -548,7 +562,9 @@ a readable console summary.
 
 **Signature status:** `results` implemented in M9 #153; aggregates and
 `str(report)` in #155; `max_total_tokens`, `not_run_count`, `flaky_cases` and
-`over_budget` in #157. JSON and `require` (#156) are proposed.
+`over_budget` in #157; `target`, `scorers`, `capture_content`,
+[`write_json`](#evalreportwrite_json) and [`require`](#evalreportrequire) in
+#156.
 
 Every aggregate counts attempts: with `repeats=3` each case adds three results.
 `not_run` attempts are counted only by `not_run_count` and left out of every
@@ -559,6 +575,9 @@ rate unseen; check `not_run_count` alongside `pass_rate`.
 | --- | --- | --- |
 | `results` | `tuple[CaseResult, ...]` | One [`CaseResult`](#caseresult) per attempt, in case order, then attempt order. |
 | `max_total_tokens` | `int \| None` | The evaluation-wide token budget, or `None`. |
+| `target` | `Mapping[str, str]` | The target's [`description`](#target), for example `{"type": "local_skill", "agent": "Assistant", "skill": "count_words"}`. |
+| `scorers` | `tuple[str, ...]` | The scorers' names, in scorer order. |
+| `capture_content` | `bool` | Whether the results keep case content. |
 | `passed_count`, `failed_count`, `errored_count` | `int` | Attempts per status; errored (target or scorer raised) is counted apart from failed (a scorer failed). |
 | `not_run_count` | `int` | Attempts that never started (budget or timeout). |
 | `pass_rate` | `float` | Passed attempts / attempts that ran, from `0.0` to `1.0`; errored attempts count against it, `not_run` ones are counted by `not_run_count` instead. `0.0` when none ran. |
@@ -632,6 +651,107 @@ b #1  passed   -                 15       -
 ```
 
 **Related:** [reports](../design/evaluation.md#reports).
+
+## `EvalReport.write_json`
+
+**Purpose / decision:** a versioned JSON document of the report, to keep as a CI
+artifact and compare later. The schema identifier is
+`agentframe.evaluation.report/1`, bumped on breaking changes
+([decision 2 of #156](https://github.com/malcmiller/agentframe/issues/156)).
+
+**Signature status:** implemented in M9 #156.
+
+```text
+EvalReport.write_json(path: str | Path) -> None
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `path` | `str \| Path` | Required | File to write as UTF-8 JSON; an existing file is replaced. |
+
+```python
+from agentframe.evaluation import EvalReport
+
+
+def keep(report: EvalReport) -> None:
+    report.write_json("eval-report.json")
+```
+
+The document's top-level keys:
+
+| Key | Meaning |
+| --- | --- |
+| `schema` | `"agentframe.evaluation.report/1"`. |
+| `agentframe_version` | The installed AgentFrame version. |
+| `target` | The report's `target`, for example `{"type": "local_skill", "agent": "Assistant", "skill": "count_words"}`. |
+| `scorers` | Scorer names, in scorer order. |
+| `capture_content` | Whether content was captured. |
+| `max_total_tokens` | The evaluation-wide budget, or `null`. |
+| `aggregates` | `attempt_count`, `passed_count`, `failed_count`, `errored_count`, `not_run_count`, `pass_rate`, `scorer_pass_rates`, `tag_pass_rates`, `flaky_cases`, `total_usage` (the [`UsageTotals`](#usagetotals) fields), `over_budget`, `budget_fully_enforced` (`null` without a budget, `false` when any attempt's usage is unknown), `latency` (`p50_seconds`, `p95_seconds`, `max_seconds`, or `null`) and `errors_by_class`. |
+| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
+
+**Behavior / failures:** unknown token counts are `null`, never 0. Like the
+console summary, the document holds no case content and no error messages by
+default: `arguments`, `text`, `expected`, `output` and each score's `reason`
+are left out, and `error_message` is `null` except for a `not_run` attempt's
+fixed reason. With `capture_content=True` they are all written; treat that
+file as sensitive. Captured values Pydantic cannot convert to JSON are written
+as their `repr`. File system errors propagate.
+
+**Related:** [pytest and CI](../design/evaluation.md#pytest-and-ci),
+[evaluation guide](../guides/evaluation.md).
+
+## `EvalReport.require`
+
+**Purpose / decision:** fail a pytest test or script when the report misses a
+threshold, so quality regressions fail a build like a test. There is no pytest
+plugin ([decision 15](../design/evaluation.md#decisions-confirmed-2026-11-13)).
+
+**Signature status:** implemented in M9 #156.
+
+```text
+EvalReport.require(*, min_pass_rate: float | None = None,
+                   max_errors: int | None = 0,
+                   max_total_tokens: int | None = None,
+                   allow_not_run: bool = False,
+                   allow_over_budget: bool = False) -> None
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `min_pass_rate` | `float \| None` | Optional; default `None` | Lowest acceptable `pass_rate`, from 0.0 to 1.0. Missed when no attempt ran, whatever the value. |
+| `max_errors` | `int \| None` | Optional; default `0` | Most errored attempts accepted, 0 or more; `None` accepts any number. |
+| `max_total_tokens` | `int \| None` | Optional; default `None` | Most tokens the evaluation may have used, greater than 0. Missed when any attempt's usage is unknown. |
+| `allow_not_run` | `bool` | Optional; default `False` | Whether attempts that never started are accepted. |
+| `allow_over_budget` | `bool` | Optional; default `False` | Whether reported usage over the report's `max_total_tokens` budget is accepted. |
+
+```python
+from agentframe.evaluation import Evaluation
+
+
+async def test_answers(evaluation: Evaluation) -> None:
+    report = await evaluation.run()
+    report.require(min_pass_rate=0.9)
+```
+
+**Behavior / failures:** raises `AssertionError` listing every missed threshold,
+then the console summary, for example:
+
+```text
+Evaluation requirements not met:
+- pass rate 66.7% is below 90.0%
+- 1 attempts errored; at most 0 allowed
+
+Evaluation: 3 cases, 2 passed, 0 failed, 1 errored (pass rate 66.7%)
+...
+```
+
+The listed misses hold counts and thresholds only, and the summary holds no
+case content unless the evaluation captured it. Unknown usage never passes a
+token threshold. A threshold out of range raises `ValueError`.
+
+**Related:** [pytest and CI](../design/evaluation.md#pytest-and-ci),
+[evaluation guide](../guides/evaluation.md).
 
 ## `UsageTotals`
 
