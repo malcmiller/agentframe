@@ -32,6 +32,10 @@ from a2a_client import call_skill, connect, say
 from agentframe import (
     Agent,
     AgentApp,
+    AgentDirectory,
+    AgentQuery,
+    AgentReference,
+    AgentRegistry,
     AllowAnonymous,
     FoundryModel,
     HostConfig,
@@ -382,6 +386,77 @@ async def test_order_example_uses_a_tool_over_a2a(
     assert usage["model_calls"] == 2
     assert usage["total_tokens"]
     assert not usage["estimated"]
+
+
+# Remote skills as model tools: a real model picks another agent's skill
+
+
+@agent(name="Order records", description="Knows where orders are.", version="1.0.0")
+class OrderRecords(Agent):
+    """A model-free specialist the orchestrator's model can call over A2A."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.looked_up: list[str] = []
+
+    @skill(id="order_status", tags=["orders"])
+    async def order_status(self, order_id: str, ctx: RunContext) -> dict[str, str]:
+        """Look up the delivery status of an order by its ID."""
+        self.looked_up.append(order_id)
+        return {"order_id": order_id, "status": "delivered", "delivery_day": "Tuesday"}
+
+
+@agent(version="1.0.0")
+class OrderDispatcher(Agent):
+    """Answers order questions with the skills of registered agents."""
+
+    instructions = "Answer in one short sentence."
+    model_settings = ModelSettings(max_output_tokens=64)
+    limits = RunLimits(max_input_tokens=2000, max_tool_calls=2)
+
+    @skill("status", tags=["orders"])
+    async def status(self, question: str, ctx: RunContext) -> str:
+        """Answer a question about an order."""
+        skills = await ctx.remote_skills()
+        return await ctx.generate(question, tools=[*skills])
+
+
+class OneAgent(AgentRegistry):
+    """Lists one agent, ``orders``, served at ``base_url``."""
+
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url
+
+    async def get(self, agent_id: str) -> AgentReference:
+        raise NotImplementedError
+
+    async def list(self, query: AgentQuery) -> list[AgentReference]:
+        card_url = f"{self.base_url}/.well-known/agent-card.json"
+        return [AgentReference("orders", card_url)]
+
+
+async def test_a_model_calls_a_remote_skill_as_a_tool(
+    serve: ServeLocally, model: Model
+) -> None:
+    await require_tools(model)
+    records = OrderRecords()
+
+    def make_app(public_url: str) -> AgentApp:
+        host = HostConfig(public_url=public_url, auth=AllowAnonymous())
+        return AgentApp(agent=records, host=host)
+
+    async with (
+        serve(make_app) as base_url,
+        AgentDirectory(sources=[OneAgent(base_url)]) as directory,
+    ):
+        await Runtime(directory=directory).run(
+            OrderDispatcher(model=model),
+            skill="status",
+            arguments={"question": "On which day was order A1 delivered?"},
+        )
+
+    # The model is nondeterministic: only check that it called the entry.
+    assert records.looked_up
 
 
 # Model routing: free text over A2A, routed by the built-in router
