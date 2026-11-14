@@ -1,12 +1,16 @@
 """Per-run context passed to skills."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
 from typing import Any, overload
 
 from pydantic import BaseModel
 
+from agentframe.discovery.remote import Remote
+from agentframe.errors import DefinitionError
+from agentframe.orchestration.catalog import SkillCatalog, build_catalog
 from agentframe.runtime.generation import GenerationState
+from agentframe.runtime.remotes import RunRemotes
 from agentframe.security.principal import Principal
 
 
@@ -30,6 +34,8 @@ class RunContext:
     # must change as the run makes model calls.
     _generation: GenerationState = field(repr=False, compare=False)
     hops: int = 0
+    # Private per-run bindings to remote agents; None without a directory.
+    _remotes: RunRemotes | None = field(default=None, repr=False, compare=False)
 
     @overload
     async def generate(
@@ -124,4 +130,71 @@ class RunContext:
             return await self._generation.generate_text(self, text, instructions, tools)
         return await self._generation.generate_output(
             self, text, instructions, output, tools
+        )
+
+    async def remote_skills(
+        self,
+        *remotes: Remote[Any],
+        agents: Collection[str] | None = None,
+        skill: str | None = None,
+        tags: Collection[str] = (),
+        ask: bool = False,
+    ) -> SkillCatalog:
+        """Return a catalog of the remote skills this run may offer a model.
+
+        With no ``remotes``, every agent the directory's sources list is
+        considered: the registry is the allowlist. An agent is included only
+        when its card can be fetched and is valid (with the directory's
+        usual checks and cache, at most eight fetches at a time) and its
+        card's security is open or met by its ``remotes=`` entry. Any other
+        agent, and any source that cannot list its agents, is skipped with
+        one WARNING log naming only the agent (or the source's position and
+        class) and the reason. An empty catalog is valid. When the run is
+        hosted by an ``AgentApp``, the agent itself is left out (matched by
+        its advertised A2A URL); a local run leaves nothing out.
+
+        With ``remotes``, the skill's own ``Remote`` parameters, the catalog
+        holds exactly those agents, and a problem with one raises instead.
+
+        An agent whose card declares AgentFrame's skill-call extension gives
+        one entry per card skill, with its argument schema; any other agent
+        gives one free-text ``ask`` entry describing it. Card text is
+        untrusted: descriptions (also inside schemas) are cut to 500
+        characters, at most ten tags are kept, control characters are
+        removed and ``examples`` are dropped. Nothing calls a model.
+
+        Args:
+            *remotes: ``Remote`` parameters of the running skill.
+            agents: Agent names to keep. ``None`` keeps every agent.
+            skill: Keep only card skills with this ID.
+            tags: Keep only card skills that have all of these tags. Matched
+                with ``skill`` on the same card skill, as
+                ``AgentDirectory.find``; an ``ask`` entry is kept when any of
+                its agent's card skills matches.
+            ask: Also add an ``ask`` entry for agents with the extension.
+
+        Returns:
+            The catalog, holding the run's binding to each of its agents.
+
+        Raises:
+            DefinitionError: The runtime has no directory, the directory is
+                not open, a name is listed by more than one source, no
+                source lists a name in ``agents`` (unless a source failed),
+                ``agents`` or ``tags`` is a single string, a positional
+                argument is not a ``Remote``, two entries share a name, or
+                more than 20 entries remain after narrowing and skipping. A
+                catalog is never truncated.
+            RemoteAgentError: A ``Remote`` parameter's card has an unsafe
+                or repeated skill ID, or a missing or over-8-KiB argument
+                schema.
+            PermissionDeniedError: An included agent is called
+                ``OnBehalfOf`` the user, and the run has no signed-in user.
+        """
+        if self._remotes is None:
+            raise DefinitionError(
+                "remote_skills needs an AgentDirectory; pass directory= to "
+                "Runtime or AgentApp"
+            )
+        return await build_catalog(
+            self._remotes, remotes, agents=agents, skill=skill, tags=tags, ask=ask
         )

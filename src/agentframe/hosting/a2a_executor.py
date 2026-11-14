@@ -221,6 +221,9 @@ class RuntimeExecutor(AgentExecutor):
         max_response_bytes: The largest result or question a task may
             return, measured as by ``check_response_size``. ``None`` bounds
             nothing.
+        own_interface_url: The A2A interface URL the agent's card
+            advertises, which leaves it out of its own skill catalog.
+            ``None`` leaves nothing out.
     """
 
     def __init__(
@@ -230,8 +233,10 @@ class RuntimeExecutor(AgentExecutor):
         router: SkillRouter | None = None,
         limits_ceiling: RunLimits | None = None,
         max_response_bytes: int | None = None,
+        own_interface_url: str | None = None,
     ) -> None:
         self._agent = agent
+        self._own_interface_url = own_interface_url
         self._runtime = runtime
         self._router = router
         self._limits_ceiling = limits_ceiling
@@ -370,6 +375,7 @@ class RuntimeExecutor(AgentExecutor):
                 caller.hops,
                 user_token,
                 correlation,
+                own_interface_url=self._own_interface_url,
             )
             part = result_part(result.value, invocation_id, self._max_response_bytes)
         except AgentFrameError as error:

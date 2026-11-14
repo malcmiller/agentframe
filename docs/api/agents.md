@@ -92,6 +92,7 @@ count), so concurrent runs never share accounting. Further accessors remain open
 | `hops` | `int` | `0` for a local run or a caller that sent no depth | The run's depth in a chain of calls between agents, read from `agentframe.hops` (M8 #89). `Remote` sends one more; see [`RunLimits.max_remote_hops`](configuration.md#runlimits). |
 | Service injection | Skill parameters annotated `Inject[T]` | Services registered by trusted application | No untyped context service bag; injected parameters are excluded from caller input and all published schemas/cards. |
 | Model access | Injected `Model` through `generate` | Model optional until used | No implicit model or fallback. No additional public model accessor is specified. |
+| Remote skill catalog | [`remote_skills`](orchestration.md#runcontextremote_skills) | Needs `directory=` on `Runtime` / `AgentApp` | Returns a [`SkillCatalog`](orchestration.md#skillcatalog) of registered agents' skills, built from their cards without calling a model (M10 #166). |
 | Cancellation, run state | Exact accessors/types open | Managed per invocation | Enforce effective limits and isolation; IDs/accounting work without tracing. |
 
 ```python

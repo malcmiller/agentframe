@@ -21,6 +21,19 @@ changelog.
   `CancelTask`). Bodies are streamed and cut off at the limit, with or without
   a `Content-Length`; a larger reply fails the call with a safe
   `RemoteAgentError` that holds none of the reply (#150).
+- **Orchestration (M10):** `ctx.remote_skills(...)` returns a `SkillCatalog` of
+  `RemoteSkill` entries built from Agent Cards: one entry per skill (with its
+  argument schema) for agents with AgentFrame's skill-call extension, one
+  free-text `ask` entry for other A2A agents. With no arguments every agent the
+  directory's sources list is considered (the registry is the allowlist);
+  agents whose card is unreachable or invalid, whose security cannot be met or
+  whose schema is over 8 KiB, and sources that fail to list, are skipped with
+  one warning each. Declared `Remote` parameters restrict the catalog and
+  raise on failure. `agents=`, `skill=` and `tags=` narrow it; more than 20
+  entries raise `DefinitionError`, never truncated. Card text is bounded (500
+  characters, 10 tags, no control characters or `examples`), skill IDs must be
+  safe and unique, entry names must be unique, and a hosted
+  orchestrator leaves itself out. No model is called (#166).
 
 ## [0.2.0] - 2026-11-14
 

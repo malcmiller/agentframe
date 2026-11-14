@@ -14,7 +14,7 @@ from a2a.types import AgentCard
 
 from agentframe.discovery.cards import ValidatedCard, fetch_card
 from agentframe.discovery.registry import AgentQuery, AgentReference, AgentRegistry
-from agentframe.errors import DefinitionError, RemoteAgentError
+from agentframe.errors import AgentFrameError, DefinitionError, RemoteAgentError
 
 logger = logging.getLogger(__name__)
 
@@ -253,19 +253,65 @@ class AgentDirectory:
             raise failures.exceptions[0] from None
         return [task.result() for task in tasks]
 
+    async def _resolve_each(
+        self, listed: Sequence[_Listed]
+    ) -> list[DiscoveredAgent | AgentFrameError]:
+        """Resolve every agent, returning each one's card or its failure.
+
+        Package-internal, for the skill catalog, which skips the agents that
+        fail instead of failing as a whole. Like ``find``, it resolves
+        through the cache with at most eight fetches at a time.
+
+        Returns:
+            For each entry of ``listed``, in order: the agent, or the
+            ``RemoteAgentError`` (its card could not be fetched or is
+            invalid) or ``DefinitionError`` (its source could not provide
+            the card headers) it failed with.
+        """
+        slots = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
+
+        async def resolve(
+            source: AgentRegistry, reference: AgentReference
+        ) -> DiscoveredAgent | AgentFrameError:
+            async with slots:
+                try:
+                    return await self._resolve(source, reference)
+                except (RemoteAgentError, DefinitionError) as error:
+                    return error
+
+        self._open_client()  # Not being open is a mistake to raise, not skip.
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(resolve(*entry)) for entry in listed]
+        return [task.result() for task in tasks]
+
     async def _list_references(self) -> list[_Listed]:
-        listed: dict[str, AgentRegistry] = {}
-        references: list[_Listed] = []
-        for source in self._sources:
-            for reference in await source.list(AgentQuery()):
-                if reference.name in listed:
-                    raise DefinitionError(
-                        f"Agent '{reference.name}' is listed by more than one "
-                        f"source: {listed[reference.name]!r} and {source!r}."
-                    )
-                listed[reference.name] = source
-                references.append((source, reference))
-        return references
+        return _without_duplicates(
+            [(source, await source.list(AgentQuery())) for source in self._sources]
+        )
+
+    async def _list_available(
+        self,
+    ) -> tuple[list[_Listed], list[tuple[int, AgentRegistry]]]:
+        """List every source's agents, skipping the sources that fail to list.
+
+        Package-internal, for the skill catalog: one failing source must not
+        hide the agents of the others.
+
+        Returns:
+            The listed agents, in source order, and the sources that failed
+            with their 1-based positions.
+
+        Raises:
+            DefinitionError: A name is listed by more than one source.
+        """
+        listed: list[tuple[AgentRegistry, list[AgentReference]]] = []
+        failed: list[tuple[int, AgentRegistry]] = []
+        for position, source in enumerate(self._sources, start=1):
+            try:
+                listed.append((source, await source.list(AgentQuery())))
+            except Exception:
+                failed.append((position, source))
+        return _without_duplicates(listed), failed
 
     async def _find_reference(self, name: str) -> _Listed:
         # Listing by name tells "not listed" (empty) apart from a source
@@ -327,6 +373,28 @@ class AgentDirectory:
 
     def _lock(self, card_url: str) -> asyncio.Lock:
         return self._locks.setdefault(card_url, asyncio.Lock())
+
+
+def _without_duplicates(
+    listed: Sequence[tuple[AgentRegistry, list[AgentReference]]],
+) -> list[_Listed]:
+    """Pair each reference with its source, refusing a name listed twice.
+
+    Raises:
+        DefinitionError: More than one source lists the same name.
+    """
+    sources: dict[str, AgentRegistry] = {}
+    references: list[_Listed] = []
+    for source, source_references in listed:
+        for reference in source_references:
+            if reference.name in sources:
+                raise DefinitionError(
+                    f"Agent '{reference.name}' is listed by more than one "
+                    f"source: {sources[reference.name]!r} and {source!r}."
+                )
+            sources[reference.name] = source
+            references.append((source, reference))
+    return references
 
 
 def _discovered(

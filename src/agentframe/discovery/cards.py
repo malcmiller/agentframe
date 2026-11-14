@@ -29,6 +29,14 @@ FETCH_TIMEOUT_SECONDS = 10.0
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
+class InvalidCardError(RemoteAgentError):
+    """The card was received, or refused before fetching, but is not usable.
+
+    Package-internal: callers see a ``RemoteAgentError``. The skill catalog
+    uses the subclass to tell an invalid card from an unreachable one.
+    """
+
+
 @dataclass(frozen=True)
 class ValidatedCard:
     """An Agent Card that passed every check, and the A2A URL to call.
@@ -87,7 +95,7 @@ def _check_destination(
     host = parts.hostname or ""
     if is_loopback_host(host) or host in allow_http_hosts:
         return
-    raise RemoteAgentError(
+    raise InvalidCardError(
         f"{agent} card URL uses plain http to a non-loopback host; use https, "
         "or list the host in allow_http_hosts for development."
     )
@@ -127,7 +135,7 @@ async def _download(
 
 
 async def _read_limited(response: httpx.Response, agent: str) -> bytes:
-    too_large = RemoteAgentError(f"{agent} card is larger than {MAX_CARD_BYTES} bytes.")
+    too_large = InvalidCardError(f"{agent} card is larger than {MAX_CARD_BYTES} bytes.")
     declared = response.headers.get("Content-Length", "")
     if declared.isdigit() and int(declared) > MAX_CARD_BYTES:
         raise too_large
@@ -143,14 +151,14 @@ def _parse(body: bytes, agent: str) -> AgentCard:
     try:
         data = json.loads(body)
     except ValueError:
-        raise RemoteAgentError(f"{agent} card is not valid JSON.") from None
+        raise InvalidCardError(f"{agent} card is not valid JSON.") from None
     try:
         card = parse_agent_card(data)
     except (ParseError, TypeError, ValueError):
         # The parser's message can quote card content, so it is not kept.
-        raise RemoteAgentError(f"{agent} card is not a valid Agent Card.") from None
+        raise InvalidCardError(f"{agent} card is not a valid Agent Card.") from None
     if not card.name:
-        raise RemoteAgentError(f"{agent} card is not a valid Agent Card: no name.")
+        raise InvalidCardError(f"{agent} card is not a valid Agent Card: no name.")
     return card
 
 
@@ -161,11 +169,11 @@ def _interface_url(card: AgentCard, card_url: str, agent: str) -> str:
             and interface.protocol_version == PROTOCOL_VERSION_1_0
         ):
             if not _same_origin(interface.url, card_url):
-                raise RemoteAgentError(
+                raise InvalidCardError(
                     f"{agent} card's A2A interface is not on the card URL's origin."
                 )
             return str(interface.url)
-    raise RemoteAgentError(f"{agent} card offers no JSON-RPC A2A 1.0 interface.")
+    raise InvalidCardError(f"{agent} card offers no JSON-RPC A2A 1.0 interface.")
 
 
 def _same_origin(url: str, card_url: str) -> bool:

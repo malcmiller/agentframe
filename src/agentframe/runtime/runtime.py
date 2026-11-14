@@ -18,15 +18,12 @@ from agentframe.authoring.definitions import SkillDefinition
 from agentframe.authoring.services import Services
 from agentframe.discovery.directory import AgentDirectory
 from agentframe.discovery.identity import (
-    EntraAppCredential,
     OnBehalfOf,
-    OutboundCredential,
     Service,
     UserToken,
-    UserTokenCredential,
     checked_remotes,
 )
-from agentframe.discovery.remote import bind_remote, find_remote
+from agentframe.discovery.remote import find_remote
 from agentframe.errors import (
     AgentFrameError,
     DefinitionError,
@@ -47,6 +44,7 @@ from agentframe.runtime.generation import (
 )
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import RunOptions, merge_settings
+from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.security.authorization import (
     AuthorizationPolicy,
@@ -304,6 +302,7 @@ class Runtime:
         hops: int = 0,
         user_token: UserToken | None = None,
         correlation: RunCorrelation | None = None,
+        own_interface_url: str | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
@@ -314,9 +313,10 @@ class Runtime:
         ``accounting`` so it can report usage when the run fails or is
         cancelled, its ``limits_ceiling``, which caps the merged limits (and
         carries the caller's deadline), the request's ``hops``, the
-        signed-in caller's ``user_token`` for ``OnBehalfOf`` remotes and the
-        request's ``correlation`` with the agents before it. ``None`` makes
-        the run a root run.
+        signed-in caller's ``user_token`` for ``OnBehalfOf`` remotes, the
+        request's ``correlation`` with the agents before it (``None`` makes
+        the run a root run) and the A2A interface URL it advertises, which
+        leaves the agent out of its own skill catalog.
         """
         started = time.perf_counter()
         accounting = accounting or RunAccounting()
@@ -336,6 +336,7 @@ class Runtime:
                 hops,
                 user_token,
                 correlation,
+                own_interface_url,
             )
         except AgentFrameError as error:
             error.invocation_id = invocation_id
@@ -364,6 +365,7 @@ class Runtime:
         hops: int,
         user_token: UserToken | None,
         correlation: RunCorrelation,
+        own_interface_url: str | None,
     ) -> Any:
         """Run the skill and return its validated value."""
         definition = type(agent).definition()
@@ -416,13 +418,34 @@ class Runtime:
                     skill=skill,
                     policy=self._policy,
                 )
+                run_remotes = None
+                if self._directory is not None:
+                    run_remotes = RunRemotes(
+                        self._directory,
+                        self._remotes,
+                        deadline=deadline,
+                        correlation=correlation,
+                        principal=principal,
+                        hops=hops,
+                        limits=limits,
+                        accounting=accounting,
+                        user_token=user_token,
+                        stack=stack,
+                        own_interface_url=own_interface_url,
+                    )
                 ctx = RunContext(
-                    invocation_id, principal, deadline, generation, hops=hops
+                    invocation_id,
+                    principal,
+                    deadline,
+                    generation,
+                    hops=hops,
+                    _remotes=run_remotes,
                 )
                 injected = await services.resolve(skill.injected)
-                remotes = await self._bind_remotes(
-                    skill, ctx, limits, accounting, stack, user_token, correlation
-                )
+                remotes: dict[str, object] = {}
+                for parameter_name, name in skill.remotes.items():
+                    assert run_remotes is not None  # Checked before the run starts.
+                    remotes[parameter_name] = await run_remotes.bind(name)
                 result = await method(
                     **validated_arguments, **injected, **remotes, ctx=ctx
                 )
@@ -469,53 +492,6 @@ class Runtime:
                 f"Skill '{skill.id}' was denied by the authorization policy"
             )
 
-    async def _bind_remotes(
-        self,
-        skill: SkillDefinition,
-        ctx: RunContext,
-        limits: RunLimits,
-        accounting: RunAccounting,
-        stack: AsyncExitStack,
-        user_token: UserToken | None,
-        correlation: RunCorrelation,
-    ) -> dict[str, object]:
-        """Create this run's ``Remote`` bindings, within the run's deadline.
-
-        Their calls are held against, and charged to, the run's
-        ``accounting``. All ``OnBehalfOf`` remotes of a run share one
-        on-behalf-of credential, closed when the run ends. The bindings pass
-        ``correlation`` on to the agents they call.
-        """
-        max_hops, max_total_tokens = limits.max_remote_hops, limits.max_total_tokens
-        assert max_hops is not None and max_total_tokens is not None  # Defaults.
-        bindings: dict[str, object] = {}
-        on_behalf_of: UserTokenCredential | None = None
-        for parameter_name, name in skill.remotes.items():
-            assert self._directory is not None  # Checked before the run starts.
-            identity = self._remotes.get(name)
-            credential: OutboundCredential | None = None
-            if isinstance(identity, Service):
-                credential = identity.credential
-            elif isinstance(identity, OnBehalfOf):
-                if on_behalf_of is None:
-                    on_behalf_of = _user_credential(name, user_token)
-                    stack.push_async_callback(on_behalf_of.close)
-                credential = EntraAppCredential(on_behalf_of, scope=identity.scope)
-            bindings[parameter_name] = await bind_remote(
-                self._directory,
-                name,
-                deadline=ctx.deadline,
-                correlation=correlation,
-                principal=ctx.principal,
-                identity=identity,
-                credential=credential,
-                hops=ctx.hops,
-                max_hops=max_hops,
-                accounting=accounting,
-                max_total_tokens=max_total_tokens,
-            )
-        return bindings
-
     def _check_directory(self, skill: SkillDefinition) -> None:
         if skill.remotes and self._directory is None:
             raise DefinitionError(
@@ -552,21 +528,6 @@ def _effective_settings(
         options.model_settings,
     )
     return limits, model_settings
-
-
-def _user_credential(name: str, user_token: UserToken | None) -> UserTokenCredential:
-    """Start this run's on-behalf-of credential for the signed-in user.
-
-    Raises:
-        PermissionDeniedError: The run has no signed-in user, so there is no
-            one to act for. Calling as the agent instead is never a fallback.
-    """
-    if user_token is None:
-        raise PermissionDeniedError(
-            f"Remote '{name}' is called on behalf of the signed-in user, but "
-            "this run has none: the caller is not an Entra user"
-        )
-    return user_token.credential()
 
 
 def _check_permissions(skill: SkillDefinition, principal: Principal | None) -> None:
