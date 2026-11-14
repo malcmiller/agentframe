@@ -71,6 +71,7 @@ class RunRemotes:
     ) -> None:
         assert limits.max_remote_hops is not None  # DEFAULT_LIMITS sets them.
         assert limits.max_total_tokens is not None
+        assert limits.max_tool_calls is not None
         self.directory = directory
         self.correlation = correlation
         self.own_interface_url = own_interface_url
@@ -80,11 +81,16 @@ class RunRemotes:
         self._hops = hops
         self._max_hops = limits.max_remote_hops
         self._max_total_tokens = limits.max_total_tokens
+        self._max_tool_calls = limits.max_tool_calls
         self._accounting = accounting
         self._user_token = user_token
         self._stack = stack
         self._on_behalf_of: UserTokenCredential | None = None
         self.catalogs: list[SkillCatalog] = []
+
+    def tool_calls_left(self) -> int:
+        """Return the tool calls the run may still make."""
+        return max(self._max_tool_calls - self._accounting.tool_calls, 0)
 
     def identity(self, name: str) -> RemoteIdentity | None:
         """Return the agent's ``remotes=`` entry, if it has one."""

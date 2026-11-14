@@ -69,6 +69,7 @@ from agentframe.models.base import (
     ToolSpec,
 )
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog
+from agentframe.orchestration.plan import Plan, PlanStep
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
 from agentframe.runtime.runtime import RunResult, Runtime
@@ -156,6 +157,8 @@ __all__ = [
     "OutputSchema",
     "OutputValidationError",
     "PermissionDeniedError",
+    "Plan",
+    "PlanStep",
     "PolicyUnavailableError",
     "Principal",
     "ProviderError",

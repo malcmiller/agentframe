@@ -347,8 +347,8 @@ answer can steer later calls. Use plans when the job can be laid out up front.
 
 ### Plan shape
 
-A plan is a frozen Pydantic value
-([#169](https://github.com/malcmiller/agentframe/issues/169)):
+Implemented ([#169](https://github.com/malcmiller/agentframe/issues/169);
+[API](../api/orchestration.md#plan)). A plan is a frozen Pydantic value:
 
 | Field | Meaning |
 | --- | --- |
@@ -367,18 +367,20 @@ there is no builder DSL.
 
 ### Data between steps
 
-- In `arguments`, a value `{"$ref": "brief"}` is replaced by that step's whole
-  result and `{"$ref": "brief.summary"}` by one top-level field of it. Types are
-  preserved.
+- In `arguments`, a value `{"$ref": "brief"}` (at any depth, with no other
+  key) is replaced by that step's whole result and `{"$ref": "brief.summary"}`
+  by one top-level field of it. Types are preserved.
 - In `ask` text, `{brief}` or `{brief.summary}` is replaced by the value as
   text (JSON for non-strings); `{{` and `}}` are literal braces.
 - No expressions, indexing, filters or functions. References copy values; no
-  model reads them between steps.
+  model reads them between steps. An `ask` step's value is text, so it has no
+  `.field`.
 
 ### Validation before execution
 
-`SkillCatalog.check(plan, max_steps=8)` runs without I/O, and `ctx.run_plan`
-runs it again:
+`SkillCatalog.check(plan, max_steps=8)` (implemented, #169) runs without I/O,
+and `ctx.run_plan` will run it again. It returns the steps in parallel groups,
+a deterministic topological order. It checks:
 
 - step IDs unique and well formed; every `use` in the catalog; `arguments` only
   on structured entries and `text` only on `ask` entries;
@@ -390,6 +392,9 @@ runs it again:
   forbids them. The receiving agent validates fully, as it already does.
 
 Failures raise `InputValidationError` naming the step and field, never values.
+Checking leaves permissions to the planning call, which shows the model only
+permitted entries (#170), and to each step, which re-checks permissions and
+`tool_checks` after substitution (#171).
 
 ### Planning call
 
