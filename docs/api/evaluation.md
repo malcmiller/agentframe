@@ -5,9 +5,10 @@ cases against an agent and scoring the results; see the
 [evaluation design](../design/evaluation.md) for rationale and the rest of the
 proposed API. Implemented so far: [`Case`](#case) and
 [`load_cases`](#load_cases) (#152); [`Evaluation`](#evaluation),
-[`LocalSkill`](#localskill), [`Score`](#score), [`CaseResult`](#caseresult) and
-a minimal [`EvalReport`](#evalreport) (#153). Everything else in the design is
-unimplemented.
+[`LocalSkill`](#localskill), [`Score`](#score) and [`CaseResult`](#caseresult)
+(#153); [`EvalReport`](#evalreport) aggregates and console summary,
+[`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155). Everything else
+in the design is unimplemented.
 
 Import from `agentframe.evaluation`, not `agentframe`. The package ships in the
 main wheel with no extra dependency, and `import agentframe` does not load it.
@@ -270,10 +271,95 @@ the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
 
 ## `EvalReport`
 
-**Purpose / decision:** the results of one evaluation run.
+**Purpose / decision:** the results of one evaluation run, with aggregates and
+a readable console summary.
 
-**Signature status:** implemented in M9 #153 with only `results:
-tuple[CaseResult, ...]`, one per case in case order. Aggregates and the console
-summary (#155), JSON and `require` (#156) are proposed.
+**Signature status:** `results` implemented in M9 #153; aggregates and
+`str(report)` in #155. JSON and `require` (#156) are proposed.
+
+| Field or property | Type | Meaning |
+| --- | --- | --- |
+| `results` | `tuple[CaseResult, ...]` | One [`CaseResult`](#caseresult) per case, in case order. |
+| `passed_count`, `failed_count`, `errored_count` | `int` | Cases per status; errored (target or scorer raised) is counted apart from failed (a scorer failed). |
+| `pass_rate` | `float` | Passed cases / cases that ran, from `0.0` to `1.0`; errored cases count against it. `0.0` with no cases. |
+| `scorer_pass_rates` | `dict[str, float]` | Each scorer's pass rate over the cases it scored, in scorer order. A scorer that did not run for a case (the target or an earlier scorer raised) does not count for it. |
+| `tag_pass_rates` | `dict[str, float]` | Pass rate of the cases carrying each tag, in first-seen order. |
+| `total_usage` | [`UsageTotals`](#usagetotals) | Summed tokens; unknown is never counted as zero. |
+| `latency` | [`Latency`](#latency) `\| None` | p50, p95 and max case duration; `None` when no case has a duration ([decision 1 of #155](https://github.com/malcmiller/agentframe/issues/155)). |
+| `errors_by_class` | `dict[str, int]` | Errored cases per error class, for example `{"TimeoutLimitExceededError": 2}`. |
+
+All aggregates are read-only properties computed from `results`.
+
+```python
+from agentframe.evaluation import EvalReport
+
+
+def check(report: EvalReport) -> None:
+    print(report)
+    if report.errored_count or report.pass_rate < 0.9:
+        raise SystemExit(1)
+```
+
+`str(report)` (and `print(report)`) is a plain-text summary with no extra
+dependency: one line each for counts and pass rate, tokens, latency, errors,
+scorer and tag pass rates, then a table of case ID, status, scorer verdicts
+(`name=pass` / `name=fail`, with the value in brackets, or `error=<class>`),
+tokens (`~` marks estimates, `unknown` when not reported) and duration,
+failing cases first (errored, then failed, then passed):
+
+```text
+Evaluation: 3 cases, 1 passed, 1 failed, 1 errored (pass rate 33.3%)
+Tokens: unknown; 45 reported, 1 cases with unknown usage
+Latency: p50 1.00s, p95 3.00s, max 3.00s
+Errors: TimeoutLimitExceededError 1
+Scorers: exact 50.0%, short 100.0%
+Tags: billing 50.0%, refunds 0.0%
+
+case    status   scores                           tokens   duration
+broken  errored  error=TimeoutLimitExceededError  unknown  -
+wrong   failed   exact=fail short=pass(0.5)       ~30      3.00s
+ok      passed   exact=pass                       15       1.00s
+```
+
+**Behavior / failures:** the summary holds IDs, statuses, scorer names,
+numbers and error classes only: no case inputs, expected values, outputs,
+score reasons or error messages. With `capture_content=True`, a "Failure
+reasons" section lists each failing scorer's reason; treat that output as
+sensitive.
+
+**Related:** [reports](../design/evaluation.md#reports).
+
+## `UsageTotals`
+
+**Purpose / decision:** token usage summed over an evaluation without ever
+treating unknown usage as zero.
+
+**Signature status:** implemented in M9 #155 as a frozen dataclass returned by
+`EvalReport.total_usage`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `input_tokens`, `output_tokens`, `total_tokens` | `int \| None` | Sums over every case, or `None` when any case has no usage or that count unknown. |
+| `known_total_tokens` | `int` | Sum of the total token counts cases did report; a lower bound when `unknown_cases` is not zero. |
+| `unknown_cases` | `int` | Cases with no usage (the target raised) or any unknown count. |
+| `estimated` | `bool` | Whether any reported usage is an estimate. |
+
+**Related:** [`Usage`](runtime.md), [reports](../design/evaluation.md#reports).
+
+## `Latency`
+
+**Purpose / decision:** case durations at p50, p95 and max only, enough for CI
+without a statistics dependency.
+
+**Signature status:** implemented in M9 #155 as a frozen dataclass returned by
+`EvalReport.latency`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `p50` | `timedelta` | Median duration (nearest rank). |
+| `p95` | `timedelta` | 95th percentile duration (nearest rank). |
+| `max` | `timedelta` | Longest duration. |
+
+Cases whose target raised have no duration and are left out.
 
 **Related:** [reports](../design/evaluation.md#reports).

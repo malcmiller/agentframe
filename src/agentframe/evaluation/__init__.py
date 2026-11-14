@@ -6,7 +6,14 @@ this package.
 
 from agentframe.evaluation.cases import Case, load_cases
 from agentframe.evaluation.harness import Evaluation
-from agentframe.evaluation.report import CaseResult, CaseStatus, EvalReport, ScoreResult
+from agentframe.evaluation.report import (
+    CaseResult,
+    CaseStatus,
+    EvalReport,
+    Latency,
+    ScoreResult,
+    UsageTotals,
+)
 from agentframe.evaluation.scoring import Score, Scorer
 from agentframe.evaluation.targets import LocalSkill
 
@@ -16,9 +23,11 @@ __all__ = [
     "CaseStatus",
     "EvalReport",
     "Evaluation",
+    "Latency",
     "LocalSkill",
     "Score",
     "ScoreResult",
     "Scorer",
+    "UsageTotals",
     "load_cases",
 ]
