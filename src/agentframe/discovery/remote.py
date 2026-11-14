@@ -93,6 +93,24 @@ class _Charge:
     sent: bool = False
 
 
+@dataclass(frozen=True)
+class RemoteReply:
+    """One finished remote request, for callers that need more than its value.
+
+    Attributes:
+        value: What ``ask`` or ``call`` (without ``output``) returns.
+        task_id: The remote task's ID, or ``None`` when the agent answered
+            with a message and started no task.
+        usage: The usage charged to the run for the request, or ``None``
+            when it is unknown: the peer reports none, or reported it
+            malformed.
+    """
+
+    value: Any
+    task_id: str | None
+    usage: Usage | None
+
+
 class Remote[N: str]:
     """Another A2A agent that a skill can send work to.
 
@@ -212,16 +230,24 @@ class Remote[N: str]:
                 ``max_remote_hops`` depth; nothing is sent.
             DefinitionError: ``max_total_tokens`` is not a whole number greater than 0.
         """
+        reply = await self._ask_reply(text, max_total_tokens)
+        text_answer: str = reply.value
+        return text_answer
+
+    async def _ask_reply(self, text: str, max_total_tokens: int | None) -> RemoteReply:
+        """Send ``text`` as ``ask`` does and return its reply; raises as ``ask``."""
         self._check_depth()
         message = Message(
             message_id=str(uuid.uuid4()),
             role=Role.ROLE_USER,
             parts=[new_text_part(text)],
         )
-        reply = await self._exchange(message, max_total_tokens)
+        reply, usage = await self._exchange(message, max_total_tokens)
         if isinstance(reply, Message):
-            return self._text(reply.parts)
-        return self._text(self._result_parts(reply), reply)
+            return RemoteReply(self._text(reply.parts), None, usage)
+        return RemoteReply(
+            self._text(self._result_parts(reply), reply), reply.id, usage
+        )
 
     @overload
     async def call[T](
@@ -297,15 +323,23 @@ class Remote[N: str]:
         Takes the arguments as one dictionary, so any argument name works,
         including ``output`` and ``max_total_tokens``. Raises as ``call``.
         """
+        reply = await self._call_reply(skill, arguments, max_total_tokens)
+        return reply.value
+
+    async def _call_reply(
+        self, skill: str, arguments: dict[str, Any], max_total_tokens: int | None
+    ) -> RemoteReply:
+        """Run ``skill`` as ``_call_with`` does and return its reply."""
         self._check_depth()
         self._check_card_offers(skill)
         message = self._skill_call_message(skill, arguments)
-        reply = await self._exchange(
+        reply, usage = await self._exchange(
             message, max_total_tokens, extensions=[SKILL_CALL_EXTENSION_URI]
         )
         if isinstance(reply, Message):
-            return self._result_value(reply.parts)
-        return self._result_value(self._result_parts(reply), reply)
+            return RemoteReply(self._result_value(reply.parts), None, usage)
+        value = self._result_value(self._result_parts(reply), reply)
+        return RemoteReply(value, reply.id, usage)
 
     def _check_card_offers(self, skill: str) -> None:
         card = self._found.card
@@ -370,7 +404,7 @@ class Remote[N: str]:
         max_total_tokens: int | None,
         *,
         extensions: Sequence[str] = (),
-    ) -> Task | Message:
+    ) -> tuple[Task | Message, Usage | None]:
         """Send the message, wait for its task to finish and charge its usage.
 
         Args:
@@ -380,7 +414,8 @@ class Remote[N: str]:
             extensions: Extension URIs to activate for this request only.
 
         Returns:
-            The agent's message reply, or its task in a state it stopped in.
+            The agent's message reply, or its task in a state it stopped in,
+            and the usage charged for it (``None`` when unknown).
         """
         # bool is an int subclass, but True is not a token count.
         if max_total_tokens is not None and (
@@ -398,8 +433,7 @@ class Remote[N: str]:
         except BaseException:
             self._settle(charge, None)
             raise
-        self._settle(charge, reply)
-        return reply
+        return reply, self._settle(charge, reply)
 
     def _hold(self, max_total_tokens: int | None) -> _Charge:
         """Hold the request's ceiling against the run's tokens, without awaiting.
@@ -433,7 +467,7 @@ class Remote[N: str]:
         self._accounting.hold_tokens(tokens)
         return _Charge(tokens=tokens, reports_usage=True)
 
-    def _settle(self, charge: _Charge, reply: Task | Message | None) -> None:
+    def _settle(self, charge: _Charge, reply: Task | Message | None) -> Usage | None:
         """Replace the request's hold with the usage its peer reported.
 
         A request that was never sent used nothing. Otherwise usage the peer
@@ -444,14 +478,19 @@ class Remote[N: str]:
         Args:
             charge: The request's hold.
             reply: The finished reply, or ``None`` when the request failed.
+
+        Returns:
+            The usage the peer reported, or ``None`` when it is unknown or
+            the request was never sent.
         """
         if not charge.sent:
             self._accounting.release_tokens(charge.tokens)
-            return
+            return None
         usage = None
         if charge.reports_usage and isinstance(reply, Task):
             usage = reported_usage(reply)
         self._accounting.settle(charge.tokens, usage or UNKNOWN_USAGE)
+        return usage
 
     async def _start(
         self, message: Message, charge: _Charge, extensions: Sequence[str] = ()
