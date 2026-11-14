@@ -424,6 +424,7 @@ Ollama or Foundry from `AGENTFRAME_MODEL_PROVIDER` (see the
 | [`examples/orders.py`](examples/orders.py) | Tool calling with permissions and a tool policy, behind a development API key. |
 | [`examples/routed_assistant.py`](examples/routed_assistant.py) | Free text routed to a skill by the built-in `ModelRouter`. |
 | [`examples/multi_agent`](examples/multi_agent) | A planner that fans out structured calls and free-text asks to a research agent over A2A. |
+| [`examples/plan_approval.py`](examples/plan_approval.py) | Human approval of model-made plans: one skill proposes a plan, a permission-protected skill runs the reviewed plan, with a plan check. |
 
 [`examples/smoke.py`](examples/smoke.py) serves every example in-process with
 a scripted model and calls it with the official A2A client, checking each
