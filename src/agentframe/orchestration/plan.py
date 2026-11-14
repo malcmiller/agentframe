@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic_core import PydanticSerializationError
 
 from agentframe.errors import DefinitionError, InputValidationError
 
@@ -103,7 +104,14 @@ def check_plan(
             f"The plan has {len(plan.steps)} steps, more than the {max_steps} "
             "this run allows"
         )
-    if len(plan.model_dump_json().encode()) > MAX_PLAN_BYTES:
+    try:
+        size = len(plan.model_dump_json().encode())
+    except (RecursionError, PydanticSerializationError):
+        # Only a plan built with model_construct can get here.
+        raise InputValidationError(
+            "The plan cannot be serialized as JSON, or is nested too deeply"
+        ) from None
+    if size > MAX_PLAN_BYTES:
         raise InputValidationError(
             f"The plan is larger than {MAX_PLAN_BYTES // 1024} KiB serialized"
         )
@@ -111,12 +119,19 @@ def check_plan(
     steps = {step.id: step for step in plan.steps}
     for step in plan.steps:
         _check_entry(step, entry(step.use))
-    # Only now are ask steps known to have text, which references rely on.
-    for step in plan.steps:
-        _check_references(step, steps)
-    if plan.result not in steps:
-        raise InputValidationError("Plan field 'result' names no step of the plan")
-    return _groups(plan.steps)
+    try:
+        # Only now are ask steps known to have text, which references rely on.
+        for step in plan.steps:
+            _check_references(step, steps)
+        if plan.result not in steps:
+            raise InputValidationError("Plan field 'result' names no step of the plan")
+        return _groups(plan.steps)
+    except RecursionError:
+        # References are found recursively; a plan built with model_construct
+        # can nest past Python's recursion limit.
+        raise InputValidationError(
+            "The plan's arguments are nested too deeply"
+        ) from None
 
 
 def checked_max_steps(max_steps: int) -> int:

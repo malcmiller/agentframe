@@ -375,3 +375,22 @@ async def test_steps_never_exceed_the_runs_remaining_tool_calls() -> None:
 
     with pytest.raises(InputValidationError, match="more than the 2 this run"):
         await check_in_a_run(plan, RunLimits(max_tool_calls=2))
+
+
+@pytest.mark.parametrize("depth", [300, 3000])
+def test_arguments_nested_too_deeply_are_refused(depth: int) -> None:
+    nested: Any = "tides"
+    for _ in range(depth):
+        nested = [nested]
+    # Validation refuses this depth, so only model_construct can build it.
+    deep = PlanStep.model_construct(
+        id="a",
+        use="research-agent.find_sources",
+        arguments={"topic": nested},
+        text=None,
+        after=[],
+    )
+    plan = Plan.model_construct(steps=[deep], result="a")
+
+    with pytest.raises(InputValidationError, match="nested too deeply"):
+        CATALOG.check(plan)
