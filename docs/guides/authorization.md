@@ -375,7 +375,11 @@ async def answer(goal: str, ctx: RunContext) -> str:
 
 - `permissions=` sets an entry's `requires_permissions`. Entries the caller
   lacks are hidden from the model, and a call naming one fails the run with
-  `PermissionDeniedError` before anything is sent.
+  `PermissionDeniedError` before anything is sent. An agent's free-text `ask`
+  entry requires every permission given for that agent's skills. Keys are
+  entry names: a tool name or, for declared remotes, a name that is not an
+  entry raises `DefinitionError`; in registry mode an unmatched key only
+  logs a warning, so back consequential entries with a tool check too.
 - `ExecutionPolicy.tool_checks` run before every remote call with `tool_name`
   set to the entry name (`"billing-agent.refund"`, or the agent's name for
   `ask`) and the arguments about to be sent, so a check can refuse a refund

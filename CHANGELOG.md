@@ -78,7 +78,11 @@ changelog.
   entry name (`"agent.skill"` or `"agent"`), the arguments about to be sent and
   the same skill object as `@tool` calls; denial raises `PermissionDeniedError`,
   a raising or late check `PolicyUnavailableError`, nothing is sent and the
-  model is never told. The 20-entry limit counts entries before hiding. Docs
+  model is never told. An agent's `ask` entry also requires every permission
+  given for its skills. A tool name as a key, or a declared remote's key that
+  names none of its card's entries, raises `DefinitionError`; other keys
+  matching no entry log one WARNING. The 20-entry limit counts entries
+  before hiding. Docs
   warn that `Service` identity makes the orchestrator a confused deputy
   without permissions (#168).
 - **Evaluation (M9):** `Evaluation(cases=..., target=LocalSkill(agent,

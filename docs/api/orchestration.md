@@ -41,7 +41,7 @@ async def remote_skills(
 | `tags` | `Collection[str]` | Optional; default `()` | Keep only card skills carrying all of these tags, matched with `skill` on the same card skill, as [`AgentDirectory.find`](discovery.md#agentdirectoryfind). A single string raises `DefinitionError`. |
 | `ask` | `bool` | Optional; default `False` | Also add a free-text `ask` entry for agents with the skill-call extension. |
 | `max_tokens_per_call` | `int \| None` | Optional; default `None` | The most tokens each [model-chosen call](#remote-skills-as-model-tools) to an entry may use, held against the run's `max_total_tokens` and sent to peers that advertise it, as `Remote.call(max_total_tokens=...)`. `None` holds everything the run has left, which is safe because those calls run one at a time. Anything but a whole number above 0 raises `DefinitionError`. Implemented (#167). |
-| `permissions` | `Mapping[str, Collection[str]] \| None` | Optional; default `None` | Permissions a caller must hold to use an entry, by entry name: `{"billing-agent.refund": {"refunds:write"}}`. The caller needs all of them, as for `@tool(requires_permissions=...)`; they become the entry's `requires_permissions`. Names that match no entry are ignored, because narrowing and skipped agents change which entries exist, so spell them exactly as `entry.name`. Anything but a mapping of strings to collections of strings (a single string included) raises `DefinitionError`. See [permissions and tool checks](#permissions-and-tool-checks). Implemented (#168). |
+| `permissions` | `Mapping[str, Collection[str]] \| None` | Optional; default `None` | Permissions a caller must hold to use an entry, by entry name: `{"billing-agent.refund": {"refunds:write"}}`. The caller needs all of them, as for `@tool(requires_permissions=...)`; they become the entry's `requires_permissions`, and an agent's `ask` entry also requires every permission given for that agent's skills. Keys are entry names; see [unmatched keys](#unmatched-permissions-keys). Anything but a mapping of strings to collections of strings (a single string included) raises `DefinitionError`. See [permissions and tool checks](#permissions-and-tool-checks). Implemented (#168). |
 | Result | [`SkillCatalog`](#skillcatalog) | On success | The entries, in source and card order, plus this run's binding to each agent. May be empty. |
 
 ```python
@@ -333,6 +333,31 @@ since that would let the model probe the policy. Errors name only the entry,
 never the arguments; nothing is logged with arguments or results. The
 runtime's `ToolAuthorizationPolicy` is for `@tool` functions only, because its
 `check_tool` receives a `ToolDefinition`; use tool checks for remote entries.
+
+**`ask` entries inherit their agent's skill permissions.** Free text can ask
+an agent for anything its skills do, so an agent's `ask` entry (from
+`ask=True`, or the only entry of an agent without the skill-call extension)
+requires the union of the permissions given for that agent's skills, plus any
+given for the `ask` entry itself, even for skills that `skill=`/`tags=` left
+out. Protecting `"billing-agent.refund"` therefore protects free text to
+`billing-agent` too.
+
+### Unmatched `permissions` keys
+
+A key that protects nothing would leave the entry it meant callable by anyone,
+so mistakes are reported:
+
+| Key | Result |
+| --- | --- |
+| An entry's provider-safe tool name instead of its name (`"billing-agent_refund"`) | `DefinitionError` naming the entry name to use |
+| With declared `Remote` parameters: the agent's name, or its name followed by `.`, that names no entry of its card (a typo, or the agent's name without `ask=True`) | `DefinitionError`. Entries `skill=`/`tags=` left out still count as entries, so they are not errors |
+| Any other key matching no entry in this run's catalog | One WARNING log per key, naming only the key: `remote_skills permissions= key '<key>' matched no catalog entry` |
+
+In registry mode keys are matched only against the entries present in this
+run's catalog: an agent that is down or skipped, or a registry that changed,
+legitimately removes entries, so a typo there is a warning, not an error. For
+consequential entries add an `ExecutionPolicy` tool check on the entry name
+as defense in depth: it runs on every call whatever the catalog holds.
 
 **The 20-entry limit counts hidden entries.** The catalog's size is checked
 when it is built, before any caller's permissions hide entries, so whether a
