@@ -138,7 +138,7 @@ def dependencies(step: PlanStep) -> dict[str, str]:
     names the step. Assumes the step's references are well formed.
     """
     found: dict[str, str] = {}
-    for reference in _argument_references(step.arguments):
+    for reference in _argument_references(list(step.arguments.values())):
         found.setdefault(_reference_step(reference["$ref"]), "arguments")
     for placeholder in _placeholders(step.text or ""):
         found.setdefault(_reference_step(placeholder), "text")
@@ -184,6 +184,11 @@ def _check_entry(step: PlanStep, entry: "RemoteSkill | None") -> None:
         raise InputValidationError(
             f"Plan step '{step.id}' field 'text' is only for ask entries; "
             f"'{entry.name}' takes arguments"
+        )
+    if "$ref" in step.arguments:
+        raise InputValidationError(
+            f"Plan step '{step.id}' field 'arguments' must name arguments; put a "
+            "reference in an argument's value"
         )
     _check_top_level_arguments(step, entry)
 
@@ -296,12 +301,20 @@ def _raise_cycle(
     visited: list[str] = []
     while current not in visited:
         visited.append(current)
-        current = next(name for name in needs[current] if name in waiting)
-    following = next(name for name in needs[current] if name in waiting)
+        current = _waiting_dependency(needs[current], waiting)
+    following = _waiting_dependency(needs[current], waiting)
     raise InputValidationError(
         f"Plan step '{current}' field '{needs[current][following]}' is part of a "
         "dependency cycle"
     )
+
+
+def _waiting_dependency(needs: Mapping[str, str], waiting: set[str]) -> str:
+    """Return the first of ``needs`` still waiting; there always is one,
+    since no waiting step was ready."""
+    found = next((name for name in needs if name in waiting), None)
+    assert found is not None
+    return found
 
 
 def _argument_references(value: Any) -> Iterator[dict[str, Any]]:

@@ -154,6 +154,18 @@ INVALID_PLANS = [
         id="dangling-reference",
     ),
     pytest.param(
+        [step("a", "research-agent.brief", arguments={"$ref": "nope"})],
+        "a",
+        "step 'a' field 'arguments' must name arguments",
+        id="top-level-dangling-reference",
+    ),
+    pytest.param(
+        [step("a", "research-agent.brief", arguments={"$ref": "b"}), step("b")],
+        "a",
+        "step 'a' field 'arguments' must name arguments",
+        id="top-level-reference",
+    ),
+    pytest.param(
         [step("a", arguments={"topic": {"$ref": "b.c.d"}}), step("b")],
         "a",
         "step 'a' field 'arguments.topic' has a malformed reference",
