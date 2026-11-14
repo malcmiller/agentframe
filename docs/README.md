@@ -20,7 +20,7 @@ unresolved defaults or interfaces.
 | Execution | [Runtime, `RunResult` and safe errors](api/runtime.md), [models](api/models.md), [configuration/defaults](api/configuration.md) |
 | Security and protocols | [Authenticators, authorization and content policy](api/authorization.md), [hosting/protection defaults](api/hosting.md) |
 | Next core multi-agent release | [Read-first registries, managed directory and remote A2A client](api/discovery.md) |
-| Evaluation (M9, in progress) | [Cases, JSONL datasets, local skill targets and scorers](api/evaluation.md) |
+| Evaluation (M9, built, not yet released) | [Cases, datasets, local and A2A targets, scorers, rubric judge, reports and `agentframe eval`](api/evaluation.md) |
 | Model-planned orchestration (M10, in progress) | [Remote skill catalog: `remote_skills`, `RemoteSkill`, `SkillCatalog`; remote skills as model tools; `Plan`, `PlanStep`, `SkillCatalog.check`; `RunContext.plan`](api/orchestration.md) |
 | Future streaming | [Optional AG-UI adapter and runtime event boundary](api/streaming.md) |
 
@@ -33,7 +33,7 @@ behavior works, and `design/` records rationale and proposed designs.
 
 | Document | Purpose |
 | --- | --- |
-| [Roadmap](roadmap.md) | Product boundaries, architectural rules, defaults, single-agent milestones 0-7, next core multi-agent release M8+, planned M9 evaluation and planned M10 model-planned orchestration. |
+| [Roadmap](roadmap.md) | Product boundaries, architectural rules, defaults, single-agent milestones 0-7, next core multi-agent release M8+, built M9 evaluation and planned M10 model-planned orchestration. |
 | [Repository context](../AGENTS.md) | Durable contributor and coding-agent instructions, including framework independence and scope boundaries. |
 
 ### Guides
@@ -45,7 +45,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [Development and packaging](guides/development.md) | M2 `run`, M8+ `dev`, `agentframe.yaml`, local registry/auth/logging and one-container-per-agent packaging. |
 | [Limits](guides/limits.md) | Per-request output/input limits, invocation budgets, host ceilings, and honest accounting guarantees. |
 | [Authorization](guides/authorization.md) | Skill permission requirements, verified principals, application role/resource policy, and fail-closed execution. |
-| [Evaluation in pytest and CI](guides/evaluation.md) | M9 evaluations as ordinary pytest tests, `report.require` thresholds, the `agentframe eval` command, real-model opt-in, evaluating non-AgentFrame and Foundry A2A agents and the JSON report as a CI artifact. |
+| [Evaluating agents](guides/evaluation.md) | M9 walkthrough of `examples/evaluation.py`: cases, targets, scorers, a rubric judge with votes and their cost, budgets, reports, gating CI with `report.require` or `agentframe eval`, real models, non-AgentFrame and Foundry A2A agents, privacy and the release acceptance tests. |
 | [Releasing](guides/releasing.md) | Maintainer one-time PyPI trusted-publisher and environment setup, and the steps to publish a release. |
 
 ### Design
@@ -53,7 +53,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | Document | Purpose |
 | --- | --- |
 | [Base classes](design/base-classes.md) | Complete annotation/subclass/composition decision table, interfaces, and small proposed API examples. |
-| [Evaluation](design/evaluation.md) | Planned M9 evaluation harness: typed cases, local and A2A targets, scorers and rubric judge, budgets, private-by-default reports and CI use; decisions confirmed 2026-11-13. |
+| [Evaluation](design/evaluation.md) | M9 evaluation harness (built, not yet released): typed cases, local and A2A targets, scorers and rubric judge, budgets, private-by-default reports and CI use; decisions confirmed 2026-11-13. |
 | [Discovery](design/discovery.md) | M8+ core registry/directory and remote A2A composition, cross-hop context, local/container deployment direction and acceptance; not a workflow/graph engine. |
 | [Orchestration](design/orchestration.md) | M10, in progress (catalog, remote tools, typed plans and `ctx.plan` implemented, #166-#170): remote skill catalog from Agent Cards, remote skills as model tools, model-made validated execution plans run with existing limits, identity and policy; revisits two M8+ scope cuts; decisions confirmed 2026-11-13. |
 | [MCP skills](design/mcp-skills.md) | Optional allowlisted skill publication, shared A2A/MCP hosting, schema mapping, and protocol boundaries. |

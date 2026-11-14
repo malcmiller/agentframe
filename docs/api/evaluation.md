@@ -1,21 +1,11 @@
 # Evaluation
 
-[Reference status conventions](README.md). Planned M9 harness for running fixed
-cases against an agent and scoring the results; see the
-[evaluation design](../design/evaluation.md) for rationale and the rest of the
-proposed API. Implemented so far: [`Case`](#case) and
-[`load_cases`](#load_cases) (#152); [`Evaluation`](#evaluation),
-[`LocalSkill`](#localskill), [`Score`](#score) and [`CaseResult`](#caseresult)
-(#153); the built-in scorers [`equals`](#equals), [`contains`](#contains) and
-[`valid`](#valid) (#154); [`EvalReport`](#evalreport) aggregates and console
-summary, [`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155);
-[`A2ATarget`](#a2atarget), [`Target`](#target) and
-[`TargetResult`](#targetresult) (#158);
-[`EvalReport.write_json`](#evalreportwrite_json) and
-[`EvalReport.require`](#evalreportrequire) (#156); the rubric [`Judge`](#judge) (#160);
-the [`agentframe eval`](#agentframe-eval) command (#162). See the
-[evaluation guide](../guides/evaluation.md) for pytest and CI use.
-Everything else in the design is unimplemented.
+[Reference status conventions](README.md). The M9 harness for running fixed
+cases against an agent and scoring the results, built and not yet released
+(#152-#163); see the [evaluation design](../design/evaluation.md) for
+rationale, the [evaluation guide](../guides/evaluation.md) for a walkthrough
+and `examples/evaluation.py` for a runnable example. Only the later Foundry
+evaluation export in the design is unimplemented.
 
 Import from `agentframe.evaluation`, not `agentframe`. The package ships in the
 main wheel with no extra dependency, and `import agentframe` does not load it.

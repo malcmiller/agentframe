@@ -1,14 +1,13 @@
 # Evaluation
 
-**Status: planned (M9), in progress.** Only [`Case` and
-`load_cases`](#cases-and-datasets) (#152) and `LocalSkill`, `Evaluation.run`
-with function scorers, `Score` and `CaseResult` (#153), the built-in scorers
-`equals`, `contains` and `valid` (#154) and `A2ATarget` (#158; see the
-[reference](../api/evaluation.md)) are implemented; everything else on this
-page does not exist in `agentframe` yet. The design choices listed under
+**Status: built (M9), not yet released.** Everything on this page except the
+[later Foundry evaluation export](#later-foundry-evaluation-export) is
+implemented in `agentframe.evaluation` (#152-#163); see the
+[reference](../api/evaluation.md), the [guide](../guides/evaluation.md) and
+`examples/evaluation.py`. The design choices listed under
 [decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
-exact signatures and remaining details are settled while building the stories
-of the [M9 overview](https://github.com/malcmiller/agentframe/issues/164).
+the [M9 overview](https://github.com/malcmiller/agentframe/issues/164) tracks
+the stories.
 
 Agents built with AgentFrame are nondeterministic once they call a model. Unit
 tests with [`ScriptedModel`](../api/models.md#scriptedmodel) prove the code
@@ -82,14 +81,13 @@ repeated votes, and the judge charged to the same budget as everything else.
 
 ## API sketch
 
-Signatures below are illustrative until built. The harness lives in a separate
+The harness lives in a separate
 `agentframe.evaluation` module (like `agentframe.testing`), not in the top-level
 `agentframe` namespace, so the core import stays unchanged
 ([decisions 1-2](#decisions-confirmed-2026-11-13)).
 
 ```python
-# test_assistant_eval.py - proposed, not implemented
-from agentframe import Runtime
+# test_assistant_eval.py - implemented; see examples/evaluation.py
 from agentframe.evaluation import Case, Evaluation, LocalSkill, contains, equals
 from agentframe.testing import ScriptedModel
 
@@ -115,7 +113,7 @@ A model-backed skill against a real model, with a rubric judge and cases from a
 file:
 
 ```python
-# proposed, not implemented
+# implemented; model, judge_model and Summary are application-supplied
 from agentframe.evaluation import Evaluation, Judge, LocalSkill, load_cases, valid
 
 evaluation = Evaluation(
@@ -529,4 +527,4 @@ The maintainer confirmed every recommendation from the planning review on
     imposed order relative to the later adapters. Evaluation needs the remote
     client (M8+) but no adapter.
 
-See the [roadmap](../roadmap.md#m9-evaluation-planned) for the milestone entry.
+See the [roadmap](../roadmap.md#m9-evaluation-built) for the milestone entry.

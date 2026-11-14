@@ -16,8 +16,8 @@ generation, M4 typed structured outputs, M5 bounded tool calling, M6 built-in
 opt-in model routing and M7 hardening alongside design documentation. Version
 0.1.0, the first usable single-agent release, and version 0.2.0, the M8+
 multi-agent release (#83-#97), are published on PyPI as `agentframe-py`
-(import `agentframe`). Pre-1.0 there is no stable API. M9 evaluation (#164) and
-M10 model-planned orchestration (#177) are planned next; later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
+(import `agentframe`). Pre-1.0 there is no stable API. M9 evaluation (#164) is built, not yet
+released; M10 model-planned orchestration (#177) is planned next; later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
@@ -100,7 +100,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
 | `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`). |
-| `examples/` | Runnable examples, each with `create_app()`; `smoke.py` checks them all against the installed wheel in CI. |
+| `examples/` | Runnable examples, each with `create_app()` (`evaluation.py` has `create_evaluation()` instead); `smoke.py` checks them all against the installed wheel in CI. |
 | `docs/roadmap.md` | Product boundaries, decisions and milestones. |
 | `docs/guides/` | How to use AgentFrame and how its behavior works. |
 | `docs/design/` | Rationale and proposed designs. |
@@ -124,7 +124,8 @@ run locally and through `examples/orders.py` over A2A (skipped if the model
 lacks tool support), a model calling a localhost agent's skill as a remote
 tool (M10 #167, checking only that the entry was called; skipped without tool
 support), a rubric `Judge` grading one model-free case in an `Evaluation`
-by majority of `votes=3` (M9 #160, #161), a model planning one unambiguous
+by majority of `votes=3` (M9 #160, #161), `examples/evaluation.py`'s answers
+graded by a rubric judge (M9 #163), a model planning one unambiguous
 two-step goal over two localhost agents' cards with `ctx.plan` (M10 #170,
 checking only the entries and the dependency; `llama3.2:3b` sometimes writes
 an invalid plan), a Foundry one-tool round trip that replays encrypted
