@@ -2,7 +2,8 @@
 
 Each example app is served in-process on a free localhost port and called with
 the official A2A client, the way any A2A caller would. ``ScriptedModel`` stands
-in for Ollama and Foundry, so nothing leaves localhost. From the directory that
+in for Ollama and Foundry, so nothing leaves localhost. The evaluation example
+runs in process. From the directory that
 contains ``examples/``, with AgentFrame installed with its ``server`` extra::
 
     python -m examples.smoke
@@ -31,7 +32,7 @@ import agentframe
 from agentframe import AgentApp, ModelCapabilities, ToolCall
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.testing import ScriptedModel
-from examples import assistant, echo, orders, routed_assistant
+from examples import assistant, echo, evaluation, orders, routed_assistant
 from examples.multi_agent import planner, research
 
 STRUCTURED = ModelCapabilities(context_window=8192, structured_output=True)
@@ -243,6 +244,17 @@ async def check_multi_agent() -> None:
             expect(plan.topics[1].sources[0].title, "Wind and waves")
 
 
+async def check_evaluation() -> None:
+    """The assistant evaluated in process, with a rubric judge."""
+    report = await evaluation.create_evaluation().run()
+    report.require(min_pass_rate=1.0)
+    verdict = json.dumps({"passed": True, "reason": "Correct and short."})
+    judge = ScriptedModel([verdict] * 2, capabilities=STRUCTURED)
+    model = ScriptedModel(["Paris.", "Tokyo."])
+    report = await evaluation.create_answer_evaluation(model, judge).run()
+    report.require(min_pass_rate=1.0)
+
+
 async def main() -> None:
     """Check every example in turn; raise ``AssertionError`` on the first failure."""
     print(f"agentframe {agentframe.__version__} from {agentframe.__file__}")
@@ -252,6 +264,7 @@ async def main() -> None:
         check_orders,
         check_routed_assistant,
         check_multi_agent,
+        check_evaluation,
     )
     for check in checks:
         await check()
