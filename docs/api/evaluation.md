@@ -12,7 +12,8 @@ summary, [`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155);
 [`A2ATarget`](#a2atarget), [`Target`](#target) and
 [`TargetResult`](#targetresult) (#158);
 [`EvalReport.write_json`](#evalreportwrite_json) and
-[`EvalReport.require`](#evalreportrequire) (#156); the rubric [`Judge`](#judge) (#160). See the
+[`EvalReport.require`](#evalreportrequire) (#156); the rubric [`Judge`](#judge) (#160);
+the [`agentframe eval`](#agentframe-eval) command (#162). See the
 [evaluation guide](../guides/evaluation.md) for pytest and CI use.
 Everything else in the design is unimplemented.
 
@@ -126,6 +127,7 @@ Evaluation(*, cases: Iterable[Case[Any]], target: Target,
            max_total_tokens: int | None = None,
            timeout_seconds: float | None = None)
 async Evaluation.run() -> EvalReport
+Evaluation.capture_content -> bool  # read-only property (#162)
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
@@ -165,7 +167,9 @@ cases share an ID (the message names positions, not the ID), a case does not
 suit the target (its `check_case`; see [`LocalSkill`](#localskill) and
 [`A2ATarget`](#a2atarget)), `concurrency` or `repeats`
 is not an integer of 1 or more, or `max_total_tokens` or `timeout_seconds` is
-not greater than 0. `run` runs up to `concurrency` attempts at once, started in
+not greater than 0. The read-only `capture_content` property returns the
+constructor's value, so [`agentframe eval`](#agentframe-eval) can refuse a
+capturing evaluation before it runs. `run` runs up to `concurrency` attempts at once, started in
 case order, and returns one [`CaseResult`](#caseresult) per attempt, in case
 order, then attempt order, however they finish:
 
@@ -896,3 +900,72 @@ without a statistics dependency.
 Cases whose target raised have no duration and are left out.
 
 **Related:** [reports](../design/evaluation.md#reports).
+
+## `agentframe eval`
+
+**Purpose / decision:** run an evaluation from the command line and gate CI on
+its thresholds without pytest. The last, separable M9 story
+([decision 14](../design/evaluation.md#decisions-confirmed-2026-11-13)); pytest
+plus [`require`](#evalreportrequire) covers the same need.
+
+**Signature status:** implemented in M9 #162, in the existing `agentframe`
+command with no new dependency.
+
+```text
+agentframe eval TARGET [--json PATH] [--min-pass-rate RATE] [--max-errors N]
+                [--max-total-tokens N] [--allow-not-run] [--allow-over-budget]
+                [--capture-content]
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `TARGET` | `module:function` string | Required | Function called with no arguments that returns an [`Evaluation`](#evaluation), loaded like [`agentframe run`](hosting.md#agentframe-run)'s factory. The working directory is importable. |
+| `--json` | path | Optional; default none | Write [`write_json`](#evalreportwrite_json) here before thresholds are checked, so the file exists when one is missed. An existing file is replaced. |
+| `--min-pass-rate` | float | Optional; default none | Passed to `require(min_pass_rate=)`; from 0.0 to 1.0. |
+| `--max-errors` | integer | Optional; default `0` | Passed to `require(max_errors=)`; 0 or more. |
+| `--max-total-tokens` | integer | Optional; default none | Passed to `require(max_total_tokens=)`; 1 or more. Unknown usage misses it. |
+| `--allow-not-run` | flag | Off | Passed to `require(allow_not_run=True)`. |
+| `--allow-over-budget` | flag | Off | Passed to `require(allow_over_budget=True)`. |
+| `--capture-content` | flag | Off | Allow an evaluation built with `capture_content=True`. The command never turns capture on; without this flag such an evaluation is refused before it runs. |
+
+```python
+# evals/word_counts.py
+from agentframe.evaluation import Case, Evaluation, LocalSkill, equals
+
+from myapp.agents import Assistant  # application agent
+
+
+def create_evaluation() -> Evaluation:
+    return Evaluation(
+        cases=[Case(id="short", arguments={"text": "one two three"}, expected=3)],
+        target=LocalSkill(Assistant(), skill="count_words"),
+        scorers=[equals],
+    )
+```
+
+```shell
+agentframe eval evals.word_counts:create_evaluation --json eval-report.json \
+  --min-pass-rate 0.9
+```
+
+**Behavior / failures:** the evaluation runs once. Exit codes:
+
+| Exit code | Meaning | Output |
+| --- | --- | --- |
+| `0` | Every threshold met. | The summary (`str(report)`) on stdout. |
+| `1` | A threshold missed (`require` raised `AssertionError`). | Each miss above the summary on stdout, then `agentframe: error: The evaluation missed a threshold.` on stderr. |
+| `2` | Configuration error; nothing is printed on stdout. | One `agentframe: error: ...` line on stderr. |
+
+Configuration errors are a target that is not `module:name`, a module that
+cannot be found, a missing attribute, a target that is not callable, a factory
+returning anything but an `Evaluation`, an invalid evaluation
+(`DefinitionError` from `Evaluation`), an evaluation that captures content
+without `--capture-content`, and a `--json` path that cannot be written.
+Invalid threshold values are argparse usage errors, also exit code 2. Errors
+raised by the application's own code keep their traceback. Output holds no case
+content (the summary and JSON never do) unless the evaluation captured it and
+`--capture-content` allowed that. Failing, errored and not-run attempts never
+stop the run; they are counted against the thresholds.
+
+**Related:** [pytest and CI](../design/evaluation.md#pytest-and-ci),
+[evaluation guide](../guides/evaluation.md#without-pytest-agentframe-eval).

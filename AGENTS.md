@@ -88,7 +88,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | Path | Contents |
 | --- | --- |
 | `src/agentframe/__init__.py` | Public API re-exports; every public name is importable from `agentframe`. |
-| `src/agentframe/` (root) | `errors.py`, `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run` / `dev` / `compose`), `project.py` (`agentframe.yaml`), `dev.py` (`dev_settings()`), `dev_server.py` (`agentframe dev` supervisor), `compose.py` (`agentframe compose` generator). |
+| `src/agentframe/` (root) | `errors.py`, `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run` / `dev` / `compose` / `eval`), `project.py` (`agentframe.yaml`), `dev.py` (`dev_settings()`), `dev_server.py` (`agentframe dev` supervisor), `compose.py` (`agentframe compose` generator). |
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
 | `src/agentframe/runtime/` | `Runtime`, generation, `RunLimits`, `RunOptions`, `Usage`. |
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`; `strict_schema.py` (OpenAI strict JSON-schema converter). |

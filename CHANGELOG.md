@@ -10,6 +10,16 @@ changelog.
 
 ### Added
 
+- **Evaluation (M9):** `agentframe eval module:function [--json PATH]
+  [--min-pass-rate RATE] [--max-errors N] [--max-total-tokens N]
+  [--allow-not-run] [--allow-over-budget] [--capture-content]` runs the
+  `Evaluation` a no-argument function returns, prints the content-free summary,
+  writes the JSON report before checking thresholds and passes the threshold
+  flags straight to `EvalReport.require`. Exits 0 when they are met, 1 when one
+  is missed and 2 on a configuration error (one `agentframe: error:` line). An
+  evaluation with `capture_content=True` is refused unless `--capture-content`
+  is passed; the command never turns capture on. New read-only
+  `Evaluation.capture_content`. No new dependency (#162).
 - **Evaluation (M9):** `Judge(..., votes=1)` takes the majority of up to
   `votes` verdicts (an odd number from 1 to 15, else `DefinitionError`), run
   one at a time and stopping once the majority is certain. Each vote is a
