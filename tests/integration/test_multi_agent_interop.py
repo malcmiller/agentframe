@@ -251,6 +251,31 @@ async def test_a_peer_failure_raises_a_safe_remote_agent_error(
     assert PEER_SECRET not in str(error)
 
 
+async def test_a_reply_over_max_reply_bytes_fails_without_its_content(
+    serve: ServeLocally, peer: PeerExecutor, tmp_path: Path
+) -> None:
+    agents = tmp_path / "agents.yaml"
+    async with serve(a2a_peer(peer)) as peer_url:
+        agents.write_text(
+            f"- name: plain-peer\n  url: {peer_url}/.well-known/agent-card.json\n"
+        )
+        limited = AgentDirectory(
+            sources=[FileAgentRegistry(agents)], max_reply_bytes=4096
+        )
+        async with limited as directory:
+            # A short answer fits; the long echo does not.
+            short = await run_planner(directory, "ask_peer", {"text": "tides"})
+            with pytest.raises(RemoteAgentError) as raised:
+                await run_planner(directory, "ask_peer", {"text": "tide" * 2000})
+
+    assert short.value == "Echo: tides"
+    assert raised.value.message == (
+        "Agent 'plain-peer' sent a reply larger than the directory's "
+        "max_reply_bytes (4096 bytes)"
+    )
+    assert "tidetide" not in str(raised.value)
+
+
 # A non-AgentFrame client calling AgentFrame
 
 

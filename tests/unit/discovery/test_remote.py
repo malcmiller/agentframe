@@ -161,6 +161,7 @@ class Peer:
         self.card = card_json() if card is None else card
         self.replies = list(replies)
         self.requests: list[httpx.Request] = []
+        self.reply_sizes: list[int] = []
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -172,26 +173,31 @@ class Peer:
             await asyncio.sleep(60)
             raise AssertionError("the caller's deadline should have passed")
         if isinstance(reply, dict):
-            return httpx.Response(
+            response = httpx.Response(
                 200, json={"jsonrpc": "2.0", "id": rpc["id"], **reply}
             )
-        if rpc["method"] == "SendMessage":
-            key = "task" if isinstance(reply, Task) else "message"
-            reply = SendMessageResponse(**{key: reply})
-        result = MessageToDict(reply)
-        return httpx.Response(
-            200, json={"jsonrpc": "2.0", "id": rpc["id"], "result": result}
-        )
+        else:
+            if rpc["method"] == "SendMessage":
+                key = "task" if isinstance(reply, Task) else "message"
+                reply = SendMessageResponse(**{key: reply})
+            result = MessageToDict(reply)
+            response = httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": rpc["id"], "result": result}
+            )
+        self.reply_sizes.append(len(response.content))
+        return response
 
     def methods(self) -> list[str]:
         return [json.loads(r.content)["method"] for r in self.requests if r.content]
 
-    def directory(self, *, follow_redirects: bool = False) -> AgentDirectory:
+    def directory(
+        self, *, follow_redirects: bool = False, **options: Any
+    ) -> AgentDirectory:
         client = httpx.AsyncClient(
             transport=httpx.MockTransport(self.handle),
             follow_redirects=follow_redirects,
         )
-        return AgentDirectory(sources=[OneAgent()], http_client=client)
+        return AgentDirectory(sources=[OneAgent()], http_client=client, **options)
 
 
 @pytest.fixture(autouse=True)
@@ -463,6 +469,70 @@ async def test_a_task_that_disappears_raises_remote_agent_error_with_its_id() ->
 
     assert raised.value.task_id == "task-1"
     assert "secret" not in raised.value.message
+
+
+# Reply size
+
+
+def finding_replies() -> tuple[Task, Task]:
+    """A working task, then the same task completed with a larger result."""
+    return task(TaskState.TASK_STATE_WORKING), task(
+        TaskState.TASK_STATE_COMPLETED, "Findings"
+    )
+
+
+async def ask_with_limit(peer: Peer, max_reply_bytes: int) -> Any:
+    runtime = Runtime(directory=peer.directory(max_reply_bytes=max_reply_bytes))
+    return await runtime.invoke(Planner(), skill="plan", arguments={"goal": "tides"})
+
+
+async def test_a_reply_of_exactly_max_reply_bytes_is_read() -> None:
+    measured = Peer(*finding_replies())
+    await ask(measured)
+    largest = max(measured.reply_sizes)
+
+    assert await ask_with_limit(Peer(*finding_replies()), largest) == "Findings"
+
+
+async def test_a_reply_one_byte_over_max_reply_bytes_fails_without_its_content() -> (
+    None
+):
+    measured = Peer(*finding_replies())
+    await ask(measured)
+    # The completed task's reply, to the poll, is the larger one.
+    largest = measured.reply_sizes[-1]
+
+    with pytest.raises(RemoteAgentError) as raised:
+        await ask_with_limit(Peer(*finding_replies()), largest - 1)
+
+    assert raised.value.message == (
+        "Agent 'research-agent' sent a reply larger than the directory's "
+        f"max_reply_bytes ({largest - 1} bytes)"
+    )
+    assert raised.value.task_id == "task-1"
+    assert raised.value.__cause__ is None
+
+
+class StreamingPeer(Peer):
+    """Answers every JSON-RPC request with a body of unknown length."""
+
+    async def handle(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return await super().handle(request)
+
+        async def chunks() -> Any:
+            for _ in range(10):
+                yield b"x" * 200
+
+        return httpx.Response(200, content=chunks())
+
+
+async def test_a_streamed_reply_without_a_length_is_cut_off_at_the_limit() -> None:
+    with pytest.raises(RemoteAgentError, match="larger than") as raised:
+        await ask_with_limit(StreamingPeer(), 1000)
+
+    assert "xxx" not in raised.value.message
+    assert raised.value.task_id is None
 
 
 async def test_a_message_reply_returns_its_text() -> None:

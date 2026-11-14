@@ -441,6 +441,7 @@ AgentDirectory(
     *, sources: Sequence[AgentRegistry], card_ttl_seconds: float = 300,
     allow_stale: bool = False, allow_http_hosts: Collection[str] = (),
     http_client: httpx.AsyncClient | None = None,
+    max_reply_bytes: int = 8_388_608,
 )
 ```
 
@@ -451,6 +452,7 @@ AgentDirectory(
 | `allow_stale` | `bool` | Optional; default `False` | When a stale card's refresh fails, serve the previous card with `stale=True` and log a warning instead of raising. Does not apply to `refresh` or to source failures. |
 | `allow_http_hosts` | `Collection[str]` | Optional; default empty | Non-loopback host names whose cards may be fetched over plain `http`, for development. Case-insensitive; a single string raises `DefinitionError`. |
 | `http_client` | `httpx.AsyncClient \| None` | Optional; default `None` | Caller-owned client used for card fetches and remote calls; never closed by the directory. It must not carry credentials in default headers or cookies, and must not follow redirects when any remote has credentials (startup refuses it). When omitted, the directory creates a client on `async with` and closes it on exit. Also lets tests use in-process ASGI apps. |
+| `max_reply_bytes` | `int` | Optional; default `8388608` (8 MiB) | The largest A2A reply body a [`Remote`](#remoteliteralname) call reads (#150); a larger one fails the call with `RemoteAgentError`. A whole number greater than 0, else `DefinitionError`. The default is twice a host's default [`max_response_bytes`](hosting.md#hostconfig), leaving room for the task's history and JSON-RPC framing; raise it for agents configured with a larger `max_response_bytes`. Does not affect card fetches (1 MiB). |
 
 ```python
 from agentframe import AgentDirectory, EnvironmentAgentRegistry, FileAgentRegistry
@@ -984,6 +986,15 @@ shared client's defaults, and redirects are never followed.
   unreachable, refusing or redirecting peer: raises
   [`RemoteAgentError`](runtime.md#remoteagenterror) with the remote task ID and
   state when known. The remote status text is never put in the message.
+- A reply (to `SendMessage`, `GetTask` or `CancelTask`) larger than the
+  directory's [`max_reply_bytes`](#agentdirectory) (default 8 MiB, #150):
+  raises `RemoteAgentError` ("Agent 'name' sent a reply larger than the
+  directory's max_reply_bytes (N bytes)") with the task ID when known, and
+  none of the reply. Bodies are read as a stream and cut off at the limit, so
+  a peer cannot make the caller hold more, with or without a
+  `Content-Length`. An oversized `SendMessage` reply leaves the task ID
+  unknown, so that task is not cancelled; an oversized `CancelTask` reply is
+  only logged.
 - The run is already at its `RunLimits.max_remote_hops` depth (default 5):
   raises base `LimitExceededError` ("Maximum remote call depth of 5
   exceeded") before anything is sent.

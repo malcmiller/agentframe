@@ -450,7 +450,9 @@ Model deployments are not agent endpoints; no AgentFrame-to-Foundry deployment
 or tested registry integration is claimed.
 
 Implemented (#84): `AgentDirectory(sources=[...], card_ttl_seconds=300,
-allow_stale=False, allow_http_hosts=(), http_client=None)` owns SDK card
+allow_stale=False, allow_http_hosts=(), http_client=None,
+max_reply_bytes=8 MiB)` (#150: `Remote` replies streamed, over it -> safe
+`RemoteAgentError`) owns SDK card
 fetch/validation/cache/refresh via an internal fetcher (no public
 `AgentCardResolver`/`CardCacheConfig`). Sources read on every `get`; cards
 cached per card URL, refetched when stale; failed refresh raises unless

@@ -10,7 +10,6 @@ from typing import Any, Literal, TypeAliasType, get_args, get_origin, overload
 
 from a2a.client import ClientCallContext
 from a2a.client.errors import A2AClientTimeoutError
-from a2a.client.transports import JsonRpcTransport
 from a2a.extensions.common import HTTP_EXTENSION_HEADER
 from a2a.helpers import get_data_parts, new_data_part, new_text_part
 from a2a.types import (
@@ -41,6 +40,7 @@ from agentframe.discovery.identity import (
     RemoteIdentity,
     check_identity,
 )
+from agentframe.discovery.transport import BoundedJsonRpcTransport, ReplyTooLargeError
 from agentframe.errors import (
     AuthenticationError,
     ClarificationNeededError,
@@ -113,7 +113,7 @@ class Remote[N: str]:
 
     Args:
         found: The agent and its validated card, from the directory.
-        transport: The SDK JSON-RPC client for ``found.interface_url``.
+        transport: The JSON-RPC client for ``found.interface_url``.
         deadline: Event-loop time when the run that owns the binding times out.
         correlation: The run that owns the binding and the request it is part
             of; labels its logs and, for peers that advertise them, its
@@ -132,7 +132,7 @@ class Remote[N: str]:
     def __init__(
         self,
         found: DiscoveredAgent,
-        transport: JsonRpcTransport,
+        transport: BoundedJsonRpcTransport,
         *,
         deadline: float,
         correlation: RunCorrelation,
@@ -201,8 +201,9 @@ class Remote[N: str]:
             ClarificationNeededError: The remote agent asked a question.
                 Nothing answers it automatically.
             RemoteAgentError: The agent could not be reached, refused the
-                request, ended its task in any state but completed, or
-                answered with something other than text.
+                request, ended its task in any state but completed,
+                answered with something other than text, or sent a reply
+                larger than the directory's ``max_reply_bytes``.
             TimeoutLimitExceededError: The run's deadline passed first.
             TokenLimitExceededError: ``max_total_tokens``, or with ``None``
                 any token at all, does not fit what the run has left; nothing
@@ -273,7 +274,8 @@ class Remote[N: str]:
             RemoteAgentError: The card does not declare the skill-call
                 extension or the skill (nothing is sent), or the agent could
                 not be reached, refused the request (for example invalid
-                arguments), did not complete its task or sent no result.
+                arguments), did not complete its task, sent no result or
+                sent a reply larger than the directory's ``max_reply_bytes``.
             OutputValidationError: The result does not match ``output``.
             ClarificationNeededError: The remote agent asked a question.
             TimeoutLimitExceededError: The run's deadline passed first.
@@ -682,6 +684,14 @@ class Remote[N: str]:
             yield
         except A2AClientTimeoutError:
             raise self._timeout() from None
+        except ReplyTooLargeError:
+            # The reply itself is untrusted, so none of it is kept.
+            raise RemoteAgentError(
+                f"{self._agent} sent a reply larger than the directory's "
+                f"max_reply_bytes ({self._transport.max_reply_bytes} bytes)",
+                task_id=task_id,
+                invocation_id=self._invocation_id,
+            ) from None
         except (A2AError, ParseError) as error:
             raise RemoteAgentError(
                 f"{self._agent} could not be reached or refused the request",
@@ -823,8 +833,12 @@ async def bind_remote(
     found = await find_remote(directory, name, identity)
     # noinspection PyProtectedMember
     client = directory._open_client()
-    transport = JsonRpcTransport(
-        client, found.card, found.interface_url, is_shared_httpx=True
+    transport = BoundedJsonRpcTransport(
+        client,
+        found.card,
+        found.interface_url,
+        # noinspection PyProtectedMember
+        max_reply_bytes=directory._max_reply_bytes,
     )
     return Remote(
         found,

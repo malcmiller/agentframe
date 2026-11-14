@@ -507,6 +507,8 @@ async def test_an_open_directory_cannot_be_entered_again() -> None:
         {"sources": [StaticRegistry()], "card_ttl_seconds": float("inf")},
         {"sources": [StaticRegistry()], "card_ttl_seconds": True},
         {"sources": [StaticRegistry()], "allow_http_hosts": "dev.internal"},
+        {"sources": [StaticRegistry()], "max_reply_bytes": 0},
+        {"sources": [StaticRegistry()], "max_reply_bytes": True},
     ],
 )
 def test_invalid_settings_are_definition_errors(options: dict[str, Any]) -> None:

@@ -16,6 +16,11 @@ changelog.
   `json.loads` only) whose `DefinitionError`s name the file and line but never
   the case content. `import agentframe` does not load the package, and it adds
   no dependency.
+- **Multi-agent:** `AgentDirectory(max_reply_bytes=8_388_608)` bounds the
+  A2A replies `Remote.ask` and `Remote.call` read (`SendMessage`, `GetTask`,
+  `CancelTask`). Bodies are streamed and cut off at the limit, with or without
+  a `Content-Length`; a larger reply fails the call with a safe
+  `RemoteAgentError` that holds none of the reply (#150).
 
 ## [0.2.0] - 2026-11-14
 
