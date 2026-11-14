@@ -158,9 +158,11 @@ time in order and returns one [`CaseResult`](#caseresult) per case:
 
 Errors never stop the run; `asyncio.CancelledError` propagates. A scorer's
 name is its `__name__`, or its class name for callable objects. The harness
-logs one INFO line per case (case ID, status, invocation ID) and, for
-exceptions that are not AgentFrame errors, their traceback under logger
-`agentframe.evaluation.harness`; it never logs case content or outputs.
+itself logs only one INFO line per case (case ID, status, invocation ID)
+under logger `agentframe.evaluation.harness`, never case inputs or outputs.
+Tracebacks of target and scorer exceptions that are not AgentFrame errors go
+to the operator log with their messages (results never keep those messages),
+so keep content out of exception messages, as for skills.
 
 **Related:** [scorers](../design/evaluation.md#scorers),
 [running](../design/evaluation.md#running-concurrency-and-cost).

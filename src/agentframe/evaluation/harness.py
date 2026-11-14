@@ -49,7 +49,11 @@ class Evaluation:
         scorers: Sync or async callables ``(case, output) -> bool | Score``.
         capture_content: Whether results keep case inputs, expected values,
             outputs and score reasons. Off by default; a report with content
-            is sensitive. Logs never contain content either way.
+            is sensitive. The harness itself logs only case IDs, statuses
+            and invocation IDs. Tracebacks of target and scorer exceptions
+            that are not AgentFrame errors go to the operator log with their
+            messages, so keep content out of exception messages, as for
+            skills.
 
     Raises:
         DefinitionError: There are no cases or no scorers, two cases share an

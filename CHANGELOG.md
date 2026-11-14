@@ -43,8 +43,9 @@ changelog.
   number) with the error class and safe message and the run's metadata; errors
   never stop the run. Duplicate case IDs, `text` cases and `expected` values
   that are not valid skill results fail before any case runs. Results hold no
-  inputs, outputs or reasons unless `capture_content=True`, and the harness
-  never logs content.
+  inputs, outputs or reasons unless `capture_content=True`; the harness logs
+  only case IDs, statuses and invocation IDs, plus operator-log tracebacks
+  (with messages) of non-AgentFrame exceptions.
 
 ### Fixed
 
