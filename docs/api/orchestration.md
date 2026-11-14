@@ -1,11 +1,13 @@
-# Orchestration: remote skill catalogs
+# Orchestration: remote skill catalogs and remote skills as tools
 
 Model-planned orchestration ([M10](../design/orchestration.md)) lets an
 orchestrator's model choose which registered agent and skill to call. This
-page covers its first piece, the **remote skill catalog**: implemented (M10
-[#166](https://github.com/malcmiller/agentframe/issues/166)). Offering
-catalog entries to a model as tools (#167), plans (#169-#174) and the
-optional `default_remote` identity (#175) are planned, not implemented.
+page covers its first two pieces, both implemented: the **remote skill
+catalog** (M10 [#166](https://github.com/malcmiller/agentframe/issues/166))
+and offering its entries to a model as **tools**
+([#167](https://github.com/malcmiller/agentframe/issues/167)). Permissions and
+tool checks for model-chosen calls (#168), plans (#169-#174) and the optional
+`default_remote` identity (#175) are planned, not implemented.
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
@@ -24,6 +26,7 @@ async def remote_skills(
     skill: str | None = None,
     tags: Collection[str] = (),
     ask: bool = False,
+    max_tokens_per_call: int | None = None,
 ) -> SkillCatalog: ...
 ```
 
@@ -34,6 +37,7 @@ async def remote_skills(
 | `skill` | `str \| None` | Optional; default `None` | Keep only card skills with this ID. |
 | `tags` | `Collection[str]` | Optional; default `()` | Keep only card skills carrying all of these tags, matched with `skill` on the same card skill, as [`AgentDirectory.find`](discovery.md#agentdirectoryfind). A single string raises `DefinitionError`. |
 | `ask` | `bool` | Optional; default `False` | Also add a free-text `ask` entry for agents with the skill-call extension. |
+| `max_tokens_per_call` | `int \| None` | Optional; default `None` | The most tokens each [model-chosen call](#remote-skills-as-model-tools) to an entry may use, held against the run's `max_total_tokens` and sent to peers that advertise it, as `Remote.call(max_total_tokens=...)`. `None` holds everything the run has left, which is safe because those calls run one at a time. Anything but a whole number above 0 raises `DefinitionError`. Implemented (#167). |
 | Result | [`SkillCatalog`](#skillcatalog) | On success | The entries, in source and card order, plus this run's binding to each agent. May be empty. |
 
 ```python
@@ -105,8 +109,8 @@ it never calls a model or sends an A2A message.
   more than one source, an unknown name in `agents`, `agents` or `tags` given
   as a single string, a positional argument that is not a `Remote`, credentials
   with a redirect-following HTTP client, two entries with the same name (for
-  example agent `a.b`'s `ask` entry and agent `a`'s skill `b`), or more than
-  20 entries.
+  example agent `a.b`'s `ask` entry and agent `a`'s skill `b`), more than
+  20 entries, or an invalid `max_tokens_per_call`.
 - `RemoteAgentError`: a declared `Remote`'s card cannot be fetched (raised
   while binding the parameter, as in M8+), has an unsafe or repeated skill ID,
   or its argument schema is missing or over 8 KiB.
@@ -155,6 +159,7 @@ application code. Implemented (#166).
 | Member | Type | Meaning |
 | --- | --- | --- |
 | `entries` | `tuple[RemoteSkill, ...]` | The entries, in source and card order. |
+| `max_tokens_per_call` | `int \| None` | The tokens each model-chosen call to an entry may use; `None` means everything the run has left. |
 | `iter(catalog)` | `Iterator[RemoteSkill]` | Iterates the entries. |
 | `len(catalog)` | `int` | The number of entries, at most 20. |
 
@@ -169,7 +174,83 @@ async def option_names(ctx: RunContext) -> list[str]:
 
 A catalog belongs to the run that built it: each binding carries that run's
 deadline, hop depth, token budget, identity and correlation, exactly like a
-`Remote` parameter. Calling entries through the catalog arrives with #167
-(model tools) and #171 (plans).
+`Remote` parameter. Its entries are called by a model through
+[`ctx.generate(tools=[...])`](#remote-skills-as-model-tools) (#167); plans
+(#171) are planned.
 
 **Related:** [M10 overview](https://github.com/malcmiller/agentframe/issues/177).
+
+## Remote skills as model tools
+
+**Purpose / signature:** let the orchestrator's model call registered agents'
+skills, one at a time, with the existing [tool loop](agents.md#implemented-tool-calling-m5-61).
+Pass catalog entries to [`RunContext.generate`](agents.md#runcontextgenerate)
+next to, or instead of, `@tool` functions. Implemented (M10 #167).
+
+```python
+from agentframe import Agent, RunContext, agent, skill
+
+
+@agent(name="Orchestrator", description="Delegates to specialists.", version="0.1.0")
+class Orchestrator(Agent):
+    @skill(id="answer", description="Answer a goal.", tags=["orchestration"])
+    async def answer(self, goal: str, ctx: RunContext) -> str:
+        skills = await ctx.remote_skills(tags=["research"], max_tokens_per_call=5000)
+        return await ctx.generate(goal, tools=[*skills])
+```
+
+Run it with `Runtime(directory=...)` or `AgentApp(directory=...)`, and a model
+that supports tool calling.
+
+**The tools.** Each entry becomes one model tool:
+
+| Tool field | Value |
+| --- | --- |
+| Name | `entry.name` with every character other than letters, digits, `_` and `-` replaced by `_`: `"research-agent.find_sources"` becomes `"research-agent_find_sources"`. Providers such as Foundry accept no `.`. A name over 64 characters raises `DefinitionError`. |
+| Description | The entry's bounded card description. |
+| Parameters | A copy of the entry's `arguments_schema`; `{"text": string}` for an `ask` entry. Foundry converts it to its strict form like any tool's. |
+
+Card text goes only into these tool definitions, never into trusted `system`
+instructions. The model's tool-call name is looked up in this mapping; a name
+that is not in it runs nothing (`{"error": "Unknown tool. ..."}`).
+
+**A call.** A structured entry runs `Remote.call(skill, **arguments)` and an
+`ask` entry `Remote.ask(text)` on the catalog's binding (a declared `Remote`
+or a registry agent), so the run's deadline, hop depth, identity, trace
+context, correlation and token reconciliation apply exactly as for a declared
+`Remote`. Each call holds the catalog's `max_tokens_per_call`, or everything
+the run has left; a peer's reported usage replaces the hold once, and a peer
+that does not report usage makes the run's usage unknown, never zero. Calls
+run one at a time in the model's order, each counts toward `max_tool_calls`,
+and none is ever retried, including when the next model call is retried after
+a transient failure: remote side effects are unknown.
+
+| Situation | Result |
+| --- | --- |
+| The call succeeds | The result goes back to the model as untrusted tool output: the `ask` answer as text, a structured result as JSON |
+| Arguments are not a JSON object, or an `ask` call's are not exactly one string `text` | Nothing is sent; the model gets `{"error": "Invalid arguments: ..."}`. Other argument checks are the remote agent's |
+| `RemoteAgentError` (unreachable, refused, failed, oversized reply) or `ClarificationNeededError` | The model gets `{"error": "The remote call failed: <class name>"}` and can try something else; one WARNING log names the entry, the class and its safe message |
+| `max_tool_calls` reached | `ToolCallLimitExceededError` before the call |
+| `max_tokens_per_call` (or any token) does not fit what the run has left | `TokenLimitExceededError`; nothing is sent |
+| Any other error: limits (deadline, hop depth), `AuthenticationError`, `PermissionDeniedError`, policy | Fails the run; the model is never told |
+
+**Refused before any model call** (`DefinitionError`): an entry whose tool name
+matches a selected `@tool` or another entry's, an entry selected twice, or an
+entry that is not from a catalog this run built (matched by identity, so one
+from another run, or constructed by hand, is refused). An argument schema the
+model's provider cannot use, such as a free-form object for Foundry's strict
+mode, raises `UnsupportedCapabilityError` before sending.
+
+**Not yet:** `requires_permissions` on entries and `ExecutionPolicy.tool_checks`
+for model-chosen remote calls arrive with
+[#168](https://github.com/malcmiller/agentframe/issues/168). Until then, with
+`Service` identity every caller of the orchestrator can make the model call any
+catalog entry with the orchestrator's identity; narrow the catalog, or use
+`OnBehalfOf` so remote agents authorize the original user.
+
+`@tool` functions still cannot take `Remote` parameters (#87): catalog entries
+are the supported way to give a model remote agents.
+
+**Related:** [design: remote skills as model tools](../design/orchestration.md#remote-skills-as-model-tools),
+[tool calling](agents.md#implemented-tool-calling-m5-61),
+[`Remote`](discovery.md#remoteliteralname).

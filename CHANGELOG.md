@@ -34,6 +34,20 @@ changelog.
   characters, 10 tags, no control characters or `examples`), skill IDs must be
   safe and unique, entry names must be unique, and a hosted
   orchestrator leaves itself out. No model is called (#166).
+- **Orchestration (M10):** `ctx.generate(goal, tools=[*skills])` offers
+  `RemoteSkill` catalog entries to the model as tools, next to `@tool`
+  functions. Each becomes a tool with a provider-safe name (`.` and other
+  characters become `_`), its bounded card description and a copy of its
+  argument schema (`{"text": string}` for `ask`). A call runs `Remote.call`
+  or `Remote.ask` on the catalog's per-run binding, so deadlines, hop depth,
+  identity, correlation and token reconciliation apply; it counts toward
+  `max_tool_calls`, is never retried and holds `remote_skills(...,
+  max_tokens_per_call=)` tokens, or everything the run has left. Results go
+  back as untrusted tool output; `RemoteAgentError` and
+  `ClarificationNeededError` become a tool error naming only the class, while
+  limits, authentication and authorization fail the run. Tool-name
+  collisions, repeated entries and entries from another run raise
+  `DefinitionError` before any model call (#167).
 - **Evaluation (M9):** `Evaluation(cases=..., target=LocalSkill(agent,
   skill=...), scorers=[...])` runs each case's arguments through
   `Runtime.run` (validation, permissions, policies, limits; a protected skill
