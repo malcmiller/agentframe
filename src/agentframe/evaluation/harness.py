@@ -126,6 +126,11 @@ class Evaluation:
         self._max_total_tokens = max_total_tokens
         self._timeout_seconds = timeout_seconds
 
+    @property
+    def capture_content(self) -> bool:
+        """Whether this evaluation's results keep case content."""
+        return self._capture_content
+
     async def run(self) -> EvalReport:
         """Run every case ``repeats`` times and score each attempt.
 

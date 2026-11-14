@@ -51,6 +51,42 @@ never passes when any of that usage is unknown,
 and `min_pass_rate=` fails when no attempt ran. Outside pytest, a script can
 call `require` and let the `AssertionError` exit non-zero.
 
+## Without pytest: `agentframe eval`
+
+For CI without pytest, put the evaluation in a function that takes no
+arguments and returns it, then run it with
+[`agentframe eval`](../api/evaluation.md#agentframe-eval) (M9 #162):
+
+```python
+# evals/word_counts.py
+from agentframe.evaluation import Case, Evaluation, LocalSkill, equals
+from agentframe.testing import ScriptedModel
+from examples.assistant import Assistant
+
+
+def create_evaluation() -> Evaluation:
+    return Evaluation(
+        cases=[Case(id="short", arguments={"text": "one two three"}, expected=3)],
+        target=LocalSkill(Assistant(model=ScriptedModel()), skill="count_words"),
+        scorers=[equals],
+    )
+```
+
+```shell
+agentframe eval evals.word_counts:create_evaluation --json eval-report.json \
+  --min-pass-rate 0.9
+```
+
+It prints the summary and exits with 0 when every threshold is met, 1 when one
+is missed (each miss is listed above the summary) and 2 on a configuration
+error, such as a target that cannot be imported or does not return an
+`Evaluation`. The threshold flags `--min-pass-rate`, `--max-errors` (default
+0), `--max-total-tokens`, `--allow-not-run` and `--allow-over-budget` go
+straight to `require`. `--json` is written before thresholds are checked, so
+upload it with `if: always()` as below. An evaluation created with
+`capture_content=True` is refused unless you pass `--capture-content`; the
+command never turns capture on itself.
+
 ## Real models
 
 Real-model evaluations follow the repository's opt-in convention: mark the test

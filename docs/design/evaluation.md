@@ -424,6 +424,7 @@ asyncio auto mode works as in this repository), using `report.require(...)`.
 A small CLI for CI without pytest, `agentframe eval module:create_evaluation
 [--json PATH] [--min-pass-rate RATE]` exiting non-zero below the threshold, is
 the last, droppable story ([decision 14](#decisions-confirmed-2026-11-13)).
+Implemented in #162; see [`agentframe eval`](../api/evaluation.md#agentframe-eval).
 
 ## Packaging and dependencies
 

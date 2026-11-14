@@ -6,10 +6,13 @@ Usage::
     agentframe run myapp.agents:Echo --dev
     agentframe dev
     agentframe compose
+    agentframe eval evals.summaries:create_evaluation --min-pass-rate 0.9
 
 ``agentframe dev`` runs every agent listed in ``agentframe.yaml``; see
 ``agentframe.dev_server``. ``agentframe compose`` writes a development
 ``compose.yaml`` and ``Dockerfile`` for them; see ``agentframe.compose``.
+``agentframe eval`` runs an evaluation and exits non-zero when it misses a
+threshold, for CI without pytest.
 
 The first form calls the application's own ``create_app()`` function, which
 returns a fully configured ``AgentApp``; secrets belong in environment
@@ -23,6 +26,7 @@ after Uvicorn has waited for open requests, bounded by the same grace period.
 """
 
 import argparse
+import asyncio
 import contextlib
 import importlib
 import json
@@ -34,6 +38,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import TYPE_CHECKING
 
 from agentframe.authoring.agent import Agent
 from agentframe.compose import write_compose
@@ -44,6 +49,11 @@ from agentframe.hosting.app import AgentApp
 from agentframe.hosting.host import HostConfig, is_loopback_host
 from agentframe.project import PROJECT_FILE
 from agentframe.security.authentication import AllowAnonymous
+
+if TYPE_CHECKING:
+    # Imported at run time only by agentframe eval, so other commands never
+    # load the evaluation package.
+    from agentframe.evaluation import EvalReport, Evaluation
 
 logger = logging.getLogger("agentframe")
 
@@ -74,6 +84,35 @@ class RunSettings:
     dev: bool
 
 
+@dataclass(frozen=True)
+class EvalSettings:
+    """What ``agentframe eval`` runs, and the thresholds it must meet.
+
+    The thresholds are passed straight to ``EvalReport.require``.
+
+    Args:
+        target: ``module:function`` returning an ``Evaluation``.
+        json_path: Where to write the JSON report, if anywhere.
+        capture_content: Allow an evaluation built with
+            ``capture_content=True``; without it such an evaluation is refused
+            before it runs.
+        min_pass_rate: The lowest acceptable pass rate.
+        max_errors: The most errored attempts accepted.
+        max_total_tokens: The most tokens the evaluation may use.
+        allow_not_run: Accept attempts that never started.
+        allow_over_budget: Accept usage over the evaluation's own budget.
+    """
+
+    target: str
+    json_path: str | None = None
+    capture_content: bool = False
+    min_pass_rate: float | None = None
+    max_errors: int = 0
+    max_total_tokens: int | None = None
+    allow_not_run: bool = False
+    allow_over_budget: bool = False
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the ``agentframe`` command.
 
@@ -83,9 +122,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Returns:
         The process exit code: 0 after a clean shutdown, 1 on a reported error.
+        ``agentframe eval`` returns 0 when the evaluation meets its
+        thresholds, 1 when it misses one and 2 on a configuration error.
     """
     arguments = _parser().parse_args(argv)
     _configure_logging()
+    if arguments.command == "eval":
+        return evaluate(_eval_settings(arguments))
     try:
         if arguments.command == "dev":
             run_dev(Path(arguments.config), startup_timeout=arguments.startup_timeout)
@@ -157,7 +200,103 @@ def _parser() -> argparse.ArgumentParser:
     compose.add_argument(
         "--force", action="store_true", help="overwrite an existing compose.yaml"
     )
+    evaluation = commands.add_parser(
+        "eval",
+        help="run an evaluation and fail when it misses a threshold",
+        description=(
+            "Run an evaluation, print its summary and exit with 1 when it "
+            "misses a threshold or 2 on a configuration error."
+        ),
+    )
+    _add_eval_arguments(evaluation)
     return parser
+
+
+def _add_eval_arguments(evaluation: argparse.ArgumentParser) -> None:
+    evaluation.add_argument("target", help="module:function returning an Evaluation")
+    evaluation.add_argument(
+        "--json", metavar="PATH", dest="json_path", help="write the JSON report here"
+    )
+    evaluation.add_argument(
+        "--min-pass-rate",
+        type=_rate,
+        metavar="RATE",
+        help="the lowest acceptable pass rate, from 0.0 to 1.0",
+    )
+    evaluation.add_argument(
+        "--max-errors",
+        type=_non_negative_integer,
+        default=0,
+        metavar="N",
+        help="the most errored attempts accepted (default: 0)",
+    )
+    evaluation.add_argument(
+        "--max-total-tokens",
+        type=_positive_integer,
+        metavar="N",
+        help="the most tokens the evaluation may use; unknown usage misses it",
+    )
+    evaluation.add_argument(
+        "--allow-not-run",
+        action="store_true",
+        help="accept attempts that never started",
+    )
+    evaluation.add_argument(
+        "--allow-over-budget",
+        action="store_true",
+        help="accept usage over the evaluation's own max_total_tokens budget",
+    )
+    evaluation.add_argument(
+        "--capture-content",
+        action="store_true",
+        help=(
+            "allow an evaluation built with capture_content=True; its summary "
+            "and JSON report then hold case content"
+        ),
+    )
+
+
+def _eval_settings(arguments: argparse.Namespace) -> EvalSettings:
+    return EvalSettings(
+        target=arguments.target,
+        json_path=arguments.json_path,
+        capture_content=arguments.capture_content,
+        min_pass_rate=arguments.min_pass_rate,
+        max_errors=arguments.max_errors,
+        max_total_tokens=arguments.max_total_tokens,
+        allow_not_run=arguments.allow_not_run,
+        allow_over_budget=arguments.allow_over_budget,
+    )
+
+
+def _rate(text: str) -> float:
+    try:
+        rate = float(text)
+    except ValueError:
+        rate = math.nan
+    if not 0.0 <= rate <= 1.0:
+        raise argparse.ArgumentTypeError(f"'{text}' is not a rate from 0.0 to 1.0")
+    return rate
+
+
+def _non_negative_integer(text: str) -> int:
+    return _integer(text, minimum=0)
+
+
+def _positive_integer(text: str) -> int:
+    return _integer(text, minimum=1)
+
+
+def _integer(text: str, *, minimum: int) -> int:
+    try:
+        number = int(text)
+    except ValueError:
+        number = minimum - 1
+    if number < minimum:
+        raise argparse.ArgumentTypeError(
+            f"'{text}' is not an integer of {minimum} or more"
+        )
+    return number
 
 
 def _compose(project_file: Path, *, force: bool) -> None:
@@ -191,10 +330,7 @@ def serve(settings: RunSettings, *, reload: bool = False) -> None:
         AgentFrameError: The application's configuration is invalid.
     """
     uvicorn = _import_uvicorn()
-    # A console script's import path starts at the script's directory, not the
-    # working directory the application's modules live in.
-    if os.getcwd() not in sys.path:
-        sys.path.insert(0, os.getcwd())
+    _import_from_working_directory()
     app = build_app(settings)
     if not reload:
         _serve_draining(app, settings)
@@ -223,6 +359,111 @@ def _serve_draining(app: AgentApp, settings: RunSettings) -> None:
         server.run()
     if not server.started:
         raise CommandError("The server did not start; see the log above.")
+
+
+def evaluate(settings: EvalSettings) -> int:
+    """Run the evaluation ``settings`` names and check its thresholds.
+
+    Prints the summary (``str(report)``), which holds no case content unless
+    the evaluation captured it, and writes the JSON report before checking
+    thresholds, so CI keeps it when the check fails. Problems are printed as
+    one ``agentframe: error: ...`` line.
+
+    Args:
+        settings: The evaluation, report path and thresholds.
+
+    Returns:
+        0 when every threshold is met; 1 when one is missed, after printing
+        each miss above the summary; 2 when the target cannot be loaded, is not
+        an ``Evaluation``, captures content without ``capture_content``, its
+        factory raises, or the report cannot be written.
+    """
+    try:
+        evaluation = load_evaluation(settings)
+        report = asyncio.run(evaluation.run())
+        if settings.json_path is not None:
+            _write_report(report, settings.json_path)
+    except (CommandError, AgentFrameError) as error:
+        print(f"agentframe: error: {error}", file=sys.stderr)
+        return 2
+    try:
+        report.require(
+            min_pass_rate=settings.min_pass_rate,
+            max_errors=settings.max_errors,
+            max_total_tokens=settings.max_total_tokens,
+            allow_not_run=settings.allow_not_run,
+            allow_over_budget=settings.allow_over_budget,
+        )
+    except AssertionError as miss:
+        # The message lists each miss above the same summary.
+        print(miss, flush=True)
+        print("agentframe: error: The evaluation missed a threshold.", file=sys.stderr)
+        return 1
+    print(report)
+    return 0
+
+
+def load_evaluation(settings: EvalSettings) -> "Evaluation":
+    """Build the ``Evaluation`` that ``settings`` names, without running it.
+
+    Args:
+        settings: The evaluation's target and whether content may be captured.
+
+    Returns:
+        The evaluation the application's factory returned.
+
+    Raises:
+        CommandError: The target cannot be loaded, is not a function returning
+            an ``Evaluation``, its factory raised an exception that is not an
+            AgentFrame error (only the class name is reported), or it captures
+            content without ``capture_content``.
+        AgentFrameError: The application's evaluation is invalid.
+    """
+    from agentframe.evaluation import Evaluation
+
+    _import_from_working_directory()
+    factory = _load(settings.target)
+    if not callable(factory):
+        raise CommandError(
+            f"'{settings.target}' is not a function that returns an Evaluation."
+        )
+    try:
+        evaluation = factory()
+    except AgentFrameError:
+        raise
+    except Exception as error:
+        # The message may hold case content, so only the class name is shown.
+        raise CommandError(
+            f"'{settings.target}' raised {type(error).__name__}."
+        ) from error
+    if not isinstance(evaluation, Evaluation):
+        raise CommandError(
+            f"'{settings.target}' returned {type(evaluation).__name__}, "
+            "not an Evaluation."
+        )
+    if evaluation.capture_content and not settings.capture_content:
+        raise CommandError(
+            f"'{settings.target}' captures content (capture_content=True), so "
+            "its summary and report would hold case inputs and outputs; pass "
+            "--capture-content to allow that."
+        )
+    return evaluation
+
+
+def _write_report(report: "EvalReport", path: str) -> None:
+    try:
+        report.write_json(path)
+    except OSError as error:
+        raise CommandError(
+            f"Cannot write the JSON report to '{path}': {error.strerror}."
+        ) from error
+
+
+def _import_from_working_directory() -> None:
+    # A console script's import path starts at the script's directory, not the
+    # working directory the application's modules live in.
+    if os.getcwd() not in sys.path:
+        sys.path.insert(0, os.getcwd())
 
 
 def build_app(settings: RunSettings) -> AgentApp:
