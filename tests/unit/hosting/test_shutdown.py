@@ -16,6 +16,9 @@ from typing import Any
 
 import httpx
 import pytest
+from a2a.server.context import ServerCallContext
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import Task, TaskState
 
 from agentframe import (
     Agent,
@@ -272,6 +275,35 @@ async def test_runs_that_finish_within_the_grace_period_complete(
     assert seconds < 1
     assert worker.finished == 2
     assert task_of(await blocking)["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert await task_state(http, background["id"]) == "TASK_STATE_COMPLETED"
+
+
+async def test_a_run_that_finishes_while_draining_stores_its_final_state(
+    http: httpx.AsyncClient,
+    worker: Worker,
+    lifespan: Lifespan,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A slow store, like a persistent one: the run has released its slot
+    # well before the SDK has saved its final state.
+    save = InMemoryTaskStore.save
+
+    async def slow_save(
+        store: InMemoryTaskStore, task: Task, context: ServerCallContext
+    ) -> None:
+        if task.status.state == TaskState.TASK_STATE_COMPLETED:
+            await asyncio.sleep(0.2)
+        await save(store, task, context)
+
+    monkeypatch.setattr(InMemoryTaskStore, "save", slow_save)
+    background = task_of(
+        await (await start_waiting(http, worker, return_immediately=True))
+    )
+
+    worker.release.set()
+    seconds = await lifespan.shutdown()
+
+    assert seconds < 1
     assert await task_state(http, background["id"]) == "TASK_STATE_COMPLETED"
 
 
