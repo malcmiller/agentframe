@@ -219,7 +219,9 @@ same deadline, `max_total_tokens` hold, outbound identity, same-origin and
 no-redirect rules, best-effort cancellation and usage reconciliation as a
 skill's remote call. Non-AgentFrame agents and Foundry agents work through
 `ask`; `call` needs a peer whose card declares AgentFrame's skill-call extension
-and skill, exactly as `Remote.call` requires. `OnBehalfOf` identities are not
+and skill, exactly as `Remote.call` requires. CI evaluates a plain official-SDK
+agent and an opt-in test a real Foundry agent (#159); see the
+[guide](../guides/evaluation.md#agents-not-built-with-agentframe). `OnBehalfOf` identities are not
 supported because an evaluation run has no signed-in user.
 
 Each `A2ATarget` case is its own short caller run. Its limits resolve like a
