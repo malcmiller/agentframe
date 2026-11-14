@@ -440,7 +440,8 @@ Implemented ([#171](https://github.com/malcmiller/agentframe/issues/171);
 skills, max_parallel=4, max_tokens_per_step=None, max_steps=8)`; the
 `on_failure="continue"` option is planned
 ([#172](https://github.com/malcmiller/agentframe/issues/172)). It checks the
-plan again with `skills.check(plan, max_steps=...)`, even one from `ctx.plan`,
+plan again as `ctx.plan` does, against only the entries the caller may use
+(a hidden entry fails like an unknown one), even a plan from `ctx.plan`,
 then runs it under one `asyncio.TaskGroup`: a step starts when its
 dependencies have completed, with at most `max_parallel` at once. The executor
 is the internal module `orchestration/execution.py`; only `ctx.run_plan`,

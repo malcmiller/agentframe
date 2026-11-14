@@ -357,16 +357,32 @@ async def test_a_tool_check_sees_an_upstream_value_and_stops_it_leaving(
     assert peer.requests == []
 
 
-async def test_permissions_are_checked_again_for_a_caller_supplied_plan(
+async def test_a_caller_supplied_plan_cannot_use_an_entry_the_caller_lacks(
     agents: Agents, research: Research
 ) -> None:
     orchestrator = Orchestrator(permissions={"research.find_sources": {"research:use"}})
     plan = Plan(steps=[find("tides", "tides")], result="tides")
 
-    with pytest.raises(PermissionDeniedError, match=r"research\.find_sources"):
+    # As in ctx.plan, a hidden entry looks exactly like a missing one.
+    with pytest.raises(InputValidationError) as raised:
         await execute(agents, orchestrator, plan, principal=Principal("caller"))
 
+    assert raised.value.message == (
+        "Plan step 'tides' field 'use' names no entry of the skill catalog"
+    )
     assert research.calls == []
+
+
+async def test_a_caller_with_the_permission_runs_the_step(
+    agents: Agents, research: Research
+) -> None:
+    orchestrator = Orchestrator(permissions={"research.find_sources": {"research:use"}})
+    plan = Plan(steps=[find("tides", "tides")], result="tides")
+    caller = Principal("caller", frozenset({"research:use"}))
+
+    await execute(agents, orchestrator, plan, principal=caller)
+
+    assert research.calls == [("find_sources", {"topic": "tides"})]
 
 
 async def test_placeholders_insert_text_and_json_and_a_plain_peer_makes_usage_unknown(

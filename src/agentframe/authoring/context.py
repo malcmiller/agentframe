@@ -352,12 +352,14 @@ class RunContext:
     ) -> PlanResult:
         """Check ``plan`` against ``skills`` again, then run it.
 
-        The plan is checked with ``skills.check(plan, max_steps=...)`` first,
-        even if it came from ``ctx.plan``: a caller-supplied plan is
-        untrusted. Steps then run under one ``asyncio.TaskGroup``: a step
-        starts when every step it depends on has completed, with at most
-        ``max_parallel`` running at once. No model sees any result between
-        steps.
+        The plan is checked first, as ``ctx.plan`` checks it: with
+        ``SkillCatalog.check`` against only the entries the caller may use,
+        so a step using a hidden entry fails like one using an unknown name.
+        This happens even if the plan came from ``ctx.plan``: a
+        caller-supplied plan is untrusted. Steps then run under one
+        ``asyncio.TaskGroup``: a step starts when every step it depends on
+        has completed, with at most ``max_parallel`` running at once. No
+        model sees any result between steps.
 
         Just before a step is sent:
 
@@ -405,10 +407,10 @@ class RunContext:
             DefinitionError: ``skills`` was not built by this run, or
                 ``max_parallel``, ``max_tokens_per_step`` or ``max_steps``
                 is not a whole number above 0. Nothing is sent.
-            InputValidationError: The plan is invalid (see
-                ``SkillCatalog.check``; nothing is sent), or a step refers to
-                a field that the referenced step's value is not an object
-                with.
+            InputValidationError: The plan is invalid for the entries the
+                caller may use (see ``SkillCatalog.check``; nothing is sent),
+                or a step refers to a field that the referenced step's value
+                is not an object with.
             PermissionDeniedError: The caller lacks a permission a step's
                 entry requires, or a tool check denied a step. That step is
                 not sent.

@@ -95,8 +95,11 @@ async def run_plan(
             "run_plan needs a catalog this run built with ctx.remote_skills(...)"
         )
     # Checked again even if the plan came from ctx.plan: a caller may have
-    # supplied it, and the run may have made tool calls since.
-    groups = catalog.check(plan, max_steps=max_steps)
+    # supplied it, and the run may have made tool calls since. As in
+    # ctx.plan, a hidden entry looks exactly like a missing one.
+    # check() lowers max_steps to the tool calls left (_step_limit).
+    # noinspection PyProtectedMember
+    groups = catalog._visible_to(principal).check(plan, max_steps=max_steps)
     steps = [step for group in groups for step in group]
     tokens = max_tokens_per_step or _equal_share(generation, len(steps))
     execution = _Execution(
