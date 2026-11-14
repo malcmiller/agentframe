@@ -9,7 +9,8 @@ from agentframe.authoring.agent import Agent
 from agentframe.authoring.definitions import SkillDefinition
 from agentframe.errors import DefinitionError, describe_validation_error
 from agentframe.evaluation.cases import Case
-from agentframe.runtime.options import RunOptions
+from agentframe.runtime.limits import DEFAULT_LIMITS
+from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.runtime import RunResult, Runtime
 from agentframe.security.principal import Principal
 
@@ -59,6 +60,21 @@ class LocalSkill:
         self._runtime = runtime or Runtime()
         self._principal = principal
         self._options = options
+
+    @property
+    def token_ceiling(self) -> int:
+        """The most tokens one case's run may use: its resolved ``max_total_tokens``.
+
+        Resolved like the run's own limits: library defaults, then the agent,
+        the skill and ``options``. An evaluation-wide budget holds this much
+        for each case before it starts.
+        """
+        options = self._options or RunOptions()
+        limits = merge_settings(
+            DEFAULT_LIMITS, self._agent.limits, self._skill.limits, options.limits
+        )
+        assert limits.max_total_tokens is not None, "DEFAULT_LIMITS sets it"
+        return limits.max_total_tokens
 
     def check_case(self, case: Case[Any]) -> Case[Any]:
         """Check that ``case`` can run against this skill, before any case runs.

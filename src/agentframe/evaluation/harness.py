@@ -1,10 +1,16 @@
 """Run cases against a target and score each output."""
 
+import asyncio
 import logging
 from collections.abc import Iterable
 from typing import Any
 
-from agentframe.errors import AgentFrameError, DefinitionError
+from agentframe.errors import (
+    AgentFrameError,
+    DefinitionError,
+    TimeoutLimitExceededError,
+)
+from agentframe.evaluation.budget import TokenBudget
 from agentframe.evaluation.cases import Case
 from agentframe.evaluation.report import (
     CaseResult,
@@ -19,12 +25,16 @@ from agentframe.runtime.runtime import RunResult
 logger = logging.getLogger(__name__)
 
 
+_BUDGET_STOP = "The evaluation's token budget could not fit this attempt."
+
+
 class Evaluation:
     """Runs fixed cases against a target and scores every output.
 
-    Cases run one at a time, in order. A case passes when every scorer
-    passes. A failing target or scorer marks only that case ``errored``; the
-    run goes on. ``asyncio.CancelledError`` still propagates.
+    Up to ``concurrency`` attempts run at once, started in case order. A case
+    passes when every scorer passes. A failing target or scorer marks only
+    that attempt ``errored``; the run goes on. ``asyncio.CancelledError``
+    from outside still propagates.
 
     Example::
 
@@ -54,11 +64,30 @@ class Evaluation:
             that are not AgentFrame errors go to the operator log with their
             messages, so keep content out of exception messages, as for
             skills.
+        concurrency: The most attempts that run at once. ``1`` runs them in
+            order.
+        repeats: How many times each case runs, to show nondeterminism.
+            Pass rates count every attempt; a case whose attempts end
+            differently is listed in ``EvalReport.flaky_cases``.
+        max_total_tokens: An optional token budget for the whole evaluation.
+            Before an attempt starts it holds its full per-run ceiling
+            (``target.token_ceiling``), so the holds never add up to more
+            than the budget; when the rest of the budget cannot fit an
+            attempt, it waits for running ones, and once nothing is running
+            it is ``not_run``. A finished attempt's reported usage replaces
+            its hold; unknown usage (including a failed run) keeps the whole
+            hold charged. Per-run limits are never raised.
+        timeout_seconds: An optional wall-clock limit for the whole
+            evaluation. When it expires, running attempts are cancelled and
+            marked ``errored`` with ``TimeoutLimitExceededError``, and
+            attempts not yet started are ``not_run``.
 
     Raises:
         DefinitionError: There are no cases or no scorers, two cases share an
-            ID, a scorer is not callable, or a case does not suit the target
-            (see ``LocalSkill.check_case``).
+            ID, a scorer is not callable, a case does not suit the target
+            (see ``LocalSkill.check_case``), ``concurrency`` or ``repeats`` is
+            not a positive integer, or ``max_total_tokens`` or
+            ``timeout_seconds`` is set but not greater than 0.
     """
 
     def __init__(
@@ -68,7 +97,12 @@ class Evaluation:
         target: LocalSkill,
         scorers: Iterable[Scorer],
         capture_content: bool = False,
+        concurrency: int = 4,
+        repeats: int = 1,
+        max_total_tokens: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> None:
+        _check_settings(concurrency, repeats, max_total_tokens, timeout_seconds)
         cases = list(cases)
         scorers = list(scorers)
         if not cases:
@@ -82,30 +116,73 @@ class Evaluation:
         self._target = target
         self._scorers = scorers
         self._capture_content = capture_content
+        self._concurrency = concurrency
+        self._repeats = repeats
+        self._max_total_tokens = max_total_tokens
+        self._timeout_seconds = timeout_seconds
 
     async def run(self) -> EvalReport:
-        """Run every case once and score it.
+        """Run every case ``repeats`` times and score each attempt.
 
         Returns:
-            A report with one result per case, in case order.
+            A report with one result per attempt, in case order, then
+            attempt order, whatever order they finished in.
         """
-        results = []
-        for case in self._cases:
-            result = await self._run_case(case)
-            logger.info(
-                "Evaluation case %s %s (invocation_id=%s)",
-                result.case_id,
-                result.status,
-                result.invocation_id,
-            )
-            results.append(result)
-        return EvalReport(results=tuple(results))
+        attempts = [
+            (case, attempt)
+            for case in self._cases
+            for attempt in range(1, self._repeats + 1)
+        ]
+        results: list[CaseResult | None] = [None] * len(attempts)
+        started: set[int] = set()
+        budget = TokenBudget(self._max_total_tokens)
+        ceiling = self._target.token_ceiling
+        # Workers share one iterator, so each attempt is taken exactly once and
+        # attempts start in case order.
+        queue = iter(enumerate(attempts))
 
-    async def _run_case(self, case: Case[Any]) -> CaseResult:
+        async def worker() -> None:
+            for index, (case, attempt) in queue:
+                if await budget.hold(ceiling):
+                    started.add(index)
+                    result = await self._run_case(case, attempt)
+                    await budget.settle(ceiling, _total_tokens(result))
+                else:
+                    result = self._not_run(case, attempt, _BUDGET_STOP)
+                _log(result)
+                results[index] = result
+
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                async with asyncio.TaskGroup() as group:
+                    for _ in range(min(self._concurrency, len(attempts))):
+                        group.create_task(worker())
+        except TimeoutError:
+            # Only our own timeout ends up here: asyncio.timeout turns its
+            # cancellation into TimeoutError, while an outside cancellation
+            # stays asyncio.CancelledError and propagates.
+            for index, (case, attempt) in enumerate(attempts):
+                if results[index] is None:
+                    result = self._stopped_by_timeout(
+                        case, attempt, running=index in started
+                    )
+                    _log(result)
+                    results[index] = result
+        finished = [result for result in results if result is not None]
+        if len(finished) < len(results):
+            # A worker raised CancelledError itself, which TaskGroup treats as
+            # a cancelled task rather than an error; never drop its attempts.
+            raise asyncio.CancelledError
+        return EvalReport(
+            results=tuple(finished),
+            max_total_tokens=self._max_total_tokens,
+        )
+
+    async def _run_case(self, case: Case[Any], attempt: int) -> CaseResult:
         try:
             run = await self._target.run(case)
         except Exception as error:
-            return self._errored(case, error, "The target", (), run=None)
+            return self._errored(case, attempt, error, "The target", (), run=None)
         scores: list[ScoreResult] = []
         for scorer in self._scorers:
             name = scorer_name(scorer)
@@ -113,7 +190,7 @@ class Evaluation:
                 score = await run_scorer(scorer, case, run.value)
             except Exception as error:
                 return self._errored(
-                    case, error, f"Scorer '{name}'", tuple(scores), run
+                    case, attempt, error, f"Scorer '{name}'", tuple(scores), run
                 )
             reason = score.reason if self._capture_content else None
             scores.append(
@@ -123,11 +200,34 @@ class Evaluation:
             )
         passed = all(score.passed for score in scores)
         status = CaseStatus.PASSED if passed else CaseStatus.FAILED
-        return self._result(case, status, tuple(scores), run)
+        return self._result(case, attempt, status, tuple(scores), run)
+
+    def _stopped_by_timeout(
+        self, case: Case[Any], attempt: int, *, running: bool
+    ) -> CaseResult:
+        if not running:
+            return self._not_run(
+                case, attempt, "The evaluation's timeout expired before this attempt."
+            )
+        return self._result(
+            case,
+            attempt,
+            CaseStatus.ERRORED,
+            (),
+            None,
+            error_type=TimeoutLimitExceededError.__name__,
+            error_message="The evaluation's timeout expired while this attempt ran.",
+        )
+
+    def _not_run(self, case: Case[Any], attempt: int, reason: str) -> CaseResult:
+        return self._result(
+            case, attempt, CaseStatus.NOT_RUN, (), None, error_message=reason
+        )
 
     def _errored(
         self,
         case: Case[Any],
+        attempt: int,
         error: Exception,
         source: str,
         scores: tuple[ScoreResult, ...],
@@ -151,6 +251,7 @@ class Evaluation:
             )
         return self._result(
             case,
+            attempt,
             CaseStatus.ERRORED,
             scores,
             run,
@@ -162,6 +263,7 @@ class Evaluation:
     def _result(
         self,
         case: Case[Any],
+        attempt: int,
         status: CaseStatus,
         scores: tuple[ScoreResult, ...],
         run: RunResult[Any] | None,
@@ -173,6 +275,7 @@ class Evaluation:
         capture = self._capture_content
         return CaseResult(
             case_id=case.id,
+            attempt=attempt,
             status=status,
             scores=scores,
             error_type=error_type,
@@ -189,6 +292,35 @@ class Evaluation:
             expected=case.expected if capture else None,
             output=run.value if capture and run else None,
         )
+
+
+def _total_tokens(result: CaseResult) -> int | None:
+    return result.usage.total_tokens if result.usage else None
+
+
+def _log(result: CaseResult) -> None:
+    logger.info(
+        "Evaluation case %s attempt %d %s (invocation_id=%s)",
+        result.case_id,
+        result.attempt,
+        result.status,
+        result.invocation_id,
+    )
+
+
+def _check_settings(
+    concurrency: int,
+    repeats: int,
+    max_total_tokens: int | None,
+    timeout_seconds: float | None,
+) -> None:
+    for name, count in (("concurrency", concurrency), ("repeats", repeats)):
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise DefinitionError(f"Evaluation {name} must be an integer of 1 or more.")
+    if max_total_tokens is not None and not max_total_tokens > 0:
+        raise DefinitionError("Evaluation max_total_tokens must be greater than 0.")
+    if timeout_seconds is not None and not timeout_seconds > 0:
+        raise DefinitionError("Evaluation timeout_seconds must be greater than 0.")
 
 
 def _check_unique_ids(cases: list[Case[Any]]) -> None:
