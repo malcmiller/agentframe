@@ -7,11 +7,13 @@ provider's structured output can express: entry names as an enum, and each
 step's arguments as a JSON string. An ``ask`` entry's arguments are
 ``{"text": ...}``, as when it is offered as a tool. The reply is turned into a
 ``Plan`` and checked against the same entries. Nothing is repaired or
-re-requested.
+re-requested. A made plan is logged as ``Plan created`` with its step count
+and entry names only.
 """
 
 import copy
 import json
+import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +31,8 @@ from agentframe.orchestration.remote_tools import ASK_SCHEMA
 if TYPE_CHECKING:
     # Imported only for type checking: the context module imports this one.
     from agentframe.authoring.context import RunContext
+
+logger = logging.getLogger(__name__)
 
 NO_SKILLS_MESSAGE = "No skills are available to plan with"
 NO_PLAN_MESSAGE = "No plan for this goal with the available skills"
@@ -123,7 +127,28 @@ async def make_plan(
     except InputValidationError as error:
         # The plan came from the model, so a problem with it is bad output.
         raise OutputValidationError(error.message) from None
+    _log_created(ctx, plan)
     return plan
+
+
+def _log_created(ctx: "RunContext", plan: Plan) -> None:
+    # Entry names were checked against the catalog; arguments and text are
+    # never logged.
+    uses = [step.use for step in plan.steps]
+    # noinspection PyProtectedMember
+    run = ctx._remotes
+    extra = (
+        run.correlation.log_extra()
+        if run is not None
+        else {"invocation_id": ctx.invocation_id}
+    )
+    logger.info(
+        "Plan created with %d steps using %s (invocation_id=%s)",
+        len(uses),
+        ", ".join(uses),
+        ctx.invocation_id,
+        extra={**extra, "step_count": len(uses), "uses": uses},
+    )
 
 
 def planning_request(goal: str, entries: tuple[RemoteSkill, ...]) -> str:

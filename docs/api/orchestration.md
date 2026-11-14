@@ -20,8 +20,9 @@ optional [`default_remote`](#default_remote) identity for registered agents
 ([#171](https://github.com/malcmiller/agentframe/issues/171)), and
 [plan checks and the approval pattern](#plan-checks-and-the-approval-pattern)
 ([#174](https://github.com/malcmiller/agentframe/issues/174)), with the
-`continue` failure policy (#172). Per-step logs (#173) are planned, not
-implemented.
+`continue` failure policy (#172) and
+[per-step logs and usage](#plan-logs-and-usage)
+([#173](https://github.com/malcmiller/agentframe/issues/173)).
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
@@ -664,19 +665,19 @@ class Orchestrator(Agent):
 ## `PlanResult`
 
 **Purpose / signature:** what [`ctx.run_plan`](#runcontextrun_plan) returns.
-A frozen dataclass. Implemented (#171, `complete` #172); the plan's total
-`usage` is planned with #173.
+A frozen dataclass. Implemented (#171, `complete` #172, `usage` #173).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `value` | `Any` | The value of the plan's `result` step, or `None` when it did not complete (only with `on_failure="continue"`). |
 | `steps` | `Mapping[str, StepResult]` | Every step's [`StepResult`](#stepresult), by step ID, in the order the steps were checked to run. |
 | `complete` | `bool` | Whether every step completed. Always `True` under the default `"stop"` policy. |
+| `usage` | `Usage \| None` | The usage of the steps that were sent, added up; `None` when any of them is unknown, never a partial sum. Skipped steps were never sent and are left out. A breakdown only: the run's `RunResult.usage` already includes every step, charged once. |
 
 ## `StepResult`
 
 **Purpose / signature:** one step's result in a [`PlanResult`](#planresult).
-A frozen dataclass. Implemented (#171, statuses and error fields #172).
+A frozen dataclass. Implemented (#171, statuses and error fields #172, `use` and `duration_ms` #173).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -684,9 +685,60 @@ A frozen dataclass. Implemented (#171, statuses and error fields #172).
 | `value` | `Any` | The step's result, or `None` unless it completed: the remote skill's decoded JSON result (`str` for a text result), or the `ask` answer's text. Untrusted content from another agent. |
 | `usage` | `Usage \| None` | The usage the agent reported for the step; `None` when unknown, for example because the agent does not report usage or the step did not complete. |
 | `remote_task_id` | `str \| None` | The remote agent's task ID, which ties the step to that agent's logs; `None` when there was no task. |
+| `use` | `str` | The name of the catalog entry the step called. |
+| `duration_ms` | `int \| None` | How long the step took, in whole milliseconds, from just before its checks until the agent's reply; `None` for a skipped step. |
 | `error_type` | `str \| None` | The class name of the error that ended a `"failed"`, `"cancelled"` or `"input_required"` step (`"RemoteAgentError"` or `"ClarificationNeededError"`); otherwise `None`. |
 | `error_message` | `str \| None` | That error's safe message, never the remote agent's own status text; otherwise `None`. |
 | `question` | `str \| None` | An `"input_required"` step's question; otherwise `None`. Untrusted content from another agent: check it before showing it to anyone. |
+
+## Plan logs and usage
+
+**Purpose:** show operators which agent did what in a plan, how long it took
+and what it cost, without logging content. Implemented (M10 #173).
+
+AgentFrame logs through `logging` at INFO, sets no log format and puts every
+field in the record's `extra`, with the run's correlation fields `agent`,
+`invocation_id`, `root_invocation_id` and `parent_invocation_id`
+([correlation](../design/tracing.md#implemented-cross-agent-correlation-m8-91)):
+
+| Record | Logger | Extra fields |
+| --- | --- | --- |
+| `Plan created` | `agentframe.orchestration.planning` | `step_count` and `uses` (the steps' entry names, in order). Logged by `ctx.plan`. |
+| `Plan step started` | `agentframe.orchestration.execution` | `plan_step` (step ID), `use` (entry name), `status` `"started"`; `error_type`, `remote_task_id`, `duration_ms` and `total_tokens` are `None`. |
+| `Plan step completed` | `agentframe.orchestration.execution` | `plan_step`, `use`, `status`, `error_type`, `remote_task_id`, `duration_ms`, `total_tokens` (`None` when unknown). |
+
+A step's `status` is its [`StepResult.status`](#stepresult), whichever
+`on_failure` is set: under `"stop"` a remote failure or question is logged as
+`failed`, `cancelled` or `input_required`, exactly as `"continue"` would keep
+it, then raised. A step stopped by a limit, a check or the run's cancellation
+is logged as `failed` (or `cancelled`) with the error's class name. A skipped
+step, never sent, gets only a `Plan step completed` record with status
+`skipped` and no duration. Under `"stop"`, steps never started because the
+plan stopped are not logged.
+
+`error_type` is the error's class name only. Arguments, `ask` text, results,
+the goal, error messages and questions are never logged: they can carry user
+data. No new wire field identifies a step: the
+peer sees the orchestrator's run as its `parent_invocation_id` with the same
+`root_invocation_id`, and `remote_task_id` ties a step to the peer's own logs.
+
+```python
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s root=%(root_invocation_id)s",
+)
+```
+
+`StepResult.usage` is the usage the step's agent reported, `None` when
+unknown, and `PlanResult.usage` adds up the steps that were sent, `None` if
+any of them is unknown.
+Both are views of usage the run already charged once, as for any remote
+call, so they never add to `RunResult.usage`.
+
+**Related:** [design: observability](../design/orchestration.md#observability),
+[tracing and correlation](../design/tracing.md).
 
 ## Remote skills as model tools
 

@@ -5,6 +5,7 @@ and fails any other request. ``ScriptedModel`` replies stand in for the model.
 """
 
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -219,6 +220,25 @@ async def test_a_scripted_plan_reply_becomes_a_checked_plan() -> None:
         "writer-agent",
         "billing-agent.refund",
     ]
+
+
+async def test_a_made_plan_is_logged_with_its_entry_names_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe")
+
+    result = await plan(Orchestrator(scripted(TWO_STEPS)))
+
+    [record] = [r for r in caplog.records if r.getMessage().startswith("Plan created")]
+    fields = record.__dict__
+    assert fields["step_count"] == 2
+    assert fields["uses"] == ["research-agent.find_sources", "writer-agent"]
+    assert fields["invocation_id"] == result.invocation_id
+    assert fields["root_invocation_id"] == result.invocation_id
+    # Neither the goal nor any argument or text is logged.
+    for content in ("tides", "Write a post"):
+        assert content not in record.getMessage()
+        assert all(content not in str(value) for value in fields.values())
 
 
 async def test_the_goal_and_card_text_are_user_data_never_instructions() -> None:
