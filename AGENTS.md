@@ -96,7 +96,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
 | `src/agentframe/orchestration/` | `RemoteSkill`, `SkillCatalog`, bounding of untrusted card text and `RemoteTool` (remote entries as model tools, with per-entry permissions and tool checks) (M10). |
 | `src/agentframe/discovery/` | `AgentRegistry`, `AgentReference`, `AgentQuery`, file and environment registries (M8+). |
-| `src/agentframe/evaluation/` | Evaluation harness (M9): `cases.py` (`Case`, `load_cases`), `targets.py` (`Target`, `TargetResult`, `LocalSkill`, `A2ATarget`), `scoring.py` (`Score`, scorer calls, built-ins `equals`, `contains`, `valid`), `report.py` (`CaseResult`, `EvalReport`, versioned JSON, `require`), `budget.py` (`TokenBudget`, evaluation-wide token holds), `harness.py` (`Evaluation`). Imported as `agentframe.evaluation`, not re-exported from `agentframe`, so its `__init__.py` re-exports its own public names. |
+| `src/agentframe/evaluation/` | Evaluation harness (M9): `cases.py` (`Case`, `load_cases`), `targets.py` (`Target`, `TargetResult`, `LocalSkill`, `A2ATarget`), `scoring.py` (`Score`, scorer calls, built-ins `equals`, `contains`, `valid`), `judge.py` (`Judge`, the rubric scorer's model-backed run and its budget holds), `report.py` (`CaseResult`, `EvalReport`, versioned JSON, `require`), `budget.py` (`TokenBudget`, evaluation-wide token holds), `harness.py` (`Evaluation`). Imported as `agentframe.evaluation`, not re-exported from `agentframe`, so its `__init__.py` re-exports its own public names. |
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
 | `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`). |
@@ -123,7 +123,8 @@ the official A2A client, a validated typed `output=` result and the example's
 run locally and through `examples/orders.py` over A2A (skipped if the model
 lacks tool support), a model calling a localhost agent's skill as a remote
 tool (M10 #167, checking only that the entry was called; skipped without tool
-support), a Foundry one-tool round trip that replays encrypted
+support), a rubric `Judge` grading one model-free case in an `Evaluation`
+(M9 #160), a Foundry one-tool round trip that replays encrypted
 reasoning items and one unambiguous free-text request routed by
 `examples/routed_assistant.py` over A2A (checking only the selected skill and
 that its argument is present, since routing is nondeterministic). They are marked

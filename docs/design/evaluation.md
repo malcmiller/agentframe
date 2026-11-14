@@ -245,7 +245,7 @@ authentication without a network) is not part of M9: run the app with
 
 Function scorers and `Score` are implemented (#153;
 [reference](../api/evaluation.md#score)), as are the built-ins `equals`,
-`contains` and `valid` (#154); `Judge` is proposed.
+`contains` and `valid` (#154), and `Judge` (#160; votes are proposed, #161).
 
 A scorer is any sync or async callable taking the case and the output and
 returning `bool` or a `Score`:
@@ -285,6 +285,9 @@ with a clear message.
 
 ### Judge
 
+Implemented (#160; [reference](../api/evaluation.md#judge)) except `votes`
+(#161, proposed).
+
 `Judge` asks any AgentFrame `Model` (Foundry, Ollama or a custom one) whether
 one output meets a written rubric:
 
@@ -322,7 +325,7 @@ one output meets a written rubric:
 `Evaluation(cases, target, scorers, concurrency=4, repeats=1,
 max_total_tokens=None, timeout_seconds=None, capture_content=False)`.
 Concurrency, repeats, the budget and the timeout are implemented (#157; see
-[`Evaluation`](../api/evaluation.md#evaluation)); judge holds arrive with #160.
+[`Evaluation`](../api/evaluation.md#evaluation)), as are judge holds (#160).
 
 - **Per case,** the target's normal limits apply: `LocalSkill(options=
   RunOptions(limits=...))` or the agent/skill/library defaults (120 s, 100 000
@@ -380,8 +383,8 @@ The aggregates and `str(report)` are implemented (#155); see
 [`EvalReport`](../api/evaluation.md#evalreport). `not_run`, attempts and
 `flaky` are implemented (#157); `write_json` and `require` are implemented
 (#156), see [`EvalReport.write_json`](../api/evaluation.md#evalreportwrite_json)
-and the [evaluation guide](../guides/evaluation.md); `judge_usage` arrives with
-the judge (#160).
+and the [evaluation guide](../guides/evaluation.md); `judge_usage` and
+`total_judge_usage` are implemented (#160).
 
 Output formats:
 
