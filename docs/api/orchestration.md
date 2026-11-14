@@ -13,8 +13,13 @@ typed [plans](#plan) checked by [`SkillCatalog.check`](#skillcatalogcheck)
 plans from [`RunContext.plan`](#runcontextplan)
 ([#170](https://github.com/malcmiller/agentframe/issues/170)) and the
 optional [`default_remote`](#default_remote) identity for registered agents
-([#175](https://github.com/malcmiller/agentframe/issues/175)). Running plans
-(#171-#174) is planned, not implemented.
+([#175](https://github.com/malcmiller/agentframe/issues/175)), the
+[`ctx.plan`](#runcontextplan) planning call
+([#170](https://github.com/malcmiller/agentframe/issues/170)), and
+[running a plan](#runcontextrun_plan) with [`PlanResult`](#planresult)
+([#171](https://github.com/malcmiller/agentframe/issues/171)). The `continue`
+failure policy (#172), per-step logs (#173) and plan checks (#174) are
+planned, not implemented.
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
@@ -279,8 +284,8 @@ A catalog belongs to the run that built it: each binding carries that run's
 deadline, hop depth, token budget, identity and correlation, exactly like a
 `Remote` parameter. Its entries are called by a model through
 [`ctx.generate(tools=[...])`](#remote-skills-as-model-tools) (#167); plans
-are [checked](#skillcatalogcheck) against it (#169), and running them (#171) is
-planned.
+are [checked](#skillcatalogcheck) against it (#169) and
+[run](#runcontextrun_plan) with it (#171).
 
 **Related:** [M10 overview](https://github.com/malcmiller/agentframe/issues/177).
 
@@ -290,7 +295,8 @@ planned.
 [`PlanStep`](#planstep)s whose order comes from their dependencies, forming a
 directed acyclic graph. A frozen Pydantic model, public so tests and reviewed
 plans can construct one; there is no builder DSL, loops or conditions.
-Implemented (#169); `ctx.plan` (#170) and `ctx.run_plan` (#171) are planned.
+Implemented (#169); [`ctx.plan`](#runcontextplan) makes one (#170) and
+[`ctx.run_plan`](#runcontextrun_plan) runs one (#171).
 
 | Field | Type | Required / default | Meaning |
 | --- | --- | --- | --- |
@@ -347,7 +353,8 @@ indexing, filters or functions:
 - An `ask` step's value is text, so `.field` of an `ask` step is refused.
 
 A step depends on every step it references and every step in `after`.
-Substituting values happens when the plan runs (#171).
+Values are substituted just before the step runs
+([`ctx.run_plan`](#runcontextrun_plan), #171).
 
 **Related:** [data between steps](../design/orchestration.md#data-between-steps).
 
@@ -356,7 +363,7 @@ Substituting values happens when the plan runs (#171).
 **Purpose / signature:** `catalog.check(plan, *, max_steps=8) ->
 tuple[tuple[PlanStep, ...], ...]`. Checks that a [`Plan`](#plan) only calls the
 catalog's entries, correctly, without any network or model call. Implemented
-(#169); [`ctx.plan`](#runcontextplan) runs it too, and `ctx.run_plan` will.
+(#169); [`ctx.plan`](#runcontextplan) and [`ctx.run_plan`](#runcontextrun_plan) run it too.
 
 | Parameter | Type | Required / default | Meaning |
 | --- | --- | --- | --- |
@@ -406,8 +413,9 @@ when it is 1-64 letters, digits, `_` or `-`. A `max_steps` that is not a whole
 number above 0 raises `DefinitionError`. A deeply nested plan built with
 `model_construct` (validation refuses one) raises `InputValidationError`
 rather than `RecursionError`. Checking says nothing about permissions:
-entries a caller lacks are hidden from [`ctx.plan`](#runcontextplan) and will
-be re-checked with `tool_checks` before each step runs (#171).
+entries a caller lacks are hidden from [`ctx.plan`](#runcontextplan) and
+[`ctx.run_plan`](#runcontextrun_plan), and re-checked, with `tool_checks`,
+before each step runs (#171).
 
 **Related:** [validation before execution](../design/orchestration.md#validation-before-execution).
 
@@ -500,6 +508,125 @@ class Orchestrator(Agent):
 
 **Related:** [planning call](../design/orchestration.md#planning-call),
 [replanning](../design/orchestration.md#replanning).
+
+## `RunContext.run_plan`
+
+**Purpose / signature:** `await ctx.run_plan(plan, skills, *, max_parallel=4,
+max_tokens_per_step=None, max_steps=8) -> PlanResult`. Checks a
+[`Plan`](#plan) against the catalog again, then runs its steps as remote calls,
+in parallel where their dependencies allow. No model sees any result between
+steps. Implemented (M10 #171); the `on_failure="continue"` option (#172) is
+planned.
+
+| Parameter | Type | Required / default | Meaning |
+| --- | --- | --- | --- |
+| `plan` | `Plan` | Required | The plan, from [`ctx.plan`](#runcontextplan), built by the skill or received as an argument. A caller-supplied plan is untrusted and gets every check below. |
+| `skills` | `SkillCatalog` | Required | The catalog the plan was made for, built by this run with [`remote_skills`](#runcontextremote_skills); any other raises `DefinitionError`. |
+| `max_parallel` | `int` | `4` | The most steps running at once, a whole number above 0. |
+| `max_tokens_per_step` | `int \| None` | `None` | The tokens each step holds while it runs. `None` shares the tokens the run has left when the plan starts equally among its steps. Set by trusted code, never by the model. |
+| `max_steps` | `int` | `8` | As for [`SkillCatalog.check`](#skillcatalogcheck): the most steps the plan may have, never above the tool calls the run has left. Pass the same value given to `ctx.plan`. |
+
+```python
+from agentframe import Agent, Plan, RunContext, agent, skill
+
+
+@agent(name="Orchestrator", description="Runs reviewed plans.", version="0.1.0")
+class Orchestrator(Agent):
+    @skill(
+        id="execute",
+        description="Run a reviewed plan.",
+        tags=["orchestration"],
+        requires_permissions=["plans:run"],
+    )
+    async def execute(self, plan: Plan, ctx: RunContext) -> str:
+        skills = await ctx.remote_skills(agents=["research-agent", "writer-agent"])
+        result = await ctx.run_plan(plan, skills, max_tokens_per_step=2_000)
+        return str(result.value)
+```
+
+**Order.** The plan is checked first, as `ctx.plan` checks it: with
+[`SkillCatalog.check`](#skillcatalogcheck) against only the entries the
+caller may use, so a step using a hidden entry fails exactly like one using
+an unknown name ("names no entry of the skill catalog"). An invalid plan
+sends nothing. Steps then run under one
+`asyncio.TaskGroup`: a step starts when every step it references or lists in
+`after` has completed, with at most `max_parallel` running. Just before a step
+is sent:
+
+1. It counts as one tool call toward `RunLimits.max_tool_calls`.
+2. Its references are replaced by deep copies of earlier values:
+   `{"$ref": "step"}` by the whole value and `{"$ref": "step.field"}` by one
+   top-level field, keeping types. In `ask` text, `{step}` and `{step.field}`
+   insert a string value as it is and any other value as compact JSON with
+   sorted keys (`{"a":1,"b":[2]}`), never Python's `str()` form. Only values
+   change, never argument names, so the plan check's top-level argument check
+   still holds.
+3. The caller must hold the entry's `requires_permissions`
+   ([permissions](#permissions-and-tool-checks)), checked again for every
+   step as defense in depth.
+4. Every `ExecutionPolicy.tool_checks` check gets the running skill, the
+   principal, the **entry name** as `tool_name` and the read-only arguments
+   about to be sent, after substitution (`{"text": ...}` for an `ask` entry).
+   This is the data-exfiltration gate: a check sees exactly which data goes to
+   which agent.
+
+The step is then `Remote.call` (structured entry) or `Remote.ask` (`ask`
+entry) on the catalog's binding to its agent, so the run's remaining
+deadline, hop depth, identity (`remotes=` entry or `default_remote`), trace
+context, correlation and token reconciliation apply as for any remote call.
+Each step holds `max_tokens_per_step` (or the equal share) of the run's
+token budget; the peer's reported usage replaces the hold, and a peer that
+does not report usage holds nothing and makes the step's and the run's usage
+unknown, never zero.
+
+**Failures.** The first failing step stops the plan: running steps are
+cancelled, each sending its agent a best-effort `CancelTask`, later steps are
+never sent, and the failing step's error is raised as itself, never as an
+`ExceptionGroup`. No step is retried. Messages name steps, fields and entries,
+never argument values or results; nothing is logged with them.
+
+| Situation | Result |
+| --- | --- |
+| `skills` not built by this run, or `max_parallel`, `max_tokens_per_step` or `max_steps` not a whole number above 0 | `DefinitionError`; nothing is sent |
+| The plan is invalid for the entries the caller may use (including a step using a hidden entry), or has more steps than `max_steps` or the tool calls the run has left | `InputValidationError` from the check; nothing is sent |
+| A `.field` reference into a value that is not an object or lacks the field (for example a structured skill that returned text) | `InputValidationError`, for example `Plan step 'brief' field 'arguments.sources' refers to field 'summary' of 'tides', whose result has no such field`; that step is not sent |
+| The caller lacks a permission the entry requires, or a tool check denies the step | `PermissionDeniedError`; that step is not sent |
+| A tool check raises or is still running at the run's deadline | `PolicyUnavailableError`; that step is not sent |
+| A step's tokens do not fit what the run has left, or fewer tokens are left than the plan has steps (default share) | `TokenLimitExceededError` before that step (or any step) is sent |
+| The run's deadline passes | `TimeoutLimitExceededError`; running steps are cancelled |
+| The run is at its `max_remote_hops` depth | `LimitExceededError`; nothing is sent |
+| A remote agent fails, refuses or cannot be reached, or asks a question | `RemoteAgentError` or `ClarificationNeededError`, as for [`Remote.call`](discovery.md#remotecall) |
+
+An `OnBehalfOf` identity (per name or as `default_remote`) without a
+signed-in user raises `PermissionDeniedError` when the catalog is built, before
+any plan runs.
+
+**Related:** [design: running a plan](../design/orchestration.md#running-a-plan),
+[limits: cross-agent budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8),
+[LLMCompiler](https://arxiv.org/abs/2312.04511).
+
+## `PlanResult`
+
+**Purpose / signature:** what [`ctx.run_plan`](#runcontextrun_plan) returns.
+A frozen dataclass. Implemented (#171); `complete` and the plan's total
+`usage` are planned with #172 and #173.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `value` | `Any` | The value of the plan's `result` step. |
+| `steps` | `Mapping[str, StepResult]` | Every step's [`StepResult`](#stepresult), by step ID, in the order the steps were checked to run. |
+
+## `StepResult`
+
+**Purpose / signature:** one step's result in a [`PlanResult`](#planresult).
+A frozen dataclass. Implemented (#171).
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `status` | `Literal["completed"]` | Under the default `stop` policy every step of a returned plan completed. Other statuses come with `on_failure="continue"` (#172). |
+| `value` | `Any` | The step's result: the remote skill's decoded JSON result (`str` for a text result), or the `ask` answer's text. Untrusted content from another agent. |
+| `usage` | `Usage \| None` | The usage the agent reported for the step; `None` when unknown, for example because the agent does not report usage. |
+| `remote_task_id` | `str \| None` | The remote agent's task ID, which ties the step to that agent's logs; `None` when it answered without a task. |
 
 ## Remote skills as model tools
 

@@ -9,6 +9,11 @@ from pydantic import BaseModel
 from agentframe.discovery.remote import Remote
 from agentframe.errors import DefinitionError
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, build_catalog
+from agentframe.orchestration.execution import (
+    DEFAULT_MAX_PARALLEL,
+    PlanResult,
+    run_plan,
+)
 from agentframe.orchestration.plan import DEFAULT_MAX_STEPS, Plan
 from agentframe.orchestration.planning import make_plan
 from agentframe.orchestration.remote_tools import remote_tools
@@ -335,3 +340,99 @@ class RunContext:
         ``LimitExceededError``, ``ModelRefusalError`` or ``ProviderError``.
         """
         return await make_plan(self, goal, skills, max_steps, instructions)
+
+    async def run_plan(
+        self,
+        plan: Plan,
+        skills: SkillCatalog,
+        *,
+        max_parallel: int = DEFAULT_MAX_PARALLEL,
+        max_tokens_per_step: int | None = None,
+        max_steps: int = DEFAULT_MAX_STEPS,
+    ) -> PlanResult:
+        """Check ``plan`` against ``skills`` again, then run it.
+
+        The plan is checked first, as ``ctx.plan`` checks it: with
+        ``SkillCatalog.check`` against only the entries the caller may use,
+        so a step using a hidden entry fails like one using an unknown name.
+        This happens even if the plan came from ``ctx.plan``: a
+        caller-supplied plan is untrusted. Steps then run under one
+        ``asyncio.TaskGroup``: a step starts when every step it depends on
+        has completed, with at most ``max_parallel`` running at once. No
+        model sees any result between steps.
+
+        Just before a step is sent:
+
+        1. It counts as one tool call toward ``max_tool_calls``.
+        2. Its references are replaced by copies of earlier values:
+           ``{"$ref": "step"}`` by the step's whole value and
+           ``{"$ref": "step.field"}`` by one top-level field, keeping types;
+           in ``ask`` text, ``{step}`` and ``{step.field}`` by the value,
+           strings as they are and anything else as compact JSON with
+           sorted keys.
+        3. The caller must hold the entry's ``requires_permissions``.
+        4. The execution policy's tool checks get the entry's name and the
+           arguments about to be sent, after substitution (``{"text": ...}``
+           for an ``ask`` entry): the data-exfiltration gate.
+
+        Each step is then ``Remote.call`` or ``Remote.ask`` on the catalog's
+        binding to its agent, so the run's deadline, depth, identity,
+        correlation and token accounting apply as for any remote call. Each
+        step holds ``max_tokens_per_step`` of the run's token budget while it
+        runs, replaced by the usage its agent reports; an agent that does
+        not report usage holds nothing and makes the run's usage unknown.
+
+        The first failing step stops the plan: running steps are cancelled
+        (their agents get a best-effort ``CancelTask``), later steps are
+        never sent and its error is raised as itself, never as an
+        ``ExceptionGroup``. No step is retried. Errors name steps, fields
+        and entries, never values.
+
+        Args:
+            plan: The plan, from ``ctx.plan`` or built or received by the
+                skill.
+            skills: The catalog the plan was made for, built by this run.
+            max_parallel: The most steps that may run at once.
+            max_tokens_per_step: The tokens each step may use. ``None``
+                shares the tokens the run has left when the plan starts
+                equally among its steps. Never chosen by a model.
+            max_steps: The most steps the plan may have, as for
+                ``SkillCatalog.check``; never above the tool calls the run
+                has left.
+
+        Returns:
+            The ``result`` step's value and every step's result.
+
+        Raises:
+            DefinitionError: ``skills`` was not built by this run, or
+                ``max_parallel``, ``max_tokens_per_step`` or ``max_steps``
+                is not a whole number above 0. Nothing is sent.
+            InputValidationError: The plan is invalid for the entries the
+                caller may use (see ``SkillCatalog.check``; nothing is sent),
+                or a step refers to a field that the referenced step's value
+                is not an object with.
+            PermissionDeniedError: The caller lacks a permission a step's
+                entry requires, or a tool check denied a step. That step is
+                not sent.
+            PolicyUnavailableError: A tool check raised or did not answer in
+                time. That step is not sent.
+            TokenLimitExceededError: A step's tokens do not fit what the run
+                has left, or fewer tokens are left than the plan has steps.
+            ToolCallLimitExceededError: The run has made ``max_tool_calls``.
+            LimitExceededError: The run is at its ``max_remote_hops`` depth,
+                or another limit of the run stopped a step.
+            RemoteAgentError: A step's agent failed, as for ``Remote.call``.
+            ClarificationNeededError: A step's agent asked a question.
+            AuthenticationError: A credential could not provide its headers.
+        """
+        return await run_plan(
+            plan,
+            skills,
+            self._remotes,
+            generation=self._generation,
+            principal=self.principal,
+            deadline=self.deadline,
+            max_parallel=max_parallel,
+            max_tokens_per_step=max_tokens_per_step,
+            max_steps=max_steps,
+        )

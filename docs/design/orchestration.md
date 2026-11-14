@@ -388,7 +388,7 @@ there is no builder DSL.
 ### Validation before execution
 
 `SkillCatalog.check(plan, max_steps=8)` (implemented, #169) runs without I/O,
-and `ctx.run_plan` will run it again. It returns the steps in parallel groups,
+and `ctx.run_plan` (#171) runs it again. It returns the steps in parallel groups,
 a deterministic topological order. It checks:
 
 - step IDs unique and well formed; every `use` in the catalog; `arguments` only
@@ -435,12 +435,25 @@ and tokens, with `model_request_checks` applied:
 
 ## Running a plan
 
-`await ctx.run_plan(plan, skills, max_parallel=4, max_tokens_per_step=None,
-on_failure="stop")` ([#171](https://github.com/malcmiller/agentframe/issues/171))
-checks the plan, then runs it under one `asyncio.TaskGroup`: a step starts when
-its dependencies have completed, with at most `max_parallel` at once. References
-are resolved just before a step starts and the top-level argument check runs
-again. It returns a `PlanResult`:
+Implemented ([#171](https://github.com/malcmiller/agentframe/issues/171);
+[API](../api/orchestration.md#runcontextrun_plan)) as `await ctx.run_plan(plan,
+skills, max_parallel=4, max_tokens_per_step=None, max_steps=8)`; the
+`on_failure="continue"` option is planned
+([#172](https://github.com/malcmiller/agentframe/issues/172)). It checks the
+plan again as `ctx.plan` does, against only the entries the caller may use
+(a hidden entry fails like an unknown one), even a plan from `ctx.plan`,
+then runs it under one `asyncio.TaskGroup`: a step starts when its
+dependencies have completed, with at most `max_parallel` at once. The executor
+is the internal module `orchestration/execution.py`; only `ctx.run_plan`,
+`PlanResult` and `StepResult` are public. Just before a step is sent it counts
+as one tool call, its references are resolved by copying values (placeholders
+in `ask` text insert strings as they are and other values as compact JSON with
+sorted keys), the caller's permissions for the entry are re-checked and the
+`tool_checks` see the substituted arguments. Substitution changes values, not
+argument names, so the top-level argument check still holds. Implemented, the
+`PlanResult` has `value` and `steps` (each `StepResult` has `status`, always
+`completed` under the default `stop` policy, `value`, `usage` and
+`remote_task_id`); the other fields below are planned with #172 and #173:
 
 | Field | Meaning |
 | --- | --- |
@@ -464,9 +477,12 @@ again. It returns a `PlanResult`:
 
 ### Failures and partial results
 
-- `on_failure="stop"` (default): the first failure cancels running steps, which
-  sends best-effort `CancelTask` through the existing binding, and raises the
-  original error, never an `ExceptionGroup`.
+- `on_failure="stop"` (default, implemented #171): the first failure cancels
+  running steps, which sends best-effort `CancelTask` through the existing
+  binding, and raises the original error, never an `ExceptionGroup`. A
+  `.field` reference into a value that is not an object or lacks the field
+  fails its step with `InputValidationError` naming the step and field, never
+  the value.
 - `on_failure="continue"` ([#172](https://github.com/malcmiller/agentframe/issues/172)):
   dependents of a failed step are `skipped` and never sent, independent steps
   still run, and the partial `PlanResult` is returned. A remote question marks
@@ -507,7 +523,7 @@ bounded by `max_model_calls` like any other.
   Entries the caller lacks are hidden from the model and refused if named.
   The 20-entry limit counts entries before hiding, so whether a catalog is
   too large never depends on the caller.
-- **Per-call checks** (implemented for tools, #168; plan steps #171): before
+- **Per-call checks** (implemented for tools, #168, and plan steps, #171): before
   every remote call, for tools and for every plan step, the entry's permissions are re-checked and the existing
   `ExecutionPolicy.tool_checks` run with `tool_name` set to the entry name and
   the arguments about to be sent: for plan steps, after `$ref` and placeholder

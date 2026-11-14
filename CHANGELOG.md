@@ -27,6 +27,22 @@ changelog.
   that the budget cannot fit errors the case rather than scoring it on fewer
   votes. With `votes` above 1 the score's `value` is the fraction of votes
   that passed, so a split vote is visible in reports (#161).
+- **Orchestration (M10):** `await ctx.run_plan(plan, skills, max_parallel=4,
+  max_tokens_per_step=None, max_steps=8)` checks a `Plan` again against the
+  catalog entries the caller may use, as `ctx.plan` does, then runs its steps as
+  remote calls under one `asyncio.TaskGroup`: a step starts when its
+  dependencies have completed, with at most `max_parallel` running. Before each
+  step is sent it counts as one tool call, its `{"$ref": ...}` and
+  `{step.field}` references are replaced by copies of earlier values (other than
+  strings, inserted into `ask` text as compact JSON with sorted keys), the
+  caller's permissions for the entry are re-checked and
+  `ExecutionPolicy.tool_checks` see the entry name and the substituted
+  arguments. Each step holds `max_tokens_per_step` (default an equal share of
+  the tokens left) within the run's deadline, depth and token budget. The first
+  failure cancels running steps (best-effort `CancelTask`) and is raised as
+  itself; nothing is retried. Returns `PlanResult` with the `result` step's
+  value and a `StepResult` per step (`status`, `value`, `usage`,
+  `remote_task_id`) (#171).
 - **Evaluation (M9):** `Judge(model, rubric=..., options=None)`, a scorer
   (named `judge` in reports) that asks any AgentFrame `Model` with structured
   output for a binary `Verdict(passed, reason)` through an ordinary `Runtime`

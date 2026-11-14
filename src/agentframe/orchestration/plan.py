@@ -4,9 +4,12 @@ A ``Plan`` is a flat list of ``PlanStep``s, each one call to a skill catalog
 entry. Steps depend on each other through references to earlier results and
 through ``after``; the plan must be a directed acyclic graph. ``check_plan``
 validates a plan against a catalog without any I/O and returns its steps in
-parallel groups. Running a plan is a separate, later stage.
+parallel groups. When a step runs, ``substituted_arguments`` and
+``substituted_text`` replace its references with copies of earlier results.
 """
 
+import copy
+import json
 import re
 import string
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -160,6 +163,95 @@ def dependencies(step: PlanStep) -> dict[str, str]:
     for name in step.after:
         found.setdefault(name, "after")
     return found
+
+
+def substituted_arguments(step: PlanStep, values: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``step``'s arguments with every reference replaced.
+
+    A reference is any object with a ``"$ref"`` key, at any depth, as
+    ``_argument_references`` finds them. It becomes a deep copy of the
+    referenced step's value, or of one top-level field of it, so types are
+    kept and no step can change another's result. Only values change, never
+    argument names, so the top-level argument check ``check_plan`` made
+    still holds. Assumes the step passed ``check_plan``.
+
+    Args:
+        step: The step about to run.
+        values: The values of the steps it depends on, by step ID.
+
+    Raises:
+        InputValidationError: A ``.field`` reference's step has a value that
+            is not an object or lacks the field. The message names the step
+            and the field, never a value.
+    """
+    return {
+        name: _substituted(value, step, _argument_field(name), values)
+        for name, value in step.arguments.items()
+    }
+
+
+def substituted_text(step: PlanStep, values: Mapping[str, Any]) -> str:
+    """Return ``step``'s ``ask`` text with every placeholder replaced.
+
+    ``{step}`` and ``{step.field}`` become the referenced value: a string as
+    it is, anything else as compact JSON with sorted keys (non-ASCII kept as
+    is), since ``str()`` of a ``dict`` is Python syntax, not something
+    another agent can rely on. ``{{`` and ``}}`` become literal braces.
+    Assumes the step passed ``check_plan``.
+
+    Args:
+        step: The ``ask`` step about to run.
+        values: The values of the steps it depends on, by step ID.
+
+    Raises:
+        InputValidationError: As for ``substituted_arguments``.
+    """
+    pieces: list[str] = []
+    for literal, name, _, _ in string.Formatter().parse(step.text or ""):
+        pieces.append(literal)
+        if name is not None:
+            value = _referenced(step, "text", name, values)
+            pieces.append(value if isinstance(value, str) else _as_json(value))
+    return "".join(pieces)
+
+
+def _substituted(
+    value: Any, step: PlanStep, field: str, values: Mapping[str, Any]
+) -> Any:
+    """Copy ``value``, replacing references the way ``_argument_references``
+    finds them."""
+    if isinstance(value, dict):
+        if "$ref" in value:
+            return _referenced(step, field, value["$ref"], values)
+        return {
+            key: _substituted(item, step, field, values) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_substituted(item, step, field, values) for item in value]
+    return value
+
+
+def _referenced(
+    step: PlanStep, field: str, target: str, values: Mapping[str, Any]
+) -> Any:
+    """Return a deep copy of what ``target`` (``"step"`` or ``"step.field"``)
+    refers to."""
+    name, _, key = target.partition(".")
+    value = values[name]
+    if not key:
+        return copy.deepcopy(value)
+    # The value came from another agent; only its shape is described.
+    if not isinstance(value, dict) or key not in value:
+        raise InputValidationError(
+            f"Plan step '{step.id}' field '{field}' refers to field '{key}' of "
+            f"'{name}', whose result has no such field"
+        )
+    return copy.deepcopy(value[key])
+
+
+def _as_json(value: Any) -> str:
+    # Sorted, since key order from another agent's reply is not meaningful.
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _check_ids(steps: Sequence[PlanStep]) -> None:
