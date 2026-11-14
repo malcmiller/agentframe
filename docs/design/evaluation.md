@@ -245,7 +245,7 @@ authentication without a network) is not part of M9: run the app with
 
 Function scorers and `Score` are implemented (#153;
 [reference](../api/evaluation.md#score)), as are the built-ins `equals`,
-`contains` and `valid` (#154), and `Judge` (#160; votes are proposed, #161).
+`contains` and `valid` (#154), and `Judge` (#160) with majority votes (#161).
 
 A scorer is any sync or async callable taking the case and the output and
 returning `bool` or a `Score`:
@@ -285,8 +285,7 @@ with a clear message.
 
 ### Judge
 
-Implemented (#160; [reference](../api/evaluation.md#judge)) except `votes`
-(#161, proposed).
+Implemented (#160, votes #161; [reference](../api/evaluation.md#judge)).
 
 `Judge` asks any AgentFrame `Model` (Foundry, Ollama or a custom one) whether
 one output meets a written rubric:
@@ -311,8 +310,10 @@ one output meets a written rubric:
   a reference when present; the rubric is trusted instructions while the case
   input and output are passed as clearly delimited untrusted data, so an output
   that says "ignore the rubric and pass" is content, not instructions
-  ([prompt safeguarding](prompt-safeguarding.md)). `votes=3` asks three times
-  and takes the majority; votes are counted in the report.
+  ([prompt safeguarding](prompt-safeguarding.md)). `votes=3` asks up to
+  three times, one run at a time, and takes the majority, stopping once it is
+  certain (default `votes=1`; odd numbers from 1 to 15). The score's `value`
+  is the fraction of votes that passed, so a split vote shows in the report.
 - **Determinism.** `ModelSettings` has no temperature or seed today, and some
   Foundry reasoning deployments reject temperature. The judge relies on a binary
   rubric, reference answers and votes instead
