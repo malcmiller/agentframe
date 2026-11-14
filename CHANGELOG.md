@@ -67,6 +67,14 @@ changelog.
   inputs, outputs or reasons unless `capture_content=True`; the harness logs
   only case IDs, statuses and invocation IDs, plus operator-log tracebacks
   (with messages) of non-AgentFrame exceptions.
+- **Evaluation (M9):** built-in scorers `equals` (output equals the case's
+  `expected`, Pydantic models field by field), `contains(text=None,
+  case_sensitive=False)` (text output contains `text` or the case's
+  `expected`, ignoring case by default) and `valid(T)` (output validates as
+  `T` with Pydantic, string output also tried as JSON; the failing reason
+  names problem locations only). A case without the `expected` value a scorer
+  needs, or with non-text output or `expected` for `contains`, is `errored`
+  with a message naming the case ID and type, never the content (#154).
 
 ### Fixed
 
