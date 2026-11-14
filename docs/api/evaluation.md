@@ -8,7 +8,9 @@ proposed API. Implemented so far: [`Case`](#case) and
 [`LocalSkill`](#localskill), [`Score`](#score) and [`CaseResult`](#caseresult)
 (#153); the built-in scorers [`equals`](#equals), [`contains`](#contains) and
 [`valid`](#valid) (#154); [`EvalReport`](#evalreport) aggregates and console
-summary, [`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155).
+summary, [`UsageTotals`](#usagetotals) and [`Latency`](#latency) (#155);
+[`A2ATarget`](#a2atarget), [`Target`](#target) and
+[`TargetResult`](#targetresult) (#158).
 Everything else in the design is unimplemented.
 
 Import from `agentframe.evaluation`, not `agentframe`. The package ships in the
@@ -111,10 +113,11 @@ output with plain functions. A case passes when every scorer passes
 **Signature status:** implemented in M9 #153; concurrency, repeats, the
 evaluation-wide budget and timeout in #157
 ([decisions 8, 9 and 12](../design/evaluation.md#decisions-confirmed-2026-11-13)).
-A2A targets (#158) and judge holds (#160) are proposed.
+`target` accepts any [`Target`](#target) since #158. Judge holds (#160)
+are proposed.
 
 ```text
-Evaluation(*, cases: Iterable[Case[Any]], target: LocalSkill,
+Evaluation(*, cases: Iterable[Case[Any]], target: Target,
            scorers: Iterable[Scorer], capture_content: bool = False,
            concurrency: int = 4, repeats: int = 1,
            max_total_tokens: int | None = None,
@@ -125,12 +128,12 @@ async Evaluation.run() -> EvalReport
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `cases` | `Iterable[Case[Any]]` | Required | At least one case; IDs must be unique. |
-| `target` | [`LocalSkill`](#localskill) | Required | What runs each case. |
+| `target` | [`Target`](#target) | Required | What runs each case: [`LocalSkill`](#localskill), [`A2ATarget`](#a2atarget) or an application target. |
 | `scorers` | `Iterable[Scorer]` | Required | At least one sync or async callable `(case, output) -> bool \| Score`. |
 | `capture_content` | `bool` | Optional; default `False` | Keep case inputs, expected values, outputs and score reasons in results. A report with content is sensitive. |
 | `concurrency` | `int` | Optional; default `4` | Most attempts running at once, at least 1. `1` runs them in order. |
 | `repeats` | `int` | Optional; default `1` | Attempts per case, at least 1. Pass rates count every attempt; cases whose attempts end differently are `flaky`. |
-| `max_total_tokens` | `int \| None` | Optional; default `None` (no budget) | Token budget for the whole evaluation, greater than 0. Each attempt holds its full per-run ceiling ([`LocalSkill.token_ceiling`](#localskill)) before it starts. |
+| `max_total_tokens` | `int \| None` | Optional; default `None` (no budget) | Token budget for the whole evaluation, greater than 0. Each attempt holds its full per-run ceiling (the target's `token_ceiling`, see [`Target`](#target)) before it starts. |
 | `timeout_seconds` | `float \| None` | Optional; default `None` (no limit) | Wall-clock limit for the whole evaluation, greater than 0. |
 
 ```python
@@ -156,7 +159,8 @@ report = await evaluation.run()
 **Behavior / failures:** construction raises `DefinitionError`, before any case
 runs, when there are no cases or no scorers, a scorer is not callable, two
 cases share an ID (the message names positions, not the ID), a case does not
-suit the target (see [`LocalSkill`](#localskill)), `concurrency` or `repeats`
+suit the target (its `check_case`; see [`LocalSkill`](#localskill) and
+[`A2ATarget`](#a2atarget)), `concurrency` or `repeats`
 is not an integer of 1 or more, or `max_total_tokens` or `timeout_seconds` is
 not greater than 0. `run` runs up to `concurrency` attempts at once, started in
 case order, and returns one [`CaseResult`](#caseresult) per attempt, in case
@@ -270,6 +274,123 @@ may use: its `max_total_tokens` resolved like the run's limits (library default
 holds this much per attempt.
 
 **Related:** [targets](../design/evaluation.md#targets).
+
+## `A2ATarget`
+
+**Purpose / decision:** the remote target: runs each case against a deployed
+A2A agent found in an [`AgentDirectory`](discovery.md#agentdirectory), through
+the same binding a skill's [`Remote`](discovery.md#remoteliteralname) uses, so the
+evaluation covers what is actually running, including its routing, auth and
+model. Service identity only, no in-process hosted target
+([decision 16](../design/evaluation.md#decisions-confirmed-2026-11-13)).
+
+**Signature status:** implemented in M9 #158.
+
+```text
+A2ATarget(directory: AgentDirectory, name: str, *, skill: str | None = None,
+          output: type[Any] | None = None, identity: Service | None = None,
+          options: RunOptions | None = None)
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `directory` | `AgentDirectory` | Required | Where the agent is found. The application opens and closes it; cases run while it is closed error with `DefinitionError`. |
+| `name` | `str` | Required | The agent's name in the directory. |
+| `skill` | `str \| None` | Optional; default `None` | Skill ID: each case's `arguments` go through `Remote.call(skill, ...)`. `None` sends each case's `text` through `Remote.ask`. |
+| `output` | `type[Any] \| None` | Optional; default `None` | Type each skill result is validated into, such as a Pydantic model. Needs `skill`. `None` keeps decoded JSON. |
+| `identity` | `Service \| None` | Optional; default `None` | Outbound credentials, as in `remotes=`. `None` sends none, which only works when the card declares no security. `OnBehalfOf` is refused. |
+| `options` | `RunOptions \| None` | Optional; default `None` | Per-case limits from `options.limits`, then library defaults: `timeout_seconds` (120 s), `max_total_tokens` (100 000) and `max_remote_hops` (5). `options.model_settings` does not apply. |
+
+```python
+from agentframe import (
+    AgentDirectory,
+    APIKeyCredential,
+    FileAgentRegistry,
+    RunLimits,
+    RunOptions,
+    Service,
+)
+from agentframe.evaluation import A2ATarget, Evaluation, valid
+
+async with AgentDirectory(sources=[FileAgentRegistry("agents.yaml")]) as directory:
+    target = A2ATarget(
+        directory,
+        "assistant",
+        skill="summarize",
+        output=Summary,  # application model
+        identity=Service(credential=APIKeyCredential(api_key)),  # application key
+        options=RunOptions(limits=RunLimits(timeout_seconds=60)),
+    )
+    report = await Evaluation(
+        cases=cases, target=target, scorers=[valid(Summary)]
+    ).run()
+```
+
+**Behavior / failures:** construction raises `DefinitionError` for an
+`OnBehalfOf` identity (an evaluation has no signed-in user) or `output=`
+without `skill=`; it does no I/O. When an `Evaluation` is created, a skill
+target refuses `text` cases and a free-text target refuses `arguments` cases;
+each `expected` is validated against `output` (or `str` for free text) and
+converted to it, as for `LocalSkill`. The read-only property
+`token_ceiling: int` is the resolved per-case `max_total_tokens`; an
+evaluation-wide budget holds it per attempt. A peer that does not advertise
+usage reports it as unknown, so its whole hold stays charged.
+
+Each case is its own short root run with a new invocation ID: the binding
+holds `max_total_tokens` and sends it as the case's ceiling to peers that
+advertise it, sends the remaining deadline and depth 0, applies the outbound
+identity, same-origin and no-redirect rules, and reconciles the usage the peer
+reports. A peer that does not advertise usage, such as a non-AgentFrame agent,
+reports unknown usage, never zero. At the deadline the case errors with
+`TimeoutLimitExceededError` and the remote task is cancelled, best effort.
+`RemoteAgentError` (including an oversized reply), `ClarificationNeededError`,
+`OutputValidationError` and card or identity problems (`DefinitionError`)
+error only that case, keeping the error class and AgentFrame's safe message,
+never remote content.
+
+**Related:** [targets](../design/evaluation.md#targets),
+[discovery API](discovery.md).
+
+## `Target`
+
+**Purpose / decision:** what `Evaluation` runs cases against; a small
+structural protocol, so `LocalSkill`, `A2ATarget` and application targets need
+no base class.
+
+**Signature status:** implemented in M9 #158 as a `typing.Protocol`.
+
+```text
+Target.token_ceiling -> int  # read-only property
+Target.check_case(case: Case[Any]) -> Case[Any]
+async Target.run(case: Case[Any]) -> TargetResult[Any]
+```
+
+**Behavior / failures:** `token_ceiling` is the most tokens one case may use;
+an evaluation-wide `max_total_tokens` holds it per attempt. `Evaluation` calls
+`check_case` for every case before any case runs; it returns the case (possibly with `expected` converted) or
+raises `DefinitionError`. `run` returns a [`TargetResult`](#targetresult); an
+exception errors only that case.
+
+**Related:** [targets](../design/evaluation.md#targets).
+
+## `TargetResult`
+
+**Purpose / decision:** a target's output for one case plus run metadata,
+neutral between local and remote targets; unknown values are `None`, never 0.
+
+**Signature status:** implemented in M9 #158 as a frozen, keyword-only generic
+dataclass.
+
+| Field | Type | Required/default status | Meaning |
+| --- | --- | --- | --- |
+| `value` | `T` | Required | The output scorers check. |
+| `invocation_id` | `str` | Required | The case's invocation ID. |
+| `usage` | `Usage` | Required | Token usage; fields may be `None` (unknown). |
+| `duration` | `timedelta` | Required | Wall-clock time of the case. |
+| `model_calls`, `tool_calls` | `int \| None` | Optional; default `None` | From `RunResult` for `LocalSkill`; `None` for `A2ATarget`. |
+| `finish_reason` | `FinishReason \| None` | Optional; default `None` | From `RunResult` for `LocalSkill`; `None` for `A2ATarget`. |
+
+**Related:** [`CaseResult`](#caseresult).
 
 ## `Score`
 
@@ -414,7 +535,7 @@ the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
 | `error_type` | `str \| None` | Class name of the error that errored the case. |
 | `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. For `not_run`, why it did not run. |
 | `invocation_id` | `str \| None` | The run's ID, also when it failed with an AgentFrame error. |
-| `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` | from `RunResult` | `None` when the target raised or the attempt did not run; usage fields may be `None` (unknown, not zero). |
+| `usage`, `duration`, `model_calls`, `tool_calls`, `finish_reason` | from [`TargetResult`](#targetresult) | `None` when the target raised or the attempt did not run; `model_calls`, `tool_calls` and `finish_reason` are always `None` for `A2ATarget`; usage fields may be `None` (unknown, not zero). |
 | `tags` | `tuple[str, ...]` | The case's tags. |
 | `arguments`, `text`, `expected`, `output` | content | `None` unless `capture_content=True`. |
 

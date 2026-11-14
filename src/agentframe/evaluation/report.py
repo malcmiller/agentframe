@@ -52,10 +52,11 @@ class ScoreResult:
 class CaseResult:
     """The outcome of one attempt at a case: its status, scores and run metadata.
 
-    Run metadata comes from the target's ``RunResult`` and is ``None`` when
-    the target raised or the attempt did not run. Content fields
-    (``arguments``, ``text``, ``expected``, ``output`` and score reasons) are
-    ``None`` unless the evaluation was created with ``capture_content=True``.
+    Run metadata comes from the target's ``TargetResult`` and is ``None``
+    when the target raised or, for a remote agent, cannot be known. Content
+    fields (``arguments``, ``text``, ``expected``, ``output`` and score
+    reasons) are ``None`` unless the evaluation was created with
+    ``capture_content=True``.
 
     Attributes:
         case_id: The case's ID.
@@ -74,9 +75,9 @@ class CaseResult:
             with an AgentFrame error.
         usage: Token usage; fields may be ``None`` (unknown, not zero).
         duration: How long the run took.
-        model_calls: Model calls the run made.
-        tool_calls: Tool calls the model asked for.
-        finish_reason: Why the run finished.
+        model_calls: Model calls the run made; ``None`` for ``A2ATarget``.
+        tool_calls: Tool calls the model asked for; ``None`` for ``A2ATarget``.
+        finish_reason: Why the run finished; ``None`` for ``A2ATarget``.
         tags: The case's tags.
         arguments: The case's arguments, when captured.
         text: The case's text, when captured.

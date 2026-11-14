@@ -37,6 +37,18 @@ changelog.
   unknown cases), `latency` (`Latency`: p50, p95 and max) and
   `errors_by_class`. `str(report)` is a plain-text summary table, failing
   cases first, with no case content unless `capture_content=True` (#155).
+- **Evaluation (M9):** `A2ATarget(directory, name, skill=None, output=None,
+  identity=None, options=None)` evaluates a deployed A2A agent: `call` with
+  each case's `arguments` when `skill` is set, otherwise `ask` with its
+  `text`, through the same binding a skill's `Remote` uses. Each case is its
+  own root run with limits from `options.limits`, then the defaults (120 s
+  deadline, 100 000-token ceiling, 5 hops); usage comes from the peer's task,
+  unknown when it does not advertise it; a slow peer is cut off and cancelled
+  best effort. Service identity only: `OnBehalfOf` raises `DefinitionError`.
+  `Evaluation(target=...)` now takes any `Target` (`token_ceiling`,
+  `check_case`, `run`), and
+  targets return a `TargetResult`, whose call counts and finish reason are
+  `None` for remote agents (#158).
 - **Multi-agent:** `AgentDirectory(max_reply_bytes=8_388_608)` bounds the
   A2A replies `Remote.ask` and `Remote.call` read (`SendMessage`, `GetTask`,
   `CancelTask`). Bodies are streamed and cut off at the limit, with or without

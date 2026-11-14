@@ -15,9 +15,10 @@ from agentframe.evaluation.report import (
     UsageTotals,
 )
 from agentframe.evaluation.scoring import Score, Scorer, contains, equals, valid
-from agentframe.evaluation.targets import LocalSkill
+from agentframe.evaluation.targets import A2ATarget, LocalSkill, Target, TargetResult
 
 __all__ = [
+    "A2ATarget",
     "Case",
     "CaseResult",
     "CaseStatus",
@@ -28,6 +29,8 @@ __all__ = [
     "Score",
     "ScoreResult",
     "Scorer",
+    "Target",
+    "TargetResult",
     "UsageTotals",
     "contains",
     "equals",
