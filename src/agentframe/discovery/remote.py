@@ -50,8 +50,8 @@ from agentframe.errors import (
     TimeoutLimitExceededError,
     TokenLimitExceededError,
 )
+from agentframe.runtime.accounting import UNKNOWN_USAGE, RunAccounting
 from agentframe.runtime.correlation import RunCorrelation
-from agentframe.runtime.generation import UNKNOWN_USAGE, RunAccounting
 from agentframe.security.principal import Principal
 from agentframe.skill_call import (
     MAX_TOTAL_TOKENS_FIELD,

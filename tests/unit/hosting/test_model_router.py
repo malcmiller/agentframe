@@ -39,7 +39,7 @@ from agentframe import (
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.hosting.model_router import NO_TEXT_QUESTION, extraction_output
 from agentframe.hosting.routing import new_routing_context
-from agentframe.runtime.generation import RunAccounting
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.testing import ScriptedModel
 from local_server import ServeLocally, lifespan_startup
 

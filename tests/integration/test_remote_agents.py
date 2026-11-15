@@ -45,8 +45,8 @@ from agentframe import (
     skill,
 )
 from agentframe.discovery.remote import bind_remote
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import root_run
-from agentframe.runtime.generation import RunAccounting
 from local_server import ServeLocally, lifespan_startup
 
 type Research = Remote[Literal["research-agent"]]

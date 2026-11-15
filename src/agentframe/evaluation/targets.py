@@ -22,8 +22,8 @@ from agentframe.errors import (
     describe_validation_error,
 )
 from agentframe.evaluation.cases import Case
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import root_run
-from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import DEFAULT_LIMITS
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.runtime import Runtime

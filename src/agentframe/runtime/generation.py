@@ -1,33 +1,28 @@
 """Per-run model generation behind ``RunContext.generate``.
 
-Includes token accounting and retries of transient provider failures.
+Includes the tool loop and retries of transient provider failures. Token
+accounting is in ``runtime.accounting``, token estimates and limit checks in
+``runtime.tokens``, and reading the model's final answer in
+``runtime.model_output``.
 """
 
 import asyncio
-import json
-import math
 import random
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, RootModel, ValidationError
+from pydantic import BaseModel
 
 from agentframe.authoring.services import ServiceScope
 from agentframe.errors import (
     DefinitionError,
     IncompleteOutputError,
-    ModelCallLimitExceededError,
     ModelError,
-    ModelRefusalError,
-    OutputValidationError,
     ProviderError,
     TimeoutLimitExceededError,
-    TokenLimitExceededError,
-    ToolCallLimitExceededError,
     UnsupportedCapabilityError,
-    describe_validation_error,
 )
 from agentframe.models.base import (
     Message,
@@ -38,7 +33,20 @@ from agentframe.models.base import (
     ModelSettings,
     OutputSchema,
 )
+from agentframe.runtime.accounting import UNKNOWN_USAGE, RunAccounting
 from agentframe.runtime.limits import RunLimits
+from agentframe.runtime.model_output import (
+    TRUNCATED_MESSAGE,
+    output_schema,
+    text_from,
+    validate_output,
+)
+from agentframe.runtime.tokens import (
+    check_fits_model,
+    estimate_input_tokens,
+    estimate_output_tokens,
+    with_estimates,
+)
 from agentframe.runtime.tools import (
     assistant_message,
     is_permitted,
@@ -47,7 +55,7 @@ from agentframe.runtime.tools import (
     tool_spec,
 )
 from agentframe.security.execution_policy import ExecutionPolicy, enforce_checks
-from agentframe.usage import FinishReason, Usage
+from agentframe.usage import FinishReason
 
 if TYPE_CHECKING:
     # Imported only for type checking: these modules import this one.
@@ -56,129 +64,13 @@ if TYPE_CHECKING:
     from agentframe.orchestration.remote_tools import RemoteTool
     from agentframe.security.authorization import ToolAuthorizationPolicy
 
-NO_USAGE = Usage(input_tokens=0, output_tokens=0, total_tokens=0, estimated=False)
-UNKNOWN_USAGE = Usage(
-    input_tokens=None, output_tokens=None, total_tokens=None, estimated=False
-)
-
-CHARACTERS_PER_TOKEN = 4
-"""Characters counted as one token when a provider reports no token count.
-
-A common rule of thumb for English text. It is a best-effort estimate, not a
-guaranteed bound: some text, such as code or other languages, uses more tokens.
-"""
-
 INITIAL_BACKOFF_SECONDS = 0.5
 """Longest wait before the first retry when the provider gives no hint."""
 
 MAX_BACKOFF_SECONDS = 8.0
 """Longest wait before any retry when the provider gives no hint."""
 
-TRUNCATED_MESSAGE = "The model's output was cut short at its output token limit"
-
 NO_REMOTE_TOOLS: "Mapping[str, RemoteTool]" = MappingProxyType({})
-
-
-@dataclass
-class RunAccounting:
-    """The tokens, model calls and tool calls of one run.
-
-    Before a call, ``reserve`` holds the most tokens it can use (its input
-    estimate plus its output cap). After it, ``settle`` replaces the hold with
-    the tokens actually used, or keeps the hold when they are unknown, so a
-    failed call is never treated as free. Neither method awaits, so
-    concurrent calls in one run cannot both take the same remaining tokens.
-    Remote agent calls hold tokens the same way with ``hold_tokens``, without
-    counting a model call, and settle with the usage the agent reports.
-
-    Attributes:
-        usage: Tokens used by finished calls, as reported or estimated.
-        model_calls: Calls started so far, including failed and running ones.
-        tool_calls: Tool calls the models asked for so far, including ones
-            that did not run because of an unknown tool or invalid arguments.
-        committed_tokens: Tokens finished calls count against
-            ``max_total_tokens``: their actual totals, or their reservations
-            when the totals are unknown.
-        reserved_tokens: Tokens held for calls that are still running.
-    """
-
-    usage: Usage = NO_USAGE
-    model_calls: int = 0
-    tool_calls: int = 0
-    committed_tokens: int = 0
-    reserved_tokens: int = 0
-
-    def current_usage(self) -> Usage:
-        """Return the usage so far; counts are unknown while a call is running.
-
-        Every reservation is positive, so held tokens mean a call is running.
-        """
-        if self.reserved_tokens:
-            return add_usage(self.usage, UNKNOWN_USAGE)
-        return self.usage
-
-    def reserve(self, tokens: int, limits: RunLimits) -> None:
-        """Count one more model call and hold ``tokens`` of the token budget.
-
-        Raises:
-            ModelCallLimitExceededError: The run has made ``max_model_calls``.
-            TokenLimitExceededError: ``tokens`` do not fit what is left of
-                ``max_total_tokens``.
-        """
-        max_calls, max_total = limits.max_model_calls, limits.max_total_tokens
-        assert max_calls is not None and max_total is not None  # Set by defaults.
-        if self.model_calls >= max_calls:
-            raise ModelCallLimitExceededError(
-                f"The run reached its limit of {max_calls} model calls"
-            )
-        remaining = self.remaining_tokens(max_total)
-        if tokens > remaining:
-            raise TokenLimitExceededError(
-                f"The model call needs up to {tokens} tokens, but only "
-                f"{remaining} of the run's {max_total} remain"
-            )
-        self.model_calls += 1
-        self.reserved_tokens += tokens
-
-    def release(self, tokens: int) -> None:
-        """Undo a reservation for a call that was never sent."""
-        self.model_calls -= 1
-        self.reserved_tokens -= tokens
-
-    def remaining_tokens(self, max_total: int) -> int:
-        """Return the tokens of ``max_total`` that nothing holds or has used."""
-        return max(max_total - self.committed_tokens - self.reserved_tokens, 0)
-
-    def hold_tokens(self, tokens: int) -> None:
-        """Hold ``tokens`` for a remote call; the caller checked that they fit."""
-        self.reserved_tokens += tokens
-
-    def release_tokens(self, tokens: int) -> None:
-        """Undo ``hold_tokens`` for a remote call that was never sent."""
-        self.reserved_tokens -= tokens
-
-    def count_tool_call(self, limits: RunLimits) -> None:
-        """Count one more tool call, before it runs.
-
-        Raises:
-            ToolCallLimitExceededError: The run has made ``max_tool_calls``.
-        """
-        max_calls = limits.max_tool_calls
-        assert max_calls is not None  # Set by defaults.
-        if self.tool_calls >= max_calls:
-            raise ToolCallLimitExceededError(
-                f"The run reached its limit of {max_calls} tool calls"
-            )
-        self.tool_calls += 1
-
-    def settle(self, tokens: int, usage: Usage) -> None:
-        """Replace a call's reservation of ``tokens`` with its actual ``usage``."""
-        self.reserved_tokens -= tokens
-        if usage.total_tokens is None:
-            self.committed_tokens += tokens
-        else:
-            self.committed_tokens += usage.total_tokens
-        self.usage = add_usage(self.usage, usage)
 
 
 @dataclass
@@ -551,124 +443,6 @@ def check_supports(request: ModelRequest, capabilities: ModelCapabilities) -> No
         raise UnsupportedCapabilityError("The model does not support tool calling")
 
 
-def input_token_limit(limits: RunLimits, capabilities: ModelCapabilities) -> int:
-    """Return the most input tokens one call may send.
-
-    That is ``max_input_tokens`` when set, else the model's context window.
-
-    Raises:
-        DefinitionError: Neither is known. A context size is never guessed.
-    """
-    if limits.max_input_tokens is not None:
-        return limits.max_input_tokens
-    if capabilities.context_window is not None:
-        return capabilities.context_window
-    raise DefinitionError(
-        "The model does not report its context window; set "
-        "RunLimits(max_input_tokens=...) or give the model a context window"
-    )
-
-
-def check_fits_model(
-    input_tokens: int,
-    max_output_tokens: int,
-    limits: RunLimits,
-    capabilities: ModelCapabilities,
-) -> None:
-    """Check that a call's input, plus its output cap, fit the model's limits.
-
-    Oversized input fails; it is never truncated, and the output cap is never
-    lowered to make room.
-
-    Raises:
-        DefinitionError: No input limit is known (see ``input_token_limit``).
-        TokenLimitExceededError: The input exceeds the input limit, or input
-            plus output exceeds the context window.
-    """
-    max_input = input_token_limit(limits, capabilities)
-    if input_tokens > max_input:
-        raise TokenLimitExceededError(
-            f"The model input is about {input_tokens} tokens, over the "
-            f"limit of {max_input} input tokens"
-        )
-    context_window = capabilities.context_window
-    if context_window is not None and input_tokens + max_output_tokens > context_window:
-        raise TokenLimitExceededError(
-            f"The model input of about {input_tokens} tokens plus up to "
-            f"{max_output_tokens} output tokens exceeds the model's context "
-            f"window of {context_window} tokens"
-        )
-
-
-def estimate_tokens(text: str) -> int:
-    """Estimate the tokens in ``text`` from its length (``CHARACTERS_PER_TOKEN``)."""
-    return math.ceil(len(text) / CHARACTERS_PER_TOKEN)
-
-
-def estimate_input_tokens(request: ModelRequest) -> int:
-    """Estimate the input tokens of ``request``.
-
-    Counts every message, including tool calls and tool results, plus the
-    output schema and the tool specs.
-    """
-    tokens = sum(estimate_message_tokens(message) for message in request.messages)
-    if request.output is not None:
-        tokens += estimate_tokens(json.dumps(request.output.json_schema))
-    for spec in request.tools:
-        tokens += estimate_tokens(spec.name + spec.description)
-        tokens += estimate_tokens(json.dumps(spec.parameters))
-    return tokens
-
-
-def estimate_message_tokens(message: Message) -> int:
-    """Estimate the tokens of one message: its text, tool name and tool calls."""
-    tokens = estimate_tokens(message.content + (message.tool_name or ""))
-    for call in message.tool_calls:
-        tokens += estimate_tokens(call.name + call.arguments)
-    return tokens
-
-
-def estimate_output_tokens(response: ModelResponse) -> int:
-    """Estimate the output tokens of ``response``: its text and tool calls."""
-    tokens = estimate_tokens(response.text)
-    for call in response.tool_calls:
-        tokens += estimate_tokens(call.name + call.arguments)
-    return tokens
-
-
-def with_estimates(reported: Usage, input_estimate: int, output_estimate: int) -> Usage:
-    """Fill in token counts a provider did not report with estimates.
-
-    Args:
-        reported: The usage the model reported; unknown counts are ``None``.
-        input_estimate: The estimated input tokens of the call.
-        output_estimate: The estimated output tokens of the response.
-
-    Returns:
-        Complete usage. ``estimated`` is ``True`` if any count was estimated.
-    """
-    input_tokens, output_tokens = reported.input_tokens, reported.output_tokens
-    if input_tokens is not None and output_tokens is not None:
-        if reported.total_tokens is not None:
-            return reported
-        return Usage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=input_tokens + output_tokens,
-            estimated=reported.estimated,
-        )
-    if input_tokens is None:
-        input_tokens = input_estimate
-    if output_tokens is None:
-        output_tokens = output_estimate
-    return Usage(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_tokens=input_tokens + output_tokens,
-        estimated=True,
-    )
-
-
 def build_messages(
     agent_instructions: str | None,
     call_instructions: str | None,
@@ -691,93 +465,3 @@ def build_messages(
     else:
         messages.extend(text)
     return tuple(messages)
-
-
-def text_from(response: ModelResponse) -> str:
-    """Return a response's text, or raise when it is not a complete answer.
-
-    Raises:
-        IncompleteOutputError: Output stopped at the token limit or is empty.
-        ModelRefusalError: The model refused or a content filter blocked it.
-    """
-    match response.finish_reason:
-        case FinishReason.LENGTH:
-            raise IncompleteOutputError(TRUNCATED_MESSAGE)
-        case FinishReason.REFUSED:
-            raise ModelRefusalError("The model refused the request")
-        case FinishReason.CONTENT_FILTER:
-            raise ModelRefusalError(
-                "The model's output was blocked by a content filter"
-            )
-    if not response.text:
-        raise IncompleteOutputError("The model returned no text")
-    return response.text
-
-
-def output_schema(output: type[BaseModel]) -> OutputSchema:
-    """Return the schema the model must follow to produce an ``output`` instance.
-
-    Raises:
-        DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is a
-            ``RootModel``. Wrap lists and other values in a model field.
-    """
-    is_model = isinstance(output, type) and issubclass(output, BaseModel)
-    if not is_model or issubclass(output, RootModel):
-        raise DefinitionError(
-            "generate(output=...) must be a Pydantic BaseModel subclass (not a "
-            "RootModel); wrap lists and other values in a model field"
-        )
-    return OutputSchema(name=output.__name__, json_schema=output.model_json_schema())
-
-
-def validate_output[T: BaseModel](text: str, output: type[T]) -> T:
-    """Parse and validate the model's JSON ``text`` as an ``output`` instance.
-
-    Raises:
-        OutputValidationError: ``text`` is not valid JSON or does not match
-            ``output``. The message names field locations, never the text;
-            location parts that are not schema property names are masked.
-    """
-    try:
-        return output.model_validate_json(text)
-    except ValidationError as error:
-        field_names = schema_property_names(output.model_json_schema())
-        raise OutputValidationError(
-            f"The model's output is not a valid '{output.__name__}': "
-            f"{describe_validation_error(error, field_names)}"
-        ) from None
-
-
-def schema_property_names(schema: object) -> set[str]:
-    """Return every property name declared anywhere in a JSON ``schema``.
-
-    Error locations show only these names; other parts, such as dictionary
-    keys the model chose, are masked.
-    """
-    names: set[str] = set()
-    if isinstance(schema, dict):
-        properties = schema.get("properties")
-        if isinstance(properties, dict):
-            names.update(properties)
-        for value in schema.values():
-            names |= schema_property_names(value)
-    elif isinstance(schema, list):
-        for item in schema:
-            names |= schema_property_names(item)
-    return names
-
-
-def add_usage(total: Usage, extra: Usage) -> Usage:
-    """Add two usages. A count unknown on either side stays unknown."""
-    return Usage(
-        input_tokens=_add(total.input_tokens, extra.input_tokens),
-        output_tokens=_add(total.output_tokens, extra.output_tokens),
-        total_tokens=_add(total.total_tokens, extra.total_tokens),
-        estimated=total.estimated or extra.estimated,
-    )
-
-
-def _add(count: int | None, extra: int | None) -> int | None:
-    if count is None or extra is None:
-        return None
-    return count + extra

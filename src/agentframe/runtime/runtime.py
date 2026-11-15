@@ -38,15 +38,13 @@ from agentframe.errors import (
     describe_validation_error,
 )
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, ModelSettings
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation, root_run
-from agentframe.runtime.generation import (
-    GenerationState,
-    RunAccounting,
-    input_token_limit,
-)
+from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.remotes import RunRemotes
+from agentframe.runtime.tokens import input_token_limit
 from agentframe.security.authorization import (
     AuthorizationPolicy,
     ToolAuthorizationPolicy,

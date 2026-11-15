@@ -47,7 +47,7 @@ from agentframe.hosting import a2a_executor
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
 from agentframe.hosting.routing import new_routing_context
 from agentframe.models.base import Message as ModelMessage
-from agentframe.runtime.generation import RunAccounting
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.testing import ScriptedModel
 from local_server import ServeLocally
 

@@ -51,13 +51,13 @@ from agentframe import (
 from agentframe.discovery import remote
 from agentframe.discovery.remote import bind_remote, remote_name
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import (
     RunCorrelation,
     TraceContext,
     is_invocation_id,
     root_run,
 )
-from agentframe.runtime.generation import RunAccounting
 from local_server import lifespan_startup
 
 ORIGIN = "https://research.example.com"

@@ -21,8 +21,8 @@ from agentframe.discovery.identity import (
 )
 from agentframe.discovery.remote import Remote, find_remote, new_binding
 from agentframe.errors import DefinitionError, PermissionDeniedError
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation
-from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import RunLimits
 from agentframe.security.principal import Principal
 

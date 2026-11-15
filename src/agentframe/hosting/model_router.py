@@ -31,8 +31,9 @@ from agentframe.errors import DefinitionError, InputValidationError, ProviderErr
 from agentframe.hosting.routing import Clarification, RoutingContext, SkillCall
 from agentframe.models.base import Message as ModelMessage
 from agentframe.models.base import Model, ModelSettings
-from agentframe.runtime.generation import input_token_limit, output_schema
 from agentframe.runtime.limits import RunLimits
+from agentframe.runtime.model_output import output_schema
+from agentframe.runtime.tokens import input_token_limit
 
 NO_TEXT_QUESTION = "Please describe in text what you would like me to do."
 """Asked when the caller's latest message has no text to route."""

@@ -44,8 +44,9 @@ from agentframe import (
 )
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS
-from agentframe.runtime.generation import GenerationState, estimate_input_tokens
+from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.limits import DEFAULT_LIMITS
+from agentframe.runtime.tokens import estimate_input_tokens
 from agentframe.testing import ScriptedModel
 from local_server import ServeLocally
 

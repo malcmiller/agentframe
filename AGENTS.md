@@ -98,7 +98,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/__init__.py` | Public API re-exports; every public name is importable from `agentframe`. |
 | `src/agentframe/` (root) | Shared leaves importing only each other: `errors.py`, `usage.py` (`Usage`, `FinishReason`), `urls.py` (URL and loopback checks), `skill_call.py` (skill-call extension wire names and sender helpers). Also `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run` / `dev` / `compose` / `eval`), `project.py` (`agentframe.yaml`), `dev.py` (`dev_settings()`), `dev_server.py` (`agentframe dev` supervisor), `compose.py` (`agentframe compose` generator). |
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
-| `src/agentframe/runtime/` | `Runtime`, generation, `RunLimits`, `RunOptions`. |
+| `src/agentframe/runtime/` | `Runtime` (`runtime.py`), generation and its tool loop and retries (`generation.py`), run accounting (`accounting.py`, `RunAccounting`), token estimates and fit checks (`tokens.py`), reading the model's final answer (`model_output.py`), `RunLimits`, `RunOptions`. |
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`; `strict_schema.py` (OpenAI strict JSON-schema converter). |
 | `src/agentframe/hosting/` | `AgentApp`, `HostConfig`, Agent Card, A2A executor, routing. Other subpackages and the shared leaves never import it (`tests/unit/test_layering.py`). |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |

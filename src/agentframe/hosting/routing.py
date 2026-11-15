@@ -22,7 +22,8 @@ from agentframe.errors import (
 )
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, Model, ModelSettings
 from agentframe.models.base import Message as ModelMessage
-from agentframe.runtime.generation import GenerationState, RunAccounting
+from agentframe.runtime.accounting import RunAccounting
+from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import merge_settings
 from agentframe.security.execution_policy import ExecutionPolicy
