@@ -340,7 +340,9 @@ class RunContext:
         Raises everything ``generate`` raises for its model call, such as
         ``LimitExceededError``, ``ModelRefusalError`` or ``ProviderError``.
         """
-        return await make_plan(self, goal, skills, max_steps, instructions)
+        return await make_plan(
+            self, goal, skills, self._remotes, max_steps, instructions
+        )
 
     async def run_plan(
         self,

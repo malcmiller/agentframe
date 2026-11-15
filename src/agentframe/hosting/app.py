@@ -50,7 +50,6 @@ from agentframe.discovery.identity import (
     Service,
     UserToken,
     UserTokenExchange,
-    on_behalf_of_names,
 )
 from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.hosting.a2a_executor import (
@@ -330,6 +329,15 @@ class AgentApp:
         """
         self._lifecycle.begin_shutdown()
 
+    @property
+    def shutdown_grace_seconds(self) -> float:
+        """The host's ``shutdown_grace_seconds``.
+
+        Package-internal: ``agentframe run`` limits Uvicorn's wait for open
+        requests to it.
+        """
+        return self._host.shutdown_grace_seconds
+
 
 def _task_store(a2a: A2AConfig) -> TaskStore:
     """Return the configured task store, or a bounded in-memory one."""
@@ -349,11 +357,7 @@ def _user_token_exchange(
         DefinitionError: An ``OnBehalfOf`` remote's or default's host does
             not authenticate users with ``EntraIDAuth`` configured for it.
     """
-    # noinspection PyProtectedMember
-    users = [f"Remote '{name}'" for name in on_behalf_of_names(runtime._remotes)]
-    # noinspection PyProtectedMember
-    if isinstance(runtime._default_remote, OnBehalfOf):
-        users.append("default_remote")
+    users = runtime.on_behalf_of_users()
     if not users:
         return None
     if not isinstance(host.auth, UserTokenExchange):

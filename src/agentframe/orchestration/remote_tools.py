@@ -143,8 +143,7 @@ class RemoteTool:
                 return await self.binding.ask(
                     parsed["text"], max_total_tokens=self.max_total_tokens
                 )
-            # noinspection PyProtectedMember
-            value = await self.binding._call_with(
+            value = await self.binding.call_with(
                 self.entry.skill, parsed, self.max_total_tokens
             )
         except (RemoteAgentError, ClarificationNeededError) as error:
@@ -257,8 +256,7 @@ def tool_name(entry: RemoteSkill) -> str:
 def _bound(entry: RemoteSkill, run: RunRemotes) -> tuple[Remote[Any], int | None]:
     """Return the entry's binding and token ceiling from this run's catalogs."""
     for catalog in run.catalogs:
-        # noinspection PyProtectedMember
-        binding = catalog._binding(entry)
+        binding = catalog.binding(entry)
         if binding is not None:
             return binding, catalog.max_tokens_per_call
     raise _not_from_this_run(entry)

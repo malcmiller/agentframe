@@ -29,8 +29,7 @@ class DrainingServer(uvicorn.Server):
     """
 
     def __init__(self, app: AgentApp, *, host: str, port: int) -> None:
-        # noinspection PyProtectedMember
-        grace_seconds = app._host.shutdown_grace_seconds
+        grace_seconds = app.shutdown_grace_seconds
         config = uvicorn.Config(
             app,
             host=host,

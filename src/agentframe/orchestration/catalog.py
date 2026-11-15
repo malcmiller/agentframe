@@ -189,10 +189,12 @@ class SkillCatalog:
                 field, never an argument value.
             DefinitionError: ``max_steps`` is not a whole number above 0.
         """
-        return check_plan(plan, self.get, self._step_limit(max_steps))
+        return check_plan(plan, self.get, self.step_limit(max_steps))
 
-    def _step_limit(self, max_steps: int) -> int:
+    def step_limit(self, max_steps: int) -> int:
         """Return ``max_steps``, lowered to the tool calls the run has left.
+
+        Package-internal: ``ctx.plan`` tells the planning model this limit.
 
         Raises:
             DefinitionError: ``max_steps`` is not a whole number above 0.
@@ -202,11 +204,11 @@ class SkillCatalog:
             limit = min(limit, self._tool_calls_left())
         return limit
 
-    def _visible_to(self, principal: Principal | None) -> "SkillCatalog":
+    def visible_to(self, principal: Principal | None) -> "SkillCatalog":
         """Return a catalog of only the entries ``principal`` may use.
 
-        A planning model sees only these, and checking its plan against
-        them makes a hidden entry look exactly like a missing one.
+        Package-internal: a planning model sees only these, and checking its
+        plan against them makes a hidden entry look exactly like a missing one.
         """
         return SkillCatalog(
             [entry for entry in self._entries if is_permitted(entry, principal)],
@@ -215,9 +217,10 @@ class SkillCatalog:
             self._tool_calls_left,
         )
 
-    def _binding(self, entry: RemoteSkill) -> Remote[Any] | None:
+    def binding(self, entry: RemoteSkill) -> Remote[Any] | None:
         """Return the binding for ``entry`` if it is this very catalog's entry.
 
+        Package-internal: remote tools and plan steps send through it.
         Matched by identity, not equality, so an entry from another run's
         catalog, or one built by hand, is never bound to this run.
         """
@@ -250,8 +253,7 @@ async def build_catalog(
     wanted_tags = _checked_collection("tags", tags) or frozenset()
     declared = _declared(remotes, names) if remotes else {}
     if remotes:
-        # noinspection PyProtectedMember
-        candidates = {name: remote._found for name, remote in declared.items()}
+        candidates = {name: remote.discovered for name, remote in declared.items()}
     else:
         candidates = await _registered(run, names)
     entries: list[RemoteSkill] = []
@@ -476,8 +478,7 @@ async def _registered(
             open, or credentials would be sent through a client that follows
             redirects.
     """
-    # noinspection PyProtectedMember
-    listed, failed = await run.directory._list_available()
+    listed, failed = await run.directory.list_available()
     for position, source in failed:
         logger.warning(
             "Skill catalog skipped source %d (%s): it could not list its agents",
@@ -489,8 +490,7 @@ async def _registered(
         if not failed:  # A missing name may belong to a source that failed.
             _check_known(names, {reference.name for _, reference in listed})
         listed = [entry for entry in listed if entry[1].name in names]
-    # noinspection PyProtectedMember
-    results = await run.directory._resolve_each(listed)
+    results = await run.directory.resolve_each(listed)
     usable: dict[str, DiscoveredAgent] = {}
     for (_, reference), result in zip(listed, results, strict=True):
         found = _usable(run, reference, result)

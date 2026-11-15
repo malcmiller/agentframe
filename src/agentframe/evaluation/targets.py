@@ -438,13 +438,8 @@ class A2ATarget:
         if self._skill is None:
             assert case.text is not None  # Checked by check_case.
             return await remote.ask(case.text, max_total_tokens=max_total_tokens)
-        # The private form takes the arguments as one dictionary, so a case
-        # may have arguments named "output" or "max_total_tokens".
-        # noinspection PyProtectedMember
-        value = await remote._call_with(
-            self._skill, dict(case.arguments or {}), max_total_tokens
+        # call_with takes the arguments as one dictionary, so a case may have
+        # arguments named "output" or "max_total_tokens".
+        return await remote.call_with(
+            self._skill, dict(case.arguments or {}), max_total_tokens, self._output
         )
-        if self._output is None:
-            return value
-        # noinspection PyProtectedMember
-        return remote._validated(value, self._output)
