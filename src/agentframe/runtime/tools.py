@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import json
 from collections.abc import Mapping
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -17,7 +16,11 @@ from agentframe.errors import (
     describe_validation_error,
 )
 from agentframe.models.base import Message, ModelResponse, ToolCall, ToolSpec
-from agentframe.security.execution_policy import ExecutionPolicy, enforce_tool_checks
+from agentframe.security.execution_policy import (
+    ExecutionPolicy,
+    enforce_tool_checks,
+    read_only_copy,
+)
 from agentframe.security.principal import Principal
 
 if TYPE_CHECKING:
@@ -133,7 +136,7 @@ async def run_tool_call(
             skill,
             ctx.principal,
             tool.name,
-            MappingProxyType(arguments),
+            arguments,
             ctx.deadline,
         )
     injected = await services.resolve(tool.injected)
@@ -158,7 +161,7 @@ async def check_tool_policy(
     """
     try:
         allowed = await authorization.check_tool(
-            ctx.principal, tool, MappingProxyType(arguments)
+            ctx.principal, tool, read_only_copy(arguments)
         )
     except asyncio.CancelledError:
         # The run's own timeout cancels the policy at the deadline. Running out

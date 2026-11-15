@@ -5,8 +5,10 @@ Checks add to authorization; they never replace it. Like an
 """
 
 import asyncio
+import copy
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
 from agentframe.errors import PermissionDeniedError, PolicyUnavailableError
@@ -92,7 +94,9 @@ class ToolCheck(Protocol):
             skill: Definition of the running skill.
             principal: Verified caller identity, or ``None``.
             tool: Name of the tool about to run.
-            arguments: The tool's validated arguments, read-only.
+            arguments: A read-only copy of the tool's validated arguments.
+                Changing a nested value changes nothing that is sent or what
+                a later check sees.
         """
         ...
 
@@ -213,8 +217,9 @@ async def enforce_tool_checks(
 ) -> None:
     """Run tool ``checks`` in order on one tool call, failing closed.
 
-    Errors name only the tool, never its arguments, so they are safe to show
-    callers and to log.
+    Each check gets its own read-only deep copy of ``arguments``, so no check
+    can change what is sent or what a later check sees. Errors name only the
+    tool, never its arguments, so they are safe to show callers and to log.
 
     Raises:
         PermissionDeniedError: A check returned something other than ``True``.
@@ -223,7 +228,17 @@ async def enforce_tool_checks(
     """
     subject = f"Tool '{tool}'"
     for check in checks:
-        await ask_check(check, (skill, principal, tool, arguments), subject, deadline)
+        checked = (skill, principal, tool, read_only_copy(arguments))
+        await ask_check(check, checked, subject, deadline)
+
+
+def read_only_copy(arguments: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return a read-only deep copy of a tool call's ``arguments``.
+
+    ``MappingProxyType`` alone is shallow: a check could still change a nested
+    list or model that the call then uses.
+    """
+    return MappingProxyType(copy.deepcopy(dict(arguments)))
 
 
 async def enforce_plan_checks(

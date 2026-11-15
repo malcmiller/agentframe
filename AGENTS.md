@@ -125,14 +125,16 @@ lacks tool support), a model calling a localhost agent's skill as a remote
 tool (M10 #167, checking only that the entry was called; skipped without tool
 support), a rubric `Judge` grading one model-free case in an `Evaluation`
 by majority of `votes=3` (M9 #160, #161), `examples/evaluation.py`'s answers
-graded by a rubric judge (M9 #163), a model planning one unambiguous
+graded by a rubric judge (M9 #163; xfails for Ollama when the small judge
+fails correct answers), a model planning one unambiguous
 two-step goal over two localhost agents' cards with `ctx.plan` (M10 #170,
-checking only the entries and the dependency; `llama3.2:3b` sometimes writes
-an invalid plan), the `examples/multi_agent` planner planning and running its
+checking only the entries and the dependency; `llama3.2:3b` often writes
+an invalid or different plan, an Ollama xfail), the `examples/multi_agent` planner planning and running its
 post with the real model and the planner evaluation with `report.require`
-(M10 #176, `-k real_planner`; specialists use stand-in models; the Ollama
-post test is an expected failure since `llama3.2:3b` rarely plans it validly,
-and its evaluation only requires half the plans valid), a Foundry one-tool round trip that replays encrypted
+(M10 #176, `-k real_planner`; specialists use stand-in models; for Ollama only
+model-quality outcomes xfail: an invalid or empty plan, a plan the example's
+checks refuse, or more than half the evaluation's plans erroring that way;
+any other failure fails), a Foundry one-tool round trip that replays encrypted
 reasoning items and one unambiguous free-text request routed by
 `examples/routed_assistant.py` over A2A (checking only the selected skill and
 that its argument is present, since routing is nondeterministic). They are marked

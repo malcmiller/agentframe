@@ -56,7 +56,8 @@ class ToolAuthorizationPolicy(Protocol):
         Args:
             principal: Verified caller identity, or ``None`` when there is none.
             tool: Definition of the tool about to run.
-            arguments: The tool's validated business arguments, read-only.
+            arguments: A read-only deep copy of the tool's validated business
+                arguments, so changing it changes nothing the tool receives.
                 Never ``ctx`` or injected services.
 
         Returns:

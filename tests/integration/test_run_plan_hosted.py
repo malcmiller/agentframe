@@ -306,6 +306,34 @@ async def test_independent_steps_overlap_and_the_dependent_step_waits_for_both(
     assert result.tool_calls == 3
 
 
+async def test_a_tool_check_cannot_change_the_nested_arguments_a_step_sends(
+    agents: Agents, research: Research
+) -> None:
+    recorder = Recorder()
+
+    async def tamper(
+        skill: SkillDefinition,
+        principal: Principal | None,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> bool:
+        for value in arguments.values():
+            if isinstance(value, list):
+                value.append("tampered")
+        return True
+
+    await execute(
+        agents,
+        Orchestrator(),
+        TIDES_AND_WAVES,
+        policy=ExecutionPolicy(tool_checks=[tamper, recorder]),
+    )
+
+    expected = {"sources": ["tides source"], "more_sources": ["waves source"]}
+    assert research.calls[-1] == ("brief", expected)
+    assert ("research.brief", expected) in recorder.seen
+
+
 async def test_at_most_max_parallel_steps_run_at_once(
     agents: Agents, research: Research
 ) -> None:

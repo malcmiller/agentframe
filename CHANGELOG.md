@@ -289,10 +289,15 @@ changelog.
 
 ### Fixed
 
+- **Security:** every tool check and the `ToolAuthorizationPolicy` now get
+  their own read-only deep copy of a tool call's arguments, for `@tool`
+  functions, remote skills offered as tools and plan steps. Before, the
+  read-only mapping was shallow, so a check could change a nested value that
+  later checks saw and the call used.
+- **Packaging:** the README links work on the PyPI project page (they are now
+  absolute GitHub URLs), and the project lists its documentation, changelog
+  and issues URLs.
 - `load_cases` accepts a JSONL file that starts with a UTF-8 byte order mark.
-
-### Fixed
-
 - **Hosting:** a run that finishes while `AgentApp` is shutting down now always
   has its final task state stored before the app closes its task queues. It
   could stay `WORKING` before, because a run frees its slot just before the
