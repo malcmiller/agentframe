@@ -16,9 +16,10 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 
 ## Status
 
-AgentFrame 0.2.0, the multi-agent release (M8+), is
-[published on PyPI](https://pypi.org/project/agentframe-py/0.2.0/); it builds on
-0.1.0, the first usable single-agent release (milestones M0 to M7). See the
+AgentFrame is [published on PyPI](https://pypi.org/project/agentframe-py/) as
+`agentframe-py`. Version 0.3.0 adds evaluation (M9) and model-planned
+orchestration (M10) to 0.2.0, the multi-agent release (M8+), and 0.1.0, the
+first usable single-agent release (milestones M0 to M7). See the
 [changelog](https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
 permission checks and a timeout. M2 native A2A hosting is complete: `AgentApp`
@@ -53,9 +54,12 @@ managed `AgentDirectory`, `Remote[Literal["name"]]` bindings with `call` and `as
 hop-depth and correlation propagation, service and Entra on-behalf-of
 identity, `agentframe dev` and `agentframe compose` (see
 [multi-agent composition](#multi-agent-composition)). M9 evaluation and M10
-model-planned orchestration are built on `main`, not yet released: an
-orchestrator's model can call registered agents' skills as tools, or plan and
-run checked parallel plans (see the
+model-planned orchestration are complete and form the 0.3.0 release:
+`agentframe.evaluation` runs typed cases against local skills and A2A agents
+with scorers, a rubric judge and reports for CI (see
+[evaluating agents](https://github.com/malcmiller/agentframe/blob/main/docs/guides/evaluation.md)),
+and an orchestrator's model can call registered agents' skills as tools, or
+plan and run checked parallel plans (see the
 [orchestration guide](https://github.com/malcmiller/agentframe/blob/main/docs/guides/orchestration.md)). MCP, telemetry and
 streaming are not implemented yet; documentation for them is labeled as
 planned design, and their unspecified interfaces remain open.
@@ -239,7 +243,7 @@ research agent; run both with `agentframe dev` from that directory.
 `tests/integration/test_multi_agent_release.py` proves the release criteria
 with each agent in its own `agentframe run` process.
 
-M10 (built, not yet released) lets the orchestrator's model choose instead:
+M10 (0.3.0) lets the orchestrator's model choose instead:
 `ctx.remote_skills(...)` lists registered agents' skills from their Agent
 Cards, `ctx.generate(goal, tools=[*skills])` calls them as tools, and
 `ctx.plan(goal, skills)` with `ctx.run_plan(plan, skills)` makes and runs a
@@ -393,7 +397,7 @@ remote services' limits. Per-remote Entra OBO or explicit service identity,
 remaining deadline/token ceilings and default maximum 5 hops constrain calls.
 No orchestration helpers in the first multi-agent release: use plain Python
 `await`, `asyncio.TaskGroup` and `directory.find(skill=... / tags=...)`.
-M10 (built, not yet released) adds opt-in model-planned orchestration on top;
+M10 (0.3.0) adds opt-in model-planned orchestration on top;
 plain Python stays the default.
 Typed `Remote[ResearchAgent]` proxies are a later option, not proprietary RPC.
 
@@ -462,9 +466,9 @@ run it yourself from the repository root with `uv run python -m examples.smoke`.
 - [Future streaming and the optional AG-UI adapter](https://github.com/malcmiller/agentframe/blob/main/docs/design/streaming.md)
 - [Execution limits and token accounting](https://github.com/malcmiller/agentframe/blob/main/docs/guides/limits.md)
 - [Tracing and correlation](https://github.com/malcmiller/agentframe/blob/main/docs/design/tracing.md)
-- [Evaluation harness (built M9, not yet released)](https://github.com/malcmiller/agentframe/blob/main/docs/design/evaluation.md) and
+- [Evaluation harness (M9, 0.3.0)](https://github.com/malcmiller/agentframe/blob/main/docs/design/evaluation.md) and
   [evaluating agents](https://github.com/malcmiller/agentframe/blob/main/docs/guides/evaluation.md)
-- [Model-planned orchestration (built M10, not yet released)](https://github.com/malcmiller/agentframe/blob/main/docs/design/orchestration.md) and
+- [Model-planned orchestration (M10, 0.3.0)](https://github.com/malcmiller/agentframe/blob/main/docs/design/orchestration.md) and
   [the orchestration guide](https://github.com/malcmiller/agentframe/blob/main/docs/guides/orchestration.md)
 - [A2A hosting and optional MCP skill configuration](https://github.com/malcmiller/agentframe/blob/main/docs/design/mcp-skills.md)
 - [Skill authorization and caller identity](https://github.com/malcmiller/agentframe/blob/main/docs/guides/authorization.md)

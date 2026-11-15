@@ -16,8 +16,9 @@ generation, M4 typed structured outputs, M5 bounded tool calling, M6 built-in
 opt-in model routing and M7 hardening alongside design documentation. Version
 0.1.0, the first usable single-agent release, and version 0.2.0, the M8+
 multi-agent release (#83-#97), are published on PyPI as `agentframe-py`
-(import `agentframe`). Pre-1.0 there is no stable API. M9 evaluation (#164) is built, not yet
-released; M10 model-planned orchestration (#177, #166-#176) is built, not yet released; later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
+(import `agentframe`). Pre-1.0 there is no stable API. M9 evaluation (#164, #152-#163)
+and M10 model-planned orchestration (#177, #166-#176) are complete and form
+version 0.3.0; later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
@@ -559,7 +560,7 @@ reservations. Default max 5 remote hops, excess fails. These controls use the
 same A2A extension; detailed config/wire/usage trust remains open, not base
 protocol fields or hard billing guarantees.
 No orchestration helpers in the first multi-agent release: plain await,
-asyncio.TaskGroup and directory.find. M10 (built) adds opt-in remote skills as model
+asyncio.TaskGroup and directory.find. M10 (0.3.0) adds opt-in remote skills as model
 tools and checked plans (`docs/guides/orchestration.md`); plain await stays
 the default. Later optional `Remote[ResearchAgent]`
 typed proxy always uses structured selection, never prompt routing. Prove two or more

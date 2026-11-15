@@ -1,6 +1,6 @@
 # Evaluation
 
-**Status: built (M9), not yet released.** Everything on this page except the
+**Status: M9 complete, in 0.3.0.** Everything on this page except the
 [later Foundry evaluation export](#later-foundry-evaluation-export) is
 implemented in `agentframe.evaluation` (#152-#163); see the
 [reference](../api/evaluation.md), the [guide](../guides/evaluation.md) and
@@ -527,4 +527,4 @@ The maintainer confirmed every recommendation from the planning review on
     imposed order relative to the later adapters. Evaluation needs the remote
     client (M8+) but no adapter.
 
-See the [roadmap](../roadmap.md#m9-evaluation-built) for the milestone entry.
+See the [roadmap](../roadmap.md#m9-evaluation-030) for the milestone entry.

@@ -1,8 +1,8 @@
 # Model-planned orchestration
 
-**Status: M10 built, not yet released.** Every story of the
+**Status: M10 complete, in 0.3.0.** Every story of the
 [M10 overview](https://github.com/malcmiller/agentframe/issues/177)
-(#166-#176) is implemented on `main`; no release includes it yet. Reference:
+(#166-#176) is implemented, and version 0.3.0 is the release that adds it. Reference:
 [orchestration API](../api/orchestration.md); rationale:
 [orchestration design](../design/orchestration.md).
 

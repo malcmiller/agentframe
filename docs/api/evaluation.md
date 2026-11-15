@@ -1,7 +1,7 @@
 # Evaluation
 
 [Reference status conventions](README.md). The M9 harness for running fixed
-cases against an agent and scoring the results, built and not yet released
+cases against an agent and scoring the results, complete in 0.3.0
 (#152-#163); see the [evaluation design](../design/evaluation.md) for
 rationale, the [evaluation guide](../guides/evaluation.md) for a walkthrough
 and `examples/evaluation.py` for a runnable example. Only the later Foundry

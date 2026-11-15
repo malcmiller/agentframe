@@ -93,8 +93,8 @@ framework base class.
 | Human approvals | Application-owned workflows; no built-in approval pause/resume in first release. Required tool/action authorization remains enforced. | Application integration/decision types; protocol tasks are not durable approval workflows. |
 | Multi-agent composition | M8+: `Remote[Literal["name"]]` injection, structured `call`, plain `ask`, input-required error; multi-source directory/find, YAML files, 300-second stale-refresh cache, OBO/service identity, deadline/token/depth controls (5 hops), plain Python orchestration, dev CLI/containers. | Detailed extension schema/identity config, source conflicts/card mapping/search pagination, accounting trust and dev config; typed class proxy only later, no initial orchestration helpers. |
 | Durable workflows | Revisit after multi-agent usage; no design now. Long work uses native tasks, in-memory default/persistent store pluggable; approvals application-owned. If added, optional separate package (candidate `agentframe-workflows`). | Future evidence/scope; task persistence is not Python crash recovery or durable approval resume. |
-| Evaluation | Built M9, not yet released ([evaluation](design/evaluation.md), decided 2026-11-13): an AgentFrame-owned harness for local skills and A2A agents in `agentframe.evaluation` in the main wheel, no new dependency or extra; `Case` from Python/JSONL, plain-function scorers, binary rubric judge, concurrency 4, optional evaluation-wide budget, private-by-default reports, no pytest plugin. | Foundry export is a later adapter. |
-| Model-planned orchestration | M10, built, not yet released ([orchestration](design/orchestration.md), decided 2026-11-13, #177): a catalog of remote skills from the Agent Cards of every registered agent whose card is valid and whose security can be satisfied (the registry is the allowlist), remote skills as model tools, and a model-made, validated execution plan (flat DAG with data references) run with `asyncio.TaskGroup` and the existing deadline, hop, token, identity and policy controls. Revisits #17's orchestration-helper and dynamic-invocation cuts as opt-in features. | Settled in the [API reference](api/orchestration.md); planner quality is measured per model ([guide](guides/orchestration.md#measure-the-planner)). |
+| Evaluation | M9, complete in 0.3.0 ([evaluation](design/evaluation.md), decided 2026-11-13): an AgentFrame-owned harness for local skills and A2A agents in `agentframe.evaluation` in the main wheel, no new dependency or extra; `Case` from Python/JSONL, plain-function scorers, binary rubric judge, concurrency 4, optional evaluation-wide budget, private-by-default reports, no pytest plugin. | Foundry export is a later adapter. |
+| Model-planned orchestration | M10, complete in 0.3.0 ([orchestration](design/orchestration.md), decided 2026-11-13, #177): a catalog of remote skills from the Agent Cards of every registered agent whose card is valid and whose security can be satisfied (the registry is the allowlist), remote skills as model tools, and a model-made, validated execution plan (flat DAG with data references) run with `asyncio.TaskGroup` and the existing deadline, hop, token, identity and policy controls. Revisits #17's orchestration-helper and dynamic-invocation cuts as opt-in features. | Settled in the [API reference](api/orchestration.md); planner quality is measured per model ([guide](guides/orchestration.md#measure-the-planner)). |
 | Streaming | Later `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`, same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Version/binding, native event mapping, bounds/backpressure and typed final serialization; frontend tools/shared state later opt-in only. |
 
 ## Architectural rules
@@ -499,7 +499,7 @@ details and finer milestone breakdown remain open.
 | Capability | Planned direction and acceptance |
 | --- | --- |
 | Discovery and remote invocation | `AgentDirectory(sources=[...])` with YAML `FileAgentRegistry("agents.yaml")`, Foundry endpoint/credential source, explicit environment source and custom get/list. `AgentApp(directory=...)` validates `Remote[Literal["name"]]` at startup. Native card-backed `find(skill=... / tags=...)`, 300-second cache/stale refresh, explicit stale opt-in, ownership/isolation/destination safety. `call("skill", ..., output=Type)` uses structured A2A; `ask(text)` works with any compatible peer. Both wait within deadline; input-required raises `ClarificationNeededError`, no automatic dialogue. Implemented: `Remote[Literal["name"]]`, `directory=` and `ask` (#87); `call` (#88); deadline and hop-depth propagation with `RunLimits.max_remote_hops` (#89); per-call token ceilings and reported-usage reconciliation (#90); root/parent invocation ID log correlation and unchanged W3C trace context forwarding (#91); interoperability with a non-AgentFrame A2A client and server, the official SDK in CI and a Foundry agent opt-in (#94). |
-| Orchestrator agents | Ordinary skills with plain `await`, `asyncio.TaskGroup` and directory search. No orchestration helpers in the first multi-agent release; later only after repeated usage. M10 (built, not yet released) revisits this cut as opt-in [model-planned orchestration](guides/orchestration.md) (#177). Optional `Remote[ResearchAgent]` typed proxy later uses the same structured wire request, not proprietary RPC. |
+| Orchestrator agents | Ordinary skills with plain `await`, `asyncio.TaskGroup` and directory search. No orchestration helpers in the first multi-agent release; later only after repeated usage. M10 (0.3.0) revisits this cut as opt-in [model-planned orchestration](guides/orchestration.md) (#177). Optional `Remote[ResearchAgent]` typed proxy later uses the same structured wire request, not proprietary RPC. |
 | Cross-agent context | Per-target Entra `on_behalf_of` default or explicit `service` (implemented as `remotes={name: Service(credential=...)}`, #92, and `OnBehalfOf(scope=...)` with `EntraIDAuth(client_id=..., client_credential=...)`, #93); API-key/anonymous ingress service only, never raw token forwarding or identity fallback on exchange failure. Propagate remaining deadline (receiver min with own timeout), token ceiling (default caller remaining; receiver only lowers), actual peer usage charged once, max 5 hops and trace/correlation. Shared concurrent reservations; other-peer usage unknown. Same A2A extension, exact schema/config open; each target enforces policy and no hard billing guarantee. |
 | Development and deployment | `agentframe.yaml` lists named module paths/ports. `agentframe dev` starts localhost agents, writes local registry, configures development API keys and combines agent/invocation-tagged logs. Implemented (#95): `agents: {name: {app: module:create_app, port: int}}`, one `agentframe run` process per agent on `127.0.0.1`, `.agentframe/agents.yaml`, random per-session keys passed only through child environments, `dev_settings()`, optional `AGENTFRAME_DEV_CLIENT_KEY` caller `developer`. One container per agent. Implemented (#96): `agentframe compose` writes a development `compose.yaml` (service-name `AGENTFRAME_PUBLIC_URL`/`AGENTFRAME_AGENTS`, `AGENTFRAME_DEV=1` plus `AGENTFRAME_ALLOW_HTTP_HOSTS` opt-in, `${VAR}` key references only, `127.0.0.1` ports, `/ready` healthchecks) and, if missing, a digest-pinned non-root `Dockerfile`; `--force` overwrites only `compose.yaml`. Kubernetes/Foundry templates later, not infrastructure management. |
 
@@ -542,9 +542,12 @@ the same trusted-publishing workflow from the GitHub release
 [v0.2.0](https://github.com/malcmiller/agentframe/releases/tag/v0.2.0); the
 [release run](https://github.com/malcmiller/agentframe/actions/runs/43629699658)
 passed the TestPyPI rehearsal and the PyPI installs on Python 3.13, 3.14 and
-3.15. The M8+ overview (#17) is closed. M9 [evaluation](#m9-evaluation-built) is
-built, not yet released (#164), and so is M10 [model-planned orchestration](#m10-model-planned-orchestration-built)
-(#177).
+3.15. The M8+ overview (#17) is closed. M9 [evaluation](#m9-evaluation-030)
+(#164) and M10 [model-planned orchestration](#m10-model-planned-orchestration-030)
+(#177) are built and form version 0.3.0. Follow-ups found by the 0.3.0
+readiness review are open issues (#208-#222), for example that hosted A2A
+tasks are kept in memory until the process exits, with no retention limit or
+task store setting yet (#208).
 
 No durable workflow engine, built-in approval workflow, federation or deployment
 service is included. Checkpointed multistep flows, pause/resume and crash
@@ -553,9 +556,11 @@ optional separate package (candidate `agentframe-workflows`). Long work uses
 A2A tasks with an in-memory default and pluggable persistent store; no built-in
 approval workflow or promise of recovering skill execution from persisted tasks.
 
-### M9: Evaluation (built)
+### M9: Evaluation (0.3.0)
 
-Built, not yet released (#164): every story (#152-#163) is implemented.
+Build complete (#164): every story (#152-#163) is implemented, and version
+0.3.0 is the release that adds it, prepared for publishing with the
+[changelog](../CHANGELOG.md) entry.
 `Case` and `load_cases` (#152), `LocalSkill` and `Evaluation.run` with
 function scorers (#153), the built-in scorers `equals`, `contains` and `valid`
 (#154), report aggregates with a console summary (#155), the versioned JSON
@@ -583,12 +588,14 @@ non-AgentFrame A2A agent over A2A, gating a build on a JSON report threshold.
 No new runtime dependency, hosted service, dataset store, trajectory scoring or
 pytest plugin. Foundry evaluation export is a later optional adapter.
 
-### M10: Model-planned orchestration (built)
+### M10: Model-planned orchestration (0.3.0)
 
-Built, not yet released (#177): every story (#166-#176) is implemented, with
-the [orchestration guide](guides/orchestration.md), the planner and writer of
-`examples/multi_agent`, the release acceptance suite and a planner evaluation
-(#176). The design and its decisions, confirmed on
+Build complete (#177): every story (#166-#176) is implemented, and version
+0.3.0 is the release that adds it, prepared for publishing with the
+[changelog](../CHANGELOG.md) entry. #176 adds the
+[orchestration guide](guides/orchestration.md), the planner and writer of
+`examples/multi_agent`, the release acceptance suite and a planner
+evaluation. The design and its decisions, confirmed on
 2026-11-13, are in [orchestration](design/orchestration.md). It deliberately revisits two M8+ scope
 cuts from #17, "orchestration helpers" and "dynamic invocation of agents found
 at run time" (also #85 decision 2), as opt-in features; plain `await` and
@@ -697,7 +704,7 @@ belongs to that release even though telemetry exporters/integration stay optiona
   reconciliation, per-target identity config and result/argument-reserved-name
   collisions. `Remote.call` / `ask`, clarification error and max 5 hops decided.
   CLI config/loading/key lifecycle details remain open;
-  no first-M8+ orchestration helpers (M10, built, revisits this; decisions in
+  no first-M8+ orchestration helpers (M10, in 0.3.0, revisits this; decisions in
   [orchestration](design/orchestration.md#decisions-confirmed-2026-11-13)).
   Typed class proxies/templates later.
 - Future runtime streaming API, AG-UI version/transport/native event projection,
