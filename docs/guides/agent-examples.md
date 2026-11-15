@@ -534,8 +534,8 @@ to know:
 - The `a2a` SDK's DEBUG logs include request bodies, so keep its loggers at
   INFO or above where messages may hold sensitive data.
 
-An orchestrator is ordinary Python: no workflow engine. M10 (built, not yet
-released) adds opt-in model-planned orchestration; see the
+An orchestrator is ordinary Python: no workflow engine. M10 (0.3.0) adds
+opt-in model-planned orchestration; see the
 [orchestration guide](orchestration.md). Remote services authenticate callers and enforce their own policy and
 limits; a found card is not permission to call an agent. See
 [discovery](../design/discovery.md), its

@@ -8,6 +8,18 @@ changelog.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-14
+
+The evaluation and model-planned orchestration release (M9 and M10).
+`agentframe.evaluation` runs typed cases against a local skill or any A2A
+agent, scores the results with plain functions, built-in scorers or a rubric
+judge within an optional evaluation-wide token budget, and writes
+private-by-default reports for pytest, CI and `agentframe eval`. Orchestrator
+skills can offer registered agents' skills to their model as tools, or have it
+make a checked plan with `ctx.plan` and run it with `ctx.run_plan`, under the
+existing deadline, hop, token, identity and policy controls; plain `await`
+stays the default.
+
 ### Added
 
 - **Orchestration (M10):** the [orchestration guide](docs/guides/orchestration.md):
@@ -25,7 +37,6 @@ changelog.
   acceptance suite `tests/integration/test_orchestration_release.py` runs the
   agents, a plain A2A peer and two orchestrators as separate processes; opt-in
   Ollama and Foundry planner tests are in `test_providers.py` (#176).
-
 - **Orchestration (M10):** plans are logged at INFO with the run's correlation
   fields (`agent`, `invocation_id`, `root_invocation_id`,
   `parent_invocation_id`) in `extra`: `ctx.plan` logs `Plan created` with
@@ -186,9 +197,10 @@ changelog.
 - **Evaluation (M9):** `agentframe.evaluation` with `Case`, one fixed input
   (exactly one of skill `arguments` or free `text`, optional `expected` and
   `tags`), and `load_cases`, a strict JSONL loader (UTF-8, at most 10 MiB,
-  `json.loads` only) whose `DefinitionError`s name the file and line but never
-  the case content. `import agentframe` does not load the package, and it adds
-  no dependency.
+  `json.loads` only; a leading byte order mark is accepted) whose
+  `DefinitionError`s name the file and line but never the case content.
+  `import agentframe` does not load the package, and it adds no dependency
+  (#152).
 - **Evaluation (M9):** `EvalReport` aggregates: `passed_count`,
   `failed_count` and `errored_count`, `pass_rate`, per-scorer and per-tag pass
   rates, `total_usage` (`UsageTotals`: sums only when every case reported
@@ -277,7 +289,7 @@ changelog.
   that are not valid skill results fail before any case runs. Results hold no
   inputs, outputs or reasons unless `capture_content=True`; the harness logs
   only case IDs, statuses and invocation IDs, plus operator-log tracebacks
-  (with messages) of non-AgentFrame exceptions.
+  (with messages) of non-AgentFrame exceptions (#153).
 - **Evaluation (M9):** built-in scorers `equals` (output equals the case's
   `expected`, Pydantic models field by field), `contains(text=None,
   case_sensitive=False)` (text output contains `text` or the case's
@@ -286,6 +298,9 @@ changelog.
   names problem locations only). A case without the `expected` value a scorer
   needs, or with non-text output or `expected` for `contains`, is `errored`
   with a message naming the case ID and type, never the content (#154).
+- **Development:** a scheduled weekly workflow compares the `python:3.13-slim`
+  digest pinned by the `agentframe compose` Dockerfile template with the
+  tag's current digest and opens an issue when it moves (#151).
 
 ### Fixed
 
@@ -293,11 +308,10 @@ changelog.
   their own read-only deep copy of a tool call's arguments, for `@tool`
   functions, remote skills offered as tools and plan steps. Before, the
   read-only mapping was shallow, so a check could change a nested value that
-  later checks saw and the call used.
+  later checks saw and the call used (#223).
 - **Packaging:** the README links work on the PyPI project page (they are now
   absolute GitHub URLs), and the project lists its documentation, changelog
-  and issues URLs.
-- `load_cases` accepts a JSONL file that starts with a UTF-8 byte order mark.
+  and issues URLs (#223).
 - **Hosting:** a run that finishes while `AgentApp` is shutting down now always
   has its final task state stored before the app closes its task queues. It
   could stay `WORKING` before, because a run frees its slot just before the
@@ -487,5 +501,6 @@ and imported as `agentframe`.
 - **Examples:** runnable examples in `examples/`, each checked against the
   installed wheel by `python -m examples.smoke`.
 
+[0.3.0]: https://github.com/malcmiller/agentframe/releases/tag/v0.3.0
 [0.2.0]: https://github.com/malcmiller/agentframe/releases/tag/v0.2.0
 [0.1.0]: https://github.com/malcmiller/agentframe/releases/tag/v0.1.0

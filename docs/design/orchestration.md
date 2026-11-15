@@ -1,6 +1,6 @@
 # Model-planned orchestration
 
-**Status: M10 built, not yet released.** Every story (#166-#176) is
+**Status: M10 complete, in 0.3.0.** Every story (#166-#176) is
 implemented; the [orchestration guide](../guides/orchestration.md) shows how
 to use it. The [remote skill catalog](#remote-skill-catalog)
 ([#166](https://github.com/malcmiller/agentframe/issues/166)) and
