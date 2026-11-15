@@ -12,6 +12,64 @@ specialists and ordinary orchestrator agents that cooperate over A2A, including
 with other frameworks' A2A agents. Deliver the single-agent library through M7,
 then multi-agent composition as the next core release (M8+), not a hosted platform.
 
+### Goals
+
+- Make a small agent easy to define with explicit Python declarations.
+- Generate native A2A Agent Cards from agent and skill metadata plus host configuration.
+- Support model-free agents and optional model-assisted behavior.
+- Start with Microsoft Foundry model inference and local Llama through Ollama.
+- Allow model selection to change without rewriting agent behavior.
+- Provide safe, validated defaults with typed configuration and dependency injection.
+- Build on the official A2A Python SDK instead of maintaining another wire format.
+- Build and deploy 1 to N agents; compose specialists through ordinary orchestrator
+  skills using interoperable A2A calls, not a required workflow/graph engine.
+
+### First success criterion
+
+M1 is the first proof: model-free authoring and managed `Runtime.invoke`.
+M2 adds native A2A hosting with custom routing only. M3 meets this success
+criterion:
+
+Define one text agent in approximately 25 lines of agent-authoring code, generate
+and publish a valid Agent Card, invoke it with an independent official A2A client,
+and switch between a Foundry GPT deployment and local Llama by changing only model
+configuration. Host bootstrap and credential setup are documented separately.
+
+The same public contract must work with both hosts; identical generated answers
+are not required. A deterministic model-free example must work without cloud
+credentials, model downloads, or an inference server.
+
+[`examples/assistant.py`](../examples/assistant.py) meets it: a text skill, a
+typed structured-output skill and a model-free skill on one agent that never
+names a model host. Its `create_app()` reads `AGENTFRAME_MODEL_PROVIDER` and
+builds an `OllamaModel` or a `FoundryModel` from environment variables
+(`AGENTFRAME_OLLAMA_ENDPOINT` optionally overrides `http://localhost:11434`);
+each provider is imported only when selected, so one provider extra is enough.
+The README's [using a model](../README.md#using-a-model) section shows both
+commands. A2A clients apply their own request timeout (5 seconds by default in
+the official `a2a-sdk` client), which a model call can exceed. The example
+accepts anonymous callers as a development placeholder for a localhost server.
+Any A2A 1.0 client can fetch the card and call `answer`, `summarize` or
+`count_words` through the skill-call extension; `summarize` returns one data
+part `{"value": {"text": ..., "key_points": [...]}}`, and the completed task's
+metadata reports the run's token usage.
+`tests/integration/test_success_criterion.py` proves this offline in CI: the
+official A2A client calls the same agent served with two different scripted
+models, with no code change, and `count_words` runs without inference.
+`tests/integration/test_structured_example.py` proves `summarize` the same way,
+including safe `FAILED` tasks for invalid output, refusal, truncation and a
+model without structured output. The opt-in
+[real-provider tests](guides/provider-tests.md) run the same contract against
+Ollama and Foundry.
+
+### Scope boundaries
+
+The current core does not include a UI, durable workflow/graph engine,
+hosting/deployment service, federation, RAG system, evaluation platform, or
+Foundry-hosted agent deployment. Llama is a model family; Ollama is the initial
+local model host. Foundry model inference is distinct from deploying an agent to
+Foundry Agent Service.
+
 ## Independence and dependency boundaries
 
 AgentFrame is intended as an independent alternative to existing agent
@@ -284,7 +342,7 @@ development tooling; M1 adds model-free authoring and local execution.
 | 0 | Development setup (complete) | Installable typed `src/` skeleton, no runtime dependencies, exact development pins and `uv.lock`. Ruff formatting/lint (88-character lines), strict mypy, pytest-asyncio auto mode, pre-commit Ruff/mypy, CI checks on Python 3.13/3.14/3.15 and isolated wheel import. All checks passed locally and on `main`. |
 | 1 | Model-free authoring and `Runtime.invoke` (complete) | A class with multiple decorated skills needs no `handle()`; metadata is deterministic; invalid definitions, missing services and invalid arguments fail explicitly before skill effects. Prove annotated `Inject[T]`, singleton/scoped ownership, isolated context and validated outputs without network access. `invoke` returns the value; `run` exposes local `RunResult` metadata. |
 | 2 | Native A2A hosting with structured requests and custom routing only (complete) | Publish a valid card and accept an independent official SDK client's message with complete validated results. Prove declared/activated structured extension selection with JSON data-part arguments and no router call; unknown skills/invalid args fail explicitly. Prove free-text custom selection/extraction, input-required clarification, argument validation and typed input/output mappings, with explicit access policy and labeled application-supplied development auth/policy placeholders. Add `agentframe run module:create_app` serving the application's configured `AgentApp`, plus a localhost-only anonymous `module:Class --dev` mode. Verify task retrieval/cancellation only if advertised. Do not advertise streaming or unimplemented capabilities; built-in model routing arrives in M6. |
-| 3 | Text generation through the shared `Model` contract (complete) | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the README success criterion. Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
+| 3 | Text generation through the shared `Model` contract (complete) | Prove text generation with Ollama and Foundry, switching between local Llama and a Foundry GPT deployment through configuration only, not skill changes. This meets the [first success criterion](#first-success-criterion). Test usage accounting; model-free skills still run without inference, and no model means generation fails explicitly. Provider tests are explicit opt-ins. |
 | 4 | Typed structured outputs (complete) | Prove `ctx.generate(..., output=Summary)` returns a validated model. Unsupported capability fails before sending; invalid output, refusal and truncation raise the decided errors, never fake successful text. Partial-result opt-in remains explicit and cannot waive validation. |
 | 5 | Bounded tool calling (complete) | Prove registration plus `ctx.generate(..., tools=[...])`, normalized arguments/results, continuations, action authorization and `max_tool_calls` exhaustion. Side-effecting tools never auto-retry; transient-model retry defaults and idempotence declarations do not replay actions. |
 | 6 | Built-in opt-in model router (complete) | Depends on M3 and M4. Prove free-text selection, validated argument extraction and input-required clarification alongside custom-router support. Structured extension requests bypass this router and model-selection cost. Budget routing before skill execution and pass the remaining allowance onward; injecting an agent model never enables routing implicitly. |
@@ -328,7 +386,7 @@ network beyond localhost.
 M3 text generation was completed on **2026-11-12**: its stories (#33-#42) are
 merged. `examples/assistant.py` serves one agent class with `OllamaModel` or
 `FoundryModel`, chosen only by environment variables, meeting the
-[README success criterion](../README.md#first-success-criterion).
+[first success criterion](#first-success-criterion).
 `tests/integration/test_success_criterion.py` proves it offline in CI with the official A2A
 client, two scripted models, a model-free skill that runs without inference and
 the hosted usage snapshot; the opt-in `tests/integration/test_providers.py` runs the same
@@ -388,7 +446,7 @@ routes one unambiguous free-text request against real Ollama and Foundry,
 checking only the selected skill and that its argument is present (#70).
 
 M1 is the first proof: a model-free agent. M2 adds independent native A2A
-interoperability; M3 meets the [README success criterion](../README.md#first-success-criterion)
+interoperability; M3 meets the [first success criterion](#first-success-criterion)
 with interchangeable Foundry/Ollama configuration; M4 adds typed structured
 output; M5 adds bounded tool calling; M6 adds built-in opt-in model routing.
 M7 hardening completes the first usable release. `EntraIDAuth` validates
@@ -474,7 +532,7 @@ mypy **2.4.1**, pytest **9.2.0**, pytest-asyncio **1.4.1.post1** in **auto** mod
 and pre-commit **4.7.0**. Build/development dependencies are exactly pinned in
 `pyproject.toml`; transitive development versions are locked in `uv.lock`.
 The Ruff rule families are `E`, `W`, `F`, `I`, `B`, `UP`, `SIM`, `N`, `C4`
-and `RUF`. See [development commands](../README.md#development-and-contributions).
+and `RUF`. See [contributing](../CONTRIBUTING.md) for the development commands.
 
 | Area | Decision | Implementation work still needed |
 | --- | --- | --- |
@@ -494,6 +552,20 @@ Foundry User is the least-privileged built-in role for the registry identity,
 to be verified with the opt-in test. Foundry's
 [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
 are a possible additional reference source, not a selected registry contract.
+
+Platform references:
+
+- [A2A specification](https://a2a-protocol.org/latest/specification/)
+- [Selected A2A specification release v1.0.1](https://github.com/a2aproject/A2A/releases/tag/v1.0.1)
+- [Official A2A Python SDK](https://github.com/a2aproject/a2a-python)
+- [Observed official Python SDK 1.3.0](https://pypi.org/project/a2a-sdk/1.3.0/)
+- [Python release-cycle data](https://peps.python.org/api/release-cycle.json)
+- [Ollama Python client](https://github.com/ollama/ollama-python)
+- [OpenAI Python library](https://github.com/openai/openai-python)
+- [Microsoft Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/)
+- [Foundry OpenAI SDK migration and Responses API](https://learn.microsoft.com/en-us/azure/foundry/how-to/model-inference-to-openai-migration)
+- [Foundry incoming A2A and authenticated cards](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint)
+- [Foundry outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
 
 ### Next core release: multi-agent A2A composition (M8+)
 

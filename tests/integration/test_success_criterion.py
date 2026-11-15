@@ -1,4 +1,5 @@
-"""The README success criterion, offline: one agent, two models, no code change.
+"""The first success criterion (docs/roadmap.md), offline: one agent, two models,
+no code change.
 
 ``examples/assistant.py`` is served over real localhost HTTP and called by the
 official A2A client with structured requests, once per model. Two scripted

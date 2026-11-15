@@ -111,8 +111,8 @@ Native task support does not imply application approval pause/resume.
 | `ModelRequest` | Provider-neutral messages, optional tool definitions, output contract, and permitted generation settings. Keeps instructions distinct from user content. |
 | `ModelResponse` | Normalized generated content, optional tool calls, available usage data, and completion status. Missing usage remains unknown, not zero. |
 
-The first proof (M1) is model-free/text-only; M3 meets the README's
-Foundry/Llama configuration-switching success criterion. The M7 first usable release includes
+The first proof (M1) is model-free/text-only; M3 meets the
+Foundry/Llama configuration-switching [first success criterion](../roadmap.md#first-success-criterion). The M7 first usable release includes
 text, typed structured outputs and bounded explicitly registered tool calls,
 validated results and generation continuations. All final results are complete
 and validated. Unsupported model features fail explicitly; normalized messages,

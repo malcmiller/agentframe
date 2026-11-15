@@ -2,7 +2,7 @@
 
 The snippets here are short illustrations. The runnable, tested versions are in
 [`examples/`](../../examples/) (listed in the
-[README](../../README.md#runnable-examples)); a smoke runner checks each one
+[README](../../README.md#examples)); a smoke runner checks each one
 against the installed wheel in CI. An agent is an `Agent` subclass with one or more separately
 decorated async skills. There is no required `handle()` method or manual
 dispatch switch. Decorated inherited skills may also satisfy this requirement.
@@ -166,7 +166,7 @@ No skill code changes when the configured model host changes.
 ### Choose the host by configuration
 
 [`examples/assistant.py`](../../examples/assistant.py) is the runnable version of
-this switch (the [README success criterion](../../README.md#first-success-criterion)).
+this switch (the [first success criterion](../roadmap.md#first-success-criterion)).
 Its `create_app()` builds `OllamaModel` (with `context_window=8192`) or
 `FoundryModel` (signed in through the Azure CLI's Entra ID credential) from
 environment variables and serves one unchanged agent class, which mixes a

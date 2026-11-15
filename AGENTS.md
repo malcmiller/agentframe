@@ -154,7 +154,7 @@ that its argument is present, since routing is nondeterministic). They are marke
 default `uv run pytest` and CI never call a provider. The manually triggered
 `.github/workflows/foundry.yml` runs the `foundry` tests from GitHub behind the
 reviewer-approved `foundry` environment, signing in with OpenID Connect (no
-secrets); its one-time setup is in README.md "Real-provider tests" (M7 #81).
+secrets); its one-time setup is in `docs/guides/provider-tests.md` (M7 #81).
 Endpoints and model names come only from environment variables:
 
 | Variable | Needed | Meaning |
@@ -676,7 +676,7 @@ M2 native A2A structured extension requests plus custom free-text routing only;
 M3 interchangeable Foundry/Ollama text
 generation; M4 typed structured outputs; M5 bounded tool calling; M6 built-in
 opt-in model routing after M3/M4; M7 hardening to the first usable release.
-M1 is the first proof; M3 meets the README success criterion. The authoring goal
+M1 is the first proof; M3 meets the roadmap's first success criterion. The authoring goal
 is approximately 25 lines for a text agent, excluding host and credential setup.
 The next core release (M8+) adds multi-agent discovery/remote A2A composition.
 MCP, optional telemetry integration and streaming/AG-UI remain separate
@@ -721,9 +721,14 @@ remain open; tracing/accounting/enforcement work independently. See
 
 ## Documentation maintenance
 
-Read `README.md` and `docs/README.md` first. Keep `docs/roadmap.md`, the
+Read `README.md` and `docs/README.md` first. `README.md` is the project front
+page (features, install, quick start, examples, links), with absolute links
+because PyPI shows it; milestones, status and decisions live in
+`docs/roadmap.md`, and setup, checks and pull requests in `CONTRIBUTING.md`.
+Keep `docs/roadmap.md`, the
 guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
-`authorization.md`, `development.md`, `evaluation.md`, `orchestration.md`) and the design docs
+`authorization.md`, `development.md`, `evaluation.md`, `orchestration.md`,
+`provider-tests.md`) and the design docs
 (`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
 `prompt-safeguarding.md`, `discovery.md`, `streaming.md`, `evaluation.md`,
 `orchestration.md`) consistent, including discovery/streaming API pages and

@@ -42,6 +42,13 @@ changelog.
   `OllamaModel` connects within 10 seconds instead of waiting forever; Ollama
   reads stay bounded by the run's deadline, so long generations are not cut
   short (#220).
+- **Documentation:** the README, which is also the PyPI project page, is now a
+  short front page: features, installation, a quick start, using a model,
+  multi-agent, examples and links. Development setup, checks and pull request
+  rules moved to a new `CONTRIBUTING.md`; the real-provider tests and the
+  Foundry workflow setup to a new `docs/guides/provider-tests.md`; and the
+  success criterion, goals, scope and references to `docs/roadmap.md`. The
+  README's code samples are now tested as written.
 
 ### Fixed
 
