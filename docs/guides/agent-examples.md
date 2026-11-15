@@ -516,7 +516,9 @@ API key for `research-agent` (`Service(APIKeyCredential(...))`) and its own
 authentication from `dev_settings()`; replace those with real sources and
 authentication outside development. Run both with `agentframe dev` from the
 example's directory (see its `agentframe.yaml` and
-[local development](development.md#multiple-agents-m8)).
+[local development](development.md#multiple-agents-m8)), setting
+`AGENTFRAME_OLLAMA_MODEL` to an installed tag such as `llama3.2:3b` for the
+briefs; without it the agents start with no model and `brief` fails.
 
 Each remote call carries the caller's remaining deadline, its token ceiling,
 the hop count (at most 5 by default), the root invocation ID and any W3C trace

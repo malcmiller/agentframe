@@ -19,6 +19,14 @@ changelog.
   scorer sets them), kept without `capture_content`; the schema stays
   `agentframe.evaluation.report/1` (#213).
 
+### Changed
+
+- `examples/multi_agent`: the research agent and the planner start without
+  Ollama (#218). They use local Llama through Ollama only when
+  `AGENTFRAME_OLLAMA_MODEL` names an installed model tag, instead of defaulting
+  to `llama3.2:3b`; without it their model-backed skills fail with "This agent
+  has no model configured" and the others still work.
+
 ### Fixed
 
 - A `Remote` parameter annotated with an alias of an alias

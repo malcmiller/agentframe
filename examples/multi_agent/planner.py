@@ -21,15 +21,22 @@ production host would prefer ``OnBehalfOf``, so every agent authorizes the
 real user.
 
 Start the agents with ``agentframe dev`` from this directory (see
-``agentframe.yaml``); the research agent's briefs and the planner's plans
-need Ollama::
+``agentframe.yaml``). The research agent's briefs and the planner's plans use
+local Llama through Ollama, with the installed model tag that
+``AGENTFRAME_OLLAMA_MODEL`` names::
 
-    AGENTFRAME_DEV_CLIENT_KEY=dev-only-key agentframe dev
+    AGENTFRAME_OLLAMA_MODEL=llama3.2:3b AGENTFRAME_DEV_CLIENT_KEY=dev-only-key \\
+        agentframe dev
 
 Then, on ``http://127.0.0.1:8002`` with the header ``X-API-Key: dev-only-key``,
 call ``plan`` with ``{"goal": "A beach day", "topics": ["tides", "waves"]}``
 or ``planned`` with ``{"goal": "Write a post titled Tides from sources about
 tides and a short brief on them."}``.
+
+Without ``AGENTFRAME_OLLAMA_MODEL`` the agents start without a model:
+``find_sources`` and ``write_post`` still work, ``brief``, ``propose`` and
+``planned`` fail with "This agent has no model configured", and ``plan``,
+which asks for briefs, fails too.
 """
 
 import asyncio
@@ -249,14 +256,18 @@ class DeveloperRoles:
         return dataclasses.replace(caller, roles=frozenset({"planner"}))
 
 
-def create_model() -> Model:
-    """Return local Llama through Ollama; the model tag must already be installed."""
+def create_model() -> Model | None:
+    """Return local Llama through Ollama, or ``None`` to start without a model.
+
+    ``AGENTFRAME_OLLAMA_MODEL`` names the model tag, which must already be
+    installed. Only ``propose`` and ``planned`` use the planner's model.
+    """
+    tag = os.environ.get("AGENTFRAME_OLLAMA_MODEL")
+    if not tag:
+        return None
     from agentframe.models.ollama import OllamaModel
 
-    return OllamaModel(
-        model=os.environ.get("AGENTFRAME_OLLAMA_MODEL", "llama3.2:3b"),
-        context_window=8192,
-    )
+    return OllamaModel(model=tag, context_window=8192)
 
 
 def create_app(model: Model | None = None) -> AgentApp:
@@ -264,7 +275,7 @@ def create_app(model: Model | None = None) -> AgentApp:
 
     Args:
         model: The planning model, which must support structured output.
-            Defaults to ``create_model()``.
+            Defaults to ``create_model()``, which may be no model.
     """
     dev = dev_settings()
     services = Services()
