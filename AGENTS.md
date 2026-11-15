@@ -235,6 +235,13 @@ implementation decisions are in
 
 ## Authoring decisions
 
+- **Production-ready by default, customizable when needed.** Users build
+  production-ready agents with simple, intuitive annotations and functions.
+  Every public API ships safe, production-grade defaults upfront, and every
+  default can be overridden through a public parameter or extension point,
+  never by forking or private access. Prefer better defaults and small
+  conveniences over new abstractions; don't pigeonhole users into one way of
+  working.
 - Use `@agent` for identity and `@skill` for advertised skills.
 - Implement behavior in an `Agent` subclass; the common path needs no additional
   AgentFrame subclass.

@@ -10,6 +10,8 @@ Human readability is the top-priority contribution rule: prefer simple,
 maintainable code over cleverness or speculative abstractions, keep functions
 small and diffs focused, and fully type and document public APIs. See
 [code quality and readability](AGENTS.md#code-quality-and-readability).
+Public APIs are production-ready by default and customizable when needed (see
+[authoring decisions](AGENTS.md#authoring-decisions)).
 Proposals should explain their interoperability, safety and authoring
 tradeoffs.
 
