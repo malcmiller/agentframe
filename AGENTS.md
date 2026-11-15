@@ -14,11 +14,11 @@ This repository contains the M0 development tooling, M1 model-free
 authoring/local `Runtime`, M2 native A2A hosting, M3 Ollama/Foundry text
 generation, M4 typed structured outputs, M5 bounded tool calling, M6 built-in
 opt-in model routing and M7 hardening alongside design documentation. Version
-0.1.0, the first usable single-agent release, and version 0.2.0, the M8+
-multi-agent release (#83-#97), are published on PyPI as `agentframe-py`
-(import `agentframe`). Pre-1.0 there is no stable API. M9 evaluation (#164, #152-#163)
-and M10 model-planned orchestration (#177, #166-#176) are complete and form
-version 0.3.0; later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
+0.1.0, the first usable single-agent release, version 0.2.0, the M8+
+multi-agent release (#83-#97), and version 0.3.0, which adds M9 evaluation
+(#164, #152-#163) and M10 model-planned orchestration (#177, #166-#176), are
+published on PyPI as `agentframe-py` (import `agentframe`). Pre-1.0 there is
+no stable API. Later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
