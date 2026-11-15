@@ -509,7 +509,10 @@ All four checks must pass before committing: `uv run ruff format --check`,
 `uv run ruff check`, `uv run mypy` and `uv run pytest`. CI runs them on Python
 3.13, 3.14 and 3.15, verifies an isolated wheel import and runs the
 [examples smoke runner](#runnable-examples) against the installed wheel. Pre-commit runs Ruff
-and mypy; tests run in CI, not on every commit. See
+and mypy; tests run in CI, not on every commit.
+Measure coverage, including the agents and CLI that tests start as
+subprocesses, with `uv run coverage run -m pytest`, then `uv run coverage combine`
+and `uv run coverage report` (CI does the same). See
 [code quality and readability](https://github.com/malcmiller/agentframe/blob/main/AGENTS.md#code-quality-and-readability) for the
 contributor rules, local matrix commands and PyCharm setup.
 Releases are published to PyPI by a workflow; see

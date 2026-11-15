@@ -83,6 +83,9 @@ uv build
 Before committing, all four checks must pass: `uv run ruff format --check`,
 `uv run ruff check`, `uv run mypy` and `uv run pytest`. Run the matrix locally
 with `uv run --python 3.13 pytest` (repeat for 3.14 and 3.15).
+Measure coverage, including the agents and CLI that tests start as
+subprocesses, with `uv run coverage run -m pytest`, then `uv run coverage combine`
+and `uv run coverage report` (CI does the same).
 In PyCharm, select `.venv/bin/python`, mark `src` as Sources Root and `tests`
 as Test Sources Root, and use pytest as the test runner.
 

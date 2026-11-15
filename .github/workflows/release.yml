@@ -126,7 +126,7 @@ jobs:
         env:
           CHECKSUMS: ${{ needs.build.outputs.checksums }}
         run: cd dist && sha256sum --check --strict <<< "${CHECKSUMS}"
-      # It also uploads PEP 740 attestations (signed provenance) by default.
+      # This action also uploads PEP 740 attestations (signed provenance) by default.
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           repository-url: https://test.pypi.org/legacy/
