@@ -643,14 +643,7 @@ M8+ (#95).
 dev_settings() -> DevSettings
 ```
 
-`DevSettings` is a frozen dataclass whose `repr` never shows a key:
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `public_url` | `str` | `AGENTFRAME_PUBLIC_URL`, for `HostConfig(public_url=...)`. Required. |
-| `auth` | `APIKeyAuth` | Accepts `AGENTFRAME_DEV_API_KEYS`, each verified as its caller name. At least one key is required. |
-| `directory` | `AgentDirectory \| None` | A `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY` and/or an `EnvironmentAgentRegistry` of `AGENTFRAME_AGENTS` (set by [`agentframe compose`](#agentframe-compose)), whichever are set, or `None` when neither is. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It has its own `httpx.AsyncClient` (no redirects) open for the life of the process, because a factory has no `async with` to open it in. |
-| `remotes` | `Mapping[str, Service]` | `Service(credential=APIKeyCredential(key))` per `AGENTFRAME_DEV_REMOTE_KEYS` entry, sent in the default `X-API-Key` header. |
+It returns a [`DevSettings`](#devsettings) built from these variables.
 
 ```python
 from agentframe import AgentApp, HostConfig, dev_settings
@@ -675,7 +668,37 @@ Messages never contain keys. Development only: it never configures
 production authentication.
 
 **Related:** [`agentframe dev`](#agentframe-dev), [`HostConfig`](#hostconfig),
-[outbound identity](authorization.md#service).
+[`DevSettings`](#devsettings), [outbound identity](authorization.md#service).
+
+## `DevSettings`
+
+**Purpose / decision:** an agent's development configuration, returned by
+[`dev_settings()`](#dev_settings), with one field for each setting an app
+factory passes on. Implemented in M8+ (#95); applications read it, they do
+not build it.
+
+**Signature status:** a frozen dataclass whose `repr` never shows a key.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `public_url` | `str` | `AGENTFRAME_PUBLIC_URL`, for `HostConfig(public_url=...)`. Required. |
+| `auth` | `APIKeyAuth` | Accepts `AGENTFRAME_DEV_API_KEYS`, each verified as its caller name, for `HostConfig(auth=...)`. At least one key is required. |
+| `directory` | `AgentDirectory \| None` | For `AgentApp(directory=...)`: a `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY` and/or an `EnvironmentAgentRegistry` of `AGENTFRAME_AGENTS` (set by [`agentframe compose`](#agentframe-compose)), whichever are set, or `None` when neither is. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It has its own `httpx.AsyncClient` (no redirects) open for the life of the process, because a factory has no `async with` to open it in. |
+| `remotes` | `Mapping[str, Service]` | For `AgentApp(remotes=...)`: `Service(credential=APIKeyCredential(key))` per `AGENTFRAME_DEV_REMOTE_KEYS` entry, sent in the default `X-API-Key` header. |
+
+```python
+from agentframe import DevSettings, HostConfig
+
+
+def host_config(dev: DevSettings) -> HostConfig:
+    return HostConfig(public_url=dev.public_url, auth=dev.auth)
+```
+
+**Behavior / failures:** errors come from [`dev_settings()`](#dev_settings),
+never from reading fields. Development only: never use it to configure
+production authentication.
+
+**Related:** [`dev_settings()`](#dev_settings), [`agentframe dev`](#agentframe-dev).
 
 ## `HostConfig`
 
@@ -1029,8 +1052,8 @@ class SkillRouter(Protocol):
 | `conversation` | `Sequence[a2a.types.Message]` | The task's native A2A messages so far, oldest first: the caller's messages and the agent's earlier questions. The last message is the one being routed. |
 | `skills` | `Sequence[SkillDefinition]` | The agent's skills whose `requires_permissions` the caller holds, recomputed for every message. |
 | `ctx` | [`RoutingContext`](#routingcontext) | The message's routing context. Make model calls with `ctx.generate(model, ...)` so they are charged to the run. |
-| Returns | `SkillCall(skill, arguments)` | Run skill `skill` with the business `arguments` dict. The skill must be one of `skills`; the arguments are validated like any caller's. |
-| Returns | `Clarification(question)` | A non-empty question for the caller when the request is ambiguous or misses input. Never guess or pick the first skill. |
+| Returns | [`SkillCall`](#skillcall)`(skill, arguments)` | Run skill `skill` with the business `arguments` dict. The skill must be one of `skills`; the arguments are validated like any caller's. |
+| Returns | [`Clarification`](#clarification)`(question)` | A non-empty question for the caller when the request is ambiguous or misses input. Never guess or pick the first skill. |
 
 `SkillCall`, `Clarification`, `SkillRouter` and `RoutingContext` are exported
 from `agentframe`.
@@ -1115,9 +1138,70 @@ Pass it as `AgentApp(agent=..., host=..., router=GreetingRouter())`.
   Clarification is not human approval or durable workflow resumption.
 
 **Related:** [`RoutingContext`](#routingcontext),
+[`SkillCall`](#skillcall), [`Clarification`](#clarification),
 [`Runtime.invoke`](runtime.md#runtimeinvoke),
 [result and failure mapping](#result-and-failure-mapping),
 [routing design](../guides/annotations.md#skill-registration-versus-request-routing).
+
+## `SkillCall`
+
+**Purpose / decision:** a router's choice: which skill to run and its
+business arguments. Returned from [`SkillRouter.route`](#skillrouter).
+
+**Signature status:** implemented in M2 (#6) as a frozen dataclass.
+
+```text
+SkillCall(skill: str, arguments: dict[str, Any])
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `skill` | `str` | Required | ID of the skill to run; must be one of the skills offered to the router. |
+| `arguments` | `dict[str, Any]` | Required | Unvalidated business arguments. The runtime validates them like any caller's. |
+
+```python
+from agentframe import SkillCall
+
+call = SkillCall("greet", {"name": "Ada"})
+```
+
+**Behavior / failures:** a skill that was not offered (unknown, or the caller
+lacks its permissions) or invalid arguments end the task `REJECTED` with a
+safe message that does not echo the skill ID. Selection is not authorization:
+permissions and the authorization policy still apply when the skill runs.
+
+**Related:** [`SkillRouter`](#skillrouter), [`Clarification`](#clarification).
+
+## `Clarification`
+
+**Purpose / decision:** a router's question for the caller when a free-text
+request is ambiguous or misses input, instead of guessing. Returned from
+[`SkillRouter.route`](#skillrouter).
+
+**Signature status:** implemented in M2 (#6) as a frozen dataclass.
+
+```text
+Clarification(question: str)
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `question` | `str` | Required, non-empty | Safe text telling the caller what is missing or ambiguous. It is sent to the caller, so never include secrets. |
+
+```python
+from agentframe import Clarification
+
+ask_back = Clarification("Whom should I greet?")
+```
+
+**Behavior / failures:** the task becomes `INPUT_REQUIRED` with the question
+as its status message, and holds no concurrency slot. The caller answers in the
+same task and the router runs again with the whole conversation. An empty
+question ends the task `REJECTED`. This is not human approval or durable
+workflow resumption.
+
+**Related:** [`SkillRouter`](#skillrouter), [`SkillCall`](#skillcall),
+[`ClarificationNeededError`](discovery.md#clarificationneedederror).
 
 ## `RoutingContext`
 
