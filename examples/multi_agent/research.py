@@ -1,18 +1,22 @@
 """A research specialist that other agents call over A2A.
 
 It offers two skills: ``find_sources``, a structured call answered without a
-model, and ``brief``, answered by local Llama through Ollama. Free text sent
-to it, for example with ``Remote.ask``, is routed to ``brief``.
+model, and ``brief``, answered by local Llama through Ollama with the
+installed model tag ``AGENTFRAME_OLLAMA_MODEL`` names (without it the agent
+starts with no model, and ``brief`` fails). Free text sent to it, for example
+with ``Remote.ask``, is routed to ``brief``.
 
 Run it alone (``dev_settings()`` reads the variables ``agentframe dev`` sets)::
 
     AGENTFRAME_DEV=1 AGENTFRAME_PUBLIC_URL=http://127.0.0.1:8001 \\
         AGENTFRAME_DEV_API_KEYS=planner=dev-only-key \\
+        AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \\
         agentframe run research:create_app --port 8001
 
 or both agents with ``agentframe dev`` (see ``agentframe.yaml``).
 """
 
+import logging
 import os
 from collections.abc import Sequence
 
@@ -34,6 +38,8 @@ from agentframe import (
     dev_settings,
     skill,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Source(BaseModel):
@@ -84,21 +90,31 @@ class BriefRouter:
         return SkillCall("brief", {"question": get_message_text(conversation[-1])})
 
 
-def create_model() -> Model:
-    """Return local Llama through Ollama; the model tag must already be installed."""
+def create_model() -> Model | None:
+    """Return local Llama through Ollama, or ``None`` to start without a model.
+
+    ``AGENTFRAME_OLLAMA_MODEL`` names the model tag, which must already be
+    installed; without it, a warning names the skills that will fail. Only
+    ``brief`` uses the model.
+    """
+    tag = os.environ.get("AGENTFRAME_OLLAMA_MODEL")
+    if not tag:
+        logger.warning(
+            "AGENTFRAME_OLLAMA_MODEL is not set; "
+            "brief, and so the planner's plan, will fail"
+        )
+        return None
     from agentframe.models.ollama import OllamaModel
 
-    return OllamaModel(
-        model=os.environ.get("AGENTFRAME_OLLAMA_MODEL", "llama3.2:3b"),
-        context_window=8192,
-    )
+    return OllamaModel(model=tag, context_window=8192)
 
 
 def create_app(model: Model | None = None) -> AgentApp:
     """Serve the research agent, for the callers ``dev_settings()`` accepts.
 
     Args:
-        model: The model for ``brief``. Defaults to ``create_model()``.
+        model: The model for ``brief``. Defaults to ``create_model()``,
+            which may be no model.
     """
     dev = dev_settings()
     return AgentApp(

@@ -126,9 +126,20 @@ policy = ExecutionPolicy(
 )
 ```
 
-Run all three with `AGENTFRAME_DEV_CLIENT_KEY=dev-only-key agentframe dev`
-from `examples/multi_agent` (Ollama plans and writes briefs), then call
-`planned` on `http://127.0.0.1:8002` with `X-API-Key: dev-only-key`. The
+Run all three from `examples/multi_agent`, with Ollama planning and writing
+briefs:
+
+```shell
+AGENTFRAME_OLLAMA_MODEL=llama3.2:3b AGENTFRAME_DEV_CLIENT_KEY=dev-only-key \
+    agentframe dev
+```
+
+then call `planned` on `http://127.0.0.1:8002` with
+`X-API-Key: dev-only-key`. Without `AGENTFRAME_OLLAMA_MODEL` (the installed
+model tag) the agents start without a model, so no Ollama server is needed:
+`find_sources` and `write_post` still work, `brief`, `propose` and `planned`
+fail with "This agent has no model configured", and `plan`, which asks for
+briefs, fails too. The
 planner's development placeholder `DeveloperRoles` gives the `developer`
 caller the `planner` role, which grants `plans:run` and `posts:write`; a
 production host gets roles from its identity provider instead.

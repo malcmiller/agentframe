@@ -24,6 +24,7 @@ this agent's key as the caller ``approvals``::
 
     AGENTFRAME_DEV=1 AGENTFRAME_PUBLIC_URL=http://127.0.0.1:8001 \\
         AGENTFRAME_DEV_API_KEYS=approvals=research-key \\
+        AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \\
         agentframe run examples.multi_agent.research:create_app --port 8001
 
     CARD=http://127.0.0.1:8001/.well-known/agent-card.json
@@ -31,9 +32,10 @@ this agent's key as the caller ``approvals``::
         APPROVALS_REQUESTER_KEY=requester-key APPROVALS_REVIEWER_KEY=reviewer-key \\
         agentframe run examples.plan_approval:create_app --port 8003
 
-The research agent's briefs need local Llama through Ollama; the planning
-model is the one ``AGENTFRAME_MODEL_PROVIDER`` selects, as for the other
-examples, and must support structured output.
+The research agent's briefs need local Llama through Ollama, with the
+installed model tag ``AGENTFRAME_OLLAMA_MODEL`` names; the planning model is
+the one ``AGENTFRAME_MODEL_PROVIDER`` selects, as for the other examples, and
+must support structured output.
 """
 
 import os
