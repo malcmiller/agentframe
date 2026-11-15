@@ -1,12 +1,26 @@
 """Development wiring: what ``agentframe dev`` passes each agent, and how it is read."""
 
+import asyncio
+import gc
+import warnings
 from pathlib import Path
 
 import pytest
 
-from agentframe import DefinitionError, dev_settings
+from agentframe import (
+    Agent,
+    AgentApp,
+    AllowAnonymous,
+    DefinitionError,
+    HostConfig,
+    RunContext,
+    agent,
+    dev_settings,
+    skill,
+)
 from agentframe.dev_server import DevError, child_environment, run_dev
 from agentframe.project import ProjectAgent
+from local_server import ServeLocally
 
 RESEARCH = ProjectAgent("research-agent", "myapp.research:create_app", 8001)
 PLANNER = ProjectAgent("planner", "myapp.planner:create_app", 8002)
@@ -85,6 +99,44 @@ async def test_dev_settings_wire_auth_directory_and_remotes(
     assert dev.directory._allow_http_hosts == frozenset({"research-agent", "planner"})
     for key in ("research-key", "client-key", "planner-key"):
         assert key not in repr(dev)
+
+
+@agent(version="1.0.0")
+class Research(Agent):
+    """Finds sources."""
+
+    @skill("find_sources", tags=["research"])
+    async def find_sources(self, ctx: RunContext) -> str:
+        """Return sources."""
+        return "sources"
+
+
+@pytest.mark.usefixtures("dev_environment")
+def test_the_dev_directory_leaves_no_connection_open(
+    serve: ServeLocally, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The directory's client is never closed, so an idle connection it kept
+    # would be left open when the client is discarded (#221).
+    monkeypatch.delenv("AGENTFRAME_DEV_REGISTRY")
+
+    def research_app(public_url: str) -> AgentApp:
+        host = HostConfig(public_url=public_url, auth=AllowAnonymous())
+        return AgentApp(agent=Research(), host=host)
+
+    async def fetch_a_card() -> None:
+        async with serve(research_app) as url:
+            card_url = f"{url}/.well-known/agent-card.json"
+            monkeypatch.setenv("AGENTFRAME_AGENTS", f"research-agent={card_url}")
+            directory = dev_settings().directory
+            assert directory is not None
+            await directory.get("research-agent")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        asyncio.run(fetch_a_card())
+        gc.collect()
+
+    assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
 
 
 @pytest.mark.usefixtures("dev_environment")

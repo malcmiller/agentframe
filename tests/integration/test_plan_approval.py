@@ -122,9 +122,12 @@ def approvals(
                 model = ScriptedModel([TIDES_PLAN], capabilities=PLANNING_MODEL)
                 return plan_approval.create_app(model, directory)
 
-            async with directory, serve(approvals_app) as url:
-                requester = await connect(url, REQUESTER_KEY)
-                reviewer = await connect(url, REVIEWER_KEY)
+            async with (
+                directory,
+                serve(approvals_app) as url,
+                await connect(url, REQUESTER_KEY) as requester,
+                await connect(url, REVIEWER_KEY) as reviewer,
+            ):
                 yield requester, reviewer
 
     return serving

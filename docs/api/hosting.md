@@ -683,7 +683,7 @@ not build it.
 | --- | --- | --- |
 | `public_url` | `str` | `AGENTFRAME_PUBLIC_URL`, for `HostConfig(public_url=...)`. Required. |
 | `auth` | `APIKeyAuth` | Accepts `AGENTFRAME_DEV_API_KEYS`, each verified as its caller name, for `HostConfig(auth=...)`. At least one key is required. |
-| `directory` | `AgentDirectory \| None` | For `AgentApp(directory=...)`: a `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY` and/or an `EnvironmentAgentRegistry` of `AGENTFRAME_AGENTS` (set by [`agentframe compose`](#agentframe-compose)), whichever are set, or `None` when neither is. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It has its own `httpx.AsyncClient` (no redirects) open for the life of the process, because a factory has no `async with` to open it in. |
+| `directory` | `AgentDirectory \| None` | For `AgentApp(directory=...)`: a `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY` and/or an `EnvironmentAgentRegistry` of `AGENTFRAME_AGENTS` (set by [`agentframe compose`](#agentframe-compose)), whichever are set, or `None` when neither is. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It has its own `httpx.AsyncClient` (no redirects, no idle connections kept) open for the life of the process, because a factory has no `async with` to open it in. |
 | `remotes` | `Mapping[str, Service]` | For `AgentApp(remotes=...)`: `Service(credential=APIKeyCredential(key))` per `AGENTFRAME_DEV_REMOTE_KEYS` entry, sent in the default `X-API-Key` header. |
 
 ```python

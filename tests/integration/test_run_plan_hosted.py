@@ -559,8 +559,7 @@ async def test_a_step_never_goes_deeper_than_max_remote_hops(
                 agent=orchestrator, host=anonymous(public_url), directory=directory
             )
 
-        async with serve(orchestrator_app) as url:
-            client = await connect(url)
+        async with serve(orchestrator_app) as url, await connect(url) as client:
             plan = Plan(steps=[find("tides", "tides")], result="tides")
             task = await call_skill(
                 client,
@@ -967,8 +966,7 @@ async def test_steps_are_logged_with_correlation_and_without_content(
                 agent=orchestrator, host=anonymous(public_url), directory=directory
             )
 
-        async with serve(orchestrator_app) as url:
-            client = await connect(url)
+        async with serve(orchestrator_app) as url, await connect(url) as client:
             task = await call_skill(client, "execute", {"plan": plan.model_dump()})
 
     assert task.status.state == TaskState.TASK_STATE_COMPLETED
