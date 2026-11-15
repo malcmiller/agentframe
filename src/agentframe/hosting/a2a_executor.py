@@ -208,6 +208,26 @@ class _RunningTask:
     call_context: ServerCallContext
 
 
+@dataclass(frozen=True)
+class _HostedRun:
+    """Who sent one message, and the limits and correlation its run gets.
+
+    Attributes:
+        ceiling: The host's limits ceiling, capped by the caller's deadline
+            and token cap.
+        hops: The request's depth in a chain of calls between agents.
+    """
+
+    invocation_id: str
+    principal: Principal | None
+    user_token: UserToken | None
+    started_at: float
+    accounting: RunAccounting
+    ceiling: RunLimits | None
+    hops: int
+    correlation: RunCorrelation
+
+
 class RuntimeExecutor(AgentExecutor):
     """Executes each A2A message as one ``Runtime.run`` of the agent's skill.
 
@@ -325,6 +345,61 @@ class RuntimeExecutor(AgentExecutor):
             RuntimeError: The effective limits have no ``max_remote_hops``,
                 which never happens: the library defaults set every field.
         """
+        run = self._hosted_run(context, message, invocation_id, accounting)
+        max_hops = routing_limits(self._agent, run.ceiling).max_remote_hops
+        if max_hops is None:
+            raise RuntimeError("The run's limits have no max_remote_hops")
+        if run.hops > max_hops:
+            await publish_failure(
+                task,
+                depth_exceeded(max_hops, invocation_id),
+                accounting,
+                TaskState.TASK_STATE_REJECTED,
+            )
+            return
+        logger.info(
+            "Run started (invocation_id=%s, root_invocation_id=%s)",
+            invocation_id,
+            run.correlation.root_invocation_id,
+            extra=run.correlation.log_extra(),
+        )
+        # noinspection PyBroadException
+        try:
+            part = await self._answer(context, message, task, run)
+        except AgentFrameError as error:
+            error.invocation_id = invocation_id
+            _log_failed_run(error, run.correlation)
+            await publish_failure(task, error, accounting)
+            return
+        except Exception:
+            # Skill exceptions may carry submitted values or secrets, so the
+            # caller gets a generic message and only the log keeps the details,
+            # under the run's ID that the caller can quote.
+            failure = AgentFrameError(SKILL_FAILED_MESSAGE, invocation_id=invocation_id)
+            logger.exception(
+                "Skill failed (invocation_id=%s)",
+                invocation_id,
+                extra=run.correlation.log_extra(),
+            )
+            await publish_failure(task, failure, accounting)
+            return
+        if part is None:
+            return  # The router asked the caller a question instead.
+        await publish_result(task, part, invocation_id, accounting)
+        logger.info(
+            "Run completed (invocation_id=%s)",
+            invocation_id,
+            extra=run.correlation.log_extra(),
+        )
+
+    def _hosted_run(
+        self,
+        context: RequestContext,
+        message: Message,
+        invocation_id: str,
+        accounting: RunAccounting,
+    ) -> _HostedRun:
+        """Read the caller, its context and the run's correlation from the request."""
         principal: Principal | None = context.call_context.state.get(
             PRINCIPAL_STATE_KEY
         )
@@ -342,98 +417,63 @@ class RuntimeExecutor(AgentExecutor):
             parent_invocation_id=caller.parent_invocation_id,
             trace=trace,
         )
-        ceiling = _with_caller_limits(self._limits_ceiling, caller)
-        max_hops = routing_limits(self._agent, ceiling).max_remote_hops
-        if max_hops is None:
-            raise RuntimeError("The run's limits have no max_remote_hops")
-        if caller.hops > max_hops:
-            await publish_failure(
-                task,
-                depth_exceeded(max_hops, invocation_id),
-                accounting,
-                TaskState.TASK_STATE_REJECTED,
-            )
-            return
-        logger.info(
-            "Run started (invocation_id=%s, root_invocation_id=%s)",
-            invocation_id,
-            correlation.root_invocation_id,
-            extra=correlation.log_extra(),
-        )
-        # noinspection PyBroadException
-        try:
-            call = await self._choose_skill(
-                context,
-                message,
-                principal,
-                started_at,
-                invocation_id,
-                accounting,
-                ceiling,
-            )
-            if isinstance(call, Clarification):
-                check_response_size(
-                    call.question.encode(), self._max_response_bytes, invocation_id
-                )
-                await publish_input_required(
-                    task, call.question, invocation_id, accounting
-                )
-                return
-            # The executor shares the runtime's pipeline under its own invocation ID.
-            result = await self._runtime.run_invocation(
-                invocation_id,
-                self._agent,
-                call.skill,
-                call.arguments,
-                principal,
-                # Hosted callers cannot send per-run options in M3.
-                RunOptions(),
-                started_at,
-                accounting,
-                ceiling,
-                caller.hops,
-                user_token,
-                correlation,
-                own_interface_url=self._own_interface_url,
-            )
-            part = result_part(result.value, invocation_id, self._max_response_bytes)
-        except AgentFrameError as error:
-            error.invocation_id = invocation_id
-            _log_failed_run(error, correlation)
-            await publish_failure(task, error, accounting)
-            return
-        except Exception:
-            # Skill exceptions may carry submitted values or secrets, so the
-            # caller gets a generic message and only the log keeps the details,
-            # under the run's ID that the caller can quote.
-            failure = AgentFrameError(SKILL_FAILED_MESSAGE, invocation_id=invocation_id)
-            logger.exception(
-                "Skill failed (invocation_id=%s)",
-                invocation_id,
-                extra=correlation.log_extra(),
-            )
-            await publish_failure(task, failure, accounting)
-            return
-        await publish_result(task, part, invocation_id, accounting)
-        logger.info(
-            "Run completed (invocation_id=%s)",
-            invocation_id,
-            extra=correlation.log_extra(),
+        return _HostedRun(
+            invocation_id=invocation_id,
+            principal=principal,
+            user_token=user_token,
+            started_at=started_at,
+            accounting=accounting,
+            ceiling=_with_caller_limits(self._limits_ceiling, caller),
+            hops=caller.hops,
+            correlation=correlation,
         )
 
-    async def _choose_skill(
+    async def _answer(
         self,
         context: RequestContext,
         message: Message,
-        principal: Principal | None,
-        started_at: float,
-        invocation_id: str,
-        accounting: RunAccounting,
-        ceiling: RunLimits | None,
+        task: TaskUpdater,
+        run: _HostedRun,
+    ) -> Part | None:
+        """Run the chosen skill, or publish the router's question.
+
+        Returns:
+            The skill's result part, or ``None`` once the question is published.
+        """
+        call = await self._choose_skill(context, message, run)
+        if isinstance(call, Clarification):
+            check_response_size(
+                call.question.encode(), self._max_response_bytes, run.invocation_id
+            )
+            await publish_input_required(
+                task, call.question, run.invocation_id, run.accounting
+            )
+            return None
+        # The executor shares the runtime's pipeline under its own invocation ID.
+        result = await self._runtime.run_invocation(
+            run.invocation_id,
+            self._agent,
+            call.skill,
+            call.arguments,
+            run.principal,
+            # Hosted callers cannot send per-run options in M3.
+            RunOptions(),
+            run.started_at,
+            run.accounting,
+            run.ceiling,
+            run.hops,
+            run.user_token,
+            run.correlation,
+            own_interface_url=self._own_interface_url,
+        )
+        return result_part(result.value, run.invocation_id, self._max_response_bytes)
+
+    async def _choose_skill(
+        self, context: RequestContext, message: Message, run: _HostedRun
     ) -> SkillCall | Clarification:
         """Read the skill call, or ask the router about the free-text message.
 
-        ``ceiling`` is the host's, capped by the caller's deadline.
+        ``run.ceiling`` is the host's, capped by the caller's deadline.
 
         Raises:
             RuntimeError: Free text arrived without a router, which never
@@ -448,16 +488,16 @@ class RuntimeExecutor(AgentExecutor):
         definition = type(self._agent).definition()
         ctx = new_routing_context(
             self._agent,
-            invocation_id,
-            principal,
-            started_at,
-            accounting,
-            ceiling,
+            run.invocation_id,
+            run.principal,
+            run.started_at,
+            run.accounting,
+            run.ceiling,
             # Routing requests pass the same model-request checks as the skill's.
             self._runtime.policy,
         )
         return await route(
-            self._router, conversation, eligible_skills(definition, principal), ctx
+            self._router, conversation, eligible_skills(definition, run.principal), ctx
         )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
