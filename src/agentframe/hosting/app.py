@@ -2,17 +2,13 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
-from a2a.auth.user import UnauthenticatedUser, User
-from a2a.extensions.common import HTTP_EXTENSION_HEADER, get_requested_extensions
-from a2a.server.agent_execution import RequestContext, SimpleRequestContextBuilder
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
-    DefaultServerCallContextBuilder,
     create_agent_card_routes,
     create_jsonrpc_routes,
 )
@@ -33,13 +29,9 @@ from a2a.utils.errors import (
     TaskNotFoundError,
     UnsupportedOperationError,
 )
-
-# protobuf ships no type stubs; ParseDict is the parser the A2A SDK itself uses.
-from google.protobuf.json_format import ParseDict  # type: ignore[import-untyped]
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
+from starlette.routing import BaseRoute, Route
 from starlette.types import Receive, Scope, Send
 
 from agentframe.authoring.agent import Agent
@@ -48,21 +40,21 @@ from agentframe.discovery.directory import AgentDirectory
 from agentframe.discovery.identity import (
     OnBehalfOf,
     Service,
-    UserToken,
     UserTokenExchange,
 )
-from agentframe.errors import AuthenticationError, DefinitionError
+from agentframe.errors import DefinitionError
 from agentframe.hosting.a2a_executor import (
-    PRINCIPAL_STATE_KEY,
-    TRACE_STATE_KEY,
-    USER_TOKEN_STATE_KEY,
     RuntimeExecutor,
     incoming_context,
     is_skill_call,
     read_skill_call,
 )
-from agentframe.hosting.admission import RUN_SLOT_STATE_KEY, RunAdmission, RunSlot
+from agentframe.hosting.admission import RunAdmission
 from agentframe.hosting.card import A2A_PATH, SKILL_CALL_EXTENSION_URI, build_agent_card
+from agentframe.hosting.context_builders import (
+    CallerContextBuilder,
+    ClaimedTaskIdBuilder,
+)
 from agentframe.hosting.dedup import (
     DEDUP_STATE_KEY,
     DedupOutcome,
@@ -70,30 +62,22 @@ from agentframe.hosting.dedup import (
     InMemoryMessageDedupStore,
     MessageDeduplicator,
 )
+from agentframe.hosting.endpoints import (
+    acknowledge_skill_call_extension,
+    guard_a2a_endpoint,
+    health,
+    readiness_endpoint,
+)
 from agentframe.hosting.host import A2AConfig, HostConfig
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
-from agentframe.hosting.request_size import read_body_within, with_body
 from agentframe.hosting.routing import SkillRouter, routing_limits
 from agentframe.hosting.task_store import BoundedTaskStore, FinalStateStore
-from agentframe.runtime.correlation import (
-    TRACEPARENT_HEADER,
-    TRACESTATE_HEADER,
-    read_trace_context,
-)
 from agentframe.runtime.limits import RunLimits, check_within_ceiling
 from agentframe.runtime.options import merge_settings
 from agentframe.runtime.runtime import Runtime
-from agentframe.security.authentication import (
-    API_KEY_HEADER,
-    principal_for,
-    www_authenticate,
-)
 from agentframe.security.authorization import AuthorizationPolicy
 from agentframe.security.execution_policy import ExecutionPolicy
-from agentframe.security.principal import Principal
-
-type Endpoint = Callable[[Request], Awaitable[Response]]
 
 HEALTH_PATH = "/health"
 """Liveness probe: ``200 {"status": "ok"}`` whenever the app is serving."""
@@ -105,11 +89,6 @@ _CANCEL_SECONDS = 5
 """How long shutdown waits for runs to unwind once it has cancelled them."""
 
 logger = logging.getLogger(__name__)
-
-_CREDENTIAL_HEADERS = frozenset(
-    {"authorization", "proxy-authorization", "cookie", API_KEY_HEADER.lower()}
-)
-"""Request headers kept out of the SDK's call context, which it logs."""
 
 
 class AgentApp:
@@ -217,28 +196,15 @@ class AgentApp:
         remotes: Mapping[str, Service | OnBehalfOf] | None = None,
         default_remote: Service | OnBehalfOf | None = None,
     ) -> None:
-        if runtime is not None and (
-            services is not None
-            or authorization is not None
-            or policy is not None
-            or directory is not None
-            or remotes is not None
-            or default_remote is not None
-        ):
-            raise DefinitionError(
-                "Pass services, authorization, policy, directory, remotes and "
-                "default_remote either to AgentApp or to its Runtime, not both; "
-                "the runtime is the single source of them."
-            )
-        if runtime is None:
-            runtime = Runtime(
-                services=services,
-                authorization=authorization,
-                policy=policy,
-                directory=directory,
-                remotes=remotes,
-                default_remote=default_remote,
-            )
+        runtime = _runtime_for(
+            runtime,
+            services=services,
+            authorization=authorization,
+            policy=policy,
+            directory=directory,
+            remotes=remotes,
+            default_remote=default_remote,
+        )
         runtime.validate(agent)
         user_token_exchange = _user_token_exchange(runtime, host)
         _check_limits_within_ceiling(agent, host)
@@ -248,70 +214,18 @@ class AgentApp:
         card = build_agent_card(definition, host)
         a2a = a2a or A2AConfig()
         task_store = FinalStateStore(_task_store(a2a))
-        handler = _RequestHandler(
-            router=router,
-            agent_executor=RuntimeExecutor(
-                agent,
-                runtime,
-                router,
-                host.limits_ceiling,
-                host.max_response_bytes,
-                own_interface_url=card.supported_interfaces[0].url,
-                final_states=task_store,
-            ),
-            task_store=task_store,
-            agent_card=card,
-            request_context_builder=_ClaimedTaskIdBuilder(),
-        )
+        handler = _request_handler(agent, runtime, router, host, card, task_store)
         self._host = host
         admission = RunAdmission(host.max_concurrent_runs)
         lifecycle = Lifecycle(host.shutdown_grace_seconds)
         self._lifecycle = lifecycle
-        deduplicator = MessageDeduplicator(
-            a2a.dedup_window_seconds, a2a.dedup_store or InMemoryMessageDedupStore()
-        )
-        context_builder = _CallerContextBuilder()
-        [a2a_route] = create_jsonrpc_routes(
-            handler, rpc_url=A2A_PATH, context_builder=context_builder
-        )
-
-        @asynccontextmanager
-        async def lifespan(_app: Starlette) -> AsyncIterator[None]:
-            # Fails startup, before any request is served, when a skill or
-            # the built-in router has no input token limit, or a remote agent
-            # cannot be called. Custom routers check their own models.
-            await runtime.validate_model(agent, limits_ceiling=host.limits_ceiling)
-            await runtime.validate_remotes(agent)
-            if isinstance(router, ModelRouter):
-                await router.validate_model(routing_limits(agent, host.limits_ceiling))
-            lifecycle.mark_started()
-            yield
-            await lifecycle.wait_for_runs(admission, task_store)
-            await handler.cancel_running_tasks()
-            # Models are application-owned, so they are never closed here.
-            await handler.aclose()
-
         self._app = Starlette(
-            routes=[
-                *create_agent_card_routes(card),
-                Route(HEALTH_PATH, _health, methods=["GET"]),
-                Route(READY_PATH, _readiness_endpoint(lifecycle), methods=["GET"]),
-                Route(
-                    A2A_PATH,
-                    _guard_a2a_endpoint(
-                        _acknowledge_skill_call_extension(a2a_route.endpoint),
-                        host,
-                        user_token_exchange,
-                        card,
-                        deduplicator,
-                        _task_finder(handler, context_builder),
-                        admission,
-                        lifecycle,
-                    ),
-                    methods=["POST"],
-                ),
-            ],
-            lifespan=lifespan,
+            routes=_routes(
+                card, handler, host, user_token_exchange, a2a, admission, lifecycle
+            ),
+            lifespan=_lifespan(
+                agent, runtime, router, host, admission, lifecycle, task_store, handler
+            ),
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -337,6 +251,141 @@ class AgentApp:
         requests to it.
         """
         return self._host.shutdown_grace_seconds
+
+
+def _runtime_for(
+    runtime: Runtime | None,
+    *,
+    services: Services | None,
+    authorization: AuthorizationPolicy | None,
+    policy: ExecutionPolicy | None,
+    directory: AgentDirectory | None,
+    remotes: Mapping[str, Service | OnBehalfOf] | None,
+    default_remote: Service | OnBehalfOf | None,
+) -> Runtime:
+    """Return ``runtime``, or a new ``Runtime`` built from the other arguments.
+
+    Raises:
+        DefinitionError: ``runtime`` is combined with any of the others.
+    """
+    if runtime is not None and (
+        services is not None
+        or authorization is not None
+        or policy is not None
+        or directory is not None
+        or remotes is not None
+        or default_remote is not None
+    ):
+        raise DefinitionError(
+            "Pass services, authorization, policy, directory, remotes and "
+            "default_remote either to AgentApp or to its Runtime, not both; "
+            "the runtime is the single source of them."
+        )
+    if runtime is None:
+        runtime = Runtime(
+            services=services,
+            authorization=authorization,
+            policy=policy,
+            directory=directory,
+            remotes=remotes,
+            default_remote=default_remote,
+        )
+    return runtime
+
+
+def _request_handler(
+    agent: Agent,
+    runtime: Runtime,
+    router: SkillRouter | None,
+    host: HostConfig,
+    card: AgentCard,
+    task_store: FinalStateStore,
+) -> "_RequestHandler":
+    """Return the SDK request handler that runs every message through ``runtime``."""
+    return _RequestHandler(
+        router=router,
+        agent_executor=RuntimeExecutor(
+            agent,
+            runtime,
+            router,
+            host.limits_ceiling,
+            host.max_response_bytes,
+            own_interface_url=card.supported_interfaces[0].url,
+            final_states=task_store,
+        ),
+        task_store=task_store,
+        agent_card=card,
+        request_context_builder=ClaimedTaskIdBuilder(),
+    )
+
+
+def _routes(
+    card: AgentCard,
+    handler: "_RequestHandler",
+    host: HostConfig,
+    user_token_exchange: UserTokenExchange | None,
+    a2a: A2AConfig,
+    admission: RunAdmission,
+    lifecycle: Lifecycle,
+) -> list[BaseRoute]:
+    """Return the Agent Card, health, readiness and guarded A2A routes."""
+    deduplicator = MessageDeduplicator(
+        a2a.dedup_window_seconds, a2a.dedup_store or InMemoryMessageDedupStore()
+    )
+    context_builder = CallerContextBuilder()
+    [a2a_route] = create_jsonrpc_routes(
+        handler, rpc_url=A2A_PATH, context_builder=context_builder
+    )
+    return [
+        *create_agent_card_routes(card),
+        Route(HEALTH_PATH, health, methods=["GET"]),
+        Route(READY_PATH, readiness_endpoint(lifecycle), methods=["GET"]),
+        Route(
+            A2A_PATH,
+            guard_a2a_endpoint(
+                acknowledge_skill_call_extension(a2a_route.endpoint),
+                host,
+                user_token_exchange,
+                card,
+                deduplicator,
+                _task_finder(handler, context_builder),
+                admission,
+                lifecycle,
+            ),
+            methods=["POST"],
+        ),
+    ]
+
+
+def _lifespan(
+    agent: Agent,
+    runtime: Runtime,
+    router: SkillRouter | None,
+    host: HostConfig,
+    admission: RunAdmission,
+    lifecycle: Lifecycle,
+    task_store: FinalStateStore,
+    handler: "_RequestHandler",
+) -> Callable[[Starlette], AbstractAsyncContextManager[None]]:
+    """Return the app's lifespan: startup checks, then graceful shutdown."""
+
+    @asynccontextmanager
+    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+        # Fails startup, before any request is served, when a skill or
+        # the built-in router has no input token limit, or a remote agent
+        # cannot be called. Custom routers check their own models.
+        await runtime.validate_model(agent, limits_ceiling=host.limits_ceiling)
+        await runtime.validate_remotes(agent)
+        if isinstance(router, ModelRouter):
+            await router.validate_model(routing_limits(agent, host.limits_ceiling))
+        lifecycle.mark_started()
+        yield
+        await lifecycle.wait_for_runs(admission, task_store)
+        await handler.cancel_running_tasks()
+        # Models are application-owned, so they are never closed here.
+        await handler.aclose()
+
+    return lifespan
 
 
 def _task_store(a2a: A2AConfig) -> TaskStore:
@@ -382,141 +431,8 @@ def _check_limits_within_ceiling(agent: Agent, host: HostConfig) -> None:
         check_within_ceiling(explicit, host.limits_ceiling, f"Skill '{skill.id}'")
 
 
-async def _health(_request: Request) -> Response:
-    return JSONResponse({"status": "ok"})
-
-
-def _readiness_endpoint(lifecycle: Lifecycle) -> Endpoint:
-    async def readiness(_request: Request) -> Response:
-        if lifecycle.ready:
-            return JSONResponse({"status": "ready"})
-        return JSONResponse({"status": "not ready"}, 503)
-
-    return readiness
-
-
-def _guard_a2a_endpoint(
-    sdk_endpoint: Endpoint,
-    host: HostConfig,
-    user_token_exchange: UserTokenExchange | None,
-    card: AgentCard,
-    deduplicator: MessageDeduplicator,
-    task_finder: Callable[[Request], FindTask],
-    admission: RunAdmission,
-    lifecycle: Lifecycle,
-) -> Endpoint:
-    """Wrap the SDK's A2A endpoint with the host's checks, in a fixed order.
-
-    1. Size: the body must fit ``host.max_request_bytes``. It is read here,
-       before anything parses it, so an oversized body is never held in full.
-    2. Authentication: every request needs a caller the host verifies. When
-       ``user_token_exchange`` is given, a signed-in user's verified token
-       is kept for the run's ``OnBehalfOf`` remotes, never anywhere else.
-    3. Deduplication: a ``SendMessage`` that repeats one the caller already
-       sent goes to the SDK for its original task, taking no run slot.
-    4. Admission: any other ``SendMessage`` needs a free run slot and a host
-       that is not shutting down.
-
-    Every refusal happens before the SDK sees the request, so no task exists.
-    """
-    challenge = www_authenticate(card.security_schemes)
-    challenge_headers = {"WWW-Authenticate": challenge} if challenge else None
-
-    async def guarded_endpoint(request: Request) -> Response:
-        body = await read_body_within(request, host.max_request_bytes)
-        if body is None:
-            # Nothing about the body is logged or echoed back.
-            return JSONResponse({"error": "Request too large."}, 413)
-        request = with_body(request, body)
-
-        try:
-            caller = await host.auth.authenticate(request.headers)
-        except AuthenticationError:
-            # The reply reveals nothing about the agent or its skills.
-            return JSONResponse(
-                {"error": "Authentication required."}, 401, headers=challenge_headers
-            )
-        request.state.principal = (
-            principal_for(caller, host.role_permissions) if caller else None
-        )
-        request.state.user_token = None
-        if user_token_exchange and caller and caller.user_assertion:
-            request.state.user_token = UserToken(
-                caller.user_assertion, user_token_exchange
-            )
-
-        if not await _is_send_message(request):
-            return await sdk_endpoint(request)
-        principal: Principal | None = request.state.principal
-        message = await _read_message(request)
-        # Anonymous callers share one namespace, so a guessable messageId
-        # would hand one of them another's task.
-        if principal is None or message is None or not message.message_id:
-            return await admit_and_send(request)
-        find_task = task_finder(request)
-        async with deduplicator.check(principal.id, message, find_task) as outcome:
-            request.state.dedup = outcome
-            if outcome.is_repeat:
-                return await sdk_endpoint(request)
-            return await admit_and_send(request)
-
-    async def admit_and_send(request: Request) -> Response:
-        if lifecycle.shutting_down:
-            return _unavailable("The agent is shutting down; retry later.")
-        slot = admission.try_admit()
-        if slot is None:
-            # Overload fails fast: the caller retries rather than waiting here.
-            return _unavailable("The agent is busy; retry later.")
-        request.state.run_slot = slot
-        try:
-            with lifecycle.track_send():
-                return await sdk_endpoint(request)
-        finally:
-            # A started run releases its own slot when it ends, which can be
-            # after a non-blocking response. A message the SDK refused never
-            # started a run.
-            if not slot.started:
-                slot.release()
-
-    return guarded_endpoint
-
-
-def _unavailable(error: str) -> Response:
-    return JSONResponse({"error": error}, 503, headers={"Retry-After": "1"})
-
-
-async def _is_send_message(request: Request) -> bool:
-    """Return whether the JSON-RPC request is ``SendMessage``.
-
-    It is the only method that runs a skill: task reads, lists and cancels
-    take no run slot, and the SDK refuses streaming, which the card does not
-    advertise. Malformed JSON is left for the SDK to report.
-    """
-    try:
-        body = await request.json()
-    except ValueError:
-        return False
-    return isinstance(body, dict) and body.get("method") == "SendMessage"
-
-
-async def _read_message(request: Request) -> Message | None:
-    """Return a ``SendMessage`` request's message, parsed as the SDK parses it.
-
-    The JSON body was already read and parsed by ``_is_send_message``; this
-    reads no more of the request. Malformed parameters give ``None`` and are
-    left for the SDK to report.
-    """
-    params = (await request.json()).get("params", {})
-    try:
-        send = ParseDict(params, SendMessageRequest(), ignore_unknown_fields=True)
-    except Exception:  # The SDK reports the same parse failure.
-        return None
-    message: Message = send.message
-    return message
-
-
 def _task_finder(
-    handler: "_RequestHandler", context_builder: "_CallerContextBuilder"
+    handler: "_RequestHandler", context_builder: CallerContextBuilder
 ) -> Callable[[Request], FindTask]:
     """Return a function that looks up tasks as the request's caller."""
 
@@ -525,27 +441,6 @@ def _task_finder(
         return lambda task_id: handler.find_task(task_id, context)
 
     return for_request
-
-
-def _acknowledge_skill_call_extension(endpoint: Endpoint) -> Endpoint:
-    """Wrap ``endpoint`` to confirm activation of the skill-call extension.
-
-    A2A clients activate an extension by listing its URI in the
-    ``A2A-Extensions`` request header; the response names the extensions the
-    agent activated in the same header. The skill-call extension is the only
-    one this agent supports, so other requested URIs are ignored.
-    """
-
-    async def acknowledging_endpoint(request: Request) -> Response:
-        response = await endpoint(request)
-        requested = get_requested_extensions(
-            request.headers.getlist(HTTP_EXTENSION_HEADER)
-        )
-        if SKILL_CALL_EXTENSION_URI in requested:
-            response.headers[HTTP_EXTENSION_HEADER] = SKILL_CALL_EXTENSION_URI
-        return response
-
-    return acknowledging_endpoint
 
 
 class _RequestHandler(DefaultRequestHandler):
@@ -680,76 +575,3 @@ class _RequestHandler(DefaultRequestHandler):
             )
         page: ListTasksResponse = await super().on_list_tasks(params, context)
         return page
-
-
-class _CallerContextBuilder(DefaultServerCallContextBuilder):
-    """Add the caller, any run slot, any dedup outcome and any valid W3C trace
-    context to the call context."""
-
-    def build(self, request: Request) -> ServerCallContext:
-        context = super().build(request)
-        # The SDK keeps the request headers in the call context and logs that
-        # context at debug level; credentials are no longer needed once the
-        # caller is verified, so they are dropped rather than logged.
-        context.state["headers"] = {
-            name: value
-            for name, value in context.state.get("headers", {}).items()
-            if name.lower() not in _CREDENTIAL_HEADERS
-        }
-        context.state[PRINCIPAL_STATE_KEY] = request.state.principal
-        context.state[USER_TOKEN_STATE_KEY] = request.state.user_token
-        trace = read_trace_context(
-            request.headers.getlist(TRACEPARENT_HEADER),
-            request.headers.getlist(TRACESTATE_HEADER),
-        )
-        if trace is not None:
-            context.state[TRACE_STATE_KEY] = trace
-        slot: RunSlot | None = getattr(request.state, "run_slot", None)
-        if slot is not None:
-            context.state[RUN_SLOT_STATE_KEY] = slot
-        dedup: DedupOutcome | None = getattr(request.state, "dedup", None)
-        if dedup is not None:
-            context.state[DEDUP_STATE_KEY] = dedup
-        return context
-
-    def build_user(self, request: Request) -> User:
-        principal: Principal | None = request.state.principal
-        if principal is None:
-            return UnauthenticatedUser()
-        return _Caller(principal)
-
-
-class _Caller(User):
-    """An authenticated caller; the SDK scopes tasks by its ``user_name``."""
-
-    def __init__(self, principal: Principal) -> None:
-        self._principal = principal
-
-    @property
-    def is_authenticated(self) -> bool:
-        return True
-
-    @property
-    def user_name(self) -> str:
-        return self._principal.id
-
-
-class _ClaimedTaskIdBuilder(SimpleRequestContextBuilder):
-    """Run a new message in the task ID that deduplication claimed for it.
-
-    The SDK would otherwise generate a fresh ID, and a retry of a message
-    whose first copy never ran would not find its claimed task.
-    """
-
-    async def build(
-        self,
-        context: ServerCallContext,
-        params: SendMessageRequest | None = None,
-        task_id: str | None = None,
-        context_id: str | None = None,
-        task: Task | None = None,
-    ) -> RequestContext:
-        dedup: DedupOutcome | None = context.state.get(DEDUP_STATE_KEY)
-        if task_id is None and dedup is not None:
-            task_id = dedup.task_id
-        return await super().build(context, params, task_id, context_id, task)
