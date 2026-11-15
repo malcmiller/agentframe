@@ -276,15 +276,17 @@ class RuntimeExecutor(AgentExecutor):
                 slot.release()
 
     async def _run_task(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Start or resume the task, run it and record its accounting."""
-        # The SDK always fills these in before calling the executor.
-        task_id, context_id, message = (
-            context.task_id,
-            context.context_id,
-            context.message,
-        )
-        assert task_id is not None and context_id is not None
-        assert message is not None
+        """Start or resume the task, run it and record its accounting.
+
+        Raises:
+            RuntimeError: The SDK called the executor without a message,
+                which it never does.
+        """
+        task_id, context_id = _task_ids(context)
+        message = context.message
+        # Checked with ``if``, not ``assert``, which ``python -O`` removes.
+        if message is None:
+            raise RuntimeError("The A2A SDK called the executor without a message")
         if self._final_states is not None:
             self._final_states.expect_final_state(task_id)
         if context.current_task is None:
@@ -306,18 +308,24 @@ class RuntimeExecutor(AgentExecutor):
         )
         self._running[task_id] = _RunningTask(accounting, context.call_context)
         try:
-            await self._execute(context, task, invocation_id, accounting)
+            await self._execute(context, message, task, invocation_id, accounting)
         finally:
             self._running.pop(task_id, None)
 
     async def _execute(
         self,
         context: RequestContext,
+        message: Message,
         task: TaskUpdater,
         invocation_id: str,
         accounting: RunAccounting,
     ) -> None:
-        """Run the skill and publish its result, question or failure."""
+        """Run the skill and publish its result, question or failure.
+
+        Raises:
+            RuntimeError: The effective limits have no ``max_remote_hops``,
+                which never happens: the library defaults set every field.
+        """
         principal: Principal | None = context.call_context.state.get(
             PRINCIPAL_STATE_KEY
         )
@@ -325,8 +333,6 @@ class RuntimeExecutor(AgentExecutor):
             USER_TOKEN_STATE_KEY
         )
         started_at = asyncio.get_running_loop().time()
-        message = context.message
-        assert message is not None
         # The request handler has already refused malformed context.
         caller = incoming_context(context.requested_extensions, message)
         trace: TraceContext | None = context.call_context.state.get(TRACE_STATE_KEY)
@@ -339,7 +345,8 @@ class RuntimeExecutor(AgentExecutor):
         )
         ceiling = _with_caller_limits(self._limits_ceiling, caller)
         max_hops = routing_limits(self._agent, ceiling).max_remote_hops
-        assert max_hops is not None  # DEFAULT_LIMITS sets every field.
+        if max_hops is None:
+            raise RuntimeError("The run's limits have no max_remote_hops")
         if caller.hops > max_hops:
             await publish_failure(
                 task,
@@ -357,7 +364,13 @@ class RuntimeExecutor(AgentExecutor):
         # noinspection PyBroadException
         try:
             call = await self._choose_skill(
-                context, principal, started_at, invocation_id, accounting, ceiling
+                context,
+                message,
+                principal,
+                started_at,
+                invocation_id,
+                accounting,
+                ceiling,
             )
             if isinstance(call, Clarification):
                 check_response_size(
@@ -413,6 +426,7 @@ class RuntimeExecutor(AgentExecutor):
     async def _choose_skill(
         self,
         context: RequestContext,
+        message: Message,
         principal: Principal | None,
         started_at: float,
         invocation_id: str,
@@ -422,14 +436,16 @@ class RuntimeExecutor(AgentExecutor):
         """Read the skill call, or ask the router about the free-text message.
 
         ``ceiling`` is the host's, capped by the caller's deadline.
+
+        Raises:
+            RuntimeError: Free text arrived without a router, which never
+                happens: the request handler refuses it first.
         """
-        message = context.message
-        assert message is not None
         if is_skill_call(context.requested_extensions, message):
             # The request handler has already refused malformed skill calls.
             return read_skill_call(message)
-        # The request handler refuses free text when there is no router.
-        assert self._router is not None
+        if self._router is None:
+            raise RuntimeError("A free-text message reached an app with no router")
         conversation = [*_earlier_messages(context.current_task), message]
         definition = type(self._agent).definition()
         ctx = new_routing_context(
@@ -454,9 +470,12 @@ class RuntimeExecutor(AgentExecutor):
         cancels the ``execute`` call. That ``asyncio`` cancellation unwinds
         the run, so per-run services are still cleaned up. The task reports
         the ``invocation_id`` its run started with and the usage it reached.
+
+        Raises:
+            RuntimeError: The SDK called ``cancel`` without a task or context
+                ID, which it never does.
         """
-        task_id, context_id = context.task_id, context.context_id
-        assert task_id is not None and context_id is not None
+        task_id, context_id = _task_ids(context)
         task = TaskUpdater(event_queue, task_id, context_id)
         invocation_id: str | None = None
         current_task = context.current_task
@@ -691,6 +710,23 @@ def _safe_message(error: AgentFrameError) -> str:
         )
         return HOST_MISCONFIGURED_MESSAGE
     return error.message
+
+
+def _task_ids(context: RequestContext) -> tuple[str, str]:
+    """Return the task and context IDs the SDK fills in before calling the executor.
+
+    Checked with ``if``, not ``assert``, which ``python -O`` removes: every
+    task update and cancellation is keyed by these IDs.
+
+    Raises:
+        RuntimeError: The SDK left one out, which it never does.
+    """
+    task_id, context_id = context.task_id, context.context_id
+    if task_id is None or context_id is None:
+        raise RuntimeError(
+            "The A2A SDK called the executor without a task or context ID"
+        )
+    return task_id, context_id
 
 
 def _new_invocation_id() -> str:

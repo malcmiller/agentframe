@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
 
-from agentframe.discovery.remote import Remote, RemoteReply
+from agentframe.discovery.remote import RemoteReply
 from agentframe.errors import (
     ClarificationNeededError,
     DefinitionError,
@@ -64,6 +64,13 @@ type StepStatus = Literal[
 """How one step of a plan ended."""
 
 logger = logging.getLogger(__name__)
+
+# Internal invariants are checked with ``if ...: raise RuntimeError``, never
+# ``assert``: ``python -O`` removes asserts, and these guard policy checks,
+# authorization and limits.
+_NO_RUNNING_SKILL_MESSAGE = (
+    "A plan ran outside a skill, so the execution policy's checks have no skill"
+)
 
 
 @dataclass(frozen=True)
@@ -197,12 +204,14 @@ async def _check_plan(
         PermissionDeniedError: A plan check denied the plan.
         PolicyUnavailableError: A plan check raised or did not answer before
             the run's deadline.
+        RuntimeError: No skill is running, which never happens: plans run
+            only inside a skill, never while routing.
     """
     policy, skill = generation.policy, generation.skill
     if policy is None or not policy.plan_checks:
         return
-    # Plans run only inside a skill; routing never runs one.
-    assert skill is not None
+    if skill is None:
+        raise RuntimeError(_NO_RUNNING_SKILL_MESSAGE)
     await enforce_plan_checks(policy.plan_checks, skill, principal, plan, deadline)
 
 
@@ -229,9 +238,12 @@ def _equal_share(generation: GenerationState, step_count: int) -> int:
 
     Raises:
         TokenLimitExceededError: Fewer tokens are left than there are steps.
+        RuntimeError: The run has no token limit, which never happens: the
+            library defaults set one.
     """
     max_total = generation.limits.max_total_tokens
-    assert max_total is not None  # Set by defaults.
+    if max_total is None:
+        raise RuntimeError("The run has no max_total_tokens to share among steps")
     remaining = generation.accounting.remaining_tokens(max_total)
     if remaining < step_count:
         raise TokenLimitExceededError(
@@ -296,7 +308,10 @@ class _Execution:
                     group.create_task(self._run_step(step))
         except BaseExceptionGroup:
             failure = self._failure
-            assert failure is not None  # Every step failure is recorded.
+            if failure is None:
+                # Only a step's Exception is recorded; anything else
+                # propagates unchanged.
+                raise
         # Raised outside the except block, so the group is not its context.
         if failure is not None:
             raise failure
@@ -405,15 +420,22 @@ class _Execution:
         """Count, resolve, authorize and check one step, then send it.
 
         ``started`` is the ``time.monotonic()`` the step's duration counts from.
+
+        Raises:
+            RuntimeError: The step's entry is not in the catalog or has no
+                binding, which never happens: the plan was checked against
+                this catalog. Nothing was counted, checked or sent.
         """
         entry = self._catalog.get(step.use)
-        assert entry is not None  # The plan was checked against the catalog.
+        if entry is None:
+            raise RuntimeError(f"Plan step '{step.id}' uses no entry of this catalog")
+        # noinspection PyProtectedMember
+        binding = self._catalog._binding(entry)
+        if binding is None:
+            raise RuntimeError(f"Plan step '{step.id}' uses an entry with no binding")
         generation = self._generation
         generation.accounting.count_tool_call(generation.limits)
         values = {step_id: result.value for step_id, result in self._results.items()}
-        # noinspection PyProtectedMember
-        binding: Remote[Any] | None = self._catalog._binding(entry)
-        assert binding is not None
         sending: Coroutine[Any, Any, RemoteReply]
         if entry.skill is None:
             text = substituted_text(step, values)
@@ -452,6 +474,8 @@ class _Execution:
                 requires, or a tool check denied the step.
             PolicyUnavailableError: A tool check raised or did not answer
                 before the run's deadline.
+            RuntimeError: No skill is running, which never happens: plans
+                run only inside a skill, never while routing.
         """
         if not is_permitted(entry, self._principal):
             raise PermissionDeniedError(
@@ -461,8 +485,8 @@ class _Execution:
         policy, skill = self._generation.policy, self._generation.skill
         if policy is None or not policy.tool_checks:
             return
-        # Plans run only inside a skill; routing never runs one.
-        assert skill is not None
+        if skill is None:
+            raise RuntimeError(_NO_RUNNING_SKILL_MESSAGE)
         await enforce_tool_checks(
             policy.tool_checks,
             skill,

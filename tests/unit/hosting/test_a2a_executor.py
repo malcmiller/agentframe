@@ -11,12 +11,15 @@ from typing import Any
 
 import pytest
 from a2a.helpers import new_data_part, new_text_part
+from a2a.server.agent_execution import RequestContext
+from a2a.server.context import ServerCallContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import TaskState, TaskStatusUpdateEvent
 from pydantic import BaseModel
 
 from agentframe import (
+    Agent,
     AgentFrameError,
     CancelledError,
     DefinitionError,
@@ -29,9 +32,14 @@ from agentframe import (
     PermissionDeniedError,
     PolicyUnavailableError,
     ProviderError,
+    RunContext,
+    Runtime,
     UnsupportedCapabilityError,
+    agent,
+    skill,
 )
 from agentframe.hosting.a2a_executor import (
+    RuntimeExecutor,
     failure_state,
     publish_failure,
     publish_input_required,
@@ -59,6 +67,20 @@ def only_status(queue: RecordingQueue) -> TaskStatusUpdateEvent:
     [event] = queue.events
     assert isinstance(event, TaskStatusUpdateEvent)
     return event
+
+
+@agent(version="1.0.0")
+class Greeter(Agent):
+    """Greets people."""
+
+    @skill("greet", tags=["greeting"])
+    async def greet(self, ctx: RunContext) -> str:
+        """Say hello."""
+        return "Hello"
+
+
+def executor() -> RuntimeExecutor:
+    return RuntimeExecutor(Greeter(), Runtime())
 
 
 class Point(BaseModel):
@@ -192,3 +214,26 @@ async def test_question_leaves_the_task_input_required() -> None:
     assert event.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
     assert event.status.message.parts[0].text == "Which city did you mean?"
     assert event.metadata["invocation_id"] == "run-1"
+
+
+# Internal invariants: explicit checks, not ``assert``, which ``python -O``
+# removes. ``test_optimized_mode.py`` runs these under ``python -O`` too.
+
+
+async def test_invariant_execute_needs_a_message() -> None:
+    queue = RecordingQueue()
+    context = RequestContext(ServerCallContext(), task_id="t", context_id="c")
+
+    with pytest.raises(RuntimeError, match="without a message"):
+        await executor().execute(context, queue)
+
+    assert queue.events == []
+
+
+async def test_invariant_cancel_needs_task_and_context_ids() -> None:
+    queue = RecordingQueue()
+
+    with pytest.raises(RuntimeError, match="without a task or context ID"):
+        await executor().cancel(RequestContext(ServerCallContext()), queue)
+
+    assert queue.events == []
