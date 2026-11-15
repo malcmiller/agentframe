@@ -300,7 +300,7 @@ before trusting a new model or prompt.
   remote skills (including the peer) as model tools, `on_failure="continue"`,
   and the planner evaluation in CI.
 - `examples/smoke.py` runs `plan` and `planned` against the installed wheel.
-- Opt-in, with a real model ([real-provider tests](../../README.md#real-provider-tests)):
+- Opt-in, with a real model ([real-provider tests](provider-tests.md)):
   `test_a_real_planner_plans_and_runs_the_example_post` and
   `test_a_real_planner_passes_its_evaluation` in `test_providers.py`, run with
   the `ollama` or `foundry` marker.

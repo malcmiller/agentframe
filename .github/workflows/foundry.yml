@@ -2,7 +2,7 @@
 # Foundry calls cost money, so this never runs on push or pull request. The
 # `foundry` environment requires reviewer approval and holds the Azure IDs and
 # endpoint as variables; sign-in uses OpenID Connect, so there is no secret.
-# One-time setup: README.md, "Real-provider tests".
+# One-time setup: docs/guides/provider-tests.md, "Foundry workflow".
 name: Foundry provider tests
 
 on:

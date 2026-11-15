@@ -127,8 +127,8 @@ The [delivery milestones](../roadmap.md#delivery-milestones) separate M0
 development setup, M1 model-free `Runtime.invoke`, M2 native A2A with custom
 routing only, M3 shared-model text generation, M4 typed structured outputs,
 M5 bounded tools, M6 built-in opt-in model routing (dependent on M3/M4), and M7
-hardening to the first usable release. M1 is the first proof; M3 meets the README
-success criterion. M8+ is the next core multi-agent release; MCP, optional
+hardening to the first usable release. M1 is the first proof; M3 meets the
+[first success criterion](../roadmap.md#first-success-criterion). M8+ is the next core multi-agent release; MCP, optional
 telemetry integration and streaming/AG-UI remain separate optional follow-ups.
 
 Applications own human approval workflows; no built-in first-release approval

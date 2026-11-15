@@ -6,7 +6,7 @@ version 0.3.0 is
 [published on PyPI](https://pypi.org/project/agentframe-py/0.3.0/) as
 `agentframe-py`. Features not yet implemented (MCP, telemetry, streaming)
 remain design proposals. See the
-[setup and check commands](../README.md#development-and-contributions).
+[setup and check commands](../CONTRIBUTING.md).
 
 ## Proposed API reference
 
@@ -49,6 +49,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [Authorization](guides/authorization.md) | Skill permission requirements, verified principals, application role/resource policy, and fail-closed execution. |
 | [Evaluating agents](guides/evaluation.md) | M9 walkthrough of `examples/evaluation.py`: cases, targets, scorers, a rubric judge with votes and their cost, budgets, reports, gating CI with `report.require` or `agentframe eval`, real models, non-AgentFrame and Foundry A2A agents, privacy and the release acceptance tests. |
 | [Orchestration](guides/orchestration.md) | M10: choosing plain `await`, remote skills as tools or plans; the `examples/multi_agent` planner and writer; the catalog, plans, a safety checklist with open-proxy and `default_remote` warnings, logs and usage, measuring the planner with an evaluation, and the release acceptance tests. |
+| [Real-provider tests](guides/provider-tests.md) | Opt-in tests against real Ollama and Foundry, the expected Ollama planner failures, and the one-time setup of the manual Foundry workflow with OpenID Connect. |
 | [Releasing](guides/releasing.md) | Maintainer one-time PyPI trusted-publisher and environment setup, and the steps to publish a release. |
 
 ### Design
@@ -96,7 +97,8 @@ role mapping. Factory/error wire layouts and other unspecified details remain op
 
 The [milestone plan](roadmap.md#delivery-milestones) starts with M0
 development setup and M1 model-free proof; M2 proves A2A with custom routing only,
-and M3 meets the README's Foundry/Llama configuration-switching success criterion.
+and M3 meets the Foundry/Llama configuration-switching
+[first success criterion](roadmap.md#first-success-criterion).
 M4 adds typed structured outputs, M5 bounded tools and M6 built-in opt-in model
 routing (all complete); M7 hardening completes the first usable single-agent release.
 M8+ then delivers 1 to N independently deployable specialists and ordinary

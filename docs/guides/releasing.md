@@ -19,7 +19,7 @@ Publishing a GitHub release for a tag such as `v0.1.0` starts the workflow:
 2. **Build:** the tag must equal `v` plus the `pyproject.toml` version, and that
    version must not already exist on PyPI or TestPyPI. The wheel and sdist are
    built once and pass the same installed-wheel checks as CI, including the
-   [examples smoke runner](../../README.md#runnable-examples).
+   [examples smoke runner](../../README.md#examples).
 3. **TestPyPI:** the same files are uploaded to TestPyPI (environment
    `testpypi`), then installed in a clean Python 3.13 environment, where the
    examples smoke runner runs against them. Only `agentframe-py` itself comes
