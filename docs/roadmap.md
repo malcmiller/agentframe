@@ -544,7 +544,8 @@ the same trusted-publishing workflow from the GitHub release
 passed the TestPyPI rehearsal and the PyPI installs on Python 3.13, 3.14 and
 3.15. The M8+ overview (#17) is closed. M9 [evaluation](#m9-evaluation-030)
 (#164) and M10 [model-planned orchestration](#m10-model-planned-orchestration-030)
-(#177) are built and form version 0.3.0. Follow-ups found by the 0.3.0
+(#177) are built and form version 0.3.0, published on 2026-11-14 (see
+[M10](#m10-model-planned-orchestration-030)). Follow-ups found by the 0.3.0
 readiness review are open issues (#208-#222), for example that hosted A2A
 tasks are kept in memory until the process exits, with no retention limit or
 task store setting yet (#208).
@@ -558,8 +559,9 @@ approval workflow or promise of recovering skill execution from persisted tasks.
 
 ### M9: Evaluation (0.3.0)
 
-Build complete (#164): every story (#152-#163) is implemented, and version
-0.3.0 is the release that adds it, prepared for publishing with the
+Build complete (#164): every story (#152-#163) is implemented, and M9 was
+released on **2026-11-14** as version 0.3.0, published to PyPI as described
+under [M10](#m10-model-planned-orchestration-030); see the
 [changelog](../CHANGELOG.md) entry.
 `Case` and `load_cases` (#152), `LocalSkill` and `Evaluation.run` with
 function scorers (#153), the built-in scorers `equals`, `contains` and `valid`
@@ -590,9 +592,9 @@ pytest plugin. Foundry evaluation export is a later optional adapter.
 
 ### M10: Model-planned orchestration (0.3.0)
 
-Build complete (#177): every story (#166-#176) is implemented, and version
-0.3.0 is the release that adds it, prepared for publishing with the
-[changelog](../CHANGELOG.md) entry. #176 adds the
+Build complete (#177): every story (#166-#176) is implemented, and M10 was
+released on **2026-11-14** as version 0.3.0 (see the
+[changelog](../CHANGELOG.md) entry). #176 adds the
 [orchestration guide](guides/orchestration.md), the planner and writer of
 `examples/multi_agent`, the release acceptance suite and a planner
 evaluation. The design and its decisions, confirmed on
@@ -624,6 +626,17 @@ the agents of `examples/multi_agent`, the plain SDK peer and two orchestrators
 as separate `agentframe run` processes, and the opt-in planner tests in
 `test_providers.py`; measured planner rates are in the
 [guide](guides/orchestration.md#measure-the-planner).
+
+M9 and M10 were completed on **2026-11-14** with the evaluation and
+model-planned orchestration release: AgentFrame
+[0.3.0](https://pypi.org/project/agentframe-py/0.3.0/) was published to PyPI by
+the same trusted-publishing workflow from the GitHub release
+[v0.3.0](https://github.com/malcmiller/agentframe/releases/tag/v0.3.0); the
+[release run](https://github.com/malcmiller/agentframe/actions/runs/43666357617)
+passed the TestPyPI rehearsal with the examples and the PyPI installs on
+Python 3.13, 3.14 and 3.15, and the
+[Foundry provider workflow](https://github.com/malcmiller/agentframe/actions/runs/43666067815)
+passed on the release commit.
 
 ### Optional follow-ups after M7
 

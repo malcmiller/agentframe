@@ -1,9 +1,11 @@
 # AgentFrame documentation
 
 These documents record decided design contracts and still-open API details,
-not a stable agent SDK. The repository includes the M0 development tooling and
-M1 model-free authoring with local `Runtime.invoke` / `run`, available from
-source; later-milestone features remain design proposals. See the
+not a stable agent SDK. The repository implements milestones M0 to M10;
+version 0.3.0 is
+[published on PyPI](https://pypi.org/project/agentframe-py/0.3.0/) as
+`agentframe-py`. Features not yet implemented (MCP, telemetry, streaming)
+remain design proposals. See the
 [setup and check commands](../README.md#development-and-contributions).
 
 ## Proposed API reference
@@ -33,7 +35,7 @@ behavior works, and `design/` records rationale and proposed designs.
 
 | Document | Purpose |
 | --- | --- |
-| [Roadmap](roadmap.md) | Product boundaries, architectural rules, defaults, single-agent milestones 0-7, next core multi-agent release M8+, M9 evaluation and M10 model-planned orchestration (0.3.0). |
+| [Roadmap](roadmap.md) | Product boundaries, architectural rules, defaults, single-agent milestones 0-7, next core multi-agent release M8+, M9 evaluation and M10 model-planned orchestration (released as 0.3.0). |
 | [Repository context](../AGENTS.md) | Durable contributor and coding-agent instructions, including framework independence and scope boundaries. |
 
 ### Guides

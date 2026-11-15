@@ -16,8 +16,9 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 
 ## Status
 
-AgentFrame is [published on PyPI](https://pypi.org/project/agentframe-py/) as
-`agentframe-py`. Version 0.3.0 adds evaluation (M9) and model-planned
+AgentFrame 0.3.0 is
+[published on PyPI](https://pypi.org/project/agentframe-py/0.3.0/) as
+`agentframe-py`. It adds evaluation (M9) and model-planned
 orchestration (M10) to 0.2.0, the multi-agent release (M8+), and 0.1.0, the
 first usable single-agent release (milestones M0 to M7). See the
 [changelog](https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
@@ -54,7 +55,7 @@ managed `AgentDirectory`, `Remote[Literal["name"]]` bindings with `call` and `as
 hop-depth and correlation propagation, service and Entra on-behalf-of
 identity, `agentframe dev` and `agentframe compose` (see
 [multi-agent composition](#multi-agent-composition)). M9 evaluation and M10
-model-planned orchestration are complete and form the 0.3.0 release:
+model-planned orchestration, released as 0.3.0, are complete:
 `agentframe.evaluation` runs typed cases against local skills and A2A agents
 with scorers, a rubric judge and reports for CI (see
 [evaluating agents](https://github.com/malcmiller/agentframe/blob/main/docs/guides/evaluation.md)),
