@@ -13,10 +13,10 @@ from agentframe.errors import (
 from agentframe.evaluation.budget import TokenBudget
 from agentframe.evaluation.cases import Case
 from agentframe.evaluation.judge import Judge, JudgeContext, sum_usage
-from agentframe.evaluation.report import (
+from agentframe.evaluation.report import EvalReport
+from agentframe.evaluation.results import (
     CaseResult,
     CaseStatus,
-    EvalReport,
     ScoreResult,
 )
 from agentframe.evaluation.scoring import Scorer, run_scorer, scorer_name
