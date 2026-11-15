@@ -23,14 +23,31 @@ LEAVES = ["errors.py", "skill_call.py", "urls.py", "usage.py"]
 
 
 def imported_modules(path: Path) -> set[str]:
-    """Return every ``agentframe`` module that ``path`` imports, anywhere in it."""
+    """Return every ``agentframe`` module that ``path`` imports, anywhere in it.
+
+    Relative imports are resolved, and ``from agentframe import hosting``
+    counts as importing ``agentframe.hosting``.
+    """
+    package = ["agentframe", *path.parent.relative_to(PACKAGE).parts]
     modules: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            base = package[: len(package) - node.level + 1] if node.level else []
+            module = ".".join([*base, *([node.module] if node.module else [])])
+            if is_package(module):
+                modules.update(f"{module}.{alias.name}" for alias in node.names)
+            else:
+                modules.add(module)
     return {name for name in modules if name.startswith("agentframe")}
+
+
+def is_package(module: str) -> bool:
+    """Return whether ``module`` names a package (a folder) of agentframe."""
+    if module != "agentframe" and not module.startswith("agentframe."):
+        return False
+    return PACKAGE.joinpath(*module.split(".")[1:]).is_dir()
 
 
 @pytest.mark.parametrize("group", BELOW_HOSTING)
