@@ -1004,7 +1004,7 @@ async def test_the_cancel_request_carries_the_credential_too() -> None:
     run = asyncio.create_task(
         runtime.invoke(Planner(), skill="plan", arguments={"goal": "x"})
     )
-    await peer.hanging.wait()
+    await asyncio.wait_for(peer.hanging.wait(), timeout=5)
 
     # A run deadline stops the wait the same way: by cancelling it. Cancelling
     # here, while the poll hangs, does not depend on how fast the runner is.
@@ -1013,7 +1013,11 @@ async def test_the_cancel_request_carries_the_credential_too() -> None:
     with pytest.raises(asyncio.CancelledError):
         await run
     assert peer.methods() == ["SendMessage", "GetTask", "CancelTask"]
-    assert peer.requests[-1].headers["X-API-Key"] == "planner-key"
+    cancel_request = peer.requests[-1]
+    assert cancel_request.headers["X-API-Key"] == "planner-key"
+    # The cancel gets its own time, not the run's: after a deadline the run
+    # has none left, and the cancel must still be sent.
+    assert cancel_request.extensions["timeout"]["read"] == remote._CANCEL_SECONDS
 
 
 async def test_an_entra_app_credential_sends_its_token_as_a_bearer() -> None:
