@@ -630,13 +630,15 @@ release v1.0.1); and Foundry **OpenAI v1 Responses API** through optional
 authentication. Do not use the retired Azure AI Inference SDK.
 Foundry registry reads use the project agents API through `azure-ai-projects`
 2.x (2.10.0 observed), separately from model inference and still in M8+.
-These are decisions, not compatibility-test results or dependency pins.
-Development tools and hatchling are pinned in `pyproject.toml`, with transitive
-versions in `uv.lock`. M1 added the first runtime dependency, Pydantic
-(`>=2.14,<3`). M2 adds the official A2A SDK as a core dependency,
-`a2a-sdk[http-server]==1.3.0`, using the JSON-RPC over HTTP binding for protocol
-1.0 only. Provider extras arrive in M3, pinned and verified when used; A2A native
-type mappings and provider mappings remain implementation work.
+These are decisions, not compatibility-test results.
+Development tools and hatchling are pinned exactly in `pyproject.toml`. Runtime
+dependencies and extras are compatible ranges, from the lowest tested version
+up to the next breaking release (next major, or next minor for 0.x packages),
+for example `a2a-sdk[http-server]>=1.3.0,<2` and `httpx>=0.28.1,<0.29`.
+`uv.lock` pins the versions CI tests, and a `lowest-deps` CI job runs the tests
+on the lowest allowed versions. The A2A SDK uses the JSON-RPC over HTTP binding
+for protocol 1.0 only; A2A native type mappings and provider mappings remain
+implementation work.
 
 The intended repository and distribution name is `agentframe`; the intended
 Python import is `agentframe`. Package-index names are not reserved by creating

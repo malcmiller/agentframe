@@ -92,7 +92,8 @@ AgentFrame's target. Explicitly select 1.0 rather than relying on a provider def
 Implemented (#86), proven offline against a fake of the agents API; the
 opt-in real-project test awaits a project with an A2A-enabled agent:
 
-- `azure-ai-projects==2.11.0` is exactly pinned in the `foundry` extra. Each
+- `azure-ai-projects>=2.11.0,<3` is in the `foundry` extra (a compatible
+  range since #219). Each
   call creates and closes its own async `AIProjectClient`, so the registry
   holds no connections and has nothing to close.
 - `list` follows every page of `agents.list()` (100 per page), then reads

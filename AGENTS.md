@@ -58,8 +58,11 @@ executable.
 - Use **pytest** with **pytest-asyncio in auto mode** for async tests. Make tests
   readable as usage examples.
 - Target the approved Python 3.13+ matrix, testing 3.13, 3.14 and 3.15.
-  `pyproject.toml` pins development tools and hatchling; commit `uv.lock`.
-- CI runs format checks (`ruff format --check`), lint, type checks and tests.
+  `pyproject.toml` pins development tools and hatchling exactly; runtime
+  dependencies and extras are compatible ranges (see platform decisions).
+  Commit `uv.lock`.
+- CI runs format checks (`ruff format --check`), lint, type checks and tests,
+  plus a `lowest-deps` job running the tests on the lowest allowed versions.
   Pre-commit runs Ruff and mypy; tests stay in CI rather than on every commit.
 - Pin every workflow action to a full commit SHA with a `# vX.Y.Z` comment
   (verify the SHA matches the tag); give jobs `timeout-minutes` and use
@@ -217,11 +220,17 @@ framework to obtain AG-UI support. No AG-UI dependency/version is selected yet.
 
 Platform/API choices approved on 2026-11-11: support Python 3.13+ and test 3.13,
 3.14 and 3.15; Python has no LTS designation. Target A2A protocol 1.0 via the
-official `a2a-sdk` (specification release v1.0.1). M2 pins the core dependency
-`a2a-sdk[http-server]==1.3.0` and selects JSON-RPC over HTTP, protocol 1.0 only
-(0.3 compatibility disabled). Pin other packages exactly when introduced, not
-from observed-version snapshots; no provider compatibility testing has occurred. Sources and remaining implementation
-decisions are in `docs/roadmap.md#resolved-m0-platform-and-api-decisions`.
+official `a2a-sdk` (specification release v1.0.1). M2 added the core dependency
+`a2a-sdk[http-server]` (1.3.0) and selects JSON-RPC over HTTP, protocol 1.0 only
+(0.3 compatibility disabled). Runtime dependencies and extras are compatible
+ranges (#219): the lower bound is the lowest tested version, the upper bound
+the next breaking release (next major, or next minor for 0.x packages), for
+example `httpx>=0.28.1,<0.29`. Raise a lower bound only when tests need it.
+`uv.lock` stays exact (Dependabot updates it weekly) and CI's `lowest-deps`
+job runs the tests with `uv sync --resolution lowest-direct --all-extras`.
+Development tools and hatchling stay exactly pinned. Sources and remaining
+implementation decisions are in
+`docs/roadmap.md#resolved-m0-platform-and-api-decisions`.
 
 ## Authoring decisions
 
@@ -673,8 +682,8 @@ MCP, optional telemetry integration and streaming/AG-UI remain separate
 follow-ups after M7; cross-agent trace/correlation propagation is M8+ core scope.
 Do not move multi-agent composition into the M7 single-agent release.
 The Python 3.13+/test-through-3.15, A2A 1.0/official SDK and Foundry API choices
-are resolved. Ruff/mypy/pytest are selected above; exact compatible pins,
-final tool configuration, A2A native type mappings and provider mappings
+are resolved. Ruff/mypy/pytest and compatible dependency ranges are selected
+above; final tool configuration, A2A native type mappings and provider mappings
 still need implementation proof. Do not silently change approved targets or
 choose remaining interfaces unilaterally.
 
