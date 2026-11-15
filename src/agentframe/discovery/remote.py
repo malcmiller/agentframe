@@ -3,20 +3,18 @@
 import asyncio
 import logging
 import uuid
-from collections.abc import Coroutine, Iterable, Iterator, Sequence
+from collections.abc import Coroutine, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any, Literal, TypeAliasType, get_args, get_origin, overload
+from typing import Any, overload
 
 from a2a.client import ClientCallContext
 from a2a.client.errors import A2AClientTimeoutError
 from a2a.extensions.common import HTTP_EXTENSION_HEADER
-from a2a.helpers import get_data_parts, new_data_part, new_text_part
+from a2a.helpers import new_data_part, new_text_part
 from a2a.types import (
     CancelTaskRequest,
     GetTaskRequest,
     Message,
-    Part,
     Role,
     SendMessageConfiguration,
     SendMessageRequest,
@@ -28,33 +26,27 @@ from a2a.utils.errors import A2AError
 
 # protobuf ships no type stubs; ParseError is what the SDK raises for bad replies.
 from google.protobuf.json_format import (  # type: ignore[import-untyped]
-    MessageToDict,
     ParseError,
 )
-from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_jsonable_python
 
-from agentframe.discovery.directory import AgentDirectory, DiscoveredAgent
+from agentframe.discovery.directory import DiscoveredAgent
 from agentframe.discovery.identity import (
     OutboundCredential,
-    RemoteIdentity,
-    check_identity,
 )
+from agentframe.discovery.replies import RemoteReply, ReplyReader
+from agentframe.discovery.token_holds import Charge, TokenHolds
 from agentframe.discovery.transport import BoundedJsonRpcTransport, ReplyTooLargeError
 from agentframe.errors import (
     AuthenticationError,
-    ClarificationNeededError,
     DefinitionError,
-    OutputValidationError,
     RemoteAgentError,
     TimeoutLimitExceededError,
-    TokenLimitExceededError,
 )
-from agentframe.runtime.accounting import UNKNOWN_USAGE, RunAccounting
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation
 from agentframe.security.principal import Principal
 from agentframe.skill_call import (
-    MAX_TOTAL_TOKENS_FIELD,
     SKILL_CALL_EXTENSION_URI,
     SKILL_METADATA_KEY,
     advertised_context,
@@ -74,41 +66,6 @@ _cancel_requests: set[asyncio.Task[None]] = set()
 """Cancellations still being sent; see ``Remote._in_background``."""
 
 _UNFINISHED_STATES = (TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING)
-
-
-@dataclass
-class _Charge:
-    """One remote request's hold on its run's token budget.
-
-    Attributes:
-        tokens: The tokens held, also sent as the request's ceiling. 0 for a
-            peer that takes no ceiling.
-        reports_usage: Whether the peer advertises ``max_total_tokens``, so
-            the usage its task reports is charged to the run.
-        sent: Whether the request may have reached the peer.
-    """
-
-    tokens: int
-    reports_usage: bool
-    sent: bool = False
-
-
-@dataclass(frozen=True)
-class RemoteReply:
-    """One finished remote request, for callers that need more than its value.
-
-    Attributes:
-        value: What ``ask`` or ``call`` (without ``output``) returns.
-        task_id: The remote task's ID, or ``None`` when the agent answered
-            with a message and started no task.
-        usage: The usage charged to the run for the request, or ``None``
-            when it is unknown: the peer reports none, or reported it
-            malformed.
-    """
-
-    value: Any
-    task_id: str | None
-    usage: Usage | None
 
 
 class Remote[N: str]:
@@ -170,12 +127,18 @@ class Remote[N: str]:
         self._credential = credential
         self._hops = hops
         self._max_hops = max_hops
-        self._accounting = accounting
-        self._max_total_tokens = max_total_tokens
         # What the peer's card says it reads; a peer that lists nothing,
         # like any non-AgentFrame agent, gets plain A2A.
         self._context_fields = advertised_context(found.card)
         self._agent = f"Agent '{found.reference.name}'"
+        self._tokens = TokenHolds(
+            accounting,
+            max_total_tokens,
+            self._context_fields,
+            self._agent,
+            self._invocation_id,
+        )
+        self._replies = ReplyReader(self._agent, self._invocation_id)
 
     @property
     def name(self) -> str:
@@ -255,9 +218,11 @@ class Remote[N: str]:
         )
         reply, usage = await self._exchange(message, max_total_tokens)
         if isinstance(reply, Message):
-            return RemoteReply(self._text(reply.parts), None, usage)
+            return RemoteReply(self._replies.text(reply.parts), None, usage)
         return RemoteReply(
-            self._text(self._result_parts(reply), reply), reply.id, usage
+            self._replies.text(self._replies.result_parts(reply), reply),
+            reply.id,
+            usage,
         )
 
     @overload
@@ -342,7 +307,7 @@ class Remote[N: str]:
         reply = await self.call_reply(skill, arguments, max_total_tokens)
         if output is None:
             return reply.value
-        return self._validated(reply.value, output)
+        return self._replies.validated(reply.value, output)
 
     async def call_reply(
         self, skill: str, arguments: dict[str, Any], max_total_tokens: int | None
@@ -358,8 +323,8 @@ class Remote[N: str]:
             message, max_total_tokens, extensions=[SKILL_CALL_EXTENSION_URI]
         )
         if isinstance(reply, Message):
-            return RemoteReply(self._result_value(reply.parts), None, usage)
-        value = self._result_value(self._result_parts(reply), reply)
+            return RemoteReply(self._replies.result_value(reply.parts), None, usage)
+        value = self._replies.result_value(self._replies.result_parts(reply), reply)
         return RemoteReply(value, reply.id, usage)
 
     def _check_card_offers(self, skill: str) -> None:
@@ -385,39 +350,6 @@ class Remote[N: str]:
         )
         message.metadata.update({SKILL_METADATA_KEY: skill})
         return message
-
-    def _result_value(self, parts: Iterable[Part], task: Task | None = None) -> Any:
-        """Decode the one part an AgentFrame host sends as a skill's result.
-
-        A ``str`` result is a text part; anything else a data part
-        ``{"value": ...}``.
-        """
-        parts = list(parts)
-        if len(parts) == 1:
-            part = parts[0]
-            if part.HasField("text"):
-                return part.text
-            if part.HasField("data"):
-                [data] = get_data_parts([part])
-                if isinstance(data, dict) and data.keys() == {"value"}:
-                    return data["value"]
-        raise RemoteAgentError(
-            f"{self._agent} did not answer with a skill result",
-            task_id=task.id if task else None,
-            task_state=TaskState.Name(task.status.state) if task else None,
-            invocation_id=self._invocation_id,
-        )
-
-    def _validated(self, value: Any, output: type[Any]) -> Any:
-        try:
-            return TypeAdapter(output).validate_python(value)
-        except ValidationError:
-            # The validation details would repeat untrusted remote data.
-            raise OutputValidationError(
-                f"{self._agent} returned a result that does not match the "
-                "requested output type",
-                invocation_id=self._invocation_id,
-            ) from None
 
     async def _exchange(
         self,
@@ -446,75 +378,18 @@ class Remote[N: str]:
                 "max_total_tokens must be a whole number greater than 0",
                 invocation_id=self._invocation_id,
             )
-        charge = self._hold(max_total_tokens)
+        charge = self._tokens.hold(max_total_tokens)
         try:
             reply = await self._start(message, charge, extensions)
             if isinstance(reply, Task):
                 reply = await self._wait(reply)
         except BaseException:
-            self._settle(charge, None)
+            self._tokens.settle(charge, None)
             raise
-        return reply, self._settle(charge, reply)
-
-    def _hold(self, max_total_tokens: int | None) -> _Charge:
-        """Hold the request's ceiling against the run's tokens, without awaiting.
-
-        Not awaiting means concurrent calls in one run cannot both take the
-        same tokens. A peer that does not advertise ``max_total_tokens``
-        takes no ceiling, so nothing is held.
-
-        Raises:
-            TokenLimitExceededError: The ceiling does not fit what is left.
-        """
-        if MAX_TOTAL_TOKENS_FIELD not in self._context_fields:
-            return _Charge(tokens=0, reports_usage=False)
-        run_total = self._max_total_tokens
-        remaining = self._accounting.remaining_tokens(run_total)
-        if max_total_tokens is None and remaining == 0:
-            raise TokenLimitExceededError(
-                f"{self._agent}: none of the run's {run_total} tokens are left "
-                "for the call. Without max_total_tokens a call holds all the "
-                "run has left, so when calling agents concurrently, pass "
-                "max_total_tokens to each call to share the budget",
-                invocation_id=self._invocation_id,
-            )
-        if max_total_tokens is not None and max_total_tokens > remaining:
-            raise TokenLimitExceededError(
-                f"{self._agent}: the call needs up to {max_total_tokens} "
-                f"tokens, but only {remaining} of the run's {run_total} remain",
-                invocation_id=self._invocation_id,
-            )
-        tokens = remaining if max_total_tokens is None else max_total_tokens
-        self._accounting.hold_tokens(tokens)
-        return _Charge(tokens=tokens, reports_usage=True)
-
-    def _settle(self, charge: _Charge, reply: Task | Message | None) -> Usage | None:
-        """Replace the request's hold with the usage its peer reported.
-
-        A request that was never sent used nothing. Otherwise usage the peer
-        does not report, or reports in a malformed way, is unknown: the hold
-        stays counted and the run's usage becomes unknown, never zero.
-        Reported usage above the hold is charged as reported.
-
-        Args:
-            charge: The request's hold.
-            reply: The finished reply, or ``None`` when the request failed.
-
-        Returns:
-            The usage the peer reported, or ``None`` when it is unknown or
-            the request was never sent.
-        """
-        if not charge.sent:
-            self._accounting.release_tokens(charge.tokens)
-            return None
-        usage = None
-        if charge.reports_usage and isinstance(reply, Task):
-            usage = reported_usage(reply)
-        self._accounting.settle(charge.tokens, usage or UNKNOWN_USAGE)
-        return usage
+        return reply, self._tokens.settle(charge, reply)
 
     async def _start(
-        self, message: Message, charge: _Charge, extensions: Sequence[str] = ()
+        self, message: Message, charge: Charge, extensions: Sequence[str] = ()
     ) -> Task | Message:
         """Send the message; if the run stops meanwhile, cancel what it started.
 
@@ -534,7 +409,7 @@ class Remote[N: str]:
             raise
 
     async def _send(
-        self, message: Message, charge: _Charge, extensions: Sequence[str]
+        self, message: Message, charge: Charge, extensions: Sequence[str]
     ) -> Task | Message:
         # A peer that lists no context fields, like any non-AgentFrame
         # agent, gets plain A2A.
@@ -625,49 +500,12 @@ class Remote[N: str]:
                 extra=self._correlation.log_extra(),
             )
 
-    def _result_parts(self, task: Task) -> list[Part]:
-        """Return a completed task's result parts, or raise for any other end.
-
-        The parts are those of its artifacts, or of its final message when it
-        has no artifacts.
-        """
-        state = task.status.state
-        if state == TaskState.TASK_STATE_COMPLETED:
-            parts = [part for artifact in task.artifacts for part in artifact.parts]
-            return parts or list(task.status.message.parts)
-        if state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            raise ClarificationNeededError(
-                f"{self._agent} needs more input before it can answer",
-                question="\n".join(_texts(task.status.message.parts)),
-                task_id=task.id,
-                context_id=task.context_id,
-                invocation_id=self._invocation_id,
-            )
-        # The remote status message is not repeated: it is untrusted text.
-        raise RemoteAgentError(
-            f"{self._agent} did not complete its task",
-            task_id=task.id,
-            task_state=TaskState.Name(state),
-            invocation_id=self._invocation_id,
-        )
-
-    def _text(self, parts: Iterable[Part], task: Task | None = None) -> str:
-        parts = list(parts)
-        if not parts or any(part.WhichOneof("content") != "text" for part in parts):
-            raise RemoteAgentError(
-                f"{self._agent} did not answer with text",
-                task_id=task.id if task else None,
-                task_state=TaskState.Name(task.status.state) if task else None,
-                invocation_id=self._invocation_id,
-            )
-        return "\n".join(_texts(parts))
-
     def _check_depth(self) -> None:
         if self._hops + 1 > self._max_hops:
             raise depth_exceeded(self._max_hops, self._invocation_id)
 
     def _add_caller_context(
-        self, message: Message, context: ClientCallContext, charge: _Charge
+        self, message: Message, context: ClientCallContext, charge: Charge
     ) -> None:
         """Add the context fields the peer's card lists to ``message``.
 
@@ -781,198 +619,3 @@ def poll_delays() -> Iterator[float]:
     while True:
         yield delay
         delay = min(delay * 2, _MAX_POLL_SECONDS)
-
-
-def reported_usage(task: Task) -> Usage | None:
-    """Read the usage snapshot an AgentFrame agent puts in its task's metadata.
-
-    The snapshot is the peer's claim: it is charged to the run, never used
-    for authorization.
-
-    Returns:
-        The usage, or ``None`` when the snapshot is missing, malformed or its
-        total is unknown.
-    """
-    snapshot = MessageToDict(task.metadata).get("usage")
-    if not isinstance(snapshot, dict):
-        return None
-    counts = [
-        _token_count(snapshot.get(name))
-        for name in ("input_tokens", "output_tokens", "total_tokens")
-    ]
-    input_tokens, output_tokens, total_tokens = counts
-    estimated = snapshot.get("estimated")
-    if total_tokens is None or not isinstance(estimated, bool):
-        return None
-    return Usage(input_tokens, output_tokens, total_tokens, estimated)
-
-
-def _token_count(value: object) -> int | None:
-    """Return a whole, non-negative token count, or ``None`` for anything else.
-
-    JSON numbers arrive as floats; ``bool`` is an ``int`` but not a count.
-    """
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    if not float(value).is_integer() or value < 0:
-        return None
-    return int(value)
-
-
-def _texts(parts: Iterable[Part]) -> list[str]:
-    return [part.text for part in parts if part.WhichOneof("content") == "text"]
-
-
-# Bounds alias unwrapping, so an alias that refers to itself cannot loop forever.
-_MAX_ALIAS_DEPTH = 10
-
-
-def remote_name(annotation: object) -> str | None:
-    """Return the agent name of a ``Remote[Literal["name"]]`` annotation.
-
-    ``type`` aliases of one are read through, including aliases of aliases.
-
-    Returns:
-        The name, or ``None`` when ``annotation`` is not a ``Remote``.
-
-    Raises:
-        DefinitionError: ``Remote`` is used without exactly one string name,
-            or a ``type`` alias nests too deeply or refers to itself.
-    """
-    for _ in range(_MAX_ALIAS_DEPTH):
-        if isinstance(annotation, TypeAliasType):
-            annotation = annotation.__value__
-    if isinstance(annotation, TypeAliasType):
-        raise DefinitionError(
-            f"type alias nests more than {_MAX_ALIAS_DEPTH} levels or refers to itself"
-        )
-    if annotation is not Remote and get_origin(annotation) is not Remote:
-        return None
-    [name_type] = get_args(annotation) or [None]
-    names = get_args(name_type) if get_origin(name_type) is Literal else ()
-    if len(names) != 1 or not isinstance(names[0], str):
-        raise DefinitionError("Name the remote agent as Remote[Literal['agent-name']]")
-    return names[0]
-
-
-async def find_remote(
-    directory: AgentDirectory, name: str, identity: RemoteIdentity | None
-) -> DiscoveredAgent:
-    """Look an agent up and check that a binding can call it.
-
-    Args:
-        directory: Where to look the agent up.
-        name: The agent's name.
-        identity: The agent's entry in ``remotes=``, if any.
-
-    Raises:
-        DefinitionError: No source lists the agent, its card requires
-            credentials that ``identity`` cannot provide, or credentials
-            would be sent with an HTTP client that follows redirects.
-        RemoteAgentError: Its card cannot be fetched or is invalid.
-    """
-    found = await directory.get(name)
-    check_identity(name, found.card, identity)
-    check_no_redirects(directory, name, identity)
-    return found
-
-
-def check_no_redirects(
-    directory: AgentDirectory, name: str, identity: RemoteIdentity | None
-) -> None:
-    """Check that credentials for ``name`` cannot follow a redirect elsewhere.
-
-    Raises:
-        DefinitionError: ``identity`` is set and the directory's HTTP client
-            follows redirects, or the directory is not open.
-    """
-    if identity is not None and directory.open_client().follow_redirects:
-        raise DefinitionError(
-            f"Remote '{name}' has credentials, but the AgentDirectory's "
-            "http_client follows redirects; credentials are only sent to the "
-            "card's own origin, so pass a client with follow_redirects=False."
-        )
-
-
-async def bind_remote(
-    directory: AgentDirectory,
-    name: str,
-    *,
-    deadline: float,
-    correlation: RunCorrelation,
-    principal: Principal | None,
-    identity: RemoteIdentity | None,
-    credential: OutboundCredential | None,
-    hops: int,
-    max_hops: int,
-    accounting: RunAccounting,
-    max_total_tokens: int,
-) -> Remote[Any]:
-    """Create the binding one run passes to a ``Remote`` skill parameter.
-
-    Args:
-        identity: The agent's entry in ``remotes=``, if any, checked against
-            its card.
-        credential: What this run sends for ``identity``: a ``Service``'s
-            credential, or the run's on-behalf-of token for ``OnBehalfOf``.
-
-    Raises:
-        DefinitionError: As for ``find_remote``, or the directory is not open.
-        RemoteAgentError: As for ``find_remote``.
-    """
-    found = await find_remote(directory, name, identity)
-    return new_binding(
-        directory,
-        found,
-        deadline=deadline,
-        correlation=correlation,
-        principal=principal,
-        credential=credential,
-        hops=hops,
-        max_hops=max_hops,
-        accounting=accounting,
-        max_total_tokens=max_total_tokens,
-    )
-
-
-def new_binding(
-    directory: AgentDirectory,
-    found: DiscoveredAgent,
-    *,
-    deadline: float,
-    correlation: RunCorrelation,
-    principal: Principal | None,
-    credential: OutboundCredential | None,
-    hops: int,
-    max_hops: int,
-    accounting: RunAccounting,
-    max_total_tokens: int,
-) -> Remote[Any]:
-    """Create a run's binding to an agent whose card is already checked.
-
-    The binding sends its requests with the directory's HTTP client. The
-    caller must have checked ``credential`` against the card first, as
-    ``find_remote`` does.
-
-    Raises:
-        DefinitionError: The directory is not open.
-    """
-    client = directory.open_client()
-    transport = BoundedJsonRpcTransport(
-        client,
-        found.card,
-        found.interface_url,
-        max_reply_bytes=directory.max_reply_bytes,
-    )
-    return Remote(
-        found,
-        transport,
-        deadline=deadline,
-        correlation=correlation,
-        principal=principal,
-        credential=credential,
-        hops=hops,
-        max_hops=max_hops,
-        accounting=accounting,
-        max_total_tokens=max_total_tokens,
-    )

@@ -16,6 +16,7 @@ from agentframe.authoring.agent import Agent
 from agentframe.authoring.context import RunContext
 from agentframe.authoring.definitions import SkillDefinition
 from agentframe.authoring.services import Services
+from agentframe.discovery.binding import find_remote
 from agentframe.discovery.directory import AgentDirectory
 from agentframe.discovery.identity import (
     OnBehalfOf,
@@ -25,7 +26,6 @@ from agentframe.discovery.identity import (
     checked_remotes,
     on_behalf_of_names,
 )
-from agentframe.discovery.remote import find_remote
 from agentframe.errors import (
     AgentFrameError,
     DefinitionError,

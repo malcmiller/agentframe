@@ -49,7 +49,7 @@ from agentframe import (
     tool,
 )
 from agentframe.discovery import remote
-from agentframe.discovery.remote import bind_remote, remote_name
+from agentframe.discovery.binding import bind_remote, remote_name
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI, build_agent_card
 from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import (

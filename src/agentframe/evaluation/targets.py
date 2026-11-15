@@ -12,9 +12,10 @@ from pydantic import TypeAdapter, ValidationError
 
 from agentframe.authoring.agent import Agent
 from agentframe.authoring.definitions import SkillDefinition
+from agentframe.discovery.binding import bind_remote
 from agentframe.discovery.directory import AgentDirectory
 from agentframe.discovery.identity import OnBehalfOf, Service
-from agentframe.discovery.remote import Remote, bind_remote
+from agentframe.discovery.remote import Remote
 from agentframe.errors import (
     AgentFrameError,
     DefinitionError,

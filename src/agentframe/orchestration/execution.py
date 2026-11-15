@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
 
-from agentframe.discovery.remote import RemoteReply
+from agentframe.discovery.replies import RemoteReply
 from agentframe.errors import (
     ClarificationNeededError,
     DefinitionError,

@@ -25,11 +25,12 @@ from a2a.types import AgentCard, AgentSkill
 # protobuf ships no type stubs.
 from google.protobuf.json_format import MessageToDict  # type: ignore[import-untyped]
 
+from agentframe.discovery.binding import check_no_redirects
 from agentframe.discovery.cards import InvalidCardError
 from agentframe.discovery.directory import DiscoveredAgent
 from agentframe.discovery.identity import check_identity
 from agentframe.discovery.registry import AgentReference
-from agentframe.discovery.remote import Remote, check_no_redirects
+from agentframe.discovery.remote import Remote
 from agentframe.errors import AgentFrameError, DefinitionError, RemoteAgentError
 from agentframe.orchestration.card_text import (
     MAX_SCHEMA_BYTES,
