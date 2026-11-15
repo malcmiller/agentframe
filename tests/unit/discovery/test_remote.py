@@ -38,11 +38,8 @@ from agentframe import (
     Remote,
     RemoteAgentError,
     RunContext,
-    RunLimits,
-    RunOptions,
     Runtime,
     Service,
-    TimeoutLimitExceededError,
     TokenLimitExceededError,
     agent,
     skill,
@@ -152,7 +149,8 @@ def task(state: TaskState, *parts: str) -> Task:
 class Peer:
     """A fake A2A agent: serves its card and answers JSON-RPC from a script.
 
-    A reply of ``"hang"`` never answers, so the caller's deadline passes.
+    A reply of ``"hang"`` never answers; ``hanging`` is set once it starts, so
+    a test can stop the caller there.
     """
 
     def __init__(
@@ -162,6 +160,7 @@ class Peer:
         self.replies = list(replies)
         self.requests: list[httpx.Request] = []
         self.reply_sizes: list[int] = []
+        self.hanging = asyncio.Event()
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -170,8 +169,9 @@ class Peer:
         rpc = json.loads(request.content)
         reply = self.replies.pop(0)
         if isinstance(reply, str):  # "hang": wait to be cancelled.
+            self.hanging.set()
             await asyncio.sleep(60)
-            raise AssertionError("the caller's deadline should have passed")
+            raise AssertionError("the caller should have stopped waiting")
         if isinstance(reply, dict):
             response = httpx.Response(
                 200, json={"jsonrpc": "2.0", "id": rpc["id"], **reply}
@@ -994,23 +994,30 @@ async def test_ask_sends_the_credential_and_context_under_one_extension() -> Non
 
 
 async def test_the_cancel_request_carries_the_credential_too() -> None:
-    cancelled = task(TaskState.TASK_STATE_CANCELED)
     peer = Peer(
         task(TaskState.TASK_STATE_WORKING),
         "hang",
-        cancelled,
+        task(TaskState.TASK_STATE_CANCELED),
         card=card_json(securitySchemes=API_KEY_SCHEMES),
     )
     runtime = Runtime(directory=peer.directory(), remotes=with_key())
-    options = RunOptions(limits=RunLimits(timeout_seconds=0.2))
+    run = asyncio.create_task(
+        runtime.invoke(Planner(), skill="plan", arguments={"goal": "x"})
+    )
+    await asyncio.wait_for(peer.hanging.wait(), timeout=5)
 
-    with pytest.raises(TimeoutLimitExceededError):
-        await runtime.invoke(
-            Planner(), skill="plan", arguments={"goal": "x"}, options=options
-        )
+    # A run deadline stops the wait the same way: by cancelling it. Cancelling
+    # here, while the poll hangs, does not depend on how fast the runner is.
+    run.cancel()
 
+    with pytest.raises(asyncio.CancelledError):
+        await run
     assert peer.methods() == ["SendMessage", "GetTask", "CancelTask"]
-    assert peer.requests[-1].headers["X-API-Key"] == "planner-key"
+    cancel_request = peer.requests[-1]
+    assert cancel_request.headers["X-API-Key"] == "planner-key"
+    # The cancel gets its own time, not the run's: after a deadline the run
+    # has none left, and the cancel must still be sent.
+    assert cancel_request.extensions["timeout"]["read"] == remote._CANCEL_SECONDS
 
 
 async def test_an_entra_app_credential_sends_its_token_as_a_bearer() -> None:
