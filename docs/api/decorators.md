@@ -263,7 +263,7 @@ skill ID.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `id` | `str` | The skill ID callers select. |
-| `name` | `str` | Display name; defaults to the method name in title case. |
+| `name` | `str` | Display name; defaults to the method name with underscores replaced by spaces, in title case (`find_sources` becomes `"Find Sources"`). |
 | `description` | `str` | Explicit description or the docstring. |
 | `tags` | `tuple[str, ...]` | As declared on `@skill`. |
 | `requires_permissions` | `frozenset[str]` | As declared on `@skill`; empty when none. |

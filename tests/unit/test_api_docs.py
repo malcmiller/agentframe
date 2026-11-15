@@ -14,11 +14,16 @@ API_DOCS = Path(__file__).parents[2] / "docs" / "api"
 # trailing call or subscript: "## `@skill`", "## `dev_settings()`" and
 # "## `Inject[T]`" document skill, dev_settings and Inject.
 HEADING_NAME = re.compile(r"^#{2,} `@?([\w.]+)", re.MULTILINE)
+# Removed first, so a heading-like line inside an example cannot count.
+CODE_BLOCK = re.compile(r"^[ \t]*```.*?^[ \t]*```", re.MULTILINE | re.DOTALL)
 
 
 def documented_names() -> set[str]:
-    pages = API_DOCS.glob("*.md")
-    return {name for page in pages for name in HEADING_NAME.findall(page.read_text())}
+    names: set[str] = set()
+    for page in API_DOCS.glob("*.md"):
+        prose = CODE_BLOCK.sub("", page.read_text())
+        names.update(HEADING_NAME.findall(prose))
+    return names
 
 
 def public_modules() -> list[ModuleType]:
