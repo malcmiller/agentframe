@@ -249,6 +249,58 @@ grants no frontend execution authority.
 **Related:** [`Agent`](agents.md#agent), [`ExecutionPolicy`](authorization.md#executionpolicy),
 [`MCPConfig`](hosting.md#mcpconfig), [tool design](../guides/annotations.md#optional-tool-example).
 
+## `SkillDefinition`
+
+**Purpose / decision:** the validated, immutable description of one `@skill`
+method, built when `@agent` decorates the class. Routers, authorization
+policies and execution-policy checks receive it to know which skill is
+running; applications read it and never construct one.
+
+**Signature status:** implemented in M1 as a frozen dataclass exported from
+`agentframe`. Read one through the class's `definition().skills`, keyed by
+skill ID.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | `str` | The skill ID callers select. |
+| `name` | `str` | Display name; defaults to the method name with underscores replaced by spaces, in title case (`find_sources` becomes `"Find Sources"`). |
+| `description` | `str` | Explicit description or the docstring. |
+| `tags` | `tuple[str, ...]` | As declared on `@skill`. |
+| `requires_permissions` | `frozenset[str]` | As declared on `@skill`; empty when none. |
+| `limits` | `RunLimits \| None` | Skill-level limits, or `None` when not set. |
+| `model_settings` | `ModelSettings \| None` | Skill-level model settings, or `None` when not set. |
+| `method_name` | `str` | The decorated method's name. |
+| `argument_names` | `tuple[str, ...]` | Business parameters, in declaration order. |
+| `injected` | `dict[str, object]` | `Inject[T]` parameters mapped to their service types. |
+| `remotes` | `dict[str, str]` | `Remote[Literal["name"]]` parameters mapped to their agent names. |
+| `arguments_adapter` | `TypeAdapter` | Validates business arguments; unknown names are rejected. |
+| `return_adapter` | `TypeAdapter` | Validates the return value. |
+
+```python
+from agentframe import Agent, RunContext, SkillDefinition, agent, skill
+
+
+@agent(version="0.1.0")
+class Echo(Agent):
+    """Repeats text."""
+
+    @skill("echo", tags=["text"], requires_permissions=["echo:use"])
+    async def echo(self, text: str, ctx: RunContext) -> str:
+        """Return the text unchanged."""
+        return text
+
+
+definition: SkillDefinition = Echo.definition().skills["echo"]
+assert definition.requires_permissions == {"echo:use"}
+```
+
+**Behavior / failures:** a method that breaks a skill rule raises
+`DefinitionError` when the class is decorated, so a `SkillDefinition` always
+describes a valid skill. Treat it as read-only.
+
+**Related:** [`@skill`](#skill), [`AuthorizationPolicy`](authorization.md#authorizationpolicy),
+[`ExecutionPolicy`](authorization.md#executionpolicy), [`SkillRouter`](hosting.md#skillrouter).
+
 ## `ToolDefinition`
 
 **Purpose / decision:** the validated, immutable description of a `@tool`

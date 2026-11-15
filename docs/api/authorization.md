@@ -334,6 +334,10 @@ OutputCheck:       (skill: SkillDefinition, principal: Principal | None,
                     value: Any) -> bool
 ```
 
+Each shape has its own entry: [`InputCheck`](#inputcheck),
+[`ModelRequestCheck`](#modelrequestcheck), [`ToolCheck`](#toolcheck),
+[`PlanCheck`](#plancheck) and [`OutputCheck`](#outputcheck).
+
 `skill` is `None` for model-request checks during routing, which runs before a
 skill is selected. `request` is the complete
 [`ModelRequest`](models.md#modelrequest): messages, settings, output schema and
@@ -426,6 +430,233 @@ state/tool declarations are untrusted, not `Principal` or trusted dependencies.
 [`RunContext.generate`](agents.md#runcontextgenerate),
 [safeguarding design](../design/prompt-safeguarding.md).
 
+## `InputCheck`
+
+**Purpose / decision:** the shape of an [`ExecutionPolicy`](#executionpolicy)
+input check, which sees a skill's validated arguments before the skill runs.
+
+**Signature status:** implemented in M7 #77 as a structural `Protocol`. Any
+async function or callable object with this shape works; no inheritance is
+needed. Arguments are passed by position.
+
+```text
+async (skill: SkillDefinition, principal: Principal | None,
+       arguments: Mapping[str, Any], /) -> bool
+```
+
+| Parameter / return | Type | Meaning and constraints |
+| --- | --- | --- |
+| `skill` | [`SkillDefinition`](decorators.md#skilldefinition) | The skill about to run. |
+| `principal` | `Principal \| None` | Verified caller identity, or `None`. |
+| `arguments` | `Mapping[str, Any]` | The skill's validated business arguments, read-only. Injected services and `ctx` are not included. |
+| Returns | `bool` | Only `True` lets the run continue. |
+
+```python
+from collections.abc import Mapping
+from typing import Any
+
+from agentframe import ExecutionPolicy, Principal, SkillDefinition
+
+
+async def short_inputs(
+    skill: SkillDefinition, principal: Principal | None, arguments: Mapping[str, Any]
+) -> bool:
+    # Application-supplied placeholder rule: refuse very long text arguments.
+    return all(len(v) <= 10_000 for v in arguments.values() if isinstance(v, str))
+
+
+policy = ExecutionPolicy(input_checks=[short_inputs])
+```
+
+**Behavior / failures:** runs after argument validation and the
+[`AuthorizationPolicy`](#authorizationpolicy), before services are resolved.
+Any other return raises `PermissionDeniedError`; raising or running past the
+deadline raises `PolicyUnavailableError`. See
+[`ExecutionPolicy`](#executionpolicy) for the full rules.
+
+**Related:** [`ExecutionPolicy`](#executionpolicy).
+
+## `ModelRequestCheck`
+
+**Purpose / decision:** the shape of an [`ExecutionPolicy`](#executionpolicy)
+model-request check, which sees every request before it is sent to a model.
+
+**Signature status:** implemented in M7 #77 as a structural `Protocol`. Any
+async function or callable object with this shape works. Arguments are passed
+by position.
+
+```text
+async (skill: SkillDefinition | None, principal: Principal | None,
+       request: ModelRequest, /) -> bool
+```
+
+| Parameter / return | Type | Meaning and constraints |
+| --- | --- | --- |
+| `skill` | [`SkillDefinition`](decorators.md#skilldefinition)` \| None` | The running skill, or `None` while a free-text request is routed, before any skill is selected. |
+| `principal` | `Principal \| None` | Verified caller identity, or `None`. |
+| `request` | [`ModelRequest`](models.md#modelrequest) | The complete request: messages, settings, output schema and tool specs. |
+| Returns | `bool` | Only `True` sends the request. |
+
+```python
+from agentframe import ExecutionPolicy, ModelRequest, Principal, SkillDefinition
+
+
+async def no_tools_while_routing(
+    skill: SkillDefinition | None, principal: Principal | None, request: ModelRequest
+) -> bool:
+    # Application-supplied placeholder rule: routing never offers tools.
+    return skill is not None or not request.tools
+
+
+policy = ExecutionPolicy(model_request_checks=[no_tools_while_routing])
+```
+
+**Behavior / failures:** runs once per logical request, including
+structured-output requests, every tool-loop continuation and router requests,
+not again when a transient failure is retried. A denied request is never sent
+and reserves no tokens. Failures follow [`ExecutionPolicy`](#executionpolicy).
+
+**Related:** [`ExecutionPolicy`](#executionpolicy), [`ModelRouter`](hosting.md#modelrouter).
+
+## `ToolCheck`
+
+**Purpose / decision:** the shape of an [`ExecutionPolicy`](#executionpolicy)
+tool check, which sees every tool call the model asks for, just before the
+tool runs.
+
+**Signature status:** implemented in M7 #78 as a structural `Protocol`. Any
+async function or callable object with this shape works. Arguments are passed
+by position.
+
+```text
+async (skill: SkillDefinition, principal: Principal | None,
+       tool: str, arguments: Mapping[str, Any], /) -> bool
+```
+
+| Parameter / return | Type | Meaning and constraints |
+| --- | --- | --- |
+| `skill` | [`SkillDefinition`](decorators.md#skilldefinition) | The running skill. |
+| `principal` | `Principal \| None` | Verified caller identity, or `None`. |
+| `tool` | `str` | Name of the tool about to run; for a [remote entry](orchestration.md#permissions-and-tool-checks), its entry name (`"agent.skill"`, or `"agent"` for `ask`). |
+| `arguments` | `Mapping[str, Any]` | A read-only deep copy of the tool's validated arguments, one per check. Changing a nested value changes nothing that is sent or what a later check sees. |
+| Returns | `bool` | Only `True` runs the tool. |
+
+```python
+from collections.abc import Mapping
+from typing import Any
+
+from agentframe import ExecutionPolicy, Principal, SkillDefinition
+
+READ_ONLY_TOOLS = {"lookup_order", "search_docs"}
+
+
+async def read_only_tools(
+    skill: SkillDefinition,
+    principal: Principal | None,
+    tool: str,
+    arguments: Mapping[str, Any],
+) -> bool:
+    # Application-supplied placeholder allowlist.
+    return tool in READ_ONLY_TOOLS
+
+
+policy = ExecutionPolicy(tool_checks=[read_only_tools])
+```
+
+**Behavior / failures:** runs after the tool's arguments are validated and
+authorized: by the [`ToolAuthorizationPolicy`](#toolauthorizationpolicy) for
+`@tool` functions, by the entry's permissions for
+[remote entries](orchestration.md#permissions-and-tool-checks). A denied
+call fails the whole run and is never fed back to the model. Failures follow
+[`ExecutionPolicy`](#executionpolicy).
+
+**Related:** [`ExecutionPolicy`](#executionpolicy), [`@tool`](decorators.md#tool).
+
+## `PlanCheck`
+
+**Purpose / decision:** the shape of an [`ExecutionPolicy`](#executionpolicy)
+plan check, which sees a whole plan in
+[`ctx.run_plan`](orchestration.md#runcontextrun_plan) before any step is sent.
+
+**Signature status:** implemented in M10 #174 as a structural `Protocol`. Any
+async function or callable object with this shape works. Arguments are passed
+by position.
+
+```text
+async (skill: SkillDefinition, principal: Principal | None,
+       plan: Plan, /) -> bool
+```
+
+| Parameter / return | Type | Meaning and constraints |
+| --- | --- | --- |
+| `skill` | [`SkillDefinition`](decorators.md#skilldefinition) | The skill running the plan. |
+| `principal` | `Principal \| None` | Verified caller identity, or `None`. |
+| `plan` | [`Plan`](orchestration.md#plan) | A deep copy of the checked plan: every step's entry, arguments, text and references. Changing it changes nothing that runs. |
+| Returns | `bool` | Only `True` runs the plan. |
+
+```python
+from agentframe import ExecutionPolicy, Plan, Principal, SkillDefinition
+
+
+async def at_most_five_steps(
+    skill: SkillDefinition, principal: Principal | None, plan: Plan
+) -> bool:
+    return len(plan.steps) <= 5
+
+
+policy = ExecutionPolicy(plan_checks=[at_most_five_steps])
+```
+
+**Behavior / failures:** runs once, after the plan passes the catalog and
+permission checks and before the first step counts as a tool call. Tool checks
+still run for every step. A denied plan sends no step. Failures follow
+[`ExecutionPolicy`](#executionpolicy).
+
+**Related:** [plan checks and the approval pattern](orchestration.md#plan-checks-and-the-approval-pattern).
+
+## `OutputCheck`
+
+**Purpose / decision:** the shape of an [`ExecutionPolicy`](#executionpolicy)
+output check, which sees a skill's validated value before it is returned.
+
+**Signature status:** implemented in M7 #77 as a structural `Protocol`. Any
+async function or callable object with this shape works. Arguments are passed
+by position.
+
+```text
+async (skill: SkillDefinition, principal: Principal | None,
+       value: Any, /) -> bool
+```
+
+| Parameter / return | Type | Meaning and constraints |
+| --- | --- | --- |
+| `skill` | [`SkillDefinition`](decorators.md#skilldefinition) | The skill that produced `value`. |
+| `principal` | `Principal \| None` | Verified caller identity, or `None`. |
+| `value` | `Any` | The skill's validated return value. |
+| Returns | `bool` | Only `True` returns the value. |
+
+```python
+from typing import Any
+
+from agentframe import ExecutionPolicy, Principal, SkillDefinition
+
+
+async def no_internal_hosts(
+    skill: SkillDefinition, principal: Principal | None, value: Any
+) -> bool:
+    # Application-supplied placeholder rule.
+    return "internal.example.com" not in str(value)
+
+
+policy = ExecutionPolicy(output_checks=[no_internal_hosts])
+```
+
+**Behavior / failures:** a denied value is never returned or published, but
+cannot undo actions the skill already took. Failures follow
+[`ExecutionPolicy`](#executionpolicy).
+
+**Related:** [`ExecutionPolicy`](#executionpolicy).
+
 ## `Authenticator`
 
 **Purpose / decision:** common interface for verified remote identity, with
@@ -443,9 +674,7 @@ class Authenticator(Protocol):
 | Name | Type | Meaning and constraints |
 | --- | --- | --- |
 | `headers` | `Mapping[str, str]` | The request's HTTP headers. Header names should be matched case-insensitively. |
-| Return | `VerifiedCaller \| None` | The verified caller, or `None` only for explicitly allowed anonymous callers. |
-| `VerifiedCaller.id` | `str` | Stable caller identifier; becomes `Principal.id`. |
-| `VerifiedCaller.roles` | `frozenset[str]` | Verified roles, mapped to permissions by `HostConfig(role_permissions=...)`. |
+| Return | `VerifiedCaller \| None` | The verified caller, or `None` only for explicitly allowed anonymous callers. See [`VerifiedCaller`](#verifiedcaller). |
 
 Missing or invalid credentials raise `AuthenticationError`, which the host maps
 to HTTP 401 before creating any task or revealing skill details. The 401 carries
@@ -499,7 +728,46 @@ grants still pass through skill/resource policy. Custom authenticators and
 resource policies plug into the same enforcement interfaces.
 
 **Related:** [`HostConfig`](hosting.md#hostconfig), [`Principal`](#principal),
+[`VerifiedCaller`](#verifiedcaller),
 [`DeclaresCardSecurity`](#declarescardsecurity).
+
+## `VerifiedCaller`
+
+**Purpose / decision:** what an [`Authenticator`](#authenticator) returns once
+it has verified a caller's credentials; the host turns it into the run's
+[`Principal`](#principal).
+
+**Signature status:** implemented in M2 (#4) as a frozen dataclass;
+`user_assertion` added in M8+ #93.
+
+```text
+VerifiedCaller(id: str, roles: frozenset[str] = frozenset(),
+               user_assertion: str | None = None)
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `id` | `str` | Required | Stable caller identifier; becomes `Principal.id`. Tasks are scoped to it. |
+| `roles` | `frozenset[str]` | Default empty | Verified roles, mapped to permissions by `HostConfig(role_permissions=...)`; unknown roles grant nothing. |
+| `user_assertion` | `str \| None` | Default `None` | A signed-in user's verified token, which the host may exchange for [`OnBehalfOf`](#onbehalfof) remotes. `EntraIDAuth` sets it for delegated user tokens only. Hidden from `repr` and ignored by equality. |
+
+```python
+from agentframe import VerifiedCaller
+
+caller = VerifiedCaller(id="billing-svc", roles=frozenset({"Reader"}))
+```
+
+See the `ServiceTokenAuth` example under [`Authenticator`](#authenticator) for
+returning one from a custom authenticator.
+
+**Behavior / failures:** only an authenticator should build one, after it has
+checked the credentials; the host trusts it as is. `user_assertion` never
+reaches `Principal`, `RunContext`, logs or errors, and is never forwarded.
+A custom authenticator should set it only for a verified delegated user token
+it wants exchanged on the user's behalf.
+
+**Related:** [`Authenticator`](#authenticator), [`Principal`](#principal),
+[`OnBehalfOf`](#onbehalfof).
 
 ## `DeclaresCardSecurity`
 
@@ -659,15 +927,12 @@ simple service-to-service callers, not credentials embedded in source/cards.
 **Signature status:** implemented (M2 story #4).
 
 ```text
-APIKey(caller_id: str, roles: Iterable[str] = ())
 APIKeyAuth(*, keys: Mapping[str, APIKey])
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `keys` | `Mapping[str, APIKey]` | Required, non-empty | Maps each accepted key to its identity. Load keys from the environment or a secret store, never source code. |
-| `APIKey.caller_id` | `str` | Required, non-empty | Becomes `Principal.id`; the key itself never does. Several keys may share one `caller_id`, for example during rotation. |
-| `APIKey.roles` | `Iterable[str]`, stored as `frozenset[str]` | `()` | Role names mapped to permissions by `HostConfig(role_permissions=...)`. A single string is rejected. |
+| `keys` | `Mapping[str, APIKey]` | Required, non-empty | Maps each accepted key to its [`APIKey`](#apikey) identity. Load keys from the environment or a secret store, never source code. |
 
 Clients send the key in the `X-API-Key` header.
 
@@ -696,7 +961,44 @@ compared in constant time and never logged, included in errors or shown by
 responsibilities. This built-in does not claim conforming MCP OAuth or Foundry
 incoming-A2A authentication, which have their own protocol requirements.
 
-**Related:** [`Authenticator`](#authenticator), [`HostConfig`](hosting.md#hostconfig).
+**Related:** [`Authenticator`](#authenticator), [`APIKey`](#apikey),
+[`HostConfig`](hosting.md#hostconfig).
+
+## `APIKey`
+
+**Purpose / decision:** the identity behind one key accepted by
+[`APIKeyAuth`](#apikeyauth): who the caller is and which roles it has. The key
+itself is the mapping's key, never part of the identity.
+
+**Signature status:** implemented (M2 story #4) as a frozen dataclass.
+
+```text
+APIKey(caller_id: str, roles: Iterable[str] = ())
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `caller_id` | `str` | Required, non-empty | Becomes `Principal.id`; the key itself never does. Several keys may share one `caller_id`, for example during rotation. |
+| `roles` | `Iterable[str]`, stored as `frozenset[str]` | Default `()` | Role names mapped to permissions by `HostConfig(role_permissions=...)`. |
+
+```python
+import os
+
+from agentframe import APIKey, APIKeyAuth
+
+reader = APIKey(caller_id="billing-svc", roles=["Reader"])
+auth = APIKeyAuth(
+    keys={
+        os.environ["BILLING_KEY"]: reader,
+        os.environ["BILLING_KEY_NEXT"]: reader,  # rotation: both keys work
+    }
+)
+```
+
+**Behavior / failures:** an empty or non-string `caller_id`, or `roles` given
+as a single string instead of a list of names, raises `DefinitionError`.
+
+**Related:** [`APIKeyAuth`](#apikeyauth), [`Principal`](#principal).
 
 ## `AllowAnonymous`
 

@@ -771,7 +771,7 @@ Message(role: Role, content: str, tool_calls: tuple[ToolCall, ...] = (), tool_ca
 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `role` | `Role` = `Literal["system", "user", "assistant", "tool"]` | Required | `system` holds trusted instructions only; untrusted user text is always a `user` message; tool results are `tool` messages, never `system`. |
+| `role` | [`Role`](#role) | Required | `system` holds trusted instructions only; untrusted user text is always a `user` message; tool results are `tool` messages, never `system`. |
 | `content` | `str` | Required | The message text. For a `tool` message, the tool's result as text (M5: validated results serialized as JSON). May be empty for an assistant message that only calls tools. |
 | `tool_calls` | `tuple[`[`ToolCall`](#toolcall)`, ...]` | Default `()` | The tools an `assistant` message asked to call, in the model's order. |
 | `tool_call_id` | `str \| None` | Default `None`; required for `tool` | The [`ToolCall.id`](#toolcall) this `tool` message answers. |
@@ -804,7 +804,44 @@ without `tool_call_id`, or `tool_call_id`/`tool_name` on a non-`tool` message.
 from a response to the assistant message and never inspects, logs, traces or
 returns it (decided 2026-11-12). Other content types remain open.
 
-**Related:** [`ModelRequest`](#modelrequest),
+**Related:** [`ModelRequest`](#modelrequest), [`Role`](#role),
+[prompt safeguarding](../design/prompt-safeguarding.md).
+
+## `Role`
+
+**Purpose / decision:** who a [`Message`](#message) is from, so trusted
+instructions never mix with untrusted content.
+
+**Signature (implemented, M3 #33; `tool` M5 #59):** a type alias.
+
+```text
+type Role = Literal["system", "user", "assistant", "tool"]
+```
+
+| Value | Meaning and constraints |
+| --- | --- |
+| `"system"` | Trusted instructions only, such as agent and skill instructions. Never untrusted text. |
+| `"user"` | The caller's text, and any other untrusted input. |
+| `"assistant"` | The model's replies, including the tool calls it asks for. |
+| `"tool"` | A tool's result, answering one of the assistant's tool calls. Untrusted content too. |
+
+```python
+from agentframe import Message, Role
+
+
+def message(role: Role, text: str) -> Message:
+    return Message(role=role, content=text)
+
+
+instructions = message("system", "Answer in one sentence.")
+question = message("user", "What is A2A?")
+```
+
+**Behavior / failures:** a type checker rejects other strings; at run time
+`Message` checks how tool fields match the role (see [`Message`](#message)),
+not the role's spelling.
+
+**Related:** [`Message`](#message),
 [prompt safeguarding](../design/prompt-safeguarding.md).
 
 ## `ModelRequest`
@@ -903,8 +940,8 @@ ModelResponse(text: str, usage: Usage, finish_reason: FinishReason, tool_calls: 
 | Field | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `text` | `str` | Required | Generated text, or the JSON text for a structured-output request; possibly truncated when `finish_reason` is not `COMPLETED`. |
-| `usage` | [`Usage`](runtime.md#runresult) | Required | Tokens for this call; unknown counts are `None`, never zero; `estimated` marks estimates. |
-| `finish_reason` | [`FinishReason`](runtime.md#runresult) | Required | `COMPLETED`, `LENGTH`, `REFUSED`, `CONTENT_FILTER` or `TOOL_CALLS` (the model stopped to ask for tool calls; model calls only, never a run's finish reason). |
+| `usage` | [`Usage`](runtime.md#usage) | Required | Tokens for this call; unknown counts are `None`, never zero; `estimated` marks estimates. |
+| `finish_reason` | [`FinishReason`](runtime.md#finishreason) | Required | `COMPLETED`, `LENGTH`, `REFUSED`, `CONTENT_FILTER` or `TOOL_CALLS` (the model stopped to ask for tool calls; model calls only, never a run's finish reason). |
 | `tool_calls` | `tuple[`[`ToolCall`](#toolcall)`, ...]` | Default `()` | The tools the model asks to call, in its order. `text` may be empty. |
 | `provider_items` | `tuple[object, ...]` | Default `()` | Opaque adapter data to replay with the assistant message (see [`Message`](#message)). Excluded from `repr` and equality; never logged, traced or returned. |
 

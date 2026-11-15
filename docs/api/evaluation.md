@@ -124,7 +124,7 @@ Evaluation.capture_content -> bool  # read-only property (#162)
 | --- | --- | --- | --- |
 | `cases` | `Iterable[Case[Any]]` | Required | At least one case; IDs must be unique. |
 | `target` | [`Target`](#target) | Required | What runs each case: [`LocalSkill`](#localskill), [`A2ATarget`](#a2atarget) or an application target. |
-| `scorers` | `Iterable[Scorer]` | Required | At least one sync or async callable `(case, output) -> bool \| Score`, or a [`Judge`](#judge). |
+| `scorers` | `Iterable[`[`Scorer`](#scorer)`]` | Required | At least one sync or async callable `(case, output) -> bool \| Score`, or a [`Judge`](#judge). |
 | `capture_content` | `bool` | Optional; default `False` | Keep case inputs, expected values, outputs and score reasons in results. A report with content is sensitive. |
 | `concurrency` | `int` | Optional; default `4` | Most attempts running at once, at least 1. `1` runs them in order. |
 | `repeats` | `int` | Optional; default `1` | Attempts per case, at least 1. Pass rates count every attempt; cases whose attempts end differently are `flaky`. |
@@ -442,6 +442,53 @@ numbers with at least one vote cast and no more passing than cast.
 
 **Related:** [scorers](../design/evaluation.md#scorers).
 
+## `Scorer`
+
+**Purpose / decision:** the shape of a scorer: any plain function or callable
+object that checks one case's output, so scoring needs no base class
+([decision 5](../design/evaluation.md#decisions-confirmed-2026-11-13)).
+
+**Signature status:** implemented in M9 #153 as a type alias, exported from
+`agentframe.evaluation`.
+
+```text
+type Scorer = Callable[[Case[Any], Any], bool | Score | Awaitable[bool | Score]]
+```
+
+| Parameter / return | Type | Meaning and constraints |
+| --- | --- | --- |
+| `case` | [`Case[Any]`](#case) | The case being scored, including `expected` when set. |
+| `output` | `Any` | The target's output for the case. |
+| Returns | `bool \| Score`, or an awaitable of either | `True` / `False`, or a [`Score`](#score) with detail. Sync and async scorers both work. |
+
+```python
+from agentframe.evaluation import Case, Scorer
+
+
+def mentions(word: str) -> Scorer:
+    def mentions_word(case: Case[str], output: str) -> bool:
+        return word.casefold() in output.casefold()
+
+    return mentions_word
+
+
+async def not_empty(case: Case[str], output: str) -> bool:
+    return bool(output.strip())
+
+
+scorers: list[Scorer] = [mentions("refund"), not_empty]
+```
+
+**Behavior / failures:** reports name a scorer by its `__name__`, or by its
+class name for a callable object without one. A scorer that returns anything
+else, such as a bare number, or raises errors that case
+([`CaseStatus`](#casestatus) `errored`) and later scorers for it do not run;
+other cases still run. Only AgentFrame errors keep their message; for any
+other exception the result says which scorer raised.
+
+**Related:** [`Score`](#score), [`equals`](#equals), [`contains`](#contains),
+[`valid`](#valid), [`Judge`](#judge), [scorers](../design/evaluation.md#scorers).
+
 ## `equals`
 
 **Purpose / decision:** built-in scorer that passes when the output equals the
@@ -646,15 +693,14 @@ data-egress choice.
 ([decision 13](../design/evaluation.md#decisions-confirmed-2026-11-13)).
 
 **Signature status:** implemented in M9 #153 as a frozen dataclass; built by
-the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
-`failed`, `errored` and `not_run` (#157).
+the harness, not by applications.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `case_id` | `str` | The case's ID. |
 | `attempt` | `int` | Which attempt this is, from 1 to `repeats` (#157). |
-| `status` | `CaseStatus` | `passed`, `failed`, `errored` or `not_run` (never started: budget or timeout). |
-| `scores` | `tuple[ScoreResult, ...]` | Each scorer's `scorer` name, `passed`, `value`, `reason` (`None` unless captured), and `votes_cast` / `votes_passed` (always set by a [`Judge`](#judge), `None` unless the scorer sets them; always kept), in scorer order. |
+| `status` | [`CaseStatus`](#casestatus) | `passed`, `failed`, `errored` or `not_run` (never started: budget or timeout). |
+| `scores` | `tuple[`[`ScoreResult`](#scoreresult)`, ...]` | Each scorer's verdict, in scorer order. Scorers after one that raised do not run. |
 | `error_type` | `str \| None` | Class name of the error that errored the case. |
 | `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. For `not_run`, why it did not run. |
 | `invocation_id` | `str \| None` | The run's ID, also when it failed with an AgentFrame error. |
@@ -663,7 +709,65 @@ the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
 | `tags` | `tuple[str, ...]` | The case's tags. |
 | `arguments`, `text`, `expected`, `output` | content | `None` unless `capture_content=True`. |
 
-**Related:** [reports](../design/evaluation.md#reports).
+**Related:** [`CaseStatus`](#casestatus), [`ScoreResult`](#scoreresult),
+[reports](../design/evaluation.md#reports).
+
+## `CaseStatus`
+
+**Purpose / decision:** how one attempt at a case ended, as a fixed set of
+values reports and CI gates can compare against.
+
+**Signature status:** implemented in M9 #153 as a `StrEnum`; `NOT_RUN` added
+in #157.
+
+| Value | String | Meaning |
+| --- | --- | --- |
+| `PASSED` | `"passed"` | The target ran and every scorer passed. |
+| `FAILED` | `"failed"` | The target ran and at least one scorer failed. |
+| `ERRORED` | `"errored"` | The target or a scorer raised, a scorer returned something other than a `bool` or `Score`, or the evaluation's timeout cancelled the attempt while it ran. |
+| `NOT_RUN` | `"not_run"` | The attempt never started: the evaluation's token budget could not fit it, or its timeout expired first. |
+
+```python
+from agentframe.evaluation import CaseStatus, EvalReport
+
+
+def errored_ids(report: EvalReport) -> list[str]:
+    return [r.case_id for r in report.results if r.status is CaseStatus.ERRORED]
+```
+
+**Behavior / failures:** the JSON report writes the string values. Pass rates
+leave out `not_run` attempts; see [`EvalReport`](#evalreport).
+
+**Related:** [`CaseResult`](#caseresult), [`EvalReport.require`](#evalreportrequire).
+
+## `ScoreResult`
+
+**Purpose / decision:** one scorer's verdict on one case, as kept in a
+[`CaseResult`](#caseresult). A [`Score`](#score) is what a scorer returns;
+a `ScoreResult` adds the scorer's name and drops content that was not
+captured.
+
+**Signature status:** implemented in M9 #153 as a frozen, keyword-only
+dataclass; vote counts in #213. Built by the harness, not by applications.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `scorer` | `str` | The scorer's name (see [`Scorer`](#scorer)). |
+| `passed` | `bool` | Whether the output passed. |
+| `value` | `float \| None` | The scorer's optional number. |
+| `reason` | `str \| None` | The scorer's explanation; `None` unless the evaluation captures content, since it may quote the output. |
+| `votes_cast` | `int \| None` | How many votes a voting scorer such as [`Judge`](#judge) cast; `None` unless the scorer sets them. Always kept, since counts hold no content. |
+| `votes_passed` | `int \| None` | How many of those votes passed. |
+
+```python
+from agentframe.evaluation import CaseResult
+
+
+def failed_scorers(result: CaseResult) -> list[str]:
+    return [score.scorer for score in result.scores if not score.passed]
+```
+
+**Related:** [`Score`](#score), [`CaseResult`](#caseresult).
 
 ## `EvalReport`
 
