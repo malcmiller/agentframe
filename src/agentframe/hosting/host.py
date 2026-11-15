@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
+from a2a.server.tasks import TaskStore
+
 from agentframe.errors import DefinitionError
 from agentframe.hosting.dedup import MessageDedupStore
 from agentframe.runtime.limits import RunLimits
@@ -99,17 +101,54 @@ class A2AConfig:
         dedup_store: Where those ``messageId`` claims are kept. ``None`` (the
             default) keeps them in this process's memory, so they are lost on
             restart and not shared with other instances.
+        task_store: Where A2A tasks are kept: any ``a2a-sdk`` ``TaskStore``,
+            such as a database store. It owns its own retention, so the two
+            settings below do not apply to it. ``None`` (the default) keeps
+            tasks in this process's memory, lost on restart.
+        task_retention_seconds: How long the default in-memory store keeps a
+            finished (completed, failed, cancelled or rejected) task. After
+            that, ``GetTask`` and ``CancelTask`` treat it as unknown. Tasks in
+            any non-terminal state are never deleted. Must be at
+            least ``dedup_window_seconds``, so a retry within the window still
+            finds its task. Defaults to 3600 (1 hour).
+        max_retained_tasks: How many finished tasks the default in-memory store
+            keeps at most; past it, the oldest finished task is deleted first.
+            Defaults to 10,000.
 
     Raises:
-        DefinitionError: ``dedup_window_seconds`` is not positive.
+        DefinitionError: ``task_store`` is not an ``a2a-sdk`` ``TaskStore``;
+            ``dedup_window_seconds`` or ``task_retention_seconds`` is not
+            positive; ``max_retained_tasks`` is less than 1; or, with
+            the default task store, ``task_retention_seconds`` is shorter than
+            ``dedup_window_seconds``.
     """
 
     dedup_window_seconds: float = 600
     dedup_store: MessageDedupStore | None = None
+    task_store: TaskStore | None = None
+    task_retention_seconds: float = 3600
+    max_retained_tasks: int = 10_000
 
     def __post_init__(self) -> None:
         if not self.dedup_window_seconds > 0:
             raise DefinitionError("A2AConfig dedup_window_seconds must be positive")
+        if not self.task_retention_seconds > 0:
+            raise DefinitionError("A2AConfig task_retention_seconds must be positive")
+        if self.task_store is not None and not isinstance(self.task_store, TaskStore):
+            raise DefinitionError(
+                "A2AConfig task_store must be an a2a-sdk TaskStore "
+                "(a2a.server.tasks.TaskStore)"
+            )
+        if self.max_retained_tasks < 1:
+            raise DefinitionError("A2AConfig max_retained_tasks must be at least 1")
+        if (
+            self.task_store is None
+            and self.task_retention_seconds < self.dedup_window_seconds
+        ):
+            raise DefinitionError(
+                "A2AConfig task_retention_seconds must be at least "
+                "dedup_window_seconds, or a retried message could run again"
+            )
 
 
 def is_plain_http_url(url: str) -> bool:

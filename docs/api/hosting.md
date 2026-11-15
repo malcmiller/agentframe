@@ -37,7 +37,7 @@ AgentApp(
 | `agent` | `Agent` instance | Required in current shape | Valid registered skills and identity; no per-method A2A RPC endpoints. |
 | `host` | `HostConfig` | Explicit in current examples; omission contract open | Advertised origin, authentication integration, independent resource ceilings. |
 | `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization, policy=policy, directory=directory, remotes=remotes, default_remote=default_remote)` | The single authoritative runtime and service container for every request. Passing it together with `services=`, `authorization=`, `policy=`, `directory=`, `remotes=` or `default_remote=` raises `DefinitionError`. Pass a runtime to authorize tool calls: `AgentApp(runtime=Runtime(services=..., tool_authorization=...))`; there is no separate host setting (M5 #62). |
-| `a2a` | [`A2AConfig`](#a2aconfig) | Optional; `None` means `A2AConfig()` (M7 #75) | A2A endpoint settings; today only [message deduplication](#a2aconfig). A2A is always served. |
+| `a2a` | [`A2AConfig`](#a2aconfig) | Optional; `None` means `A2AConfig()` (M7 #75) | A2A endpoint settings: [message deduplication](#a2aconfig) and the [task store and its retention](#task-retention) (#208). A2A is always served. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
 | `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app never closes a router's model. |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
@@ -383,7 +383,7 @@ do not expose instructions, secrets, private tools, or imaginary capabilities.
 Reject invalid definitions/configuration and unsupported required adapters.
 Messages, tasks, artifacts, cancellation, and safe failures follow the selected
 official protocol/SDK version. Stream disconnection is not automatically task
-cancellation; in-memory task storage is ephemeral. First release returns
+cancellation; in-memory task storage is ephemeral and [bounded](#task-retention). First release returns
 complete validated results and must not advertise A2A streaming. Protocol tasks
 do not establish built-in human approval pause/resume. Ordinary A2A callers receive only
 the invocation ID in response metadata, not internal `RunResult` fields.
@@ -763,25 +763,36 @@ extension, and free-text requests through custom or opt-in model routing.
 
 **Constructor status:** implemented in M7 #75 as
 `A2AConfig(*, dedup_window_seconds=600, dedup_store=None)`, passed as
-`AgentApp(a2a=...)`. `enabled` and `path` stay proposed and unimplemented:
+`AgentApp(a2a=...)`; #208 added `task_store`, `task_retention_seconds` and
+`max_retained_tasks`. `enabled` and `path` stay proposed and unimplemented:
 A2A is always served at `/a2a`.
 
 ```text
-A2AConfig(*, dedup_window_seconds: float = 600, dedup_store: MessageDedupStore | None = None)
+A2AConfig(
+    *,
+    dedup_window_seconds: float = 600,
+    dedup_store: MessageDedupStore | None = None,
+    task_store: TaskStore | None = None,
+    task_retention_seconds: float = 3600,
+    max_retained_tasks: int = 10_000,
+)
 ```
 
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `dedup_window_seconds` | `float` | `600` (10 minutes), configurable; must be positive or `DefinitionError` (implemented) | How long a verified caller's `messageId` is remembered. The same caller resending it within the window gets the original task back. |
 | `dedup_store` | [`MessageDedupStore`](#messagededupstore) or `None` | `None`: in-process memory (implemented) | Where `messageId` claims are kept. Supply a shared store for multi-instance hosts. |
+| `task_store` | `a2a-sdk` `TaskStore` (`a2a.server.tasks.TaskStore`) or `None` | `None`: bounded in-process memory (implemented, #208) | Where A2A tasks are kept, for example the SDK's database store. It owns its own retention: the two settings below do not apply to it. |
+| `task_retention_seconds` | `float` | `3600` (1 hour); must be positive and, with the default store, at least `dedup_window_seconds`, or `DefinitionError` (implemented, #208) | How long the default store keeps a finished task after it finished. See [task retention](#task-retention). |
+| `max_retained_tasks` | `int` | `10_000`; must be at least 1 or `DefinitionError` (implemented, #208) | How many finished tasks the default store keeps at most; past it, the oldest finished task is deleted first. |
 | `enabled` | `bool` | Proposed, not implemented | Would control the adapter, not caller authorization. |
 | `path` | `str` | Proposed, not implemented; today always `/a2a` | Selected A2A binding endpoint, not a route per skill. |
 | Binding | No constructor field | JSON-RPC over HTTP, A2A 1.0 only (decided M2) | Advertised as `protocolBinding: "JSONRPC"`, `protocolVersion: "1.0"`. No gRPC, HTTP+JSON/REST or 0.3 compatibility; requests without `A2A-Version: 1.0` are rejected. |
-| Task-store integration, supported capabilities | Exact fields/types open | Select/verify before release | Reuse SDK interfaces; first-release complete results only. Do not advertise streaming/push/task features the host cannot execute. |
+| Supported capabilities | Exact fields/types open | Select/verify before release | Reuse SDK interfaces; first-release complete results only. Do not advertise streaming/push/task features the host cannot execute. |
 | Structured requests | A2A extension declaration/activation, data-part arguments; [wire format implemented (M2 #5)](#structured-skill-call-wire-format) | Preferred request style; no constructor keyword | Card declares support; caller selects a skill under that extension, bypassing routing but not authorization/typed validation/limits/accounting/tracing. |
 | Prompt clarification | Native A2A task/status message; exact contract open | Required for ambiguous/missing prompt input | Return `TASK_STATE_INPUT_REQUIRED` with an ask-back, not a guessed invocation or successful final result. |
 | Response correlation/errors | Native response metadata/task states; exact mappings open | The invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts) (M3 #36) | Safe failed/rejected states as appropriate; no `RunResult`, raw provider exception, stack trace or secrets. |
-| Long-running tasks | Native A2A task store; constructor setting open | In-memory default, persistent store pluggable | Task persistence is not Python skill checkpointing, human approval resume or exactly-once execution. |
+| Long-running tasks | Native A2A task store; `task_store` (#208) | Bounded in-memory default, persistent store pluggable | Task persistence is not Python skill checkpointing, human approval resume or exactly-once execution. |
 
 ```python
 from agentframe import A2AConfig, Agent, AgentApp, HostConfig
@@ -824,6 +835,55 @@ the original task instead of running the skill again.
   tasks themselves to be visible to every instance, and concurrent copies on
   different instances can both run. Applications that need exactly-once side
   effects use idempotent backends ([retries](../guides/limits.md#retries-and-duplicate-requests)).
+- **Evicted tasks.** A repeat finds its original task only while the task
+  store still has it. The default store keeps finished tasks at least as long
+  as the window, but past `max_retained_tasks` it deletes the oldest finished
+  task sooner; a repeat of a deleted task's message then runs again, in a new
+  task with the same ID.
+
+### Task retention
+
+**Implemented (#208).** The default task store keeps tasks in this process's
+memory, lost on restart, and bounds them so a long-running server does not
+grow until it exits:
+
+- A task is *finished* once it is completed, failed, cancelled or rejected.
+  It is deleted `task_retention_seconds` (default 1 hour) after it finished,
+  or earlier when more than `max_retained_tasks` (default 10,000) finished
+  tasks are kept, oldest first.
+- Tasks in any non-terminal state (for example submitted, working,
+  input-required or auth-required) are **never deleted**. A caller that never
+  answers an input-required task leaves it in memory until the process exits.
+- A deleted task is unknown, as if it never existed: `GetTask` and
+  `CancelTask` fail with the A2A `TaskNotFoundError` (JSON-RPC `-32001`), and
+  `ListTasks` no longer lists it. Expired tasks are deleted whenever the store
+  is used, so none is returned after its time is up.
+- `task_retention_seconds` must be at least `dedup_window_seconds`, so a
+  retried message normally finds its task (see the evicted-tasks note above).
+- Each result is at most `HostConfig.max_response_bytes` (4 MiB) and each
+  request at most `max_request_bytes` (1 MiB), but a task's history grows with
+  each answered question, so the count bounds memory only together with those
+  limits. Lower `max_retained_tasks` on small hosts.
+
+A `task_store` passed to `A2AConfig` replaces this default and owns its own
+retention; `AgentApp` never deletes from it. It is wrapped, so shutdown still
+waits for every run's final state to be saved (#128).
+
+```python
+from a2a.server.tasks import TaskStore
+
+from agentframe import A2AConfig
+
+
+def keep_fewer_tasks() -> A2AConfig:
+    # Keep finished tasks for 15 minutes, and at most 1,000 of them.
+    return A2AConfig(task_retention_seconds=900, max_retained_tasks=1_000)
+
+
+def use_my_store(store: TaskStore) -> A2AConfig:
+    # An application-supplied store, for example the SDK's database store.
+    return A2AConfig(task_store=store)
+```
 
 **Behavior / failures:** structured selection is deterministic with no routing
 model call/cost; the selected skill can still run inference. Unknown skill IDs
