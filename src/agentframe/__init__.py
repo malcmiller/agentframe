@@ -74,7 +74,6 @@ from agentframe.orchestration.plan import Plan, PlanStep
 from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
 from agentframe.runtime.runtime import RunResult, Runtime
-from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.security.authentication import (
     AllowAnonymous,
     APIKey,
@@ -96,6 +95,7 @@ from agentframe.security.execution_policy import (
     ToolCheck,
 )
 from agentframe.security.principal import Principal
+from agentframe.usage import FinishReason, Usage
 
 if TYPE_CHECKING:
     from agentframe.discovery.foundry import (

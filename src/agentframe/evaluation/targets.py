@@ -27,8 +27,8 @@ from agentframe.runtime.generation import RunAccounting
 from agentframe.runtime.limits import DEFAULT_LIMITS
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.runtime import Runtime
-from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.security.principal import Principal
+from agentframe.usage import FinishReason, Usage
 
 
 @dataclass(frozen=True, kw_only=True)

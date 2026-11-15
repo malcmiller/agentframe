@@ -21,7 +21,7 @@ from agentframe.evaluation.report import (
 )
 from agentframe.evaluation.scoring import Scorer, run_scorer, scorer_name
 from agentframe.evaluation.targets import Target, TargetResult
-from agentframe.runtime.usage import Usage
+from agentframe.usage import Usage
 
 logger = logging.getLogger(__name__)
 

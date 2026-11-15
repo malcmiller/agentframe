@@ -53,7 +53,7 @@ from agentframe.models.base import (
     ToolSpec,
 )
 from agentframe.models.strict_schema import drop_defaulted_nulls, strict_schema
-from agentframe.runtime.usage import FinishReason, Usage
+from agentframe.usage import FinishReason, Usage
 
 FOUNDRY_SCOPE = "https://ai.azure.com/.default"
 """Microsoft Entra scope for Foundry inference tokens."""

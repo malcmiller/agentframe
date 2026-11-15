@@ -21,11 +21,11 @@ from a2a.utils.constants import PROTOCOL_VERSION_1_0, TransportProtocol
 from agentframe.authoring.definitions import AgentDefinition, SkillDefinition
 from agentframe.errors import DefinitionError
 from agentframe.hosting.host import HostConfig
-from agentframe.hosting.skill_call import CONTEXT_FIELDS, CONTEXT_PARAM
-from agentframe.hosting.skill_call import (
+from agentframe.security.authentication import Authenticator, DeclaresCardSecurity
+from agentframe.skill_call import CONTEXT_FIELDS, CONTEXT_PARAM
+from agentframe.skill_call import (
     SKILL_CALL_EXTENSION_URI as SKILL_CALL_EXTENSION_URI,
 )
-from agentframe.security.authentication import Authenticator, DeclaresCardSecurity
 
 A2A_PATH = "/a2a"
 # Callers send free text or JSON arguments, and receive text or JSON results.

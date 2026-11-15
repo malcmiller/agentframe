@@ -4,7 +4,7 @@ from collections.abc import Collection
 
 from pydantic import ValidationError
 
-from agentframe.runtime.usage import Usage
+from agentframe.usage import Usage
 
 
 class AgentFrameError(Exception):

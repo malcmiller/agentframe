@@ -17,7 +17,7 @@ from agentframe.models.base import Model
 from agentframe.runtime.limits import DEFAULT_LIMITS
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.runtime import Runtime
-from agentframe.runtime.usage import Usage
+from agentframe.usage import Usage
 
 _INSTRUCTIONS = """\
 You are an evaluation judge. Decide whether one output meets the rubric below.

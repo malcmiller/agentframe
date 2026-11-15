@@ -46,13 +46,13 @@ from agentframe.runtime.generation import (
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.remotes import RunRemotes
-from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.security.authorization import (
     AuthorizationPolicy,
     ToolAuthorizationPolicy,
 )
 from agentframe.security.execution_policy import ExecutionPolicy, enforce_checks
 from agentframe.security.principal import Principal
+from agentframe.usage import FinishReason, Usage
 
 
 @dataclass(frozen=True)

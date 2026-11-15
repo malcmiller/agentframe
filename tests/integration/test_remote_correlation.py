@@ -53,7 +53,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI
+from agentframe.skill_call import SKILL_CALL_EXTENSION_URI
 from local_server import AppFactory, ServeLocally
 
 type Next = Remote[Literal["next"]]

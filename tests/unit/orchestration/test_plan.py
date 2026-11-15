@@ -25,8 +25,8 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI
 from agentframe.orchestration.plan import substituted_arguments, substituted_text
+from agentframe.skill_call import SKILL_CALL_EXTENSION_URI
 from agentframe.testing import ScriptedModel
 
 FIND_SOURCES = RemoteSkill(

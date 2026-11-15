@@ -33,8 +33,8 @@ from agentframe import (
     SkillRouter,
     agent,
 )
-from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.testing import ScriptedModel
+from agentframe.usage import FinishReason, Usage
 from examples.routed_assistant import RoutedAssistant, Temperature, create_app
 from local_server import ServeLocally
 

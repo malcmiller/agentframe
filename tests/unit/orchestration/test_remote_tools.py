@@ -42,8 +42,8 @@ from agentframe import (
     skill,
     tool,
 )
-from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI
 from agentframe.orchestration.remote_tools import ASK_SCHEMA
+from agentframe.skill_call import SKILL_CALL_EXTENSION_URI
 from agentframe.testing import ScriptedModel
 
 TOOL_MODEL = ModelCapabilities(context_window=128_000, tools=True)

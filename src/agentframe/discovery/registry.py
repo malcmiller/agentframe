@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from agentframe.errors import DefinitionError
-from agentframe.hosting.host import is_plain_http_url
+from agentframe.urls import is_plain_http_url
 
 _MAX_FILE_BYTES = 1_048_576
 

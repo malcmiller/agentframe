@@ -23,8 +23,8 @@ from agentframe import (
     ToolCall,
 )
 from agentframe.runtime import generation
-from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.testing import ScriptedModel
+from agentframe.usage import FinishReason, Usage
 from examples.orders import Order, OrderStore, create_app
 from local_server import ServeLocally
 

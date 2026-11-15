@@ -41,8 +41,8 @@ from agentframe import (
     dev_settings,
     skill,
 )
-from agentframe.runtime.usage import FinishReason
 from agentframe.testing import ScriptedModel
+from agentframe.usage import FinishReason
 from examples.multi_agent import planner, research
 
 BRIEF_TOKENS = 300

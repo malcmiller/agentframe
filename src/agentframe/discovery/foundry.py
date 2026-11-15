@@ -23,7 +23,7 @@ except ImportError as error:
 
 from agentframe.discovery.registry import AgentQuery, AgentReference, AgentRegistry
 from agentframe.errors import DefinitionError
-from agentframe.hosting.host import is_plain_http_url
+from agentframe.urls import is_plain_http_url
 
 # The Entra scope for Foundry project and agent endpoint access.
 FOUNDRY_SCOPE = "https://ai.azure.com/.default"

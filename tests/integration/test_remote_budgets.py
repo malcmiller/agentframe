@@ -52,9 +52,9 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI
-from agentframe.runtime.usage import FinishReason
+from agentframe.skill_call import SKILL_CALL_EXTENSION_URI
 from agentframe.testing import ScriptedModel
+from agentframe.usage import FinishReason
 from local_server import AppFactory, ServeLocally
 
 type Peer = Remote[Literal["peer"]]
