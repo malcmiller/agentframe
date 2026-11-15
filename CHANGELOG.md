@@ -8,6 +8,15 @@ changelog.
 
 ## [Unreleased]
 
+### Fixed
+
+- A `Remote` parameter annotated with an alias of an alias
+  (`type A = Remote[Literal["x"]]; type B = A`) now resolves its agent name
+  instead of failing with "unsupported type annotation". Aliases are read
+  through up to 10 levels; a deeper or self-referencing alias raises
+  `DefinitionError`, and an invalid `Remote` annotation's error now names the
+  parameter (#214).
+
 ## [0.3.0] - 2026-11-14
 
 The evaluation and model-planned orchestration release (M9 and M10).

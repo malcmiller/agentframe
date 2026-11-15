@@ -227,6 +227,42 @@ def test_remote_without_one_literal_name_is_a_definition_error(
         remote_name(annotation)
 
 
+type NestedResearch = Research
+type BadRemote = Remote[str]
+type NestedBadRemote = BadRemote
+type Looping = Looping  # type: ignore[misc]
+
+
+def test_remote_name_reads_through_nested_type_aliases() -> None:
+    @agent(name="Nested", description="Plans with research.", version="0.1.0")
+    class Nested(Agent):
+        @skill(id="plan", description="Research a goal.", tags=["planning"])
+        async def plan(
+            self, goal: str, research: NestedResearch, ctx: RunContext
+        ) -> str:
+            return await research.ask(goal)
+
+    [plan] = Nested.definition().skills.values()
+
+    assert plan.remotes == {"research": "research-agent"}
+
+
+def test_a_bad_nested_remote_alias_names_the_parameter() -> None:
+    expected = r"parameter 'research': Name the remote agent as Remote\[Literal"
+    with pytest.raises(DefinitionError, match=expected):
+
+        @agent(name="Bad", description="Plans with research.", version="0.1.0")
+        class Bad(Agent):
+            @skill(id="plan", description="Research a goal.", tags=["planning"])
+            async def plan(self, research: NestedBadRemote, ctx: RunContext) -> str:
+                return ""
+
+
+def test_a_self_referencing_alias_is_a_definition_error() -> None:
+    with pytest.raises(DefinitionError, match="refers to itself"):
+        remote_name(Looping)
+
+
 def test_remote_parameters_are_not_arguments_or_in_the_card() -> None:
     [plan] = Planner.definition().skills.values()
     host = HostConfig(public_url="http://127.0.0.1:8000", auth=AllowAnonymous())

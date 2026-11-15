@@ -321,7 +321,9 @@ def _split_parameters(
         try:
             remote = remote_name(annotation)
         except DefinitionError as error:
-            raise DefinitionError(f"{where}: {error.message}") from None
+            raise DefinitionError(
+                f"{where}: parameter '{parameter.name}': {error.message}"
+            ) from None
         if parameter.name == "ctx":
             if annotation is not RunContext:
                 raise DefinitionError(f"{where}: 'ctx' must be annotated RunContext")
