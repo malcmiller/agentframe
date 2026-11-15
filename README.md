@@ -52,7 +52,11 @@ M8+ multi-agent composition, released as 0.2.0, is complete: registries and a
 managed `AgentDirectory`, `Remote[Literal["name"]]` bindings with `call` and `ask`, deadline, token,
 hop-depth and correlation propagation, service and Entra on-behalf-of
 identity, `agentframe dev` and `agentframe compose` (see
-[multi-agent composition](#multi-agent-composition)). MCP, telemetry and
+[multi-agent composition](#multi-agent-composition)). M9 evaluation and M10
+model-planned orchestration are built on `main`, not yet released: an
+orchestrator's model can call registered agents' skills as tools, or plan and
+run checked parallel plans (see the
+[orchestration guide](docs/guides/orchestration.md)). MCP, telemetry and
 streaming are not implemented yet; documentation for them is labeled as
 planned design, and their unspecified interfaces remain open.
 
@@ -233,7 +237,17 @@ ID, on behalf of the signed-in user (`OnBehalfOf(scope=...)`).
 [`examples/multi_agent`](examples/multi_agent) is a complete planner and
 research agent; run both with `agentframe dev` from that directory.
 `tests/integration/test_multi_agent_release.py` proves the release criteria
-with each agent in its own `agentframe run` process. See the
+with each agent in its own `agentframe run` process.
+
+M10 (built, not yet released) lets the orchestrator's model choose instead:
+`ctx.remote_skills(...)` lists registered agents' skills from their Agent
+Cards, `ctx.generate(goal, tools=[*skills])` calls them as tools, and
+`ctx.plan(goal, skills)` with `ctx.run_plan(plan, skills)` makes and runs a
+checked plan, in parallel where its steps allow. The example's planner adds
+`propose` and `planned` skills over the research agent and a writer agent,
+behind permissions, a plan check and a tool check; read the
+[orchestration guide](docs/guides/orchestration.md) and its safety checklist
+before exposing a skill like that. See the
 [agent examples](docs/guides/agent-examples.md#multi-agent-composition),
 [local development](docs/guides/development.md) and the
 [discovery reference](docs/api/discovery.md).
@@ -379,6 +393,8 @@ remote services' limits. Per-remote Entra OBO or explicit service identity,
 remaining deadline/token ceilings and default maximum 5 hops constrain calls.
 No orchestration helpers in the first multi-agent release: use plain Python
 `await`, `asyncio.TaskGroup` and `directory.find(skill=... / tags=...)`.
+M10 (built, not yet released) adds opt-in model-planned orchestration on top;
+plain Python stays the default.
 Typed `Remote[ResearchAgent]` proxies are a later option, not proprietary RPC.
 
 M2 adds `agentframe run module:create_app` (and `module:Class --dev` for
@@ -423,7 +439,7 @@ Ollama or Foundry from `AGENTFRAME_MODEL_PROVIDER` (see the
 | [`examples/assistant.py`](examples/assistant.py) | Text generation, a typed structured output and a model-free skill on one agent. |
 | [`examples/orders.py`](examples/orders.py) | Tool calling with permissions and a tool policy, behind a development API key. |
 | [`examples/routed_assistant.py`](examples/routed_assistant.py) | Free text routed to a skill by the built-in `ModelRouter`. |
-| [`examples/multi_agent`](examples/multi_agent) | A planner that fans out structured calls and free-text asks to a research agent over A2A. |
+| [`examples/multi_agent`](examples/multi_agent) | A planner that fans out structured calls and free-text asks to a research agent over A2A, and lets its model plan and run a post over the research and writer agents (M10), with a planner evaluation. |
 | [`examples/plan_approval.py`](examples/plan_approval.py) | Human approval of model-made plans: one skill proposes a plan, a permission-protected skill runs the reviewed plan, with a plan check. |
 
 [`examples/smoke.py`](examples/smoke.py) serves every example in-process with
@@ -448,7 +464,8 @@ run it yourself from the repository root with `uv run python -m examples.smoke`.
 - [Tracing and correlation](docs/design/tracing.md)
 - [Evaluation harness (built M9, not yet released)](docs/design/evaluation.md) and
   [evaluating agents](docs/guides/evaluation.md)
-- [Model-planned orchestration (planned M10)](docs/design/orchestration.md)
+- [Model-planned orchestration (built M10, not yet released)](docs/design/orchestration.md) and
+  [the orchestration guide](docs/guides/orchestration.md)
 - [A2A hosting and optional MCP skill configuration](docs/design/mcp-skills.md)
 - [Skill authorization and caller identity](docs/guides/authorization.md)
 - [Prompt safeguarding and shared responsibilities](docs/design/prompt-safeguarding.md)
@@ -501,7 +518,24 @@ before a release. It runs only from **Actions > Foundry provider tests > Run
 workflow**, never on push or pull request, and waits for a reviewer to approve
 the `foundry` environment. It signs in to Azure with OpenID Connect, so the
 repository stores no secret; Foundry calls cost money, so run it sparingly.
-There is no Ollama job, since the model download is large. The
+There is no Ollama job, since the model download is large.
+
+The M10 planner tests in `test_providers.py` run the `examples/multi_agent`
+planner with the real model (the specialists use stand-in models): one plans
+and runs the example's post, checking only the entries used and completion,
+and one runs the planner evaluation with `report.require(...)`. Planning is
+nondeterministic: `llama3.2:3b` rarely plans the post validly, so that test is
+an expected failure for Ollama, and its evaluation only requires half the
+plans to be valid; measured rates are in the
+[orchestration guide](docs/guides/orchestration.md#measure-the-planner).
+For example:
+
+```bash
+AGENTFRAME_TEST_OLLAMA=1 AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \
+    uv run pytest -m ollama -k real_planner
+```
+
+The
 `FoundryAgentRegistry` test needs its own variables (below in AGENTS.md), so
 the workflow skips it.
 

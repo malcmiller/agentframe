@@ -17,7 +17,7 @@ opt-in model routing and M7 hardening alongside design documentation. Version
 0.1.0, the first usable single-agent release, and version 0.2.0, the M8+
 multi-agent release (#83-#97), are published on PyPI as `agentframe-py`
 (import `agentframe`). Pre-1.0 there is no stable API. M9 evaluation (#164) is built, not yet
-released; M10 model-planned orchestration (#177) is planned next; later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
+released; M10 model-planned orchestration (#177, #166-#176) is built, not yet released; later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
@@ -99,8 +99,8 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/evaluation/` | Evaluation harness (M9): `cases.py` (`Case`, `load_cases`), `targets.py` (`Target`, `TargetResult`, `LocalSkill`, `A2ATarget`), `scoring.py` (`Score`, scorer calls, built-ins `equals`, `contains`, `valid`), `judge.py` (`Judge`, the rubric scorer's model-backed run and its budget holds), `report.py` (`CaseResult`, `EvalReport`, versioned JSON, `require`), `budget.py` (`TokenBudget`, evaluation-wide token holds), `harness.py` (`Evaluation`). Imported as `agentframe.evaluation`, not re-exported from `agentframe`, so its `__init__.py` re-exports its own public names. |
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
-| `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`). |
-| `examples/` | Runnable examples, each with `create_app()` (`evaluation.py` has `create_evaluation()` instead); `smoke.py` checks them all against the installed wheel in CI. |
+| `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`); `agent_processes.py` starts agents (`agentframe run`) and the plain A2A peer (`peer_process.py`) as separate processes for release tests. |
+| `examples/` | Runnable examples, each with `create_app()` (`evaluation.py` has `create_evaluation()` instead; `multi_agent/planner_evaluation.py` has `create_planner_evaluation(model, runtime)`); `smoke.py` checks them all against the installed wheel in CI. `multi_agent/` holds the research, writer and planner agents (hand-written `plan`, model-planned `propose` / `planned`, M10). |
 | `docs/roadmap.md` | Product boundaries, decisions and milestones. |
 | `docs/guides/` | How to use AgentFrame and how its behavior works. |
 | `docs/design/` | Rationale and proposed designs. |
@@ -128,7 +128,11 @@ by majority of `votes=3` (M9 #160, #161), `examples/evaluation.py`'s answers
 graded by a rubric judge (M9 #163), a model planning one unambiguous
 two-step goal over two localhost agents' cards with `ctx.plan` (M10 #170,
 checking only the entries and the dependency; `llama3.2:3b` sometimes writes
-an invalid plan), a Foundry one-tool round trip that replays encrypted
+an invalid plan), the `examples/multi_agent` planner planning and running its
+post with the real model and the planner evaluation with `report.require`
+(M10 #176, `-k real_planner`; specialists use stand-in models; the Ollama
+post test is an expected failure since `llama3.2:3b` rarely plans it validly,
+and its evaluation only requires half the plans valid), a Foundry one-tool round trip that replays encrypted
 reasoning items and one unambiguous free-text request routed by
 `examples/routed_assistant.py` over A2A (checking only the selected skill and
 that its argument is present, since routing is nondeterministic). They are marked
@@ -553,7 +557,9 @@ reservations. Default max 5 remote hops, excess fails. These controls use the
 same A2A extension; detailed config/wire/usage trust remains open, not base
 protocol fields or hard billing guarantees.
 No orchestration helpers in the first multi-agent release: plain await,
-asyncio.TaskGroup and directory.find. Later optional `Remote[ResearchAgent]`
+asyncio.TaskGroup and directory.find. M10 (built) adds opt-in remote skills as model
+tools and checked plans (`docs/guides/orchestration.md`); plain await stays
+the default. Later optional `Remote[ResearchAgent]`
 typed proxy always uses structured selection, never prompt routing. Prove two or more
 independently deployed AgentFrame agents, an orchestrator discovering/calling a
 specialist with propagated context, and non-AgentFrame A2A client/server interop.
@@ -620,7 +626,11 @@ failed runs log ID, class and safe message; skill/tool/router tracebacks stay in
 operator logs with the ID, so authors keep secrets out of exception messages.
 `tests/integration/test_hardening.py` is the M7 end-to-end acceptance suite;
 `tests/integration/test_multi_agent_release.py` is M8+'s, running
-`examples/multi_agent` as separate `agentframe run` processes.
+`examples/multi_agent` as separate `agentframe run` processes;
+`tests/integration/test_orchestration_release.py` is M10's (#176), running its
+research, writer and planner agents, the plain SDK peer and a registry-wide
+coordinator (`tests/support/release_targets.py`) as separate processes with a
+scripted planning model, plus the planner evaluation.
 Network host examples must include clearly labeled application-supplied
 development authentication/authorization placeholders where appropriate;
 loopback/omission is not access policy or a production-safe default.
@@ -688,7 +698,7 @@ remain open; tracing/accounting/enforcement work independently. See
 
 Read `README.md` and `docs/README.md` first. Keep `docs/roadmap.md`, the
 guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
-`authorization.md`, `development.md`, `evaluation.md`) and the design docs
+`authorization.md`, `development.md`, `evaluation.md`, `orchestration.md`) and the design docs
 (`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
 `prompt-safeguarding.md`, `discovery.md`, `streaming.md`, `evaluation.md`,
 `orchestration.md`) consistent, including discovery/streaming API pages and

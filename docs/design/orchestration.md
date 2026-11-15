@@ -1,6 +1,8 @@
 # Model-planned orchestration
 
-**Status: M10 in progress.** The [remote skill catalog](#remote-skill-catalog)
+**Status: M10 built, not yet released.** Every story (#166-#176) is
+implemented; the [orchestration guide](../guides/orchestration.md) shows how
+to use it. The [remote skill catalog](#remote-skill-catalog)
 ([#166](https://github.com/malcmiller/agentframe/issues/166)) and
 [remote skills as model tools](#remote-skills-as-model-tools)
 ([#167](https://github.com/malcmiller/agentframe/issues/167), permissions
@@ -11,12 +13,15 @@
 ([#170](https://github.com/malcmiller/agentframe/issues/170)), [running a
 plan](#running-a-plan) ([#171](https://github.com/malcmiller/agentframe/issues/171))
 and [plan checks with the approval pattern](#authorization-and-approval)
-([#174](https://github.com/malcmiller/agentframe/issues/174)) are implemented
-(reference: [orchestration API](../api/orchestration.md)); everything else on
-this page is planned, not implemented. The design choices listed under
-[decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided;
-exact signatures and remaining details are settled while building the stories
-of the [M10 overview](https://github.com/malcmiller/agentframe/issues/177).
+([#174](https://github.com/malcmiller/agentframe/issues/174)), the `continue`
+failure policy (#172), per-step logs and usage (#173), the optional
+`default_remote` identity (#175) and the guide, example, release acceptance
+and planner evaluation ([#176](https://github.com/malcmiller/agentframe/issues/176))
+are implemented (reference: [orchestration API](../api/orchestration.md)).
+Sketches below written before implementation are kept as rationale; the
+reference holds the implemented names. The design choices listed under
+[decisions confirmed 2026-11-13](#decisions-confirmed-2026-11-13) are decided
+([M10 overview](https://github.com/malcmiller/agentframe/issues/177)).
 
 Since M8+, an orchestrator is an ordinary agent whose skill calls specialists it
 declared as `Remote[Literal["name"]]` parameters, using plain `await` and
@@ -134,10 +139,11 @@ Security research shapes the boundaries:
 
 ## API sketch
 
-Illustrative until built. Public names are importable from `agentframe`.
+Implemented as sketched (#166-#171); public names are importable from
+`agentframe`. A complete, runnable version is the planner of
+[`examples/multi_agent`](../../examples/multi_agent).
 
 ```python
-# proposed, not implemented
 from typing import Literal
 
 from agentframe import Agent, Remote, RunContext, agent, skill
@@ -196,8 +202,8 @@ flowchart LR
 
 Implemented (#166, `max_tokens_per_call=` #167, `permissions=` #168) as `await
 ctx.remote_skills(*remotes, agents=None, skill=None, tags=(), ask=False,
-max_tokens_per_call=None, permissions=None)`; the `default_remote` identity
-below (#175) is a planned addition. It returns a `SkillCatalog`
+max_tokens_per_call=None, permissions=None)`, with the `default_remote` identity
+below (implemented, #175). It returns a `SkillCatalog`
 ([#166](https://github.com/malcmiller/agentframe/issues/166)): an immutable list
 of `RemoteSkill` entries plus the run's bindings.
 
@@ -440,9 +446,9 @@ and tokens, with `model_request_checks` applied:
 
 Implemented ([#171](https://github.com/malcmiller/agentframe/issues/171);
 [API](../api/orchestration.md#runcontextrun_plan)) as `await ctx.run_plan(plan,
-skills, max_parallel=4, max_tokens_per_step=None, max_steps=8)`; the
-`on_failure="continue"` option is planned
-([#172](https://github.com/malcmiller/agentframe/issues/172)). It checks the
+skills, max_parallel=4, max_tokens_per_step=None, max_steps=8,
+on_failure="stop")`, with `on_failure="continue"` implemented in
+[#172](https://github.com/malcmiller/agentframe/issues/172). It checks the
 plan again as `ctx.plan` does, against only the entries the caller may use
 (a hidden entry fails like an unknown one), even a plan from `ctx.plan`,
 then runs it under one `asyncio.TaskGroup`: a step starts when its
@@ -589,6 +595,10 @@ orchestrators: a scorer can compare the entries used against a case's expected
 entries. The acceptance story
 ([#176](https://github.com/malcmiller/agentframe/issues/176)) runs a small planner
 evaluation with M9's harness, so only that story depends on M9 (#153, #156).
+Implemented as `examples/multi_agent/planner_evaluation.py`: each case's
+`expected` is a reference `Plan`, and two plain scorers compare only the
+entries used and which entries wait for which. Measured rates are in the
+[guide](../guides/orchestration.md#measure-the-planner).
 
 ## Packaging
 

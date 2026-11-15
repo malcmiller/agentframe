@@ -26,6 +26,11 @@ optional [`default_remote`](#default_remote) identity for registered agents
 
 Plain `await` on declared [`Remote`](discovery.md#remoteliteralname)
 parameters stays the default way to call other agents; the catalog is opt-in.
+M10 is built, not yet released. The [orchestration guide](../guides/orchestration.md)
+explains when to use each style, with a safety checklist; the planner of
+[`examples/multi_agent`](../../examples/multi_agent) plans and runs over two
+specialists, and `planner_evaluation.py` there measures its plans
+([#176](https://github.com/malcmiller/agentframe/issues/176)).
 
 ## `RunContext.remote_skills`
 
@@ -701,7 +706,7 @@ field in the record's `extra`, with the run's correlation fields `agent`,
 `invocation_id`, `root_invocation_id` and `parent_invocation_id`
 ([correlation](../design/tracing.md#implemented-cross-agent-correlation-m8-91)):
 
-| Record | Logger | Extra fields |
+| Message starts with | Logger | Extra fields |
 | --- | --- | --- |
 | `Plan created` | `agentframe.orchestration.planning` | `step_count` and `uses` (the steps' entry names, in order). Logged by `ctx.plan`. |
 | `Plan step started` | `agentframe.orchestration.execution` | `plan_step` (step ID), `use` (entry name), `status` `"started"`; `error_type`, `remote_task_id`, `duration_ms` and `total_tokens` are `None`. |
