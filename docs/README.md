@@ -69,9 +69,9 @@ authoring walkthrough. Changes to proposed interfaces should keep the reference,
 guides, and design documents consistent. The reference's
 [open-contract list](api/README.md#decisions-still-needed) is a navigation aid,
 not a set of settled signatures. A2A protocol 1.0 and the official `a2a-sdk` are
-selected; M2 pins `a2a-sdk[http-server]==1.3.0` and uses the JSON-RPC over HTTP
-binding for protocol 1.0 only. References to the latest specification are not a
-promise of automatic compatibility with future releases.
+selected; `a2a-sdk[http-server]>=1.3.0,<2` is a core dependency, using the
+JSON-RPC over HTTP binding for protocol 1.0 only. References to the latest
+specification are not a promise of automatic compatibility with future releases.
 
 The [reviewed release decisions](roadmap.md#reviewed-release-decisions)
 include built-in opt-in model routing plus custom routers, first-release typed
@@ -125,6 +125,6 @@ auth. M8+ Foundry discovery uses the chosen projects agents API via
 formatting/linting, strict mypy on `agentframe` and tests, and pytest with
 pytest-asyncio auto mode, with CI/pre-commit checks.
 Follow the [readability-first contributor rules](../AGENTS.md#code-quality-and-readability).
-Exact development pins live in `pyproject.toml` and `uv.lock`. Protocol/provider
-dependencies are not installed yet (M1 added only Pydantic); transport and provider compatibility
-still need implementation evidence in their milestones.
+Exact development pins live in `pyproject.toml` and `uv.lock`; runtime
+dependencies and extras are compatible ranges (#219), tested at their lower
+bounds by the `lowest-deps` CI job.

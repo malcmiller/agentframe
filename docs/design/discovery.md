@@ -69,8 +69,8 @@ Decisions confirmed 2026-11-12:
   check). The registry accepts plain `http`; the directory (#84) refuses it
   except for loopback hosts or hosts listed in `AgentDirectory(allow_http_hosts=[...])`.
 - The file is read on each call (`asyncio.to_thread`, at most 1 MiB,
-  `yaml.safe_load`); the directory caches cards, not files. PyYAML is an
-  exactly pinned core dependency.
+  `yaml.safe_load`); the directory caches cards, not files. PyYAML is a core
+  dependency (`pyyaml>=6.0.3,<7`).
 - Configuration problems raise `DefinitionError` naming the source and agent.
 
 There is no I/O at import or construction, no automatic environment/file search,
@@ -92,7 +92,8 @@ AgentFrame's target. Explicitly select 1.0 rather than relying on a provider def
 Implemented (#86), proven offline against a fake of the agents API; the
 opt-in real-project test awaits a project with an A2A-enabled agent:
 
-- `azure-ai-projects==2.11.0` is exactly pinned in the `foundry` extra. Each
+- `azure-ai-projects>=2.11.0,<3` is in the `foundry` extra (a compatible
+  range since #219). Each
   call creates and closes its own async `AIProjectClient`, so the registry
   holds no connections and has nothing to close.
 - `list` follows every page of `agents.list()` (100 per page), then reads

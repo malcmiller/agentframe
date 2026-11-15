@@ -321,7 +321,7 @@ incoming A2A enabled, read through the Foundry project agents API with the
 official `azure-ai-projects` package. Implemented (#86) and proven offline
 against a fake of the API; the opt-in real-project test is below. Read-only:
 it never enables A2A, publishes or deploys. Needs the `foundry` extra
-(`pip install 'agentframe-py[foundry]'`, which pins `azure-ai-projects==2.11.0`);
+(`pip install 'agentframe-py[foundry]'`, which installs `azure-ai-projects>=2.11.0,<3`);
 imported lazily, so `import agentframe` works without it.
 
 ```text

@@ -24,6 +24,14 @@ changelog.
 
 ### Changed
 
+- Runtime dependencies and the `server`, `ollama`, `foundry` and `entra`
+  extras are now compatible ranges instead of exact pins, from the lowest
+  tested version up to the next breaking release (next major, or next minor
+  for 0.x packages), for example `a2a-sdk[http-server]>=1.3.0,<2` and
+  `httpx>=0.28.1,<0.29`, so AgentFrame installs alongside other packages
+  needing newer compatible versions. The Pydantic minimum rises from 2.14 to
+  2.14.2, the lowest version the tests pass with. A new `lowest-deps` CI job
+  runs the tests on the lowest allowed versions; `uv.lock` stays exact (#219).
 - `examples/multi_agent`: the research agent and the planner start without
   Ollama (#218). They use local Llama through Ollama only when
   `AGENTFRAME_OLLAMA_MODEL` names an installed model tag, instead of defaulting
