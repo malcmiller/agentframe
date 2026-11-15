@@ -295,8 +295,10 @@ Python 3.13.16, 3.14.8 and 3.15.0; fresh-clone `uv sync`, pre-commit, sdist/whee
 builds, and an isolated wheel import/type marker check passed. The
 [green CI run on `main`](https://github.com/malcmiller/agentframe/actions/runs/43155553347)
 at commit `8d6a825` passed all three Python jobs and the build/import job.
-CI uses `actions/checkout@v7` and `astral-sh/setup-uv@v10.3.3`; the plan's
-`setup-uv@v10` alias did not resolve, so the verified release tag is pinned.
+CI used `actions/checkout@v7` and `astral-sh/setup-uv@v10.3.3`; the plan's
+`setup-uv@v10` alias did not resolve, so the verified release tag was pinned.
+Since #209 every workflow action is pinned to a commit SHA with its release tag
+in a comment, kept current by Dependabot (`.github/dependabot.yml`).
 
 M1 decisions confirmed on **2026-11-11** and implemented: `@agent` name/description
 default to the class name/docstring (`version` required); `@skill` requires `id`,

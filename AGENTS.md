@@ -61,6 +61,10 @@ executable.
   `pyproject.toml` pins development tools and hatchling; commit `uv.lock`.
 - CI runs format checks (`ruff format --check`), lint, type checks and tests.
   Pre-commit runs Ruff and mypy; tests stay in CI rather than on every commit.
+- Pin every workflow action to a full commit SHA with a `# vX.Y.Z` comment
+  (verify the SHA matches the tag); give jobs `timeout-minutes` and use
+  `persist-credentials: false` on checkouts. Dependabot updates the pins and
+  `uv.lock` weekly; report vulnerabilities as `SECURITY.md` describes.
 
 Use uv 0.13.1 (also pinned in CI). From a fresh clone, `uv sync` creates `.venv`,
 installs the package and development tools, and downloads Python if needed:
