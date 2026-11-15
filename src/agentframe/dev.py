@@ -87,7 +87,8 @@ def dev_settings() -> DevSettings:
             )
 
     The directory has its own HTTP client, open for the life of the process,
-    because an app factory has no ``async with`` to open it in.
+    because an app factory has no ``async with`` to open it in. The client
+    keeps no idle connections, so none is left open when it is discarded.
 
     Returns:
         The agent's address, authentication, directory and remotes.
@@ -174,7 +175,12 @@ def _directory() -> AgentDirectory | None:
     return AgentDirectory(
         sources=sources,
         allow_http_hosts=[host.strip() for host in allowed if host.strip()],
-        # Like the directory's own client: credentials are never followed
-        # through a redirect.
-        http_client=httpx.AsyncClient(follow_redirects=False),
+        # The client is open for the life of the process and never closed,
+        # so it keeps no idle connections, which would be left open and
+        # warned about when it is garbage collected. Like the directory's own
+        # client, it never follows a redirect, so credentials are not sent on.
+        http_client=httpx.AsyncClient(
+            follow_redirects=False,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        ),
     )

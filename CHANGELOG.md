@@ -37,6 +37,10 @@ changelog.
 
 ### Fixed
 
+- The directory from `dev_settings()` no longer leaves connections open when
+  it is discarded, which raised `ResourceWarning`s, for example in tests that
+  build several development apps in one process. Its HTTP client, open for
+  the life of the process, now keeps no idle connections (#221).
 - A `Remote` parameter annotated with an alias of an alias
   (`type A = Remote[Literal["x"]]; type B = A`) now resolves its agent name
   instead of failing with "unsupported type annotation". Aliases are read

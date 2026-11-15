@@ -140,6 +140,10 @@ def create_directory() -> AgentDirectory:
     return AgentDirectory(
         sources=[EnvironmentAgentRegistry("AGENTFRAME_AGENTS")],
         allow_http_hosts=["127.0.0.1"],
-        # Credentials are never followed through a redirect.
-        http_client=httpx.AsyncClient(follow_redirects=False),
+        # Credentials are never followed through a redirect. The client is
+        # never closed, so it keeps no idle connections that would be left open.
+        http_client=httpx.AsyncClient(
+            follow_redirects=False,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        ),
     )
