@@ -802,19 +802,29 @@ def _texts(parts: Iterable[Part]) -> list[str]:
     return [part.text for part in parts if part.WhichOneof("content") == "text"]
 
 
+# Bounds alias unwrapping, so an alias that refers to itself cannot loop forever.
+_MAX_ALIAS_DEPTH = 10
+
+
 def remote_name(annotation: object) -> str | None:
     """Return the agent name of a ``Remote[Literal["name"]]`` annotation.
 
-    A ``type`` alias of one is read through.
+    ``type`` aliases of one are read through, including aliases of aliases.
 
     Returns:
         The name, or ``None`` when ``annotation`` is not a ``Remote``.
 
     Raises:
-        DefinitionError: ``Remote`` is used without exactly one string name.
+        DefinitionError: ``Remote`` is used without exactly one string name,
+            or a ``type`` alias nests too deeply or refers to itself.
     """
+    for _ in range(_MAX_ALIAS_DEPTH):
+        if isinstance(annotation, TypeAliasType):
+            annotation = annotation.__value__
     if isinstance(annotation, TypeAliasType):
-        annotation = annotation.__value__
+        raise DefinitionError(
+            f"type alias nests more than {_MAX_ALIAS_DEPTH} levels or refers to itself"
+        )
     if annotation is not Remote and get_origin(annotation) is not Remote:
         return None
     [name_type] = get_args(annotation) or [None]
