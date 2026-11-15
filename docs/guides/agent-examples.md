@@ -466,8 +466,9 @@ runtime pipeline; the custom REST skill API is deferred.
 
 ## Multi-agent composition
 
-[`examples/multi_agent`](../../examples/multi_agent) is two independently
-deployed agents. The research agent is an ordinary agent with a structured
+[`examples/multi_agent`](../../examples/multi_agent) is three independently
+deployed agents (the writer and the planner's model-planned skills, M10, are
+covered in the [orchestration guide](orchestration.md)). The research agent is an ordinary agent with a structured
 skill (`find_sources`) and a model-backed one (`brief`) that free text is
 routed to. The planner is an ordinary agent too: its skill finds the research
 agent's card with `directory.find(skill="find_sources")`, then researches
@@ -490,7 +491,7 @@ class Planner(Agent):
         research: Research,
         directory: Inject[AgentDirectory],
         ctx: RunContext,
-    ) -> Plan:
+    ) -> ResearchPlan:
         """Research every topic of a goal at once: sources and a short brief."""
         researchers = await directory.find(skill="find_sources")
         async with asyncio.TaskGroup() as group:
@@ -533,8 +534,9 @@ to know:
 - The `a2a` SDK's DEBUG logs include request bodies, so keep its loggers at
   INFO or above where messages may hold sensitive data.
 
-An orchestrator is ordinary Python: no orchestration helpers or workflow
-engine. Remote services authenticate callers and enforce their own policy and
+An orchestrator is ordinary Python: no workflow engine. M10 (built, not yet
+released) adds opt-in model-planned orchestration; see the
+[orchestration guide](orchestration.md). Remote services authenticate callers and enforce their own policy and
 limits; a found card is not permission to call an agent. See
 [discovery](../design/discovery.md), its
 [reference](../api/discovery.md) and [local dev/containers](development.md).

@@ -10,6 +10,22 @@ changelog.
 
 ### Added
 
+- **Orchestration (M10):** the [orchestration guide](docs/guides/orchestration.md):
+  choosing plain `await`, remote skills as tools or plans, the catalog, a
+  safety checklist with the open-proxy and `default_remote` warnings, logs and
+  usage, and measured planner rates. `examples/multi_agent` gains a model-free
+  writer agent and the planner's `propose` and `planned` skills: the model
+  plans a goal over a narrowed catalog of the research and writer agents, and
+  `planned` runs it with `on_failure="continue"`, behind `requires_permissions`,
+  per-entry `permissions=`, a plan check and a tool check. Its hand-written
+  `plan` skill now returns `ResearchPlan` (formerly the example's own `Plan`
+  model), since `Plan` is AgentFrame's.
+  `examples/multi_agent/planner_evaluation.py` evaluates the planner's plans
+  by structure (entries used and dependencies) with M9. The release
+  acceptance suite `tests/integration/test_orchestration_release.py` runs the
+  agents, a plain A2A peer and two orchestrators as separate processes; opt-in
+  Ollama and Foundry planner tests are in `test_providers.py` (#176).
+
 - **Orchestration (M10):** plans are logged at INFO with the run's correlation
   fields (`agent`, `invocation_id`, `root_invocation_id`,
   `parent_invocation_id`) in `extra`: `ctx.plan` logs `Plan created` with

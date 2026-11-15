@@ -217,7 +217,9 @@ builds and starts both containers and has the planner call the researcher.
 #97 proves the release criteria with independently started `agentframe run`
 processes (`tests/integration/test_multi_agent_release.py`); its example,
 [`examples/multi_agent`](../../examples/multi_agent), runs with
-`agentframe dev` from that directory.
+`agentframe dev` from that directory. M10's acceptance suite
+(`tests/integration/test_orchestration_release.py`, #176) runs that example's
+research, writer and planner agents as separate processes too.
 
 See [milestones](../roadmap.md#delivery-milestones),
 [discovery](../design/discovery.md) and [hosting reference](../api/hosting.md).
