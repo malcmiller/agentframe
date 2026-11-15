@@ -60,6 +60,7 @@ dev = [
     "mypy==2.4.1",
     "pytest==9.2.0",
     "pytest-asyncio==1.4.1.post1",
+    "coverage==7.17.3",
     "pre-commit==4.7.0",
     "uvicorn==0.54.0",
     "httpx==0.28.1",
@@ -94,6 +95,17 @@ python_version = "3.13"
 strict = true
 files = ["src", "tests", "examples"]
 warn_unreachable = true
+
+[tool.coverage.run]
+source_pkgs = ["agentframe"]
+# Tests start agents and the CLI as separate Python processes; measure those
+# too. Each process writes its own data file, merged by `coverage combine`.
+patch = ["subprocess"]
+parallel = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
