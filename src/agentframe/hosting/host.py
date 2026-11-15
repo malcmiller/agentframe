@@ -107,8 +107,8 @@ class A2AConfig:
             tasks in this process's memory, lost on restart.
         task_retention_seconds: How long the default in-memory store keeps a
             finished (completed, failed, cancelled or rejected) task. After
-            that, ``GetTask`` and ``CancelTask`` treat it as unknown. Tasks
-            still running or waiting for input are never deleted. Must be at
+            that, ``GetTask`` and ``CancelTask`` treat it as unknown. Tasks in
+            any non-terminal state are never deleted. Must be at
             least ``dedup_window_seconds``, so a retry within the window still
             finds its task. Defaults to 3600 (1 hour).
         max_retained_tasks: How many finished tasks the default in-memory store
@@ -116,8 +116,9 @@ class A2AConfig:
             Defaults to 10,000.
 
     Raises:
-        DefinitionError: ``dedup_window_seconds`` or ``task_retention_seconds``
-            is not positive; ``max_retained_tasks`` is less than 1; or, with
+        DefinitionError: ``task_store`` is not an ``a2a-sdk`` ``TaskStore``;
+            ``dedup_window_seconds`` or ``task_retention_seconds`` is not
+            positive; ``max_retained_tasks`` is less than 1; or, with
             the default task store, ``task_retention_seconds`` is shorter than
             ``dedup_window_seconds``.
     """
@@ -133,6 +134,11 @@ class A2AConfig:
             raise DefinitionError("A2AConfig dedup_window_seconds must be positive")
         if not self.task_retention_seconds > 0:
             raise DefinitionError("A2AConfig task_retention_seconds must be positive")
+        if self.task_store is not None and not isinstance(self.task_store, TaskStore):
+            raise DefinitionError(
+                "A2AConfig task_store must be an a2a-sdk TaskStore "
+                "(a2a.server.tasks.TaskStore)"
+            )
         if self.max_retained_tasks < 1:
             raise DefinitionError("A2AConfig max_retained_tasks must be at least 1")
         if (

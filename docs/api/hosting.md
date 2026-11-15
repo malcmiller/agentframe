@@ -851,9 +851,9 @@ grow until it exits:
   It is deleted `task_retention_seconds` (default 1 hour) after it finished,
   or earlier when more than `max_retained_tasks` (default 10,000) finished
   tasks are kept, oldest first.
-- Tasks still submitted, working or waiting for input are **never deleted**.
-  A caller that never answers an input-required task leaves it in memory
-  until the process exits.
+- Tasks in any non-terminal state (for example submitted, working,
+  input-required or auth-required) are **never deleted**. A caller that never
+  answers an input-required task leaves it in memory until the process exits.
 - A deleted task is unknown, as if it never existed: `GetTask` and
   `CancelTask` fail with the A2A `TaskNotFoundError` (JSON-RPC `-32001`), and
   `ListTasks` no longer lists it. Expired tasks are deleted whenever the store

@@ -86,8 +86,8 @@ class BoundedTaskStore(TaskStore):
 
     A task is finished once it is saved in a terminal state. It is deleted
     ``retention_seconds`` after that save, or earlier when more than
-    ``max_tasks`` finished tasks are kept, oldest first. Unfinished tasks
-    (submitted, working or waiting for input) are never deleted. Expired
+    ``max_tasks`` finished tasks are kept, oldest first. Tasks in any other
+    state, such as working or waiting for input, are never deleted. Expired
     tasks are deleted whenever the store is used, so a caller never sees one.
 
     Args:

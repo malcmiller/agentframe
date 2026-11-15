@@ -8,7 +8,7 @@ import pytest
 from a2a.auth.user import User
 from a2a.server.context import ServerCallContext
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import Task, TaskState, TaskStatus
+from a2a.types import ListTasksRequest, Task, TaskState, TaskStatus
 
 from agentframe import A2AConfig, DefinitionError
 from agentframe.hosting.task_store import BoundedTaskStore
@@ -140,7 +140,47 @@ async def test_each_task_is_deleted_from_its_own_callers_tasks(
     assert await inner.get("t1", BOB) is None
 
 
+async def test_saving_a_finished_task_deletes_the_oldest_past_the_maximum(
+    inner: InMemoryTaskStore, clock: FakeClock
+) -> None:
+    store = bounded(inner, clock, max_tasks=1)
+    await store.save(task("t1", COMPLETED), ALICE)
+    await store.save(task("t2", COMPLETED), ALICE)
+
+    assert await inner.get("t1", ALICE) is None
+
+
+async def test_listing_deletes_expired_tasks(
+    inner: InMemoryTaskStore, clock: FakeClock
+) -> None:
+    store = bounded(inner, clock)
+    await store.save(task("t1", COMPLETED), ALICE)
+
+    clock.now = 60
+    listed = await store.list(ListTasksRequest(), ALICE)
+
+    assert list(listed.tasks) == []
+    assert await inner.get("t1", ALICE) is None
+
+
+async def test_a_task_saved_unfinished_again_is_no_longer_deleted(
+    inner: InMemoryTaskStore, clock: FakeClock
+) -> None:
+    store = bounded(inner, clock)
+    await store.save(task("t1", COMPLETED), ALICE)
+    await store.save(task("t1", WORKING), ALICE)
+
+    clock.now = 1000
+
+    assert await store.get("t1", ALICE) is not None
+
+
 # Configuration
+
+
+def test_a_custom_task_store_must_be_a_task_store() -> None:
+    with pytest.raises(DefinitionError, match="task_store"):
+        A2AConfig(task_store=object())  # type: ignore[arg-type]
 
 
 def test_retention_settings_must_be_positive() -> None:
