@@ -217,16 +217,21 @@ class SkillCatalog:
             self._tool_calls_left,
         )
 
-    def binding(self, entry: RemoteSkill) -> Remote[Any] | None:
-        """Return the binding for ``entry`` if it is this very catalog's entry.
 
-        Package-internal: remote tools and plan steps send through it.
-        Matched by identity, not equality, so an entry from another run's
-        catalog, or one built by hand, is never bound to this run.
-        """
-        if any(own is entry for own in self._entries):
-            return self._bindings[entry.agent]
-        return None
+def bound_remote(catalog: SkillCatalog, entry: RemoteSkill) -> Remote[Any] | None:
+    """Return the binding for ``entry`` if it is this very catalog's entry.
+
+    Package-internal: remote tools and plan steps send through it after
+    their own checks. Calling the binding directly skips the entry's
+    ``requires_permissions``, the execution policy's tool checks and the
+    catalog's ``max_tokens_per_call``.
+
+    Matched by identity, not equality, so an entry from another run's
+    catalog, or one built by hand, is never bound to this run.
+    """
+    if any(own is entry for own in catalog._entries):
+        return catalog._bindings[entry.agent]
+    return None
 
 
 class _UnusableCardError(Exception):

@@ -231,20 +231,18 @@ class Runtime:
         for name in sorted(names):
             await find_remote(self._directory, name, self._remotes.get(name))
 
-    def on_behalf_of_users(self) -> list[str]:
-        """Name what is called ``OnBehalfOf`` the signed-in user.
+    def on_behalf_of_remotes(self) -> tuple[list[str], bool]:
+        """Say which remotes are called ``OnBehalfOf`` the signed-in user.
 
-        Package-internal: ``AgentApp`` refuses these when its host cannot
-        exchange user tokens, naming them in the error.
+        Package-internal: ``AgentApp`` refuses them when its host cannot
+        exchange user tokens.
 
         Returns:
-            ``"Remote 'name'"`` for each ``OnBehalfOf`` entry in ``remotes=``,
-            sorted by name, then ``"default_remote"`` when it is one.
+            The names of the ``OnBehalfOf`` entries in ``remotes=``, sorted,
+            and whether ``default_remote`` is ``OnBehalfOf``.
         """
-        users = [f"Remote '{name}'" for name in on_behalf_of_names(self._remotes)]
-        if isinstance(self._default_remote, OnBehalfOf):
-            users.append("default_remote")
-        return users
+        default = isinstance(self._default_remote, OnBehalfOf)
+        return on_behalf_of_names(self._remotes), default
 
     async def invoke(
         self,

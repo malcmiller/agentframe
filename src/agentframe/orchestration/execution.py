@@ -33,7 +33,7 @@ from agentframe.errors import (
     RemoteAgentError,
     TokenLimitExceededError,
 )
-from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog
+from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, bound_remote
 from agentframe.orchestration.plan import (
     Plan,
     PlanStep,
@@ -428,7 +428,7 @@ class _Execution:
         entry = self._catalog.get(step.use)
         if entry is None:
             raise RuntimeError(f"Plan step '{step.id}' uses no entry of this catalog")
-        binding = self._catalog.binding(entry)
+        binding = bound_remote(self._catalog, entry)
         if binding is None:
             raise RuntimeError(f"Plan step '{step.id}' uses an entry with no binding")
         generation = self._generation

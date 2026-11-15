@@ -36,12 +36,7 @@ class RunAdmission:
         """How many admitted runs have not yet released their slot."""
         return self._running
 
-    def release(self) -> None:
-        """Give back one slot.
-
-        Package-internal: only ``RunSlot.release`` calls it, which gives each
-        slot back at most once.
-        """
+    def _release(self) -> None:
         self._running -= 1
 
 
@@ -70,4 +65,4 @@ class RunSlot:
         if self._released:
             return
         self._released = True
-        self._admission.release()
+        self._admission._release()

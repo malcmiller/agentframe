@@ -357,7 +357,10 @@ def _user_token_exchange(
         DefinitionError: An ``OnBehalfOf`` remote's or default's host does
             not authenticate users with ``EntraIDAuth`` configured for it.
     """
-    users = runtime.on_behalf_of_users()
+    names, default_on_behalf_of = runtime.on_behalf_of_remotes()
+    users = [f"Remote '{name}'" for name in names]
+    if default_on_behalf_of:
+        users.append("default_remote")
     if not users:
         return None
     if not isinstance(host.auth, UserTokenExchange):
