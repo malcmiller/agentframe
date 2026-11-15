@@ -29,7 +29,7 @@ from agentframe.models.base import (
     ToolCall,
     ToolSpec,
 )
-from agentframe.runtime.usage import FinishReason, Usage
+from agentframe.usage import FinishReason, Usage
 
 DEFAULT_ENDPOINT = "http://localhost:11434"
 

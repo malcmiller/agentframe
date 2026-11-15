@@ -21,7 +21,7 @@ from google.protobuf.json_format import ParseError  # type: ignore[import-untype
 
 from agentframe.discovery.registry import AgentReference
 from agentframe.errors import RemoteAgentError
-from agentframe.hosting.host import is_loopback_host, is_plain_http_url
+from agentframe.urls import is_loopback_host, is_plain_http_url
 
 MAX_CARD_BYTES = 1_048_576
 FETCH_TIMEOUT_SECONDS = 10.0

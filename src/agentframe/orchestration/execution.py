@@ -45,12 +45,12 @@ from agentframe.runtime.correlation import RunCorrelation
 from agentframe.runtime.generation import NO_USAGE, GenerationState, add_usage
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.tools import is_permitted
-from agentframe.runtime.usage import Usage
 from agentframe.security.execution_policy import (
     enforce_plan_checks,
     enforce_tool_checks,
 )
 from agentframe.security.principal import Principal
+from agentframe.usage import Usage
 
 DEFAULT_MAX_PARALLEL = 4
 """Steps that may run at once unless the author passes another ``max_parallel``."""

@@ -35,7 +35,7 @@ from agentframe.models.base import (
     ModelResponse,
     ToolCall,
 )
-from agentframe.runtime.usage import FinishReason, Usage
+from agentframe.usage import FinishReason, Usage
 
 type ScriptedReply = str | ToolCall | tuple[ToolCall, ...] | ModelResponse | Exception
 """One scripted model call: text, tool calls, a full response, or an error."""

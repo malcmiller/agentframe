@@ -46,9 +46,10 @@ from agentframe.dev import DEV_VARIABLE
 from agentframe.dev_server import DEFAULT_STARTUP_TIMEOUT_SECONDS, DevError, run_dev
 from agentframe.errors import AgentFrameError
 from agentframe.hosting.app import AgentApp
-from agentframe.hosting.host import HostConfig, is_loopback_host
+from agentframe.hosting.host import HostConfig
 from agentframe.project import PROJECT_FILE
 from agentframe.security.authentication import AllowAnonymous
+from agentframe.urls import is_loopback_host
 
 if TYPE_CHECKING:
     # Imported at run time only by agentframe eval, so other commands never

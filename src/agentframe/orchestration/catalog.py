@@ -31,7 +31,6 @@ from agentframe.discovery.identity import check_identity
 from agentframe.discovery.registry import AgentReference
 from agentframe.discovery.remote import Remote, check_no_redirects
 from agentframe.errors import AgentFrameError, DefinitionError, RemoteAgentError
-from agentframe.hosting.skill_call import SKILL_CALL_EXTENSION_URI
 from agentframe.orchestration.card_text import (
     MAX_SCHEMA_BYTES,
     bounded_schema,
@@ -49,6 +48,7 @@ from agentframe.orchestration.plan import (
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.tools import is_permitted
 from agentframe.security.principal import Principal
+from agentframe.skill_call import SKILL_CALL_EXTENSION_URI
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ from typing import Any
 from pydantic_core import to_jsonable_python
 
 import agentframe
-from agentframe.runtime.usage import FinishReason, Usage
+from agentframe.usage import FinishReason, Usage
 
 # The JSON report's schema identifier; the number goes up on breaking changes.
 _SCHEMA = "agentframe.evaluation.report/1"

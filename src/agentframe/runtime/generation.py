@@ -46,8 +46,8 @@ from agentframe.runtime.tools import (
     tool_message,
     tool_spec,
 )
-from agentframe.runtime.usage import FinishReason, Usage
 from agentframe.security.execution_policy import ExecutionPolicy, enforce_checks
+from agentframe.usage import FinishReason, Usage
 
 if TYPE_CHECKING:
     # Imported only for type checking: these modules import this one.

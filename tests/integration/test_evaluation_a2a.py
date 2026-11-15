@@ -48,8 +48,8 @@ from agentframe.evaluation import (
     contains,
     equals,
 )
-from agentframe.runtime.usage import FinishReason
 from agentframe.testing import ScriptedModel
+from agentframe.usage import FinishReason
 from local_server import ServeLocally
 
 API_KEY = "evaluation-test-key"

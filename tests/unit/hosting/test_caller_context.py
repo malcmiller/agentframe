@@ -29,7 +29,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.hosting.skill_call import (
+from agentframe.skill_call import (
     SKILL_CALL_EXTENSION_URI,
     advertised_context,
     context_metadata,

@@ -14,7 +14,7 @@ Outcomes map to native A2A results as follows:
   creates one).
 - With the extension activated, the metadata may also carry the caller's
   remaining time, its token cap and the request's depth (see
-  ``hosting.skill_call``). The run's timeout and ``max_total_tokens`` are
+  ``agentframe.skill_call``). The run's timeout and ``max_total_tokens`` are
   capped by them; a request deeper than
   ``RunLimits.max_remote_hops`` ends in ``REJECTED`` before routing or the
   skill. Malformed values are ``InvalidParams`` errors, like malformed calls.
@@ -86,6 +86,7 @@ from agentframe.errors import (
     PermissionDeniedError,
 )
 from agentframe.hosting.admission import RUN_SLOT_STATE_KEY, RunSlot
+from agentframe.hosting.caller_context import CallerContext, read_caller_context
 from agentframe.hosting.routing import (
     Clarification,
     SkillCall,
@@ -95,13 +96,6 @@ from agentframe.hosting.routing import (
     route,
     routing_limits,
 )
-from agentframe.hosting.skill_call import (
-    SKILL_CALL_EXTENSION_URI,
-    SKILL_METADATA_KEY,
-    CallerContext,
-    depth_exceeded,
-    read_caller_context,
-)
 from agentframe.hosting.task_store import FinalStateStore
 from agentframe.runtime.correlation import RunCorrelation, TraceContext
 from agentframe.runtime.generation import RunAccounting
@@ -109,6 +103,11 @@ from agentframe.runtime.limits import RunLimits
 from agentframe.runtime.options import RunOptions
 from agentframe.runtime.runtime import Runtime
 from agentframe.security.principal import Principal
+from agentframe.skill_call import (
+    SKILL_CALL_EXTENSION_URI,
+    SKILL_METADATA_KEY,
+    depth_exceeded,
+)
 
 PRINCIPAL_STATE_KEY = "agentframe.principal"
 """``ServerCallContext.state`` key holding the authenticated caller."""
