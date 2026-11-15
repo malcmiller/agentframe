@@ -45,7 +45,7 @@ from agentframe.hosting.a2a_executor import (
     publish_input_required,
     result_part,
 )
-from agentframe.runtime.generation import RunAccounting
+from agentframe.runtime.accounting import RunAccounting
 
 
 class RecordingQueue(EventQueue):

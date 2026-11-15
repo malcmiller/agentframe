@@ -7,10 +7,10 @@ this package.
 from agentframe.evaluation.cases import Case, load_cases
 from agentframe.evaluation.harness import Evaluation
 from agentframe.evaluation.judge import Judge
-from agentframe.evaluation.report import (
+from agentframe.evaluation.report import EvalReport
+from agentframe.evaluation.results import (
     CaseResult,
     CaseStatus,
-    EvalReport,
     Latency,
     ScoreResult,
     UsageTotals,

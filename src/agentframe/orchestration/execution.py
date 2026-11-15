@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
 
-from agentframe.discovery.remote import RemoteReply
+from agentframe.discovery.replies import RemoteReply
 from agentframe.errors import (
     ClarificationNeededError,
     DefinitionError,
@@ -41,8 +41,9 @@ from agentframe.orchestration.plan import (
     substituted_arguments,
     substituted_text,
 )
+from agentframe.runtime.accounting import NO_USAGE, add_usage
 from agentframe.runtime.correlation import RunCorrelation
-from agentframe.runtime.generation import NO_USAGE, GenerationState, add_usage
+from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.tools import is_permitted
 from agentframe.security.execution_policy import (

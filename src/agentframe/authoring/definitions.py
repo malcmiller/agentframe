@@ -16,7 +16,7 @@ from pydantic import (
 
 from agentframe.authoring.context import RunContext
 from agentframe.authoring.services import Inject
-from agentframe.discovery.remote import remote_name
+from agentframe.discovery.binding import remote_name
 from agentframe.errors import DefinitionError
 from agentframe.models.base import ModelSettings
 from agentframe.runtime.limits import RunLimits

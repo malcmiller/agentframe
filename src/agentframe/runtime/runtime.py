@@ -16,6 +16,7 @@ from agentframe.authoring.agent import Agent
 from agentframe.authoring.context import RunContext
 from agentframe.authoring.definitions import SkillDefinition
 from agentframe.authoring.services import Services
+from agentframe.discovery.binding import find_remote
 from agentframe.discovery.directory import AgentDirectory
 from agentframe.discovery.identity import (
     OnBehalfOf,
@@ -25,7 +26,6 @@ from agentframe.discovery.identity import (
     checked_remotes,
     on_behalf_of_names,
 )
-from agentframe.discovery.remote import find_remote
 from agentframe.errors import (
     AgentFrameError,
     DefinitionError,
@@ -38,15 +38,13 @@ from agentframe.errors import (
     describe_validation_error,
 )
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, ModelSettings
+from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation, root_run
-from agentframe.runtime.generation import (
-    GenerationState,
-    RunAccounting,
-    input_token_limit,
-)
+from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.remotes import RunRemotes
+from agentframe.runtime.tokens import input_token_limit
 from agentframe.security.authorization import (
     AuthorizationPolicy,
     ToolAuthorizationPolicy,
@@ -71,6 +69,25 @@ class RunResult[T]:
     tool_calls: int
     duration: timedelta
     finish_reason: FinishReason
+
+
+@dataclass(frozen=True)
+class _Invocation:
+    """What one run was asked to do, as ``Runtime.run_invocation`` received it."""
+
+    invocation_id: str
+    agent: Agent
+    skill_id: str
+    arguments: Mapping[str, Any]
+    principal: Principal | None
+    options: RunOptions
+    started_at: float | None
+    accounting: RunAccounting
+    limits_ceiling: RunLimits | None
+    hops: int
+    user_token: UserToken | None
+    correlation: RunCorrelation
+    own_interface_url: str | None
 
 
 class Runtime:
@@ -357,22 +374,23 @@ class Runtime:
         accounting = accounting or RunAccounting()
         if correlation is None:
             correlation = root_run(type(agent).definition().name, invocation_id)
+        invocation = _Invocation(
+            invocation_id=invocation_id,
+            agent=agent,
+            skill_id=skill,
+            arguments=arguments,
+            principal=principal,
+            options=options,
+            started_at=started_at,
+            accounting=accounting,
+            limits_ceiling=limits_ceiling,
+            hops=hops,
+            user_token=user_token,
+            correlation=correlation,
+            own_interface_url=own_interface_url,
+        )
         try:
-            value = await self._run(
-                invocation_id,
-                agent,
-                skill,
-                arguments,
-                principal,
-                options,
-                started_at,
-                accounting,
-                limits_ceiling,
-                hops,
-                user_token,
-                correlation,
-                own_interface_url,
-            )
+            value = await self._run(invocation)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
             raise
@@ -386,23 +404,57 @@ class Runtime:
             finish_reason=FinishReason.COMPLETED,
         )
 
-    async def _run(
-        self,
-        invocation_id: str,
-        agent: Agent,
-        skill_id: str,
-        arguments: Mapping[str, Any],
-        principal: Principal | None,
-        options: RunOptions,
-        started_at: float | None,
-        accounting: RunAccounting,
-        limits_ceiling: RunLimits | None,
-        hops: int,
-        user_token: UserToken | None,
-        correlation: RunCorrelation,
-        own_interface_url: str | None,
-    ) -> Any:
+    async def _run(self, run: _Invocation) -> Any:
         """Run the skill and return its validated value."""
+        skill = self._checked_skill(run.agent, run.skill_id)
+        _check_permissions(skill, run.principal)
+        validated_arguments = _validate_arguments(skill, run.arguments)
+
+        limits, model_settings = _effective_settings(
+            run.agent, skill, run.options, run.limits_ceiling
+        )
+        timeout_seconds = limits.timeout_seconds
+        assert timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
+        started_at = run.started_at
+        if started_at is None:
+            started_at = asyncio.get_running_loop().time()
+        deadline = started_at + timeout_seconds
+        await self._check_policy(skill, run.principal, validated_arguments, deadline)
+        if self._policy is not None:
+            await enforce_checks(
+                self._policy.input_checks,
+                skill,
+                run.principal,
+                MappingProxyType(validated_arguments),
+                deadline,
+            )
+        try:
+            async with asyncio.timeout_at(deadline) as timeout:
+                result = await self._call_skill(
+                    run, skill, validated_arguments, limits, model_settings, deadline
+                )
+        except TimeoutError:
+            if not timeout.expired():
+                raise
+            raise TimeoutLimitExceededError(
+                f"Skill '{skill.id}' exceeded its timeout of {timeout_seconds} seconds"
+            ) from None
+        value = _validate_output(skill, result)
+        if self._policy is not None:
+            await enforce_checks(
+                self._policy.output_checks, skill, run.principal, value, deadline
+            )
+        return value
+
+    def _checked_skill(self, agent: Agent, skill_id: str) -> SkillDefinition:
+        """Return the skill to run, once its services and directory are known.
+
+        Raises:
+            InputValidationError: The agent has no skill ``skill_id``.
+            DefinitionError: A service the skill or a registered tool needs
+                is not registered, or the skill takes a ``Remote`` parameter
+                and the runtime has no directory.
+        """
         definition = type(agent).definition()
         skill = definition.skills.get(skill_id)
         if skill is None:
@@ -414,89 +466,77 @@ class Runtime:
         self._check_directory(skill)
         for tool in agent.tools.values():
             self._check_services(f"Tool '{tool.name}'", tool.injected)
-        _check_permissions(skill, principal)
-        validated_arguments = _validate_arguments(skill, arguments)
+        return skill
 
-        limits, model_settings = _effective_settings(
-            agent, skill, options, limits_ceiling
-        )
-        timeout_seconds = limits.timeout_seconds
-        assert timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
-        method = getattr(agent, skill.method_name)
-        if started_at is None:
-            started_at = asyncio.get_running_loop().time()
-        deadline = started_at + timeout_seconds
-        await self._check_policy(skill, principal, validated_arguments, deadline)
-        if self._policy is not None:
-            await enforce_checks(
-                self._policy.input_checks,
-                skill,
-                principal,
-                MappingProxyType(validated_arguments),
+    async def _call_skill(
+        self,
+        run: _Invocation,
+        skill: SkillDefinition,
+        arguments: dict[str, Any],
+        limits: RunLimits,
+        model_settings: ModelSettings,
+        deadline: float,
+    ) -> Any:
+        """Call the skill's method with its services, remotes and ``RunContext``.
+
+        Scoped services and anything else the run opens are closed when the
+        method returns or raises.
+        """
+        method = getattr(run.agent, skill.method_name)
+        async with AsyncExitStack() as stack:
+            services = self._services.scope(stack)
+            generation = GenerationState(
+                model=run.agent.model,
+                instructions=run.agent.instructions,
+                settings=model_settings,
+                limits=limits,
+                services=services,
+                accounting=run.accounting,
+                tools=run.agent.tools,
+                tool_authorization=self._tool_authorization,
+                skill=skill,
+                policy=self._policy,
+            )
+            run_remotes = self._run_remotes(run, limits, deadline, stack)
+            ctx = RunContext(
+                run.invocation_id,
+                run.principal,
                 deadline,
+                generation,
+                hops=run.hops,
+                _remotes=run_remotes,
             )
-        try:
-            async with (
-                asyncio.timeout_at(deadline) as timeout,
-                AsyncExitStack() as stack,
-            ):
-                services = self._services.scope(stack)
-                generation = GenerationState(
-                    model=agent.model,
-                    instructions=agent.instructions,
-                    settings=model_settings,
-                    limits=limits,
-                    services=services,
-                    accounting=accounting,
-                    tools=agent.tools,
-                    tool_authorization=self._tool_authorization,
-                    skill=skill,
-                    policy=self._policy,
-                )
-                run_remotes = None
-                if self._directory is not None:
-                    run_remotes = RunRemotes(
-                        self._directory,
-                        self._remotes,
-                        default=self._default_remote,
-                        deadline=deadline,
-                        correlation=correlation,
-                        principal=principal,
-                        hops=hops,
-                        limits=limits,
-                        accounting=accounting,
-                        user_token=user_token,
-                        stack=stack,
-                        own_interface_url=own_interface_url,
-                    )
-                ctx = RunContext(
-                    invocation_id,
-                    principal,
-                    deadline,
-                    generation,
-                    hops=hops,
-                    _remotes=run_remotes,
-                )
-                injected = await services.resolve(skill.injected)
-                remotes: dict[str, object] = {}
-                for parameter_name, name in skill.remotes.items():
-                    assert run_remotes is not None  # Checked before the run starts.
-                    remotes[parameter_name] = await run_remotes.bind(name)
-                result = await method(
-                    **validated_arguments, **injected, **remotes, ctx=ctx
-                )
-        except TimeoutError:
-            if not timeout.expired():
-                raise
-            raise TimeoutLimitExceededError(
-                f"Skill '{skill.id}' exceeded its timeout of {timeout_seconds} seconds"
-            ) from None
-        value = _validate_output(skill, result)
-        if self._policy is not None:
-            await enforce_checks(
-                self._policy.output_checks, skill, principal, value, deadline
-            )
-        return value
+            injected = await services.resolve(skill.injected)
+            remotes: dict[str, object] = {}
+            for parameter_name, name in skill.remotes.items():
+                assert run_remotes is not None  # Checked before the run starts.
+                remotes[parameter_name] = await run_remotes.bind(name)
+            return await method(**arguments, **injected, **remotes, ctx=ctx)
+
+    def _run_remotes(
+        self,
+        run: _Invocation,
+        limits: RunLimits,
+        deadline: float,
+        stack: AsyncExitStack,
+    ) -> RunRemotes | None:
+        """Return the run's view of remote agents, or ``None`` without a directory."""
+        if self._directory is None:
+            return None
+        return RunRemotes(
+            self._directory,
+            self._remotes,
+            default=self._default_remote,
+            deadline=deadline,
+            correlation=run.correlation,
+            principal=run.principal,
+            hops=run.hops,
+            limits=limits,
+            accounting=run.accounting,
+            user_token=run.user_token,
+            stack=stack,
+            own_interface_url=run.own_interface_url,
+        )
 
     async def _check_policy(
         self,
