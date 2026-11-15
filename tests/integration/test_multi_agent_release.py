@@ -2,7 +2,8 @@
 
 Each agent runs as its own ``agentframe run`` process on localhost, wired
 through the environment variables ``dev_settings()`` reads, with a
-development API key per caller. The planner is ``examples/multi_agent``'s;
+development API key per caller. The planner is ``examples/multi_agent``'s,
+with a stand-in planning model its hand-written ``plan`` skill never calls;
 the research agent is the example's with a stand-in model that reports 300
 tokens per brief (``tests/support/release_targets.py``). The official A2A
 client calls them, as any A2A caller would.
@@ -58,7 +59,7 @@ def agents(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Agents]:
     ) as research:
         wait_until_ready(research)
         with agent_process(
-            "examples.multi_agent.planner:create_app",
+            "release_targets:create_planner_app",
             logs,
             AGENTS=f"research-agent={research.url}{CARD_PATH}",
             DEV_API_KEYS=f"developer={CLIENT_KEY}",

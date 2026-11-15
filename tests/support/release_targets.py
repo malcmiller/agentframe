@@ -1,14 +1,14 @@
 """Application code that the release tests serve with ``agentframe run``.
 
-The multi-agent release test (M8+) serves the planner straight from
-``examples/multi_agent``. The research agent is the example's, with a
-stand-in model and one addition so the test can see what reached it. The
+Both release tests serve ``examples/multi_agent``'s planner with
+``GoalModel``, a stand-in planning model, so no test needs Ollama. The
+research agent is the example's, with a stand-in model and one addition so
+the test can see what reached it. The
 relay is a deliberately recursive agent: it asks its ``next`` agent whatever
 it is asked.
 
-The orchestration release test (M10) serves the example's planner with
-``GoalModel``, a stand-in planning model, and the coordinator, which offers
-every registered agent's skills to that model, as tools or in a plan.
+The orchestration release test (M10) also serves the coordinator, which
+offers every registered agent's skills to that model, as tools or in a plan.
 
 Every factory reads its wiring with ``dev_settings()``, as the example's do.
 """
@@ -291,7 +291,7 @@ def log_plans() -> None:
 
 
 def create_planner_app() -> AgentApp:
-    """The example's planner, planning with ``GoalModel``."""
+    """The example's planner, planning with ``GoalModel`` instead of Ollama."""
     log_plans()
     return planner.create_app(GoalModel())
 
