@@ -16,6 +16,11 @@ changelog.
   through up to 10 levels; a deeper or self-referencing alias raises
   `DefinitionError`, and an invalid `Remote` annotation's error now names the
   parameter (#214).
+- The plan executor behind `ctx.run_plan` and the A2A executor check their
+  internal invariants (a running skill for policy checks, a step's catalog
+  entry and binding, a token limit, the task's IDs and message, a router for
+  free text) with explicit checks that raise `RuntimeError`, instead of
+  `assert`, which `python -O` removes. Normal operation is unchanged (#215).
 
 ## [0.3.0] - 2026-11-14
 
