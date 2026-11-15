@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from agentframe import AuthenticationError, DefinitionError, EntraIDAuth, Principal
-from agentframe.security.authentication import authenticate_request, www_authenticate
+from agentframe.security.authentication import principal_for, www_authenticate
 from fake_entra import (
     API_CLIENT_ID,
     CALLER_OID,
@@ -49,9 +49,9 @@ async def test_a_valid_token_becomes_a_principal_with_mapped_permissions(
         "Documents.Read": ["documents:read"],
     }
 
-    principal = await authenticate_request(
-        auth, bearer(entra.token()), role_permissions
-    )
+    caller = await auth.authenticate(bearer(entra.token()))
+
+    principal = principal_for(caller, role_permissions)
 
     assert principal == Principal(
         id=CALLER_OID, permissions=frozenset({"documents:write", "documents:read"})

@@ -208,30 +208,6 @@ def principal_for(
     return Principal(id=caller.id, permissions=frozenset(permissions))
 
 
-async def authenticate_request(
-    auth: Authenticator,
-    headers: Mapping[str, str],
-    role_permissions: Mapping[str, Iterable[str]],
-) -> Principal | None:
-    """Authenticate a request and resolve the caller's principal.
-
-    Args:
-        auth: The host's authenticator.
-        headers: The request's HTTP headers.
-        role_permissions: Maps role names to the permissions they grant.
-
-    Returns:
-        The caller's principal, or ``None`` for an allowed anonymous caller.
-
-    Raises:
-        AuthenticationError: Credentials are missing or invalid.
-    """
-    caller = await auth.authenticate(headers)
-    if caller is None:
-        return None
-    return principal_for(caller, role_permissions)
-
-
 def www_authenticate(schemes: Mapping[str, SecurityScheme]) -> str:
     """Build a 401 response's ``WWW-Authenticate`` value (RFC 9110, 11.6.1).
 

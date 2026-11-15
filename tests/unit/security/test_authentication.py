@@ -8,6 +8,7 @@ from agentframe import (
     APIKey,
     APIKeyAuth,
     AuthenticationError,
+    Authenticator,
     DefinitionError,
     PermissionDeniedError,
     Principal,
@@ -17,7 +18,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.security.authentication import authenticate_request, principal_for
+from agentframe.security.authentication import principal_for
 
 # Test-only values; real applications load keys from the environment.
 BILLING_KEY = "test-billing-key"
@@ -54,9 +55,9 @@ async def test_header_name_is_case_insensitive(auth: APIKeyAuth) -> None:
 
 
 async def test_caller_id_becomes_principal_id_never_the_key(auth: APIKeyAuth) -> None:
-    principal = await authenticate_request(
-        auth, {"X-API-Key": BILLING_KEY}, ROLE_PERMISSIONS
-    )
+    caller = await auth.authenticate({"X-API-Key": BILLING_KEY})
+
+    principal = principal_for(caller, ROLE_PERMISSIONS)
 
     assert principal == Principal(
         id="billing-svc", permissions=frozenset({"documents:read"})
@@ -115,12 +116,12 @@ def test_unknown_roles_grant_nothing() -> None:
     assert principal == Principal(id="guest-svc")
 
 
-async def test_allow_anonymous_has_no_principal() -> None:
-    principal = await authenticate_request(
-        AllowAnonymous(), {"X-API-Key": BILLING_KEY}, ROLE_PERMISSIONS
-    )
+async def test_allow_anonymous_has_no_caller() -> None:
+    auth: Authenticator = AllowAnonymous()
 
-    assert principal is None
+    caller = await auth.authenticate({"X-API-Key": BILLING_KEY})
+
+    assert caller is None
 
 
 @pytest.mark.parametrize(
@@ -156,9 +157,9 @@ class Documents(Agent):
 async def test_authenticated_principal_passes_skill_permission_checks(
     auth: APIKeyAuth,
 ) -> None:
-    principal = await authenticate_request(
-        auth, {"X-API-Key": BILLING_KEY}, ROLE_PERMISSIONS
-    )
+    caller = await auth.authenticate({"X-API-Key": BILLING_KEY})
+
+    principal = principal_for(caller, ROLE_PERMISSIONS)
 
     result = await Runtime().invoke(
         Documents(), skill="read", arguments={"document_id": "d1"}, principal=principal
@@ -168,12 +169,7 @@ async def test_authenticated_principal_passes_skill_permission_checks(
 
 
 async def test_anonymous_caller_is_denied_protected_skills() -> None:
-    principal = await authenticate_request(AllowAnonymous(), {}, ROLE_PERMISSIONS)
-
     with pytest.raises(PermissionDeniedError):
         await Runtime().invoke(
-            Documents(),
-            skill="read",
-            arguments={"document_id": "d1"},
-            principal=principal,
+            Documents(), skill="read", arguments={"document_id": "d1"}, principal=None
         )
