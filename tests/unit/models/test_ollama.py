@@ -254,6 +254,27 @@ async def test_construction_does_no_io(
     assert server.requests == []
 
 
+async def test_client_connect_times_out_and_the_run_deadline_bounds_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[dict[str, Any]] = []
+    real_client = ollama.AsyncClient
+
+    def record(**kwargs: Any) -> ollama.AsyncClient:
+        created.append(kwargs)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(ollama, "AsyncClient", record)
+
+    async with OllamaModel(model="llama3.2:3b"):
+        pass
+
+    # The ollama client's default is no timeout at all.
+    assert created[0]["timeout"] == httpx.Timeout(
+        connect=10.0, read=None, write=None, pool=None
+    )
+
+
 def test_context_window_must_be_positive() -> None:
     with pytest.raises(DefinitionError, match="context_window"):
         OllamaModel(model="llama3.2:3b", context_window=0)

@@ -71,11 +71,15 @@ class FakeFoundry(AsyncHttpTransport):  # type: ignore[type-arg]
     def __init__(self, *pages: list[dict[str, Any]]) -> None:
         self.pages = list(pages)
         self.requests: list[HttpRequest] = []
+        self.timeouts: list[dict[str, Any]] = []
         self.fail_page: int | None = None
         self.deleted: set[str] = set()
 
     async def send(self, request: HttpRequest, **kwargs: Any) -> AsyncHttpResponseImpl:
         self.requests.append(request)
+        self.timeouts.append(
+            {key: value for key, value in kwargs.items() if key.endswith("timeout")}
+        )
         path = urlsplit(request.url).path.removeprefix(urlsplit(PROJECT).path)
         if path == "/agents":
             return self.page(request)
@@ -194,6 +198,20 @@ async def test_list_reads_every_page_and_keeps_only_a2a_enabled_agents() -> None
     assert all(
         r.headers["Authorization"] == "Bearer source-token" for r in foundry.requests
     )
+
+
+async def test_every_request_has_ten_second_connect_and_read_timeouts() -> None:
+    foundry = FakeFoundry(*TWO_PAGES.pages)
+    foundry_registry = registry(foundry)
+
+    await foundry_registry.list(AgentQuery())
+    await foundry_registry.get("research-agent")
+
+    assert foundry.requests
+    # azure-core's default is 300 seconds for each.
+    assert foundry.timeouts == [
+        {"connection_timeout": 10.0, "read_timeout": 10.0}
+    ] * len(foundry.requests)
 
 
 async def test_list_keeps_only_the_queried_names_from_any_page() -> None:

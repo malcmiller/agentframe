@@ -35,6 +35,18 @@ CARD_PATH = "endpoint/protocols/a2a/agentCard/v1.0"
 # The largest page the agents API allows, so large projects need fewer calls.
 _PAGE_SIZE = 100
 
+# azure-core otherwise waits 300 seconds to connect and between reads. Each
+# attempt gets the same 10 seconds as a card fetch. With azure-core's 3 default
+# retries and their backoff, an unreachable project fails a request in about
+# 45 seconds rather than minutes, and ``list`` sends its follow-up ``get``
+# calls one after another. The read timeout is the longest wait between bytes,
+# not the whole reply.
+REQUEST_TIMEOUT_SECONDS = 10.0
+_TIMEOUTS: dict[str, Any] = {
+    "connection_timeout": REQUEST_TIMEOUT_SECONDS,
+    "read_timeout": REQUEST_TIMEOUT_SECONDS,
+}
+
 
 class FoundryAgentRegistry(AgentRegistry):
     """The agents in a Foundry project that have incoming A2A enabled.
@@ -46,6 +58,8 @@ class FoundryAgentRegistry(AgentRegistry):
     Agent Card URL,
     ``{project_endpoint}/agents/{name}/endpoint/protocols/a2a/agentCard/v1.0``.
     The registry is read-only: it never enables A2A, publishes or deploys.
+    Each request waits at most 10 seconds to connect and 10 seconds between
+    reads, whichever transport sends it.
 
     Foundry cards require Microsoft Entra ID, so ``card_headers`` returns a
     bearer token from ``credential`` for ``AgentDirectory`` to send with card
@@ -61,7 +75,8 @@ class FoundryAgentRegistry(AgentRegistry):
             It stays yours: the registry never closes it.
         transport: The ``azure-core`` transport to send requests with, for
             example a test double or an outbound proxy. Defaults to
-            ``azure-core``'s own aiohttp transport.
+            ``azure-core``'s own aiohttp transport. The registry's timeouts
+            are passed with every request, overriding the transport's own.
 
     Raises:
         DefinitionError: ``project_endpoint`` is not an absolute https URL
@@ -98,7 +113,7 @@ class FoundryAgentRegistry(AgentRegistry):
         """
         try:
             async with self._client() as client:
-                details = await client.agents.get(agent_id)
+                details = await client.agents.get(agent_id, **_TIMEOUTS)
         except ResourceNotFoundError:
             raise DefinitionError(
                 f"{self._source} does not list an agent named '{agent_id}'."
@@ -130,12 +145,14 @@ class FoundryAgentRegistry(AgentRegistry):
                 # details are read with one more call.
                 names = [
                     summary.name
-                    async for summary in client.agents.list(limit=_PAGE_SIZE)
+                    async for summary in client.agents.list(
+                        limit=_PAGE_SIZE, **_TIMEOUTS
+                    )
                     if _wanted(summary.name, query)
                 ]
                 for name in names:
                     try:
-                        details = await client.agents.get(name)
+                        details = await client.agents.get(name, **_TIMEOUTS)
                     except ResourceNotFoundError:
                         continue  # deleted since the listing
                     if _a2a_enabled(details):

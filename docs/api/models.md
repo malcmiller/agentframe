@@ -377,6 +377,12 @@ server, silently switches models, or enables cloud execution.
   Because `AgentApp` reads every model's capabilities at startup, an
   `OllamaModel` contacts its server during startup (bounded by the agent's
   timeout), and startup fails if the server or model is unavailable.
+- Connecting to the server times out after 10 seconds (the `ollama` client
+  otherwise never times out), so an unreachable server fails quickly with a
+  transient `ProviderError`. Reads, writes and waits for a pooled connection
+  are not bounded by the HTTP client: a non-streaming generation sends nothing
+  until it finishes, so the run's deadline (`RunLimits.timeout_seconds`, 120
+  seconds by default) is what limits a call.
 - **Memory cost of the default:** the metadata size is usually the model's
   maximum context. Ollama allocates memory for the whole window, so
   `llama3.2:3b` with its 131072-token maximum loads at about 18 GB instead of

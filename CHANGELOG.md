@@ -26,6 +26,11 @@ changelog.
   `AGENTFRAME_OLLAMA_MODEL` names an installed model tag, instead of defaulting
   to `llama3.2:3b`; without it their model-backed skills fail with "This agent
   has no model configured" and the others still work.
+- `FoundryAgentRegistry` requests now time out after 10 seconds to connect and
+  10 seconds between reads, instead of `azure-core`'s 300-second defaults, and
+  `OllamaModel` connects within 10 seconds instead of waiting forever; Ollama
+  reads stay bounded by the run's deadline, so long generations are not cut
+  short (#220).
 
 ### Fixed
 

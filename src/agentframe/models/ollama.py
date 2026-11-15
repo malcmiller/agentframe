@@ -33,6 +33,16 @@ from agentframe.runtime.usage import FinishReason, Usage
 
 DEFAULT_ENDPOINT = "http://localhost:11434"
 
+# The ollama client waits forever by default. Connecting gets the same 10
+# seconds as an Agent Card fetch, so an unreachable server fails quickly (and
+# transiently). Reads, writes and pooled connections stay unbounded here: a
+# long generation sends nothing until it finishes, so the run's deadline, not
+# the HTTP client, decides how long a call may take.
+CONNECT_TIMEOUT_SECONDS = 10.0
+_TIMEOUT = httpx.Timeout(
+    connect=CONNECT_TIMEOUT_SECONDS, read=None, write=None, pool=None
+)
+
 
 @dataclass(frozen=True)
 class _Metadata:
@@ -69,6 +79,10 @@ class OllamaModel:
     loads at about 18 GB instead of about 2 GB at 8192. Ollama also reloads
     the model, taking several seconds, whenever ``num_ctx`` changes.
 
+    Connecting to the server times out after 10 seconds. Nothing else in a
+    call is bounded by the HTTP client: the run's deadline
+    (``RunLimits.timeout_seconds``) limits how long a generation may take.
+
     After ``close()`` the model cannot be used again; later calls fail with
     ``RuntimeError``. Create a new ``OllamaModel`` instead.
 
@@ -97,7 +111,7 @@ class OllamaModel:
         self._configured_context_window = context_window
         self._metadata: _Metadata | None = None
         self._metadata_lock = asyncio.Lock()
-        self._client = ollama.AsyncClient(host=endpoint)
+        self._client = ollama.AsyncClient(host=endpoint, timeout=_TIMEOUT)
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Send ``request`` to the server's chat API and return the full reply.
