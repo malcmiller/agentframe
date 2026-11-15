@@ -512,6 +512,10 @@ and mypy; tests run in CI, not on every commit. See
 contributor rules, local matrix commands and PyCharm setup.
 Releases are published to PyPI by a workflow; see
 [releasing](https://github.com/malcmiller/agentframe/blob/main/docs/guides/releasing.md).
+Every workflow action is pinned to a full commit SHA with its release tag in a
+comment, and Dependabot proposes weekly grouped updates to those actions and to
+`uv.lock`. Report vulnerabilities privately as described in
+[SECURITY.md](https://github.com/malcmiller/agentframe/blob/main/SECURITY.md).
 
 ### Real-provider tests
 
