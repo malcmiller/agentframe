@@ -437,7 +437,7 @@ models. So M9 adds **no new runtime dependency**.
 (like `agentframe.testing`); install with `pip install agentframe-py`, plus the
 `ollama` or `foundry` extra for a judge model. There is no separate extra for
 evaluation: one is added only if evaluation ever needs a dependency of its own,
-and that dependency is then pinned exactly.
+and that dependency then gets a compatible range like the other extras.
 
 Importing `agentframe` never imports the evaluation module, and no I/O happens
 at import or construction.

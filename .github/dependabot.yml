@@ -1,12 +1,16 @@
 # Weekly, grouped version updates for the Python dependencies (pyproject.toml
 # and uv.lock) and the SHA-pinned workflow actions. Major Python updates arrive
 # one per pull request, because each is a deliberate compatibility decision.
+# increase-if-necessary leaves a runtime range alone when it already allows the
+# new version (only uv.lock changes), so lower bounds stay the lowest tested
+# versions; exact development tool pins still move to the new version.
 # Security updates also need Dependabot alerts and security updates enabled in
 # the repository settings.
 version: 2
 updates:
   - package-ecosystem: uv
     directory: /
+    versioning-strategy: increase-if-necessary
     schedule:
       interval: weekly
     open-pull-requests-limit: 3

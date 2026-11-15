@@ -69,8 +69,8 @@ Decisions confirmed 2026-11-12:
   check). The registry accepts plain `http`; the directory (#84) refuses it
   except for loopback hosts or hosts listed in `AgentDirectory(allow_http_hosts=[...])`.
 - The file is read on each call (`asyncio.to_thread`, at most 1 MiB,
-  `yaml.safe_load`); the directory caches cards, not files. PyYAML is an
-  exactly pinned core dependency.
+  `yaml.safe_load`); the directory caches cards, not files. PyYAML is a core
+  dependency (`pyyaml>=6.0.3,<7`).
 - Configuration problems raise `DefinitionError` naming the source and agent.
 
 There is no I/O at import or construction, no automatic environment/file search,

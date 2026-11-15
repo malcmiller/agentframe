@@ -804,7 +804,7 @@ declaration is descriptive; the authenticator still enforces credentials.
 tokens and map their verified app roles and scopes to permissions.
 
 **Signature status:** implemented (M7 story #76; on-behalf-of parameters M8+
-#93). Requires the optional extra `agentframe-py[entra]`, which pins
+#93). Requires the optional extra `agentframe-py[entra]`, which installs
 `PyJWT[crypto]`, `httpx` and (for on-behalf-of) `azure-identity`; importing
 `EntraIDAuth` without it raises `ImportError` naming the extra.
 
