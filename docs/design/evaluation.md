@@ -311,7 +311,9 @@ one output meets a written rubric:
   ([prompt safeguarding](prompt-safeguarding.md)). `votes=3` asks up to
   three times, one run at a time, and takes the majority, stopping once it is
   certain (default `votes=1`; odd numbers from 1 to 15). The score's `value`
-  is the fraction of votes that passed, so a split vote shows in the report.
+  is the fraction of votes that passed, so a split vote shows in the report,
+  and its `votes_cast` / `votes_passed` count the runs made, so an early stop
+  shows too (#213).
 - **Determinism.** `ModelSettings` has no temperature or seed today, and some
   Foundry reasoning deployments reject temperature. The judge relies on a binary
   rubric, reference answers and votes instead

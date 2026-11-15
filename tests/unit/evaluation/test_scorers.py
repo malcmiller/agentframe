@@ -203,3 +203,20 @@ async def test_valid_reasons_are_reported_only_when_capturing_content(
     assert result.status is CaseStatus.FAILED
     assert (result.scores[0].reason is not None) is capture_content
     assert SECRET not in (result.scores[0].reason or "")
+
+
+@pytest.mark.parametrize(
+    ("cast", "passed"),
+    [
+        pytest.param(3, None, id="only-cast"),
+        pytest.param(None, 1, id="only-passed"),
+        pytest.param(0, 0, id="no-votes-cast"),
+        pytest.param(2, 3, id="more-passed-than-cast"),
+        pytest.param(3, -1, id="negative"),
+        pytest.param(True, True, id="bools"),
+        pytest.param(3.0, 2, id="float"),
+    ],
+)
+def test_score_refuses_vote_counts_that_do_not_add_up(cast: Any, passed: Any) -> None:
+    with pytest.raises(DefinitionError, match="votes_cast and votes_passed"):
+        Score(passed=True, votes_cast=cast, votes_passed=passed)

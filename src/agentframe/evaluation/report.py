@@ -48,12 +48,18 @@ class ScoreResult:
         value: The scorer's optional number.
         reason: The scorer's explanation; ``None`` unless the evaluation
             captures content, since it may quote the output.
+        votes_cast: How many votes a voting scorer such as ``Judge`` cast;
+            ``None`` unless the scorer sets them. Counts are kept without
+            captured content, since they hold no content.
+        votes_passed: How many of those votes passed.
     """
 
     scorer: str
     passed: bool
     value: float | None = None
     reason: str | None = None
+    votes_cast: int | None = None
+    votes_passed: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -597,6 +603,8 @@ def _score_json(score: ScoreResult, *, capture_content: bool) -> dict[str, Any]:
         "scorer": score.scorer,
         "passed": score.passed,
         "value": score.value,
+        "votes_cast": score.votes_cast,
+        "votes_passed": score.votes_passed,
     }
     if capture_content:
         entry["reason"] = score.reason
@@ -702,13 +710,22 @@ def _reasons(results: tuple[CaseResult, ...]) -> list[str]:
 
 def _scores_cell(result: CaseResult) -> str:
     cells = [
-        f"{score.scorer}={'pass' if score.passed else 'fail'}"
-        + (f"({score.value:g})" if score.value is not None else "")
+        f"{score.scorer}={'pass' if score.passed else 'fail'}{_score_detail(score)}"
         for score in result.scores
     ]
     if result.error_type is not None:
         cells.append(f"error={result.error_type}")
     return " ".join(cells) or "-"
+
+
+def _score_detail(score: ScoreResult) -> str:
+    """The value and vote counts in brackets, such as ``(0.666667, 2/3 votes)``."""
+    details = []
+    if score.value is not None:
+        details.append(f"{score.value:g}")
+    if score.votes_cast is not None:
+        details.append(f"{score.votes_passed}/{score.votes_cast} votes")
+    return f"({', '.join(details)})" if details else ""
 
 
 def _tokens_cell(result: CaseResult) -> str:

@@ -232,7 +232,12 @@ class Evaluation:
             reason = score.reason if self._capture_content else None
             scores.append(
                 ScoreResult(
-                    scorer=name, passed=score.passed, value=score.value, reason=reason
+                    scorer=name,
+                    passed=score.passed,
+                    value=score.value,
+                    reason=reason,
+                    votes_cast=score.votes_cast,
+                    votes_passed=score.votes_passed,
                 )
             )
         passed = all(score.passed for score in scores)

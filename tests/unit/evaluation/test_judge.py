@@ -1,6 +1,7 @@
 """Tests for the rubric ``Judge`` scorer, using ``ScriptedModel`` judges."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -268,7 +269,30 @@ async def test_a_judge_also_works_as_a_plain_scorer() -> None:
 
     score = await judge(Case(id="hello", text="hello"), "goodbye")
 
-    assert score == Score(passed=False, reason="It changes the text.")
+    assert score == Score(
+        passed=False, reason="It changes the text.", votes_cast=1, votes_passed=0
+    )
+
+
+async def test_a_single_vote_records_its_count_in_the_summary_and_json(
+    tmp_path: Path,
+) -> None:
+    report = await evaluate(Judge(judge_model(PASS), rubric=RUBRIC))
+
+    [score] = only(report).scores
+    assert (score.value, score.votes_cast, score.votes_passed) == (None, 1, 1)
+    assert "judge=pass(1/1 votes)" in str(report)
+    report.write_json(tmp_path / "report.json")
+    [entry] = json.loads((tmp_path / "report.json").read_text())["results"]
+    assert entry["scores"] == [
+        {
+            "scorer": "judge",
+            "passed": True,
+            "value": None,
+            "votes_cast": 1,
+            "votes_passed": 1,
+        }
+    ]
 
 
 @pytest.mark.parametrize("rubric", ["", "   "])
@@ -278,7 +302,7 @@ def test_a_judge_needs_a_rubric(rubric: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("verdicts", "passed", "value", "asked"),
+    ("verdicts", "passed", "value", "cast"),
     [
         pytest.param([PASS, PASS], True, 1.0, 2, id="agree-stops-early"),
         pytest.param([FAIL, FAIL], False, 0.0, 2, id="agree-on-fail"),
@@ -287,7 +311,7 @@ def test_a_judge_needs_a_rubric(rubric: str) -> None:
     ],
 )
 async def test_three_votes_take_the_majority_and_show_a_split(
-    verdicts: list[str], passed: bool, value: float, asked: int
+    verdicts: list[str], passed: bool, value: float, cast: int
 ) -> None:
     model = judge_model(*verdicts, PASS)  # A spare reply that must go unused.
 
@@ -298,7 +322,9 @@ async def test_three_votes_take_the_majority_and_show_a_split(
     assert score.reason == (
         "It repeats the text." if passed else "It changes the text."
     )
-    assert len(model.requests) == asked
+    assert len(model.requests) == cast
+    assert score.votes_cast == cast
+    assert score.votes_passed == verdicts.count(PASS)
 
 
 async def test_five_votes_stop_once_three_agree() -> None:
@@ -307,10 +333,27 @@ async def test_five_votes_stop_once_three_agree() -> None:
     score = await Judge(model, rubric=RUBRIC, votes=5)(Case(id="c", text="hi"), "hi")
 
     assert (score.passed, score.value) == (True, 0.75)
+    assert (score.votes_cast, score.votes_passed) == (4, 3)
     assert len(model.requests) == 4
 
 
-async def test_each_vote_is_charged_and_split_votes_show_in_the_report() -> None:
+async def test_an_early_stop_shows_fewer_votes_cast_than_a_full_majority() -> None:
+    # Both pass unanimously, so value alone (1.0) cannot tell them apart.
+    three = await Judge(judge_model(PASS, PASS), rubric=RUBRIC, votes=3)(
+        Case(id="c", text="hi"), "hi"
+    )
+    five = await Judge(judge_model(PASS, PASS, PASS), rubric=RUBRIC, votes=5)(
+        Case(id="c", text="hi"), "hi"
+    )
+
+    assert three.value == five.value == 1.0
+    assert (three.votes_passed, three.votes_cast) == (2, 2)
+    assert (five.votes_passed, five.votes_cast) == (3, 3)
+
+
+async def test_each_vote_is_charged_and_split_votes_show_in_the_report(
+    tmp_path: Path,
+) -> None:
     model = judge_model(reply(PASS, 10), reply(FAIL, 20), reply(PASS, 30))
 
     report = await evaluate(Judge(model, rubric=RUBRIC, votes=3), max_total_tokens=None)
@@ -319,7 +362,13 @@ async def test_each_vote_is_charged_and_split_votes_show_in_the_report() -> None
     assert result.status is CaseStatus.PASSED
     assert result.scores[0].value == pytest.approx(2 / 3)
     assert result.judge_usage == Usage(57, 3, 60, estimated=False)
-    assert "judge=pass(0.666667)" in str(report)
+    assert "judge=pass(0.666667, 2/3 votes)" in str(report)
+    # Vote counts are numbers, not content: kept even without capture_content.
+    report.write_json(tmp_path / "report.json")
+    [entry] = json.loads((tmp_path / "report.json").read_text())["results"]
+    [score] = entry["scores"]
+    assert (score["votes_cast"], score["votes_passed"]) == (3, 2)
+    assert "reason" not in score
 
 
 async def test_a_failed_vote_errors_the_case_and_keeps_judge_usage_unknown() -> None:

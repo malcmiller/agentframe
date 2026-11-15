@@ -415,7 +415,8 @@ dataclass.
 dataclass.
 
 ```text
-Score(*, passed: bool, value: float | None = None, reason: str | None = None)
+Score(*, passed: bool, value: float | None = None, reason: str | None = None,
+      votes_cast: int | None = None, votes_passed: int | None = None)
 ```
 
 | Field | Type | Required/default status | Meaning and constraints |
@@ -423,6 +424,8 @@ Score(*, passed: bool, value: float | None = None, reason: str | None = None)
 | `passed` | `bool` | Required | Whether the output passes this check. |
 | `value` | `float \| None` | Optional; default `None` | A number for reports, such as a similarity of 0.83. |
 | `reason` | `str \| None` | Optional; default `None` | An explanation; may quote the output, so results keep it only with `capture_content=True`. |
+| `votes_cast` | `int \| None` | Optional; default `None` | For a scorer that votes, such as [`Judge`](#judge), how many votes it actually cast: fewer than it may ask for when it stopped early. Set together with `votes_passed`; at least 1 (#213). |
+| `votes_passed` | `int \| None` | Optional; default `None` | How many of the votes cast passed, from 0 to `votes_cast` (#213). |
 
 ```python
 from agentframe.evaluation import Case, Score
@@ -433,8 +436,9 @@ def similar(case: Case[str], output: str) -> Score:
     return Score(passed=value >= 0.8, value=value)
 ```
 
-**Behavior / failures:** raises `DefinitionError` when `passed` is not a `bool`
-or `value` is not a number.
+**Behavior / failures:** raises `DefinitionError` when `passed` is not a `bool`,
+`value` is not a number, or the vote counts are not set together as whole
+numbers with at least one vote cast and no more passing than cast.
 
 **Related:** [scorers](../design/evaluation.md#scorers).
 
@@ -604,9 +608,15 @@ is not JSON-serializable errors it too.
 time and passes on a majority, stopping as soon as the majority is certain:
 `votes=3` takes two runs when they agree and three when they split, so it
 costs up to three times one vote. The `Score`'s `value` is the fraction of
-the votes asked that passed (for example `0.666667` for a 2-1 split, shown as
-`judge=pass(0.666667)` and in the JSON `scores`), so a split vote is visible;
-with `votes=1` `value` stays `None`. The `reason` is the first reason on the
+the votes cast that passed (for example `0.666667` for a 2-1 split), so a
+split vote is visible; with `votes=1` `value` stays `None`. Every judge
+`Score` also has `votes_cast` and `votes_passed`, counting the judge runs
+actually made, so an early stop is visible too: a unanimous `votes=3` is
+`2/2` and a unanimous `votes=5` is `3/3`, though both have a `value` of 1
+(#213). The summary shows them as `judge=pass(0.666667, 2/3 votes)` or, with
+one vote, `judge=pass(1/1 votes)`, and the JSON `scores` as `votes_cast` and
+`votes_passed`; they are kept without `capture_content`, since they are
+counts, not content. The `reason` is the first reason on the
 winning side. Any vote that errors, or that the budget cannot fit, errors the
 case; it is never scored on fewer votes. Votes do not run concurrently, so a
 case holds at most one judge ceiling at a time.
@@ -644,7 +654,7 @@ the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
 | `case_id` | `str` | The case's ID. |
 | `attempt` | `int` | Which attempt this is, from 1 to `repeats` (#157). |
 | `status` | `CaseStatus` | `passed`, `failed`, `errored` or `not_run` (never started: budget or timeout). |
-| `scores` | `tuple[ScoreResult, ...]` | Each scorer's `scorer` name, `passed`, `value` and `reason` (`None` unless captured), in scorer order. |
+| `scores` | `tuple[ScoreResult, ...]` | Each scorer's `scorer` name, `passed`, `value`, `reason` (`None` unless captured), and `votes_cast` / `votes_passed` (always set by a [`Judge`](#judge), `None` unless the scorer sets them; always kept), in scorer order. |
 | `error_type` | `str \| None` | Class name of the error that errored the case. |
 | `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. For `not_run`, why it did not run. |
 | `invocation_id` | `str \| None` | The run's ID, also when it failed with an AgentFrame error. |
@@ -705,7 +715,8 @@ def check(report: EvalReport) -> None:
 `str(report)` (and `print(report)`) is a plain-text summary with no extra
 dependency: one line each for counts and pass rate, tokens, latency, errors,
 scorer and tag pass rates, then a table of case ID, status, scorer verdicts
-(`name=pass` / `name=fail`, with the value in brackets, or `error=<class>`),
+(`name=pass` / `name=fail`, with the value and any vote counts in brackets,
+such as `judge=pass(0.666667, 2/3 votes)`, or `error=<class>`),
 tokens (`~` marks estimates, `unknown` when not reported) and duration,
 failing cases first (errored, then failed, then not run, then passed). With a
 budget, a `Budget:` line shows it and any overrun or unknown usage (target
@@ -791,7 +802,7 @@ The document's top-level keys:
 | `capture_content` | Whether content was captured. |
 | `max_total_tokens` | The evaluation-wide budget, or `null`. |
 | `aggregates` | `attempt_count`, `passed_count`, `failed_count`, `errored_count`, `not_run_count`, `pass_rate`, `scorer_pass_rates`, `tag_pass_rates`, `flaky_cases`, `total_usage` (the [`UsageTotals`](#usagetotals) fields), `total_judge_usage` (the same fields, or `null` when no [`Judge`](#judge) ran), `over_budget` (target plus judge tokens), `budget_fully_enforced` (`null` without a budget, `false` when any target or judge usage is unknown), `latency` (`p50_seconds`, `p95_seconds`, `max_seconds`, or `null`) and `errors_by_class`. |
-| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `judge_usage` (the same fields, or `null` when no judge ran), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
+| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`, `votes_cast`, `votes_passed`; the vote counts are `null` unless the scorer sets them, as a [`Judge`](#judge) always does, added in #213 without changing the schema identifier), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `judge_usage` (the same fields, or `null` when no judge ran), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
 
 **Behavior / failures:** unknown token counts are `null`, never 0. Like the
 console summary, the document holds no case content and no error messages by

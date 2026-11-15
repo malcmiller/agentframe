@@ -3,7 +3,7 @@
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeIs
 
 from pydantic import PydanticUserError, TypeAdapter, ValidationError
 
@@ -30,15 +30,23 @@ class Score:
         value: An optional number for reports, such as a similarity of 0.83.
         reason: An optional explanation. It may quote the output, so reports
             keep it only with ``capture_content=True``.
+        votes_cast: For a scorer that votes, such as ``Judge``, how many
+            votes it actually cast; fewer than it may ask for when it stopped
+            early. Set together with ``votes_passed``.
+        votes_passed: How many of the votes cast passed.
 
     Raises:
-        DefinitionError: ``passed`` is not a ``bool`` or ``value`` is not a
-            number.
+        DefinitionError: ``passed`` is not a ``bool``, ``value`` is not a
+            number, or only one vote count is set, or the counts are not
+            whole numbers with at least one vote cast and no more passing
+            than were cast.
     """
 
     passed: bool
     value: float | None = None
     reason: str | None = None
+    votes_cast: int | None = None
+    votes_passed: int | None = None
 
     def __post_init__(self) -> None:
         passed: object = self.passed
@@ -49,6 +57,26 @@ class Score:
             isinstance(value, bool) or not isinstance(value, int | float)
         ):
             raise DefinitionError("Score value must be a number.")
+        _check_votes(self.votes_cast, self.votes_passed)
+
+
+def _check_votes(cast: object, passed: object) -> None:
+    if cast is None and passed is None:
+        return
+    if (
+        not _is_whole_number(cast)
+        or not _is_whole_number(passed)
+        or not 0 <= passed <= cast
+        or cast < 1
+    ):
+        raise DefinitionError(
+            "Score votes_cast and votes_passed must be set together, as whole "
+            "numbers with at least one vote cast and no more passing than cast."
+        )
+
+
+def _is_whole_number(count: object) -> TypeIs[int]:
+    return isinstance(count, int) and not isinstance(count, bool)
 
 
 def scorer_name(scorer: Scorer) -> str:
