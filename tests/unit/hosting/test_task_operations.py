@@ -239,6 +239,7 @@ async def test_another_callers_task_looks_like_it_does_not_exist(
         assert error_code(follow_up) == TASK_NOT_FOUND
     still_mine = await get_task(http, alice_task["id"], ALICE_KEY)
     assert still_mine["status"]["state"] == "TASK_STATE_WORKING"
+    worker.release.set()
 
 
 # Cancellation

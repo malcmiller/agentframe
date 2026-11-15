@@ -171,7 +171,7 @@ class RemoteTool:
             self.skill,
             self.principal,
             self.entry.name,
-            MappingProxyType(arguments),
+            arguments,
             self.deadline,
         )
 

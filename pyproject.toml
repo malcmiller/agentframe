@@ -50,6 +50,9 @@ agentframe = "agentframe.cli:main"
 
 [project.urls]
 Repository = "https://github.com/malcmiller/agentframe"
+Documentation = "https://github.com/malcmiller/agentframe/tree/main/docs"
+Changelog = "https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md"
+Issues = "https://github.com/malcmiller/agentframe/issues"
 
 [dependency-groups]
 dev = [

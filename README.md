@@ -19,14 +19,14 @@ reusing protocol SDKs, validation libraries, and model-provider clients.
 AgentFrame 0.2.0, the multi-agent release (M8+), is
 [published on PyPI](https://pypi.org/project/agentframe-py/0.2.0/); it builds on
 0.1.0, the first usable single-agent release (milestones M0 to M7). See the
-[changelog](CHANGELOG.md). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
+[changelog](https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md). You can define agents with `@agent` / `@skill`, inject services, and run skills locally
 through `Runtime.invoke` / `Runtime.run` with validated inputs and outputs,
 permission checks and a timeout. M2 native A2A hosting is complete: `AgentApp`
 serves an agent as an ASGI application with its Agent Card and an authenticated
 A2A 1.0 endpoint, proven end to end with the official A2A client, and
 `agentframe run` serves it with one command (see
 [hosting over A2A](#hosting-over-a2a) and
-[development](docs/guides/development.md#one-agent-m2)). M3 text generation is
+[development](https://github.com/malcmiller/agentframe/blob/main/docs/guides/development.md#one-agent-m2)). M3 text generation is
 complete: an injected `OllamaModel` (local Llama) or
 `FoundryModel` (Foundry GPT deployment) serves the same agent, switched by
 configuration only (see the [first success criterion](#first-success-criterion)).
@@ -38,12 +38,12 @@ M5 bounded tool calling is complete: registered `@tool` functions selected by
 `ctx.generate(text, tools=[...])` run until the model answers, within
 `max_tool_calls`, with every call authorized before it runs and no tool ever
 replayed by a model retry (see
-[`examples/orders.py`](examples/orders.py)).
+[`examples/orders.py`](https://github.com/malcmiller/agentframe/blob/main/examples/orders.py)).
 M6 built-in opt-in model routing is complete: with
 `AgentApp(router=ModelRouter(model))`, free-text A2A messages are routed to a
 skill with validated arguments, or the caller is asked a question in the same
 task; the routing calls count toward the run's limits (see
-[`examples/routed_assistant.py`](examples/routed_assistant.py)).
+[`examples/routed_assistant.py`](https://github.com/malcmiller/agentframe/blob/main/examples/routed_assistant.py)).
 M7 hardening is in place: host limit ceilings, run admission, request and
 response size limits, graceful shutdown with `/health` and `/ready`, A2A
 message deduplication, `EntraIDAuth` and `ExecutionPolicy` checks, proven end
@@ -56,7 +56,7 @@ identity, `agentframe dev` and `agentframe compose` (see
 model-planned orchestration are built on `main`, not yet released: an
 orchestrator's model can call registered agents' skills as tools, or plan and
 run checked parallel plans (see the
-[orchestration guide](docs/guides/orchestration.md)). MCP, telemetry and
+[orchestration guide](https://github.com/malcmiller/agentframe/blob/main/docs/guides/orchestration.md)). MCP, telemetry and
 streaming are not implemented yet; documentation for them is labeled as
 planned design, and their unspecified interfaces remain open.
 
@@ -84,7 +84,7 @@ For example, `pip install "agentframe-py[server,ollama]"`. Discovery and remote
 A2A calls need no extra.
 
 **Stability:** Pre-1.0: public APIs may change in minor releases; changes are
-listed in the [changelog](CHANGELOG.md).
+listed in the [changelog](https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md).
 
 ## Goals
 
@@ -103,7 +103,7 @@ listed in the [changelog](CHANGELOG.md).
 Decorators describe the agent; an `Agent` subclass implements behavior. Models
 and infrastructure are injected. Each ability is a separate `@skill` method; no
 abstract `handle()` or manual dispatch method is required. This model-free agent
-is [`examples/echo.py`](examples/echo.py); run the `await` lines inside an async
+is [`examples/echo.py`](https://github.com/malcmiller/agentframe/blob/main/examples/echo.py); run the `await` lines inside an async
 function or `asyncio.run`:
 
 ```python
@@ -145,7 +145,7 @@ Names default to the class/method name and descriptions to docstrings.
 ### Hosting over A2A
 
 Serve the same agent to any A2A 1.0 client with a `create_app()` function:
-[`examples/echo.py`](examples/echo.py) wraps `Echo` in an `AgentApp` with a
+[`examples/echo.py`](https://github.com/malcmiller/agentframe/blob/main/examples/echo.py) wraps `Echo` in an `AgentApp` with a
 development API key and authorization policy. These are **development
 placeholders**: production hosts need your real identity provider and resource
 checks. Remote hosts always require an explicit `auth=` choice.
@@ -160,13 +160,13 @@ ECHO_API_KEY=dev-only-key agentframe run examples.echo:create_app
 The Agent Card is served at `/.well-known/agent-card.json` and the JSON-RPC
 endpoint at `/a2a`; callers send the key in the `X-API-Key` header. Callers can
 name a skill with JSON arguments through the
-[skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format),
-or send free text to the built-in [`ModelRouter`](docs/api/hosting.md#modelrouter)
-or a custom [`SkillRouter`](docs/api/hosting.md#skillrouter).
+[skill-call extension](https://github.com/malcmiller/agentframe/blob/main/docs/api/hosting.md#structured-skill-call-wire-format),
+or send free text to the built-in [`ModelRouter`](https://github.com/malcmiller/agentframe/blob/main/docs/api/hosting.md#modelrouter)
+or a custom [`SkillRouter`](https://github.com/malcmiller/agentframe/blob/main/docs/api/hosting.md#skillrouter).
 `tests/integration/test_interoperability.py` drives every case with the official A2A client.
 
 For production identity in a Microsoft environment, replace the API key with
-[`EntraIDAuth`](docs/api/authorization.md#entraidauth) (install the `entra`
+[`EntraIDAuth`](https://github.com/malcmiller/agentframe/blob/main/docs/api/authorization.md#entraidauth) (install the `entra`
 extra). Callers send a Microsoft Entra v2.0 access token as
 `Authorization: Bearer <token>`; their app roles and scopes map to permissions:
 
@@ -185,9 +185,9 @@ host = HostConfig(
 reference page lists the one-time setup.
 
 The normal path needs only one AgentFrame subclass, `Agent`. Model-free agents
-need no provider configuration. See [agents with and without models](docs/guides/agent-examples.md)
+need no provider configuration. See [agents with and without models](https://github.com/malcmiller/agentframe/blob/main/docs/guides/agent-examples.md)
 for multi-skill, mixed, and local invocation examples, and the
-[API design examples](docs/design/base-classes.md#proposed-api-examples) for host
+[API design examples](https://github.com/malcmiller/agentframe/blob/main/docs/design/base-classes.md#proposed-api-examples) for host
 composition and advanced extension points.
 
 Llama is a model family; Ollama is the initial local model host. Foundry model
@@ -234,7 +234,7 @@ most 5), the root invocation ID and any W3C trace context, and the peer's
 reported usage is charged to the caller once. The caller authenticates as
 itself (`remotes={"research-agent": Service(credential=...)}`) or, with Entra
 ID, on behalf of the signed-in user (`OnBehalfOf(scope=...)`).
-[`examples/multi_agent`](examples/multi_agent) is a complete planner and
+[`examples/multi_agent`](https://github.com/malcmiller/agentframe/tree/main/examples/multi_agent) is a complete planner and
 research agent; run both with `agentframe dev` from that directory.
 `tests/integration/test_multi_agent_release.py` proves the release criteria
 with each agent in its own `agentframe run` process.
@@ -246,11 +246,11 @@ Cards, `ctx.generate(goal, tools=[*skills])` calls them as tools, and
 checked plan, in parallel where its steps allow. The example's planner adds
 `propose` and `planned` skills over the research agent and a writer agent,
 behind permissions, a plan check and a tool check; read the
-[orchestration guide](docs/guides/orchestration.md) and its safety checklist
+[orchestration guide](https://github.com/malcmiller/agentframe/blob/main/docs/guides/orchestration.md) and its safety checklist
 before exposing a skill like that. See the
-[agent examples](docs/guides/agent-examples.md#multi-agent-composition),
-[local development](docs/guides/development.md) and the
-[discovery reference](docs/api/discovery.md).
+[agent examples](https://github.com/malcmiller/agentframe/blob/main/docs/guides/agent-examples.md#multi-agent-composition),
+[local development](https://github.com/malcmiller/agentframe/blob/main/docs/guides/development.md) and the
+[discovery reference](https://github.com/malcmiller/agentframe/blob/main/docs/api/discovery.md).
 
 ## First success criterion
 
@@ -268,7 +268,7 @@ are not required. A deterministic model-free example must work without cloud
 credentials, model downloads, or an inference server.
 
 This works from source today. The agent in
-[`examples/assistant.py`](examples/assistant.py) has a text skill, a typed
+[`examples/assistant.py`](https://github.com/malcmiller/agentframe/blob/main/examples/assistant.py) has a text skill, a typed
 structured-output skill and a model-free skill, and never names a model host.
 Its text skill is all a text agent needs:
 
@@ -314,7 +314,7 @@ The example accepts anonymous callers as a **development placeholder** for a
 localhost server; production hosts need real authentication and authorization
 (see [hosting over A2A](#hosting-over-a2a)). Any A2A 1.0 client can fetch the
 card and call `answer`, `summarize` or `count_words` through the
-[skill-call extension](docs/api/hosting.md#structured-skill-call-wire-format);
+[skill-call extension](https://github.com/malcmiller/agentframe/blob/main/docs/api/hosting.md#structured-skill-call-wire-format);
 `summarize` returns one data part `{"value": {"text": ..., "key_points": [...]}}`,
 and the completed task's metadata reports the run's token usage.
 `tests/integration/test_success_criterion.py` proves this offline in CI: the official A2A
@@ -323,7 +323,7 @@ code change, and `count_words` runs without inference.
 `tests/integration/test_structured_example.py` proves `summarize` the same way,
 including safe `FAILED` tasks for invalid output, refusal, truncation and a
 model without structured output. The opt-in
-[real-provider tests](AGENTS.md#real-provider-tests-opt-in-local-only) run the
+[real-provider tests](https://github.com/malcmiller/agentframe/blob/main/AGENTS.md#real-provider-tests-opt-in-local-only) run the
 same contract against Ollama and Foundry.
 
 ## Initial scope
@@ -342,9 +342,9 @@ routes: A2A for agents, optional MCP for LLM apps/tools and AG-UI later for
 frontends. Prefer structured A2A skill/JSON-argument requests through a declared,
 activated extension; free text uses routing and input-required clarification.
 Structured selection bypasses routing, not authorization or execution controls.
-See the [request-style design and open extension contract](docs/design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
+See the [request-style design and open extension contract](https://github.com/malcmiller/agentframe/blob/main/docs/design/mcp-skills.md#a2a-request-styles-and-extension-boundary).
 
-The [delivery plan](docs/roadmap.md#delivery-milestones) splits this work
+The [delivery plan](https://github.com/malcmiller/agentframe/blob/main/docs/roadmap.md#delivery-milestones) splits this work
 into independently releasable/testable milestones: M0 development setup, M1
 model-free execution, M2 A2A/custom routing, M3 interchangeable text models,
 M4 structured outputs, M5 bounded tools, M6 built-in opt-in model routing
@@ -370,12 +370,12 @@ the agent definition. The runtime enforces verified identity and
 application resource policy across entry points. Prompt safeguarding combines
 library trust boundaries with application checks, not a guaranteed injection filter.
 
-The [runtime contracts](docs/api/runtime.md) distinguish `invoke` (validated
+The [runtime contracts](https://github.com/malcmiller/agentframe/blob/main/docs/api/runtime.md) distinguish `invoke` (validated
 value) from `run` (`RunResult` with local metadata even without tracing).
-Use [annotated `Inject[T]` and `Services`](docs/api/agents.md#injectt) for service
+Use [annotated `Inject[T]` and `Services`](https://github.com/malcmiller/agentframe/blob/main/docs/api/agents.md#injectt) for service
 dependencies, validated at startup and excluded from caller schemas.
-[Decided defaults](docs/guides/limits.md) apply within independent host ceilings;
-remote hosts require an explicit [authenticator](docs/api/authorization.md#authenticator),
+[Decided defaults](https://github.com/malcmiller/agentframe/blob/main/docs/guides/limits.md) apply within independent host ceilings;
+remote hosts require an explicit [authenticator](https://github.com/malcmiller/agentframe/blob/main/docs/api/authorization.md#authenticator),
 never an implicit anonymous mode. Safe typed errors carry invocation correlation;
 transient model retries and A2A deduplication never promise exactly-once actions.
 
@@ -403,12 +403,12 @@ reading `agentframe.yaml`, local registry/development API-key wiring and tagged
 combined logs, and `agentframe compose` (implemented, #96), which writes a
 development `compose.yaml` with one container per agent and a `Dockerfile`
 template; Foundry/Kubernetes templates are later. See the
-[development plan](docs/guides/development.md). AgentFrame does not become a
+[development plan](https://github.com/malcmiller/agentframe/blob/main/docs/guides/development.md). AgentFrame does not become a
 hosting platform. Discovery itself does not deploy agents, grant authority or
 invoke them automatically. Foundry registry discovery uses the chosen projects
 agents API (`azure-ai-projects` 2.x); A2A-enabled filtering, card mapping,
 auth/RBAC and pagination still need implementation proof. See
-[discovery design](docs/design/discovery.md) and the [reference](docs/api/discovery.md).
+[discovery design](https://github.com/malcmiller/agentframe/blob/main/docs/design/discovery.md) and the [reference](https://github.com/malcmiller/agentframe/blob/main/docs/api/discovery.md).
 
 Streaming is a separate follow-up after M7, planned to support **AG-UI** as an
 optional agent-to-frontend
@@ -418,7 +418,7 @@ A2A/cards stay first-class; no UI or major agent-framework dependency is implied
 auth/limits/permissions: lifecycle, text deltas, tool names/status and safe errors.
 Whole-answer checks send complete text at end; disconnect cancels, with no
 first-version reconnect/resume. Frontend tools/shared state are later opt-in.
-The [streaming proposal](docs/design/streaming.md) scopes event mapping, trust and
+The [streaming proposal](https://github.com/malcmiller/agentframe/blob/main/docs/design/streaming.md) scopes event mapping, trust and
 output-policy boundaries without claiming implemented AG-UI conformance or
 automatically advertising A2A streaming.
 
@@ -435,41 +435,41 @@ Ollama or Foundry from `AGENTFRAME_MODEL_PROVIDER` (see the
 
 | Example | Shows |
 | --- | --- |
-| [`examples/echo.py`](examples/echo.py) | A model-free agent with an injected service, hosted for callers with a development API key. |
-| [`examples/assistant.py`](examples/assistant.py) | Text generation, a typed structured output and a model-free skill on one agent. |
-| [`examples/orders.py`](examples/orders.py) | Tool calling with permissions and a tool policy, behind a development API key. |
-| [`examples/routed_assistant.py`](examples/routed_assistant.py) | Free text routed to a skill by the built-in `ModelRouter`. |
-| [`examples/multi_agent`](examples/multi_agent) | A planner that fans out structured calls and free-text asks to a research agent over A2A, and lets its model plan and run a post over the research and writer agents (M10), with a planner evaluation. |
-| [`examples/plan_approval.py`](examples/plan_approval.py) | Human approval of model-made plans: one skill proposes a plan, a permission-protected skill runs the reviewed plan, with a plan check. |
+| [`examples/echo.py`](https://github.com/malcmiller/agentframe/blob/main/examples/echo.py) | A model-free agent with an injected service, hosted for callers with a development API key. |
+| [`examples/assistant.py`](https://github.com/malcmiller/agentframe/blob/main/examples/assistant.py) | Text generation, a typed structured output and a model-free skill on one agent. |
+| [`examples/orders.py`](https://github.com/malcmiller/agentframe/blob/main/examples/orders.py) | Tool calling with permissions and a tool policy, behind a development API key. |
+| [`examples/routed_assistant.py`](https://github.com/malcmiller/agentframe/blob/main/examples/routed_assistant.py) | Free text routed to a skill by the built-in `ModelRouter`. |
+| [`examples/multi_agent`](https://github.com/malcmiller/agentframe/tree/main/examples/multi_agent) | A planner that fans out structured calls and free-text asks to a research agent over A2A, and lets its model plan and run a post over the research and writer agents (M10), with a planner evaluation. |
+| [`examples/plan_approval.py`](https://github.com/malcmiller/agentframe/blob/main/examples/plan_approval.py) | Human approval of model-made plans: one skill proposes a plan, a permission-protected skill runs the reviewed plan, with a plan check. |
 
-[`examples/smoke.py`](examples/smoke.py) serves every example in-process with
+[`examples/smoke.py`](https://github.com/malcmiller/agentframe/blob/main/examples/smoke.py) serves every example in-process with
 a scripted model and calls it with the official A2A client, checking each
 returns a complete, validated result. CI runs it against the installed wheel;
 run it yourself from the repository root with `uv run python -m examples.smoke`.
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [Proposed API reference: public surfaces, parameters, and open contracts](docs/api/README.md)
-- [Decided local results and safe error contracts](docs/api/runtime.md)
-- [Service injection and lifecycle](docs/api/agents.md#injectt)
-- [Roadmap and delivery milestones](docs/roadmap.md)
-- [Decorators and type annotations](docs/guides/annotations.md)
-- [Base classes and interfaces](docs/design/base-classes.md)
-- [Agent examples: model-free, model-backed, and mixed](docs/guides/agent-examples.md)
-- [Read-first registries and managed agent discovery](docs/design/discovery.md)
-- [Local CLI development and container packaging plan](docs/guides/development.md)
-- [Future streaming and the optional AG-UI adapter](docs/design/streaming.md)
-- [Execution limits and token accounting](docs/guides/limits.md)
-- [Tracing and correlation](docs/design/tracing.md)
-- [Evaluation harness (built M9, not yet released)](docs/design/evaluation.md) and
-  [evaluating agents](docs/guides/evaluation.md)
-- [Model-planned orchestration (built M10, not yet released)](docs/design/orchestration.md) and
-  [the orchestration guide](docs/guides/orchestration.md)
-- [A2A hosting and optional MCP skill configuration](docs/design/mcp-skills.md)
-- [Skill authorization and caller identity](docs/guides/authorization.md)
-- [Prompt safeguarding and shared responsibilities](docs/design/prompt-safeguarding.md)
-- [Contributor and coding-agent context](AGENTS.md)
+- [Documentation index](https://github.com/malcmiller/agentframe/blob/main/docs/README.md)
+- [Proposed API reference: public surfaces, parameters, and open contracts](https://github.com/malcmiller/agentframe/blob/main/docs/api/README.md)
+- [Decided local results and safe error contracts](https://github.com/malcmiller/agentframe/blob/main/docs/api/runtime.md)
+- [Service injection and lifecycle](https://github.com/malcmiller/agentframe/blob/main/docs/api/agents.md#injectt)
+- [Roadmap and delivery milestones](https://github.com/malcmiller/agentframe/blob/main/docs/roadmap.md)
+- [Decorators and type annotations](https://github.com/malcmiller/agentframe/blob/main/docs/guides/annotations.md)
+- [Base classes and interfaces](https://github.com/malcmiller/agentframe/blob/main/docs/design/base-classes.md)
+- [Agent examples: model-free, model-backed, and mixed](https://github.com/malcmiller/agentframe/blob/main/docs/guides/agent-examples.md)
+- [Read-first registries and managed agent discovery](https://github.com/malcmiller/agentframe/blob/main/docs/design/discovery.md)
+- [Local CLI development and container packaging plan](https://github.com/malcmiller/agentframe/blob/main/docs/guides/development.md)
+- [Future streaming and the optional AG-UI adapter](https://github.com/malcmiller/agentframe/blob/main/docs/design/streaming.md)
+- [Execution limits and token accounting](https://github.com/malcmiller/agentframe/blob/main/docs/guides/limits.md)
+- [Tracing and correlation](https://github.com/malcmiller/agentframe/blob/main/docs/design/tracing.md)
+- [Evaluation harness (built M9, not yet released)](https://github.com/malcmiller/agentframe/blob/main/docs/design/evaluation.md) and
+  [evaluating agents](https://github.com/malcmiller/agentframe/blob/main/docs/guides/evaluation.md)
+- [Model-planned orchestration (built M10, not yet released)](https://github.com/malcmiller/agentframe/blob/main/docs/design/orchestration.md) and
+  [the orchestration guide](https://github.com/malcmiller/agentframe/blob/main/docs/guides/orchestration.md)
+- [A2A hosting and optional MCP skill configuration](https://github.com/malcmiller/agentframe/blob/main/docs/design/mcp-skills.md)
+- [Skill authorization and caller identity](https://github.com/malcmiller/agentframe/blob/main/docs/guides/authorization.md)
+- [Prompt safeguarding and shared responsibilities](https://github.com/malcmiller/agentframe/blob/main/docs/design/prompt-safeguarding.md)
+- [Contributor and coding-agent context](https://github.com/malcmiller/agentframe/blob/main/AGENTS.md)
 
 ## Development and contributions
 
@@ -503,15 +503,15 @@ All four checks must pass before committing: `uv run ruff format --check`,
 3.13, 3.14 and 3.15, verifies an isolated wheel import and runs the
 [examples smoke runner](#runnable-examples) against the installed wheel. Pre-commit runs Ruff
 and mypy; tests run in CI, not on every commit. See
-[code quality and readability](AGENTS.md#code-quality-and-readability) for the
+[code quality and readability](https://github.com/malcmiller/agentframe/blob/main/AGENTS.md#code-quality-and-readability) for the
 contributor rules, local matrix commands and PyCharm setup.
 Releases are published to PyPI by a workflow; see
-[releasing](docs/guides/releasing.md).
+[releasing](https://github.com/malcmiller/agentframe/blob/main/docs/guides/releasing.md).
 
 ### Real-provider tests
 
 Tests against a real Ollama server or Foundry deployment are opt-in and never
-run in normal CI; [AGENTS.md](AGENTS.md#real-provider-tests-opt-in-local-only)
+run in normal CI; [AGENTS.md](https://github.com/malcmiller/agentframe/blob/main/AGENTS.md#real-provider-tests-opt-in-local-only)
 lists the environment variables for running them locally. The manually triggered
 `.github/workflows/foundry.yml` runs the `foundry` tests from GitHub, for example
 before a release. It runs only from **Actions > Foundry provider tests > Run
@@ -524,10 +524,13 @@ The M10 planner tests in `test_providers.py` run the `examples/multi_agent`
 planner with the real model (the specialists use stand-in models): one plans
 and runs the example's post, checking only the entries used and completion,
 and one runs the planner evaluation with `report.require(...)`. Planning is
-nondeterministic: `llama3.2:3b` rarely plans the post validly, so that test is
-an expected failure for Ollama, and its evaluation only requires half the
-plans to be valid; measured rates are in the
-[orchestration guide](docs/guides/orchestration.md#measure-the-planner).
+nondeterministic and `llama3.2:3b` often plans badly, so for Ollama an
+invalid or empty plan, a plan the example's checks refuse, or (for the
+evaluation) more than half the plans erroring is an expected failure (xfail);
+any other failure still fails. The same applies to the two-step planning test,
+and to the judge example test when the small judge fails correct answers;
+measured rates are in the
+[orchestration guide](https://github.com/malcmiller/agentframe/blob/main/docs/guides/orchestration.md#measure-the-planner).
 For example:
 
 ```bash
@@ -605,7 +608,7 @@ your Foundry resource and its resource group):
 
 Then start the workflow on `main` and approve the pending `foundry` deployment.
 A missing variable makes the tests fail rather than skip.
-The [approved platform/API decisions](docs/roadmap.md#resolved-m0-platform-and-api-decisions)
+The [approved platform/API decisions](https://github.com/malcmiller/agentframe/blob/main/docs/roadmap.md#resolved-m0-platform-and-api-decisions)
 (2026-11-11) are Python **3.13+**, testing through **3.15** (Python has no LTS);
 A2A protocol **1.0** through official `a2a-sdk` (1.3.0 observed, specification
 release v1.0.1); and Foundry **OpenAI v1 Responses API** through optional
@@ -641,5 +644,5 @@ this repository, and no package availability or trademark clearance is guarantee
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE), a permissive open-source license
+Licensed under the [Apache License 2.0](https://github.com/malcmiller/agentframe/blob/main/LICENSE), a permissive open-source license
 that includes an explicit patent grant subject to its terms.

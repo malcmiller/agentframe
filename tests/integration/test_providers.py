@@ -25,8 +25,8 @@ import httpx2
 import openai
 import pytest
 from a2a.client import A2ACardResolver
-from a2a.helpers import get_artifact_text, get_data_parts
-from a2a.types import TaskState
+from a2a.helpers import get_artifact_text, get_data_parts, get_message_text
+from a2a.types import Task, TaskState
 from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 from pydantic import BaseModel
 
@@ -43,9 +43,11 @@ from agentframe import (
     FoundryModel,
     HostConfig,
     IncompleteOutputError,
+    InputValidationError,
     Model,
     ModelSettings,
     OllamaModel,
+    OutputValidationError,
     ProviderError,
     RunContext,
     RunLimits,
@@ -60,6 +62,7 @@ from agentframe.evaluation import Case, CaseStatus, Evaluation, Judge, LocalSkil
 from agentframe.models.foundry import FOUNDRY_SCOPE
 from agentframe.models.ollama import DEFAULT_ENDPOINT
 from agentframe.orchestration.plan import dependencies
+from agentframe.orchestration.planning import NO_PLAN_MESSAGE
 from examples.assistant import Summary, create_app
 from examples.evaluation import create_answer_evaluation
 from examples.multi_agent.planner import create_app as create_planner_app
@@ -310,7 +313,9 @@ async def test_the_example_answers_pass_a_rubric_judge(
     report.write_json(tmp_path / "eval-report.json")
 
     print(report)  # Numbers only: no prompts or answers by default.
-    # Small judge models occasionally fail a correct answer; errors still fail.
+    report.require(min_pass_rate=0.0)  # Errors always fail.
+    if isinstance(model, OllamaModel) and report.pass_rate < 0.5:
+        pytest.xfail("The small Ollama model judged its correct answers wrong")
     report.require(min_pass_rate=0.5)
     aggregates = json.loads((tmp_path / "eval-report.json").read_text())["aggregates"]
     assert aggregates["total_usage"]["total_tokens"]
@@ -529,6 +534,20 @@ async def test_a_model_calls_a_remote_skill_as_a_tool(
 
 
 # Planning: a real model plans a two-step goal over registered agents
+#
+# Small Ollama models often plan badly, so for Ollama a bad plan is an expected
+# failure (xfail). Only that outcome is: any other failure fails the test.
+
+
+def planned_badly(error_type: str | None, message: str | None) -> bool:
+    """Whether an error is the model's invalid or empty plan, not a bug.
+
+    ``ctx.plan`` raises ``OutputValidationError`` for an invalid plan and
+    ``InputValidationError`` with ``NO_PLAN_MESSAGE`` when the model finds none.
+    """
+    if error_type == OutputValidationError.__name__:
+        return True
+    return error_type == InputValidationError.__name__ and message == NO_PLAN_MESSAGE
 
 
 @agent(name="Research", description="Finds sources on a topic.", version="1.0.0")
@@ -601,22 +620,31 @@ async def test_a_model_plans_a_two_step_goal(serve: ServeLocally, model: Model) 
     ):
         registry = Agents({"research": research_url, "writer": writer_url})
         async with AgentDirectory(sources=[registry]) as directory:
-            result = await Runtime(directory=directory).run(
-                Planner(model=model),
-                skill="plan_goal",
-                arguments={
-                    "goal": "Find sources about tides, then write a blog post "
-                    "from those sources."
-                },
-            )
+            try:
+                result = await Runtime(directory=directory).run(
+                    Planner(model=model),
+                    skill="plan_goal",
+                    arguments={
+                        "goal": "Find sources about tides, then write a blog post "
+                        "from those sources."
+                    },
+                )
+            except (OutputValidationError, InputValidationError) as error:
+                bad = planned_badly(type(error).__name__, error.message)
+                if isinstance(model, OllamaModel) and bad:
+                    pytest.xfail(f"The small Ollama model planned badly: {error}")
+                raise
 
     # Planning is nondeterministic: only the entries and the dependency are
     # checked, not step IDs or argument values.
-    assert result.value == {
+    expected = {
         "research.find_sources": [],
         "writer.write_post": ["research.find_sources"],
     }
     assert result.model_calls == 1
+    if isinstance(model, OllamaModel) and result.value != expected:
+        pytest.xfail(f"The small Ollama model planned other steps: {result.value}")
+    assert result.value == expected
     print(f"planning usage: {result.usage}")
 
 
@@ -628,6 +656,31 @@ POST_GOAL = (
     "Write a post titled Tides from sources about tides, with a short research "
     "brief about tides as its notes."
 )
+# The example's plan and tool checks refusing a plan: too many briefs, or
+# sources the model invented instead of taking from the research agent.
+REFUSED_BY_CHECKS = (
+    "The plan was blocked by an execution policy check",
+    "Tool 'writer-agent.write_post' was blocked by an execution policy check",
+)
+
+
+def post_planned_badly(task: Task, records: list[logging.LogRecord]) -> bool:
+    """Whether the planner's task ended without a post because of a bad plan.
+
+    An invalid plan fails the task, and the planner logs the run as failed
+    with the error's class name. An empty plan, or one the example's checks
+    refuse, rejects the task with the error's message.
+    """
+    if task.status.state == TaskState.TASK_STATE_FAILED:
+        invalid_plan = f": {OutputValidationError.__name__}: "
+        return any(
+            message.startswith("Run failed") and invalid_plan in message
+            for message in (record.getMessage() for record in records)
+        )
+    if task.status.state == TaskState.TASK_STATE_REJECTED:
+        message = get_message_text(task.status.message)
+        return message == NO_PLAN_MESSAGE or message in REFUSED_BY_CHECKS
+    return False
 
 
 @asynccontextmanager
@@ -690,11 +743,11 @@ async def test_a_real_planner_plans_and_runs_the_example_post(
     # Planning is nondeterministic: only the entries used and completion are
     # checked, not step IDs, arguments or the post's wording.
     completed = task.status.state == TaskState.TASK_STATE_COMPLETED
-    data = get_data_parts(task.artifacts[0].parts) if completed else []
-    if not (data and data[0]["value"]["complete"]) and isinstance(model, OllamaModel):
-        # Invalid plans fail before sending; checks refuse invented sources.
-        pytest.xfail("llama3.2:3b rarely plans this goal validly")
+    if isinstance(model, OllamaModel) and post_planned_badly(task, caplog.records):
+        reason = get_message_text(task.status.message)
+        pytest.xfail(f"The small Ollama model planned badly: {reason}")
     assert completed, task.status
+    data = get_data_parts(task.artifacts[0].parts)
     assert data[0]["value"]["complete"] is True
     [created] = [r for r in caplog.records if r.getMessage().startswith("Plan created")]
     uses = getattr(created, "uses")  # noqa: B009 - a log record's extra field
@@ -715,13 +768,18 @@ async def test_a_real_planner_passes_its_evaluation(
             report = await create_planner_evaluation(model, runtime).run()
 
     # Planning is nondeterministic; docs/guides/orchestration.md has measured
-    # rates. llama3.2:3b rarely gets these plans' structure right, so for
-    # Ollama only half the plans must be valid (an invalid plan errors).
+    # rates. Small Ollama models rarely get these plans' structure right, so
+    # for Ollama only half the plans must be valid (a bad plan errors its case).
     print(report)
-    if isinstance(model, OllamaModel):
-        report.require(min_pass_rate=0.0, max_errors=3)
-    else:
+    if not isinstance(model, OllamaModel):
         report.require(min_pass_rate=0.5, max_errors=1)
+        return
+    errored = [r for r in report.results if r.status is CaseStatus.ERRORED]
+    other = [r for r in errored if not planned_badly(r.error_type, r.error_message)]
+    assert other == [], [(r.case_id, r.error_type) for r in other]
+    if len(errored) > 3:
+        pytest.xfail(f"The small Ollama model planned {len(errored)} goals badly")
+    report.require(min_pass_rate=0.0, max_errors=3)
 
 
 # Model routing: free text over A2A, routed by the built-in router

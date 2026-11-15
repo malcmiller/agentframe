@@ -196,7 +196,7 @@ class ToolAuthorizationPolicy(Protocol):
 | --- | --- | --- | --- |
 | `principal` | `Principal \| None` | Always passed; `None` when the run has no identity | The run's verified caller (`ctx.principal`), never model or business input. |
 | `tool` | [`ToolDefinition`](decorators.md#tooldefinition) | Always passed | Definition of the tool about to run, including `name`, `side_effects` and `requires_permissions`. |
-| `arguments` | `Mapping[str, object]` | Always passed | The tool's validated business arguments as a read-only mapping; never `ctx` or injected services. |
+| `arguments` | `Mapping[str, object]` | Always passed | A read-only deep copy of the tool's validated business arguments, so changing a nested value changes nothing the tool receives; never `ctx` or injected services. |
 | Return | `bool` | Required | Only `True` allows the call. `False` or any other value, including truthy ones, denies it. |
 
 This policy lets callers cancel only orders they own; `ownership` stands for
@@ -311,7 +311,7 @@ ExecutionPolicy(
 | --- | --- | --- | --- |
 | `input_checks` | `Sequence[InputCheck]` | Optional; default none | Run after argument validation and the [`AuthorizationPolicy`](#authorizationpolicy), before services are resolved or the skill runs. Receive the validated arguments, read-only. |
 | `model_request_checks` | `Sequence[ModelRequestCheck]` | Optional; default none | Run before every model request is sent and before its tokens are reserved: text, structured output, each tool-loop continuation and every [`ModelRouter`](hosting.md#modelrouter) or custom-router `RoutingContext.generate` call (with `skill=None`). Checked once per logical request, not again when a transient failure is retried. |
-| `tool_checks` | `Sequence[ToolCheck]` | Optional; default none | Run for every tool call the model asks for, in every tool-loop continuation: after argument validation and the [`ToolAuthorizationPolicy`](#toolauthorizationpolicy), before the tool's services are resolved or the tool runs. Receive the tool's name and validated arguments, read-only. Tool calls are never retried, so no path runs a tool without its checks. |
+| `tool_checks` | `Sequence[ToolCheck]` | Optional; default none | Run for every tool call the model asks for, in every tool-loop continuation: after argument validation and the [`ToolAuthorizationPolicy`](#toolauthorizationpolicy), before the tool's services are resolved or the tool runs. Receive the tool's name and a read-only deep copy of its validated arguments, one per check, so no check can change what the tool or a remote agent receives or what a later check sees. Tool calls are never retried, so no path runs a tool without its checks. |
 | `plan_checks` | `Sequence[PlanCheck]` | Optional; default none | Run once by [`ctx.run_plan`](orchestration.md#runcontextrun_plan), after the plan is checked against the catalog and the caller's permissions and before any step counts as a tool call or is sent. Receive a deep copy of the whole [`Plan`](orchestration.md#plan): every step's entry, arguments, text and references (not their values, which do not exist yet). Tool checks still run for every step. See [plan checks and the approval pattern](orchestration.md#plan-checks-and-the-approval-pattern). |
 | `output_checks` | `Sequence[OutputCheck]` | Optional; default none | Run after the skill's value is validated, before it is returned or published. |
 

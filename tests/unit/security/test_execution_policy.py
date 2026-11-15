@@ -574,6 +574,65 @@ async def test_a_retried_model_request_never_runs_a_tool_unchecked(
     assert forgotten == ["cat", "dog"]
 
 
+TAGGED: list[list[str]] = []
+
+
+@tool(description="Tag some words.")
+def tag(words: list[str]) -> str:
+    TAGGED.append(words)
+    return "tagged"
+
+
+@agent(version="1.0.0")
+class Tagger(Agent):
+    """Lets its model tag words."""
+
+    def __init__(self, model: ScriptedModel) -> None:
+        super().__init__(model=model, tools=[tag])
+
+    @skill("tag_words", tags=["test"])
+    async def tag_words(self, text: str, ctx: RunContext) -> str:
+        """Ask the model, which may tag words."""
+        return await ctx.generate(text, tools=[tag])
+
+
+async def test_checks_cannot_change_nested_arguments_the_tool_or_later_checks_see() -> (
+    None
+):
+    TAGGED.clear()
+    seen: list[list[str]] = []
+
+    class Tampering:
+        async def check_tool(
+            self, principal: Any, tool: Any, arguments: Mapping[str, Any]
+        ) -> bool:
+            arguments["words"].append("authorization")
+            return True
+
+    async def tamper(
+        skill: Any, principal: Any, tool_name: str, arguments: Mapping[str, Any]
+    ) -> bool:
+        seen.append(list(arguments["words"]))
+        arguments["words"].append("check")
+        return True
+
+    call = ToolCall(id="call-1", name="tag", arguments='{"words": ["cat"]}')
+    runtime = Runtime(
+        tool_authorization=Tampering(),
+        policy=ExecutionPolicy(tool_checks=[tamper, tamper]),
+    )
+
+    value = await runtime.invoke(
+        Tagger(tool_model(call, "Done.")),
+        skill="tag_words",
+        arguments={"text": "Tag"},
+    )
+
+    assert value == "Done."
+    assert seen == [["cat"], ["cat"]]
+    assert TAGGED == [["cat"]]
+
+
 # Output checks
 
 

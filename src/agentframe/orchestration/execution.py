@@ -468,7 +468,7 @@ class _Execution:
             skill,
             self._principal,
             entry.name,
-            MappingProxyType(arguments),
+            arguments,
             self._deadline,
         )
 
