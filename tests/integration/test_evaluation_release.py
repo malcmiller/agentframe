@@ -101,8 +101,11 @@ async def test_a_split_vote_shows_as_the_judge_score_value() -> None:
 
     france, japan = report.results
     assert france.scores[1].value == pytest.approx(2 / 3)
+    assert (france.scores[1].votes_passed, france.scores[1].votes_cast) == (2, 3)
     assert japan.scores[1].value == 1.0
-    assert "contains=pass judge=pass(0.666667)" in str(report)
+    assert (japan.scores[1].votes_passed, japan.scores[1].votes_cast) == (2, 2)
+    assert "contains=pass judge=pass(0.666667, 2/3 votes)" in str(report)
+    assert "contains=pass judge=pass(1, 2/2 votes)" in str(report)
 
 
 async def test_a_missed_threshold_fails_the_build_after_the_report_is_kept(

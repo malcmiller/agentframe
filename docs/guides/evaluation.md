@@ -133,11 +133,15 @@ starts. Give the judge a small `options` ceiling, as above, so votes fit the
 budget; the library default would hold 100 000 tokens per vote.
 
 With `votes` above 1, the score's `value` is the fraction of votes that
-passed, so a split vote shows in the summary and the JSON. A 2-1 pass from
-`tests/integration/test_evaluation_release.py`:
+passed, so a split vote shows in the summary and the JSON. The score also
+records `votes_passed` and `votes_cast`, the judge runs actually made, so an
+early stop shows: a unanimous `votes=3` reads `2/2 votes` and a unanimous
+`votes=5` reads `3/3 votes`, though both have a `value` of 1. The counts are
+kept even without `capture_content`, since they hold no case content. A 2-1
+pass from `tests/integration/test_evaluation_release.py`:
 
 ```text
-france  passed  contains=pass judge=pass(0.666667)  ...
+france  passed  contains=pass judge=pass(0.666667, 2/3 votes)  ...
 ```
 
 ### Judge tokens

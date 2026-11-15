@@ -403,7 +403,13 @@ async def test_the_json_report_is_versioned_and_holds_no_content_by_default(
     [result] = document["results"]
     assert result["status"] == "failed"
     assert result["scores"] == [
-        {"scorer": "never_matches", "passed": False, "value": None}
+        {
+            "scorer": "never_matches",
+            "passed": False,
+            "value": None,
+            "votes_cast": None,
+            "votes_passed": None,
+        }
     ]
     assert result["finish_reason"] == "completed"
     assert not {"arguments", "text", "expected", "output"} & result.keys()

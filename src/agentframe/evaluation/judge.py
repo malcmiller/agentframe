@@ -100,7 +100,9 @@ class Judge:
     With ``votes`` above 1 the judge asks again, one run at a time, and the
     majority verdict wins; it stops as soon as a majority is certain, so
     ``votes=3`` takes two runs when the first two agree. Every vote is a
-    separate judge run with its own cost.
+    separate judge run with its own cost. The score's ``votes_cast`` and
+    ``votes_passed`` record the runs made, so ``2/2`` from ``votes=3`` and
+    ``3/3`` from ``votes=5`` stay apart in reports.
 
     In an ``Evaluation`` with ``max_total_tokens``, each judge run (each
     vote) holds its own ceiling (``token_ceiling``) against the budget just
@@ -175,8 +177,11 @@ class Judge:
 
         Returns:
             ``Score(passed=..., reason=...)`` from the majority verdict, with
-            the reason of its first vote. With ``votes`` above 1, ``value``
-            is the fraction of votes asked that passed, so a split vote shows.
+            the reason of its first vote. ``votes_cast`` and ``votes_passed``
+            count the judge runs that were made, so a stop once the majority
+            is certain shows as fewer votes cast than ``votes``. With
+            ``votes`` above 1, ``value`` is the fraction of votes cast that
+            passed, so a split vote shows.
 
         Raises:
             TokenLimitExceededError: The budget cannot fit the next judge run;
@@ -195,10 +200,17 @@ class Judge:
             (passes if verdict.passed else fails).append(verdict)
         passed = len(passes) >= majority
         reason = (passes if passed else fails)[0].reason
+        votes_cast = len(passes) + len(fails)
         value = None
         if self._votes > 1:
-            value = len(passes) / (len(passes) + len(fails))
-        return Score(passed=passed, value=value, reason=reason)
+            value = len(passes) / votes_cast
+        return Score(
+            passed=passed,
+            value=value,
+            reason=reason,
+            votes_cast=votes_cast,
+            votes_passed=len(passes),
+        )
 
     async def _vote(self, material: str, context: JudgeContext) -> Verdict:
         """Run the judge once, holding its ceiling against ``context.budget``."""
