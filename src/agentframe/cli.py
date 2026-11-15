@@ -337,8 +337,7 @@ def serve(settings: RunSettings, *, reload: bool = False) -> None:
         _serve_draining(app, settings)
         return
     os.environ[_RELOAD_SETTINGS_VARIABLE] = json.dumps(asdict(settings))
-    # noinspection PyProtectedMember
-    grace_seconds = app._host.shutdown_grace_seconds
+    grace_seconds = app.shutdown_grace_seconds
     uvicorn.run(
         f"{__name__}:{_app_for_reload.__name__}",
         factory=True,

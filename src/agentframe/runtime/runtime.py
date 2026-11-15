@@ -23,6 +23,7 @@ from agentframe.discovery.identity import (
     UserToken,
     checked_default_remote,
     checked_remotes,
+    on_behalf_of_names,
 )
 from agentframe.discovery.remote import find_remote
 from agentframe.errors import (
@@ -131,6 +132,15 @@ class Runtime:
         self._remotes = checked_remotes(remotes)
         self._default_remote = checked_default_remote(default_remote)
 
+    @property
+    def policy(self) -> ExecutionPolicy | None:
+        """The execution policy given at construction, if any.
+
+        Package-internal: the A2A host runs its model-request checks on
+        routing requests too.
+        """
+        return self._policy
+
     def validate(self, agent: Agent) -> None:
         """Check that ``agent`` can run here before accepting any work.
 
@@ -221,6 +231,19 @@ class Runtime:
         for name in sorted(names):
             await find_remote(self._directory, name, self._remotes.get(name))
 
+    def on_behalf_of_remotes(self) -> tuple[list[str], bool]:
+        """Say which remotes are called ``OnBehalfOf`` the signed-in user.
+
+        Package-internal: ``AgentApp`` refuses them when its host cannot
+        exchange user tokens.
+
+        Returns:
+            The names of the ``OnBehalfOf`` entries in ``remotes=``, sorted,
+            and whether ``default_remote`` is ``OnBehalfOf``.
+        """
+        default = isinstance(self._default_remote, OnBehalfOf)
+        return on_behalf_of_names(self._remotes), default
+
     async def invoke(
         self,
         agent: Agent,
@@ -291,7 +314,7 @@ class Runtime:
             Exceptions raised by the skill, or by a tool it lets the model
             call, propagate unchanged.
         """
-        return await self._run_invocation(
+        return await self.run_invocation(
             str(uuid.uuid4()),
             agent,
             skill,
@@ -300,7 +323,7 @@ class Runtime:
             options or RunOptions(),
         )
 
-    async def _run_invocation(
+    async def run_invocation(
         self,
         invocation_id: str,
         agent: Agent,

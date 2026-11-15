@@ -253,7 +253,7 @@ class AgentDirectory:
             raise failures.exceptions[0] from None
         return [task.result() for task in tasks]
 
-    async def _resolve_each(
+    async def resolve_each(
         self, listed: Sequence[_Listed]
     ) -> list[DiscoveredAgent | AgentFrameError]:
         """Resolve every agent, returning each one's card or its failure.
@@ -279,7 +279,7 @@ class AgentDirectory:
                 except (RemoteAgentError, DefinitionError) as error:
                     return error
 
-        self._open_client()  # Not being open is a mistake to raise, not skip.
+        self.open_client()  # Not being open is a mistake to raise, not skip.
         async with asyncio.TaskGroup() as group:
             tasks = [group.create_task(resolve(*entry)) for entry in listed]
         return [task.result() for task in tasks]
@@ -289,7 +289,7 @@ class AgentDirectory:
             [(source, await source.list(AgentQuery())) for source in self._sources]
         )
 
-    async def _list_available(
+    async def list_available(
         self,
     ) -> tuple[list[_Listed], list[tuple[int, AgentRegistry]]]:
         """List every source's agents, skipping the sources that fail to list.
@@ -336,7 +336,7 @@ class AgentDirectory:
         reference: AgentReference,
         previous: _CachedCard | None,
     ) -> DiscoveredAgent:
-        client = self._open_client()
+        client = self.open_client()
         headers = await source.card_headers(reference)
         try:
             validated = await fetch_card(
@@ -352,7 +352,15 @@ class AgentDirectory:
         self._cards[reference.card_url] = _CachedCard(validated, monotonic())
         return _discovered(reference, validated)
 
-    def _open_client(self) -> httpx.AsyncClient:
+    @property
+    def max_reply_bytes(self) -> int:
+        """The largest reply a ``Remote`` reads from an agent, in bytes.
+
+        Package-internal: remote calls bound their reads with it.
+        """
+        return self._max_reply_bytes
+
+    def open_client(self) -> httpx.AsyncClient:
         """Return the HTTP client the directory fetches cards with.
 
         Package-internal: remote calls (``Remote.ask``) send their requests

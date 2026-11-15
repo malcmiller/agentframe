@@ -217,7 +217,7 @@ async def test_a_permission_error_fails_the_run_instead_of_reaching_the_model(
     async def denied(*args: Any) -> Any:
         raise PermissionDeniedError("The remote call was denied")
 
-    monkeypatch.setattr(Remote, "_call_with", denied)
+    monkeypatch.setattr(Remote, "call_with", denied)
     model = scripted(ToolCall("1", "research-agent_find_sources", '{"topic": "x"}'))
 
     with pytest.raises(PermissionDeniedError):

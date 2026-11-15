@@ -33,7 +33,7 @@ from agentframe.errors import (
     RemoteAgentError,
     TokenLimitExceededError,
 )
-from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog
+from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, bound_remote
 from agentframe.orchestration.plan import (
     Plan,
     PlanStep,
@@ -166,9 +166,8 @@ async def run_plan(
     # Checked again even if the plan came from ctx.plan: a caller may have
     # supplied it, and the run may have made tool calls since. As in
     # ctx.plan, a hidden entry looks exactly like a missing one.
-    # check() lowers max_steps to the tool calls left (_step_limit).
-    # noinspection PyProtectedMember
-    groups = catalog._visible_to(principal).check(plan, max_steps=max_steps)
+    # check() lowers max_steps to the tool calls left (step_limit).
+    groups = catalog.visible_to(principal).check(plan, max_steps=max_steps)
     steps = [step for group in groups for step in group]
     await _check_plan(plan, generation, principal, deadline)
     tokens = max_tokens_per_step or _equal_share(generation, len(steps))
@@ -429,8 +428,7 @@ class _Execution:
         entry = self._catalog.get(step.use)
         if entry is None:
             raise RuntimeError(f"Plan step '{step.id}' uses no entry of this catalog")
-        # noinspection PyProtectedMember
-        binding = self._catalog._binding(entry)
+        binding = bound_remote(self._catalog, entry)
         if binding is None:
             raise RuntimeError(f"Plan step '{step.id}' uses an entry with no binding")
         generation = self._generation
@@ -440,13 +438,11 @@ class _Execution:
         if entry.skill is None:
             text = substituted_text(step, values)
             await self._check(entry, {"text": text})
-            # noinspection PyProtectedMember
-            sending = binding._ask_reply(text, self._tokens_per_step)
+            sending = binding.ask_reply(text, self._tokens_per_step)
         else:
             arguments = substituted_arguments(step, values)
             await self._check(entry, arguments)
-            # noinspection PyProtectedMember
-            sending = binding._call_reply(entry.skill, arguments, self._tokens_per_step)
+            sending = binding.call_reply(entry.skill, arguments, self._tokens_per_step)
         # Only the remote agent's own answer may end one step without
         # stopping the plan. Limits, authorization, policy and cancellation
         # protect the whole run and are always raised.

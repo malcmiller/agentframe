@@ -27,6 +27,7 @@ from agentframe.errors import (
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog
 from agentframe.orchestration.plan import Plan, PlanStep
 from agentframe.orchestration.remote_tools import ASK_SCHEMA
+from agentframe.runtime.remotes import RunRemotes
 
 if TYPE_CHECKING:
     # Imported only for type checking: the context module imports this one.
@@ -96,18 +97,21 @@ async def make_plan(
     ctx: "RunContext",
     goal: str,
     catalog: SkillCatalog,
+    run: RunRemotes | None,
     max_steps: int,
     instructions: str | None,
 ) -> Plan:
-    """Ask the agent's model for a plan to reach ``goal``; see ``RunContext.plan``."""
+    """Ask the agent's model for a plan to reach ``goal``; see ``RunContext.plan``.
+
+    ``run`` is the run's remote bindings; the plan's log entry carries their
+    correlation.
+    """
     if not isinstance(catalog, SkillCatalog):
         raise DefinitionError(
             "plan() needs a SkillCatalog; pass the result of ctx.remote_skills(...)"
         )
-    # noinspection PyProtectedMember
-    visible = catalog._visible_to(ctx.principal)
-    # noinspection PyProtectedMember
-    limit = visible._step_limit(max_steps)
+    visible = catalog.visible_to(ctx.principal)
+    limit = visible.step_limit(max_steps)
     if not visible.entries:
         raise InputValidationError(NO_SKILLS_MESSAGE)
     trusted = PLANNING_INSTRUCTIONS.format(max_steps=limit)
@@ -127,16 +131,14 @@ async def make_plan(
     except InputValidationError as error:
         # The plan came from the model, so a problem with it is bad output.
         raise OutputValidationError(error.message) from None
-    _log_created(ctx, plan)
+    _log_created(ctx, run, plan)
     return plan
 
 
-def _log_created(ctx: "RunContext", plan: Plan) -> None:
+def _log_created(ctx: "RunContext", run: RunRemotes | None, plan: Plan) -> None:
     # Entry names were checked against the catalog; arguments and text are
     # never logged.
     uses = [step.use for step in plan.steps]
-    # noinspection PyProtectedMember
-    run = ctx._remotes
     extra = (
         run.correlation.log_extra()
         if run is not None

@@ -182,6 +182,14 @@ class Remote[N: str]:
         """The agent's name in the directory."""
         return self._found.reference.name
 
+    @property
+    def discovered(self) -> DiscoveredAgent:
+        """The agent as the directory found it, with its validated card.
+
+        Package-internal: the skill catalog reads the card from it.
+        """
+        return self._found
+
     async def ask(self, text: str, *, max_total_tokens: int | None = None) -> str:
         """Send plain text to the agent and return its text answer.
 
@@ -230,12 +238,15 @@ class Remote[N: str]:
                 ``max_remote_hops`` depth; nothing is sent.
             DefinitionError: ``max_total_tokens`` is not a whole number greater than 0.
         """
-        reply = await self._ask_reply(text, max_total_tokens)
+        reply = await self.ask_reply(text, max_total_tokens)
         text_answer: str = reply.value
         return text_answer
 
-    async def _ask_reply(self, text: str, max_total_tokens: int | None) -> RemoteReply:
-        """Send ``text`` as ``ask`` does and return its reply; raises as ``ask``."""
+    async def ask_reply(self, text: str, max_total_tokens: int | None) -> RemoteReply:
+        """Send ``text`` as ``ask`` does and return its reply; raises as ``ask``.
+
+        Package-internal: plan execution reads the reply's task ID and usage.
+        """
         self._check_depth()
         message = Message(
             message_id=str(uuid.uuid4()),
@@ -312,24 +323,34 @@ class Remote[N: str]:
             pydantic_core.PydanticSerializationError: An argument cannot be
                 represented as JSON. Nothing is sent.
         """
-        value = await self._call_with(skill, arguments, max_total_tokens)
-        return value if output is None else self._validated(value, output)
+        return await self.call_with(skill, arguments, max_total_tokens, output)
 
-    async def _call_with(
-        self, skill: str, arguments: dict[str, Any], max_total_tokens: int | None
+    async def call_with(
+        self,
+        skill: str,
+        arguments: dict[str, Any],
+        max_total_tokens: int | None,
+        output: type[Any] | None = None,
     ) -> Any:
-        """Run ``skill`` with ``arguments`` as ``call`` does, without ``output``.
+        """Run ``skill`` with ``arguments`` as ``call`` does.
 
-        Takes the arguments as one dictionary, so any argument name works,
-        including ``output`` and ``max_total_tokens``. Raises as ``call``.
+        Package-internal: remote model tools and evaluation targets pass
+        arguments they did not write. Taking them as one dictionary lets any
+        argument name work, including ``output`` and ``max_total_tokens``.
+        Raises as ``call``.
         """
-        reply = await self._call_reply(skill, arguments, max_total_tokens)
-        return reply.value
+        reply = await self.call_reply(skill, arguments, max_total_tokens)
+        if output is None:
+            return reply.value
+        return self._validated(reply.value, output)
 
-    async def _call_reply(
+    async def call_reply(
         self, skill: str, arguments: dict[str, Any], max_total_tokens: int | None
     ) -> RemoteReply:
-        """Run ``skill`` as ``_call_with`` does and return its reply."""
+        """Run ``skill`` as ``call_with`` does without ``output``; return its reply.
+
+        Package-internal: plan execution reads the reply's task ID and usage.
+        """
         self._check_depth()
         self._check_card_offers(skill)
         message = self._skill_call_message(skill, arguments)
@@ -865,8 +886,7 @@ def check_no_redirects(
         DefinitionError: ``identity`` is set and the directory's HTTP client
             follows redirects, or the directory is not open.
     """
-    # noinspection PyProtectedMember
-    if identity is not None and directory._open_client().follow_redirects:
+    if identity is not None and directory.open_client().follow_redirects:
         raise DefinitionError(
             f"Remote '{name}' has credentials, but the AgentDirectory's "
             "http_client follows redirects; credentials are only sent to the "
@@ -937,14 +957,12 @@ def new_binding(
     Raises:
         DefinitionError: The directory is not open.
     """
-    # noinspection PyProtectedMember
-    client = directory._open_client()
+    client = directory.open_client()
     transport = BoundedJsonRpcTransport(
         client,
         found.card,
         found.interface_url,
-        # noinspection PyProtectedMember
-        max_reply_bytes=directory._max_reply_bytes,
+        max_reply_bytes=directory.max_reply_bytes,
     )
     return Remote(
         found,

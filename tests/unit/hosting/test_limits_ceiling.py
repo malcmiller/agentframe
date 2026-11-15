@@ -263,8 +263,7 @@ async def test_per_run_options_are_capped_too() -> None:
     options = RunOptions(limits=RunLimits(timeout_seconds=60))
 
     with pytest.raises(TimeoutLimitExceededError, match=r"timeout of 0.05 seconds"):
-        # noinspection PyProtectedMember
-        await Runtime()._run_invocation(
+        await Runtime().run_invocation(
             "run-1",
             Worker(),
             "sleep",

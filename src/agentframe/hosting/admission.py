@@ -65,5 +65,4 @@ class RunSlot:
         if self._released:
             return
         self._released = True
-        # noinspection PyProtectedMember
         self._admission._release()

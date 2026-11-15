@@ -380,8 +380,7 @@ class RuntimeExecutor(AgentExecutor):
                 )
                 return
             # The executor shares the runtime's pipeline under its own invocation ID.
-            # noinspection PyProtectedMember
-            result = await self._runtime._run_invocation(
+            result = await self._runtime.run_invocation(
                 invocation_id,
                 self._agent,
                 call.skill,
@@ -455,8 +454,7 @@ class RuntimeExecutor(AgentExecutor):
             accounting,
             ceiling,
             # Routing requests pass the same model-request checks as the skill's.
-            # noinspection PyProtectedMember
-            self._runtime._policy,
+            self._runtime.policy,
         )
         return await route(
             self._router, conversation, eligible_skills(definition, principal), ctx
