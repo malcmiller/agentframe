@@ -40,10 +40,37 @@ from examples import (
     plan_approval,
     routed_assistant,
 )
-from examples.multi_agent import planner, research
+from examples.multi_agent import planner, research, writer
 
 STRUCTURED = ModelCapabilities(context_window=8192, structured_output=True)
 TOOLS = ModelCapabilities(context_window=8192, tools=True)
+
+
+def planned_step(step_id: str, use: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """One step of a scripted ``ctx.plan`` reply, as the planning model writes it."""
+    return {"id": step_id, "use": use, "arguments": json.dumps(arguments), "after": []}
+
+
+# Sources and a brief at once, then a post from both.
+TIDES_PLAN = json.dumps(
+    {
+        "steps": [
+            planned_step("tides", "research-agent.find_sources", {"topic": "tides"}),
+            planned_step("brief", "research-agent.brief", {"question": "Tides?"}),
+            planned_step(
+                "post",
+                "writer-agent.write_post",
+                {
+                    "title": "Tides",
+                    "sources": {"$ref": "tides"},
+                    "notes": {"$ref": "brief"},
+                },
+            ),
+        ],
+        "result": "post",
+        "reason": None,
+    }
+)
 
 
 @asynccontextmanager
@@ -216,27 +243,37 @@ async def check_routed_assistant() -> None:
 
 
 async def check_multi_agent() -> None:
-    """Two agents: the planner calls the research agent over A2A."""
-    model = ScriptedModel(["Check the tide table."] * 2)
+    """Three agents: hand-written and model-planned orchestration over A2A."""
+    model = ScriptedModel(["Check the tide table."] * 3)
     os.environ["AGENTFRAME_DEV"] = "1"
+    os.environ["AGENTFRAME_DEV_API_KEYS"] = "planner=smoke-planner-key"
 
     def create_research(base_url: str) -> AgentApp:
         os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
-        os.environ["AGENTFRAME_DEV_API_KEYS"] = "planner=smoke-planner-key"
         return research.create_app(model)
 
-    async with serve(create_research) as research_url:
+    def create_writer(base_url: str) -> AgentApp:
+        os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
+        return writer.create_app()
+
+    async with (
+        serve(create_research) as research_url,
+        serve(create_writer) as writer_url,
+    ):
 
         def create_planner(base_url: str) -> AgentApp:
             os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
             os.environ["AGENTFRAME_DEV_API_KEYS"] = "developer=smoke-client-key"
             os.environ["AGENTFRAME_DEV_REMOTE_KEYS"] = (
-                "research-agent=smoke-planner-key"
+                "research-agent=smoke-planner-key,writer-agent=smoke-planner-key"
             )
             os.environ["AGENTFRAME_AGENTS"] = (
-                f"research-agent={research_url}/.well-known/agent-card.json"
+                f"research-agent={research_url}/.well-known/agent-card.json,"
+                f"writer-agent={writer_url}/.well-known/agent-card.json"
             )
-            return planner.create_app()
+            return planner.create_app(
+                ScriptedModel([TIDES_PLAN], capabilities=STRUCTURED)
+            )
 
         async with (
             serve(create_planner) as planner_url,
@@ -244,11 +281,23 @@ async def check_multi_agent() -> None:
         ):
             arguments = {"goal": "A beach day", "topics": ["tides", "waves"]}
             task = await call_skill(a2a, "plan", arguments)
-            plan = planner.Plan.model_validate(data_result(task))
+            plan = planner.ResearchPlan.model_validate(data_result(task))
             expect(
                 [topic.brief for topic in plan.topics], ["Check the tide table."] * 2
             )
             expect(plan.topics[1].sources[0].title, "Wind and waves")
+
+            task = await call_skill(a2a, "planned", {"goal": "A post about tides"})
+            outcome = planner.PlanOutcome.model_validate(data_result(task))
+            expect(
+                outcome.steps, dict.fromkeys(["tides", "brief", "post"], "completed")
+            )
+            expect(
+                outcome.value,
+                "# Tides\n\nCheck the tide table.\n\n"
+                "- [Tide tables explained](https://example.org/tides)\n"
+                "- [How the Moon moves the oceans](https://example.org/moon)",
+            )
 
 
 async def check_evaluation() -> None:
@@ -272,12 +321,7 @@ async def check_plan_approval() -> None:
         return research.create_app(ScriptedModel())
 
     async with serve(create_research) as research_url:
-        step = {
-            "id": "tides",
-            "use": "research-agent.find_sources",
-            "arguments": json.dumps({"topic": "tides"}),
-            "after": [],
-        }
+        step = planned_step("tides", "research-agent.find_sources", {"topic": "tides"})
         reply = json.dumps({"steps": [step], "result": "tides", "reason": None})
         os.environ["AGENTFRAME_AGENTS"] = (
             f"research-agent={research_url}/.well-known/agent-card.json"

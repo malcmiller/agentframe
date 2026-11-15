@@ -13,6 +13,7 @@ differs. Prompts and output caps are tiny to keep paid calls cheap.
 """
 
 import json
+import logging
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -38,6 +39,7 @@ from agentframe import (
     AgentReference,
     AgentRegistry,
     AllowAnonymous,
+    APIKeyCredential,
     FoundryModel,
     HostConfig,
     IncompleteOutputError,
@@ -49,6 +51,7 @@ from agentframe import (
     RunLimits,
     RunOptions,
     Runtime,
+    Service,
     agent,
     skill,
     tool,
@@ -59,9 +62,13 @@ from agentframe.models.ollama import DEFAULT_ENDPOINT
 from agentframe.orchestration.plan import dependencies
 from examples.assistant import Summary, create_app
 from examples.evaluation import create_answer_evaluation
+from examples.multi_agent.planner import create_app as create_planner_app
+from examples.multi_agent.planner_evaluation import create_planner_evaluation
+from examples.multi_agent.writer import create_app as create_writer_app
 from examples.orders import create_app as create_orders_app
 from examples.routed_assistant import create_app as create_routed_app
 from local_server import ServeLocally
+from release_targets import create_research_app
 
 # The SDK's own HTTP client times out after httpx's default 5 seconds, too soon
 # for real models. This stays above the agents' 120-second run timeout, so the
@@ -70,6 +77,8 @@ A2A_CLIENT_TIMEOUT_SECONDS = 150
 
 # A name no provider has, to prove an unknown model fails clearly.
 MISSING_MODEL = "agentframe-test-missing-model"
+
+CARD = "/.well-known/agent-card.json"
 
 
 @agent(version="1.0.0")
@@ -609,6 +618,110 @@ async def test_a_model_plans_a_two_step_goal(serve: ServeLocally, model: Model) 
     }
     assert result.model_calls == 1
     print(f"planning usage: {result.usage}")
+
+
+# Model-planned orchestration (M10): the example's planner with a real model
+
+SPECIALIST_KEY = "specialist-key"
+CLIENT_KEY = "client-key"
+POST_GOAL = (
+    "Write a post titled Tides from sources about tides, with a short research "
+    "brief about tides as its notes."
+)
+
+
+@asynccontextmanager
+async def specialists(
+    serve: ServeLocally, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[dict[str, str]]:
+    """Serve the example's research and writer agents; yield their card URLs.
+
+    The research agent's briefs come from a stand-in model, so only planning
+    uses the real one.
+    """
+    monkeypatch.setenv("AGENTFRAME_DEV", "1")
+    monkeypatch.setenv("AGENTFRAME_DEV_API_KEYS", f"planner={SPECIALIST_KEY}")
+
+    def dev_app(create_app: Callable[[], AgentApp]) -> Callable[[str], AgentApp]:
+        def make_app(public_url: str) -> AgentApp:
+            monkeypatch.setenv("AGENTFRAME_PUBLIC_URL", public_url)
+            return create_app()
+
+        return make_app
+
+    async with (
+        serve(dev_app(create_research_app)) as research_url,
+        serve(dev_app(create_writer_app)) as writer_url,
+    ):
+        yield {
+            "research-agent": f"{research_url}/.well-known/agent-card.json",
+            "writer-agent": f"{writer_url}/.well-known/agent-card.json",
+        }
+
+
+async def test_a_real_planner_plans_and_runs_the_example_post(
+    serve: ServeLocally,
+    model: Model,
+    http: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe.orchestration")
+    async with specialists(serve, monkeypatch) as cards:
+        monkeypatch.setenv(
+            "AGENTFRAME_AGENTS", ",".join(f"{n}={u}" for n, u in cards.items())
+        )
+        monkeypatch.setenv("AGENTFRAME_DEV_API_KEYS", f"developer={CLIENT_KEY}")
+        monkeypatch.setenv(
+            "AGENTFRAME_DEV_REMOTE_KEYS",
+            ",".join(f"{name}={SPECIALIST_KEY}" for name in cards),
+        )
+
+        def make_planner(public_url: str) -> AgentApp:
+            monkeypatch.setenv("AGENTFRAME_PUBLIC_URL", public_url)
+            return create_planner_app(model)
+
+        async with (
+            serve(make_planner) as planner_url,
+            await connect(planner_url, CLIENT_KEY, http=http) as client,
+        ):
+            task = await call_skill(client, "planned", {"goal": POST_GOAL})
+
+    # Planning is nondeterministic: only the entries used and completion are
+    # checked, not step IDs, arguments or the post's wording.
+    completed = task.status.state == TaskState.TASK_STATE_COMPLETED
+    data = get_data_parts(task.artifacts[0].parts) if completed else []
+    if not (data and data[0]["value"]["complete"]) and isinstance(model, OllamaModel):
+        # Invalid plans fail before sending; checks refuse invented sources.
+        pytest.xfail("llama3.2:3b rarely plans this goal validly")
+    assert completed, task.status
+    assert data[0]["value"]["complete"] is True
+    [created] = [r for r in caplog.records if r.getMessage().startswith("Plan created")]
+    uses = getattr(created, "uses")  # noqa: B009 - a log record's extra field
+    assert {"research-agent.find_sources", "writer-agent.write_post"} <= set(uses)
+    print(f"plan: {uses}; usage: {task.metadata['usage']}")
+
+
+async def test_a_real_planner_passes_its_evaluation(
+    serve: ServeLocally, model: Model, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with specialists(serve, monkeypatch) as cards:
+        sources = [
+            Agents({name: url.removesuffix(CARD) for name, url in cards.items()})
+        ]
+        key = Service(credential=APIKeyCredential(SPECIALIST_KEY))
+        async with AgentDirectory(sources=sources) as directory:
+            runtime = Runtime(directory=directory, remotes=dict.fromkeys(cards, key))
+            report = await create_planner_evaluation(model, runtime).run()
+
+    # Planning is nondeterministic; docs/guides/orchestration.md has measured
+    # rates. llama3.2:3b rarely gets these plans' structure right, so for
+    # Ollama only half the plans must be valid (an invalid plan errors).
+    print(report)
+    if isinstance(model, OllamaModel):
+        report.require(min_pass_rate=0.0, max_errors=3)
+    else:
+        report.require(min_pass_rate=0.5, max_errors=1)
 
 
 # Model routing: free text over A2A, routed by the built-in router
