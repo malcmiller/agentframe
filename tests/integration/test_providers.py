@@ -699,7 +699,7 @@ async def test_a_real_planner_plans_and_runs_the_example_post(
     [created] = [r for r in caplog.records if r.getMessage().startswith("Plan created")]
     uses = getattr(created, "uses")  # noqa: B009 - a log record's extra field
     assert {"research-agent.find_sources", "writer-agent.write_post"} <= set(uses)
-    print(f"plan: {uses}; usage: {task.metadata['usage']}")
+    print(f"plan: {uses}; tokens: {task.metadata['usage']['total_tokens']}")
 
 
 async def test_a_real_planner_passes_its_evaluation(
