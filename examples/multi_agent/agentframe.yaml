@@ -1,4 +1,6 @@
 # Run the agents locally from this directory: agentframe dev
+# Set AGENTFRAME_OLLAMA_MODEL to an installed tag, such as llama3.2:3b, for
+# briefs and plans.
 # The research agent is listed first, since the planner checks at startup
 # that it can reach it.
 agents:

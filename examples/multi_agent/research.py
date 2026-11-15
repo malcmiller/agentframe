@@ -16,6 +16,7 @@ Run it alone (``dev_settings()`` reads the variables ``agentframe dev`` sets)::
 or both agents with ``agentframe dev`` (see ``agentframe.yaml``).
 """
 
+import logging
 import os
 from collections.abc import Sequence
 
@@ -37,6 +38,8 @@ from agentframe import (
     dev_settings,
     skill,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Source(BaseModel):
@@ -91,10 +94,15 @@ def create_model() -> Model | None:
     """Return local Llama through Ollama, or ``None`` to start without a model.
 
     ``AGENTFRAME_OLLAMA_MODEL`` names the model tag, which must already be
-    installed. Only ``brief`` uses the model.
+    installed; without it, a warning names the skills that will fail. Only
+    ``brief`` uses the model.
     """
     tag = os.environ.get("AGENTFRAME_OLLAMA_MODEL")
     if not tag:
+        logger.warning(
+            "AGENTFRAME_OLLAMA_MODEL is not set; "
+            "brief, and so the planner's plan, will fail"
+        )
         return None
     from agentframe.models.ollama import OllamaModel
 

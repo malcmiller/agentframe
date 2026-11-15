@@ -14,7 +14,9 @@ PLANNER_KEY = "planner-key"
 
 
 async def test_the_agents_start_without_a_model_and_planning_fails_clearly(
-    serve: ServeLocally, monkeypatch: pytest.MonkeyPatch
+    serve: ServeLocally,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.delenv("AGENTFRAME_OLLAMA_MODEL", raising=False)
     monkeypatch.setenv("AGENTFRAME_DEV", "1")
@@ -55,3 +57,6 @@ async def test_the_agents_start_without_a_model_and_planning_fails_clearly(
     assert get_message_text(task.status.message) == (
         "This agent has no model configured"
     )
+    # The warning tells the developer the fix at startup, before any call.
+    warning = "AGENTFRAME_OLLAMA_MODEL is not set; propose and planned will fail"
+    assert warning in caplog.messages

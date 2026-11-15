@@ -41,6 +41,7 @@ which asks for briefs, fails too.
 
 import asyncio
 import dataclasses
+import logging
 import os
 from collections.abc import Mapping
 from typing import Any, Literal
@@ -70,6 +71,8 @@ from agentframe import (
     dev_settings,
     skill,
 )
+
+logger = logging.getLogger(__name__)
 
 type Research = Remote[Literal["research-agent"]]
 
@@ -260,10 +263,14 @@ def create_model() -> Model | None:
     """Return local Llama through Ollama, or ``None`` to start without a model.
 
     ``AGENTFRAME_OLLAMA_MODEL`` names the model tag, which must already be
-    installed. Only ``propose`` and ``planned`` use the planner's model.
+    installed; without it, a warning names the skills that will fail. Only
+    ``propose`` and ``planned`` use the planner's model.
     """
     tag = os.environ.get("AGENTFRAME_OLLAMA_MODEL")
     if not tag:
+        logger.warning(
+            "AGENTFRAME_OLLAMA_MODEL is not set; propose and planned will fail"
+        )
         return None
     from agentframe.models.ollama import OllamaModel
 

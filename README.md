@@ -240,7 +240,9 @@ reported usage is charged to the caller once. The caller authenticates as
 itself (`remotes={"research-agent": Service(credential=...)}`) or, with Entra
 ID, on behalf of the signed-in user (`OnBehalfOf(scope=...)`).
 [`examples/multi_agent`](https://github.com/malcmiller/agentframe/tree/main/examples/multi_agent) is a complete planner and
-research agent; run both with `agentframe dev` from that directory.
+research agent; run both with `agentframe dev` from that directory, with
+`AGENTFRAME_OLLAMA_MODEL` set to an installed tag such as `llama3.2:3b` for
+briefs and plans.
 `tests/integration/test_multi_agent_release.py` proves the release criteria
 with each agent in its own `agentframe run` process.
 
