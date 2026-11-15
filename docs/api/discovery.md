@@ -363,9 +363,11 @@ async def foundry_card_name(agent_name: str) -> str:
   `AIProjectClient`, so there is nothing to close.
 - Every request waits at most 10 seconds to connect and 10 seconds between
   reads (`azure-core`'s `connection_timeout` and `read_timeout`, which
-  otherwise default to 300 seconds each), the same 10 seconds as a card fetch,
-  so an unreachable project fails startup quickly. The limits apply per
-  attempt; `azure-core`'s own retry policy is unchanged. A timeout raises
+  otherwise default to 300 seconds each), the same 10 seconds as a card fetch.
+  The limits apply per attempt and `azure-core`'s own retry policy is
+  unchanged, so with its 3 default retries and their backoff an unreachable
+  project fails a request in about 45 seconds; `list` sends its follow-up
+  detail reads one after another, each with the same bound. A timeout raises
   `DefinitionError` like any other read failure.
 - `list` follows every page of the project's agents (100 per page). Listed
   agents omit their endpoint, so it then reads each queried agent's details

@@ -207,6 +207,7 @@ async def test_every_request_has_ten_second_connect_and_read_timeouts() -> None:
     await foundry_registry.list(AgentQuery())
     await foundry_registry.get("research-agent")
 
+    assert foundry.requests
     # azure-core's default is 300 seconds for each.
     assert foundry.timeouts == [
         {"connection_timeout": 10.0, "read_timeout": 10.0}

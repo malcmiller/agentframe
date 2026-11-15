@@ -35,10 +35,12 @@ CARD_PATH = "endpoint/protocols/a2a/agentCard/v1.0"
 # The largest page the agents API allows, so large projects need fewer calls.
 _PAGE_SIZE = 100
 
-# azure-core otherwise waits 300 seconds to connect and between reads. Every
-# request (each attempt, since azure-core retries) gets the same 10 seconds as a
-# card fetch, so an unreachable project fails startup quickly. The read timeout
-# is the longest wait between bytes, not the whole reply.
+# azure-core otherwise waits 300 seconds to connect and between reads. Each
+# attempt gets the same 10 seconds as a card fetch. With azure-core's 3 default
+# retries and their backoff, an unreachable project fails a request in about
+# 45 seconds rather than minutes, and ``list`` sends its follow-up ``get``
+# calls one after another. The read timeout is the longest wait between bytes,
+# not the whole reply.
 REQUEST_TIMEOUT_SECONDS = 10.0
 _TIMEOUTS: dict[str, Any] = {
     "connection_timeout": REQUEST_TIMEOUT_SECONDS,
