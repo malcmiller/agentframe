@@ -337,7 +337,7 @@ FoundryAgentRegistry(
 | --- | --- | --- | --- |
 | `project_endpoint` | `str` | Required | `https://{account}.services.ai.azure.com/api/projects/{project}`. Absolute https without credentials, query or fragment; a trailing `/` is ignored. Not a model inference URL. |
 | `credential` | `azure.core.credentials_async.AsyncTokenCredential` | Required | Entra credential for listing agents and fetching their cards, for example `azure.identity.aio.DefaultAzureCredential()`. Stays yours: never closed by the registry. |
-| `transport` | `azure.core.pipeline.transport.AsyncHttpTransport \| None` | Optional; default `azure-core`'s aiohttp transport | For a test double or an outbound proxy. |
+| `transport` | `azure.core.pipeline.transport.AsyncHttpTransport \| None` | Optional; default `azure-core`'s aiohttp transport | For a test double or an outbound proxy. The registry's request timeouts are passed with every request, overriding the transport's own. |
 
 ```python
 from azure.identity.aio import DefaultAzureCredential
@@ -361,6 +361,12 @@ async def foundry_card_name(agent_name: str) -> str:
 
 - Construction does no I/O. Each `get`/`list` creates and closes its own async
   `AIProjectClient`, so there is nothing to close.
+- Every request waits at most 10 seconds to connect and 10 seconds between
+  reads (`azure-core`'s `connection_timeout` and `read_timeout`, which
+  otherwise default to 300 seconds each), the same 10 seconds as a card fetch,
+  so an unreachable project fails startup quickly. The limits apply per
+  attempt; `azure-core`'s own retry policy is unchanged. A timeout raises
+  `DefinitionError` like any other read failure.
 - `list` follows every page of the project's agents (100 per page). Listed
   agents omit their endpoint, so it then reads each queried agent's details
   with one more call (sequentially; an agent deleted in between is skipped)
