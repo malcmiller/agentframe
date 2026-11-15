@@ -548,9 +548,9 @@ passed the TestPyPI rehearsal and the PyPI installs on Python 3.13, 3.14 and
 (#164) and M10 [model-planned orchestration](#m10-model-planned-orchestration-030)
 (#177) are built and form version 0.3.0, published on 2026-11-14 (see
 [M10](#m10-model-planned-orchestration-030)). Follow-ups found by the 0.3.0
-readiness review are open issues (#208-#222), for example that hosted A2A
-tasks are kept in memory until the process exits, with no retention limit or
-task store setting yet (#208).
+readiness review are issues #208-#222. #208 bounds the default in-memory A2A
+task store (finished tasks kept 1 hour, at most 10,000) and adds
+`A2AConfig(task_store=...)` for a pluggable store.
 
 No durable workflow engine, built-in approval workflow, federation or deployment
 service is included. Checkpointed multistep flows, pause/resume and crash

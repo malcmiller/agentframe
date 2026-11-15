@@ -18,6 +18,9 @@ changelog.
   report's `scores` as `votes_cast` / `votes_passed` (`null` unless the
   scorer sets them), kept without `capture_content`; the schema stays
   `agentframe.evaluation.report/1` (#213).
+- `A2AConfig(task_store=...)` accepts any `a2a-sdk` `TaskStore`, for example
+  a database store, instead of the default in-memory one; shutdown still waits
+  for final states to be saved (#208).
 
 ### Changed
 
@@ -48,6 +51,12 @@ changelog.
   plan whose step group fails without a recorded step failure re-raises the
   exception group instead of dropping it. Normal operation is unchanged
   (#215).
+- The default in-memory A2A task store no longer keeps every task until the
+  process exits: finished tasks are deleted after
+  `A2AConfig.task_retention_seconds` (default 1 hour) or past
+  `max_retained_tasks` (default 10,000), oldest first. Unfinished tasks are
+  never deleted; `GetTask` and `CancelTask` treat a deleted task as unknown
+  (#208).
 
 ## [0.3.0] - 2026-11-14
 

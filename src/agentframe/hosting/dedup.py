@@ -14,8 +14,8 @@ task. A message counts as having run once its task's history holds it.
 
 Repeats from one caller are handled one at a time in this process, so two
 concurrent copies run the skill once. This is not exactly-once execution:
-hosts sharing a store but not a task store, process loss and expiry can all
-still run a message twice.
+hosts sharing a store but not a task store, process loss, expiry and a task
+deleted by task retention can all still run a message twice.
 """
 
 import asyncio

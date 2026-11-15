@@ -11,8 +11,12 @@ from typing import Any
 
 import httpx
 import pytest
+from a2a.server.context import ServerCallContext
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import Task
 
 from agentframe import (
+    A2AConfig,
     Agent,
     AgentApp,
     AllowAnonymous,
@@ -36,6 +40,8 @@ BOB_KEY = "bob-test-key"
 TASK_NOT_FOUND = -32001
 TASK_NOT_CANCELABLE = -32002
 UNSUPPORTED_OPERATION = -32004
+
+COMPLETED = "TASK_STATE_COMPLETED"
 
 
 class Job:
@@ -73,10 +79,12 @@ class Worker(Agent):
         return "done"
 
 
-def worker_app(worker: Worker, host: HostConfig) -> AgentApp:
+def worker_app(
+    worker: Worker, host: HostConfig, a2a: A2AConfig | None = None
+) -> AgentApp:
     services = Services()
     services.add_scoped(Job, open_job)
-    return AgentApp(agent=worker, host=host, services=services)
+    return AgentApp(agent=worker, host=host, services=services, a2a=a2a)
 
 
 def api_key_host(public_url: str) -> HostConfig:
@@ -303,3 +311,65 @@ async def test_anonymous_callers_reach_tasks_by_id_but_cannot_list_them(
     assert fetched["result"]["id"] == task["id"]
     assert error_code(listed) == UNSUPPORTED_OPERATION
     assert "authenticated" in listed["error"]["message"]
+
+
+# Task retention and the task store
+
+
+async def test_past_the_maximum_a_finished_task_becomes_unknown(
+    serve: ServeLocally, worker: Worker
+) -> None:
+    a2a = A2AConfig(max_retained_tasks=1)
+
+    def make_app(public_url: str) -> AgentApp:
+        return worker_app(worker, api_key_host(public_url), a2a)
+
+    async with serve(make_app) as base_url, httpx.AsyncClient(base_url=base_url) as h:
+        worker.release.set()
+        first = await send(h, return_immediately=False)
+        second = await send(h, return_immediately=False)
+        # The second task's final state is saved just after its response.
+        async with asyncio.timeout(5):
+            while "result" in (get := await call(h, "GetTask", {"id": first["id"]})):
+                await asyncio.sleep(0.01)
+        cancel = await call(h, "CancelTask", {"id": first["id"]})
+        kept = await get_task(h, second["id"])
+
+    assert error_code(get) == TASK_NOT_FOUND
+    assert error_code(cancel) == TASK_NOT_FOUND
+    assert kept["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
+class RecordingTaskStore(InMemoryTaskStore):
+    """An application's own task store, recording what it saves."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.saved: list[str] = []
+
+    async def save(self, task: Task, context: ServerCallContext) -> None:
+        self.saved.append(task.id)
+        await super().save(task, context)
+
+
+async def test_a_custom_task_store_keeps_the_tasks(
+    serve: ServeLocally, worker: Worker
+) -> None:
+    store = RecordingTaskStore()
+    a2a = A2AConfig(task_store=store, max_retained_tasks=1)
+
+    def make_app(public_url: str) -> AgentApp:
+        return worker_app(worker, api_key_host(public_url), a2a)
+
+    async with serve(make_app) as base_url, httpx.AsyncClient(base_url=base_url) as h:
+        worker.release.set()
+        first = await send(h, return_immediately=False)
+        second = await send(h, return_immediately=False)
+        async with asyncio.timeout(5):
+            while (await get_task(h, second["id"]))["status"]["state"] != COMPLETED:
+                await asyncio.sleep(0.01)
+        fetched = await get_task(h, first["id"])
+
+    assert first["id"] in store.saved
+    # The store owns its retention: AgentApp deletes nothing from it.
+    assert fetched["status"]["state"] == COMPLETED

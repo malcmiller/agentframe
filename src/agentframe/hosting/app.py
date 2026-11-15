@@ -16,7 +16,7 @@ from a2a.server.routes import (
     create_agent_card_routes,
     create_jsonrpc_routes,
 )
-from a2a.server.tasks import InMemoryTaskStore
+from a2a.server.tasks import InMemoryTaskStore, TaskStore
 from a2a.types import (
     AgentCard,
     CancelTaskRequest,
@@ -76,7 +76,7 @@ from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.request_size import read_body_within, with_body
 from agentframe.hosting.routing import SkillRouter, routing_limits
-from agentframe.hosting.task_store import FinalStateStore
+from agentframe.hosting.task_store import BoundedTaskStore, FinalStateStore
 from agentframe.runtime.correlation import (
     TRACEPARENT_HEADER,
     TRACESTATE_HEADER,
@@ -171,7 +171,7 @@ class AgentApp:
             question. ``None`` refuses free text with a protocol error, even
             when the agent has a model. A ``ModelRouter``'s schemas are built
             here and its model is checked at server startup.
-        a2a: A2A endpoint settings, such as message deduplication. Defaults
+        a2a: A2A endpoint settings: message deduplication and the task store. Defaults
             to ``A2AConfig()``.
         directory: Where ``Remote[Literal["name"]]`` parameters find their
             agents, when ``runtime`` is not given. Server startup looks up
@@ -247,7 +247,8 @@ class AgentApp:
         if isinstance(router, ModelRouter):
             router.validate_skills(definition.skills.values())
         card = build_agent_card(definition, host)
-        task_store = FinalStateStore(InMemoryTaskStore())
+        a2a = a2a or A2AConfig()
+        task_store = FinalStateStore(_task_store(a2a))
         handler = _RequestHandler(
             router=router,
             agent_executor=RuntimeExecutor(
@@ -267,7 +268,6 @@ class AgentApp:
         admission = RunAdmission(host.max_concurrent_runs)
         lifecycle = Lifecycle(host.shutdown_grace_seconds)
         self._lifecycle = lifecycle
-        a2a = a2a or A2AConfig()
         deduplicator = MessageDeduplicator(
             a2a.dedup_window_seconds, a2a.dedup_store or InMemoryMessageDedupStore()
         )
@@ -329,6 +329,15 @@ class AgentApp:
         than once and from a signal handler.
         """
         self._lifecycle.begin_shutdown()
+
+
+def _task_store(a2a: A2AConfig) -> TaskStore:
+    """Return the configured task store, or a bounded in-memory one."""
+    if a2a.task_store is not None:
+        return a2a.task_store
+    return BoundedTaskStore(
+        InMemoryTaskStore(), a2a.task_retention_seconds, a2a.max_retained_tasks
+    )
 
 
 def _user_token_exchange(

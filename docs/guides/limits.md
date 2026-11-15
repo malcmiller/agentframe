@@ -482,7 +482,9 @@ with [`AgentApp(a2a=A2AConfig(dedup_window_seconds=..., dedup_store=...))`](../a
   `put_if_absent` can be shared by several instances.
 - This is **not exactly-once**: process loss, expiry, instances that cannot
   see each other's tasks and distributed side effects still need application
-  handling, such as idempotent backends.
+  handling, such as idempotent backends. A repeat also runs again when its
+  finished task was already deleted by
+  [task retention](../api/hosting.md#task-retention) (#208).
 
 Deduplication does **not bypass task authorization**: the original task is
 looked up as the caller, and another caller's same `messageId` gets its own

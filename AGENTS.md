@@ -357,6 +357,11 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
   default, not exactly-once. Order size -> auth -> dedupe -> admission (a hit
   takes no slot); anonymous not deduplicated; answers deduplicated; reused ID
   with different parts/metadata (SHA-256) -> InvalidParams.
+- A2A tasks (#208): `A2AConfig(task_store=None, task_retention_seconds=3600,
+  max_retained_tasks=10_000)`; any SDK `TaskStore` (owns its retention, still
+  wrapped by `FinalStateStore`); default in-memory store deletes finished
+  tasks after the TTL or past the count (oldest first), never unfinished ones;
+  deleted -> unknown task; retention must be >= dedup window.
 - `HostConfig` defaults: max_concurrent_runs=32 (immediate HTTP 503 +
   `Retry-After: 1` before the SDK, no task; INPUT_REQUIRED holds no slot; M7 #72),
   max_request_bytes=1048576 (HTTP 413 before auth, no task; M7 #73),
