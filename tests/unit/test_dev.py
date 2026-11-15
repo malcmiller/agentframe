@@ -133,6 +133,7 @@ def test_the_dev_directory_leaves_no_connection_open(
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
+        # A sync test with its own loop, so the loop is closed before gc.collect().
         asyncio.run(fetch_a_card())
         gc.collect()
 

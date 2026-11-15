@@ -117,7 +117,9 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 # An unclosed resource fails the suite. Most ResourceWarnings are raised in
 # __del__, where an error cannot propagate; pytest reports those as
-# unraisable exception warnings, so they are errors too.
+# unraisable exception warnings, so they are errors too. Because of garbage
+# collection timing, the failure can name a later test than the one that
+# leaked; run with PYTHONTRACEMALLOC=20 to see where the resource was created.
 filterwarnings = [
     "error::ResourceWarning",
     "error::pytest.PytestUnraisableExceptionWarning",
