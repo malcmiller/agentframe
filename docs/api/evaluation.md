@@ -654,7 +654,7 @@ the harness, not by applications. `CaseStatus` is a `StrEnum` of `passed`,
 | `case_id` | `str` | The case's ID. |
 | `attempt` | `int` | Which attempt this is, from 1 to `repeats` (#157). |
 | `status` | `CaseStatus` | `passed`, `failed`, `errored` or `not_run` (never started: budget or timeout). |
-| `scores` | `tuple[ScoreResult, ...]` | Each scorer's `scorer` name, `passed`, `value`, `reason` (`None` unless captured), and `votes_cast` / `votes_passed` (set for a [`Judge`](#judge), `None` for other scorers; always kept), in scorer order. |
+| `scores` | `tuple[ScoreResult, ...]` | Each scorer's `scorer` name, `passed`, `value`, `reason` (`None` unless captured), and `votes_cast` / `votes_passed` (always set by a [`Judge`](#judge), `None` unless the scorer sets them; always kept), in scorer order. |
 | `error_type` | `str \| None` | Class name of the error that errored the case. |
 | `error_message` | `str \| None` | AgentFrame's safe message, or which part raised (for example `"Scorer 'mentions_order' raised KeyError."`); other exceptions' messages are never kept. For `not_run`, why it did not run. |
 | `invocation_id` | `str \| None` | The run's ID, also when it failed with an AgentFrame error. |
@@ -802,7 +802,7 @@ The document's top-level keys:
 | `capture_content` | Whether content was captured. |
 | `max_total_tokens` | The evaluation-wide budget, or `null`. |
 | `aggregates` | `attempt_count`, `passed_count`, `failed_count`, `errored_count`, `not_run_count`, `pass_rate`, `scorer_pass_rates`, `tag_pass_rates`, `flaky_cases`, `total_usage` (the [`UsageTotals`](#usagetotals) fields), `total_judge_usage` (the same fields, or `null` when no [`Judge`](#judge) ran), `over_budget` (target plus judge tokens), `budget_fully_enforced` (`null` without a budget, `false` when any target or judge usage is unknown), `latency` (`p50_seconds`, `p95_seconds`, `max_seconds`, or `null`) and `errors_by_class`. |
-| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`, `votes_cast`, `votes_passed`; the vote counts are `null` except for a [`Judge`](#judge), added in #213 without changing the schema identifier), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `judge_usage` (the same fields, or `null` when no judge ran), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
+| `results` | One object per attempt, in report order: `case_id`, `attempt`, `status`, `tags`, `scores` (`scorer`, `passed`, `value`, `votes_cast`, `votes_passed`; the vote counts are `null` unless the scorer sets them, as a [`Judge`](#judge) always does, added in #213 without changing the schema identifier), `error_type`, `error_message`, `invocation_id`, `usage` (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, or `null`), `judge_usage` (the same fields, or `null` when no judge ran), `duration_seconds`, `model_calls`, `tool_calls` and `finish_reason`. |
 
 **Behavior / failures:** unknown token counts are `null`, never 0. Like the
 console summary, the document holds no case content and no error messages by

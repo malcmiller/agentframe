@@ -15,8 +15,8 @@ changelog.
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,
   a unanimous `votes=5` is `3/3`, though both have a `value` of 1). The
   console summary shows them as `judge=pass(0.666667, 2/3 votes)` and the JSON
-  report's `scores` as `votes_cast` / `votes_passed` (`null` for other
-  scorers), kept without `capture_content`; the schema stays
+  report's `scores` as `votes_cast` / `votes_passed` (`null` unless the
+  scorer sets them), kept without `capture_content`; the schema stays
   `agentframe.evaluation.report/1` (#213).
 
 ### Fixed

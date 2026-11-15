@@ -49,8 +49,8 @@ class ScoreResult:
         reason: The scorer's explanation; ``None`` unless the evaluation
             captures content, since it may quote the output.
         votes_cast: How many votes a voting scorer such as ``Judge`` cast;
-            ``None`` for other scorers. Counts are kept without captured
-            content, since they hold no content.
+            ``None`` unless the scorer sets them. Counts are kept without
+            captured content, since they hold no content.
         votes_passed: How many of those votes passed.
     """
 
