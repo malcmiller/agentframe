@@ -35,6 +35,9 @@ server = ["uvicorn>=0.54.0,<0.55"]
 ollama = [
     "ollama>=0.6.3,<0.7",
 ]
+anthropic = [
+    "anthropic>=2.8.0,<3",
+]
 foundry = [
     "aiohttp>=3.14.5,<4",
     "azure-ai-projects>=2.11.0,<3",
@@ -70,7 +73,7 @@ dev = [
     # Imported directly by the tests, so pinned rather than left transitive.
     "httpx2==2.16.0",
     "azure-core==1.41.0",
-    "agentframe-py[ollama,foundry,entra]",
+    "agentframe-py[ollama,foundry,anthropic,entra]",
     "types-pyyaml==6.0.12.20261111",
 ]
 
@@ -130,6 +133,7 @@ filterwarnings = [
 markers = [
     "ollama: calls a real Ollama server; runs only with AGENTFRAME_TEST_OLLAMA=1",
     "foundry: calls real Foundry; runs only with AGENTFRAME_TEST_FOUNDRY=1 (models) or AGENTFRAME_TEST_FOUNDRY_AGENTS=1 (agents registry)",
+    "anthropic: calls the real Anthropic API; runs only with AGENTFRAME_TEST_ANTHROPIC=1",
     "entra: uses a real Microsoft Entra token; runs only with AGENTFRAME_TEST_ENTRA=1",
     "docker: builds and runs containers; runs only with AGENTFRAME_TEST_DOCKER=1",
     "benchmark: measures overhead and throughput; runs only with AGENTFRAME_BENCHMARK=1",
