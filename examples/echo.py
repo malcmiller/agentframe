@@ -70,8 +70,6 @@ def create_app() -> AgentApp:
     Raises:
         KeyError: ``ECHO_API_KEY`` is not set.
     """
-    services = Services()
-    services.add(Greeter, Greeter())
     # Development placeholder: one API key from the environment.
     keys = {os.environ["ECHO_API_KEY"]: APIKey("developer")}
     return AgentApp(
@@ -80,6 +78,6 @@ def create_app() -> AgentApp:
             public_url=os.environ.get("ECHO_PUBLIC_URL", "http://127.0.0.1:8000"),
             auth=APIKeyAuth(keys=keys),
         ),
-        services=services,
+        services=Services().add(Greeter, Greeter()),
         authorization=DevelopmentPolicy(),
     )

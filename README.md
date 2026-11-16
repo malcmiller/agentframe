@@ -88,9 +88,7 @@ class Echo(Agent):
         return greeter.greet(name)
 
 
-services = Services()
-services.add(Greeter, Greeter())
-runtime = Runtime(services=services)
+runtime = Runtime(services=Services().add(Greeter, Greeter()))
 
 value = await runtime.invoke(Echo(), skill="echo", arguments={"text": "hi"})
 result = await runtime.run(Echo(), skill="greet", arguments={"name": "Ada"})

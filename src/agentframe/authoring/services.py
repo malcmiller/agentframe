@@ -5,7 +5,7 @@ import inspect
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from types import MappingProxyType
-from typing import Annotated, cast
+from typing import Annotated, Self, cast
 
 from agentframe.errors import DefinitionError
 
@@ -26,14 +26,16 @@ type ScopedFactory[T] = (
 class Services:
     """Registry of services that skills receive through ``Inject[T]``.
 
-    Pass an instance to ``Runtime(services=...)``.
+    Pass an instance to ``Runtime(services=...)``. ``add`` and ``add_scoped``
+    return the services, so registrations chain:
+    ``Services().add(Store, store).add_scoped(Session, open_session)``.
     """
 
     def __init__(self) -> None:
         self._singletons: dict[object, object] = {}
         self._scoped: dict[object, Callable[[], object]] = {}
 
-    def add[T](self, service_type: type[T], instance: T) -> None:
+    def add[T](self, service_type: type[T], instance: T) -> Self:
         """Register an application-owned service shared by all runs.
 
         AgentFrame never closes this instance; the application owns its lifecycle.
@@ -42,13 +44,17 @@ class Services:
             service_type: Type that skills request with ``Inject[service_type]``.
             instance: The service instance to inject.
 
+        Returns:
+            These services, so registrations can be chained.
+
         Raises:
             DefinitionError: If ``service_type`` is already registered.
         """
         self._check_not_registered(service_type)
         self._singletons[service_type] = instance
+        return self
 
-    def add_scoped[T](self, service_type: type[T], factory: ScopedFactory[T]) -> None:
+    def add_scoped[T](self, service_type: type[T], factory: ScopedFactory[T]) -> Self:
         """Register a service created freshly for each run.
 
         The factory may be a sync function, an async function, or an async
@@ -59,11 +65,15 @@ class Services:
             service_type: Type that skills request with ``Inject[service_type]``.
             factory: Zero-argument callable that creates the service.
 
+        Returns:
+            These services, so registrations can be chained.
+
         Raises:
             DefinitionError: If ``service_type`` is already registered.
         """
         self._check_not_registered(service_type)
         self._scoped[service_type] = factory
+        return self
 
     def is_registered(self, service_type: object) -> bool:
         """Return whether ``service_type`` has been registered."""

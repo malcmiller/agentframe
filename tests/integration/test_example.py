@@ -46,7 +46,7 @@ async def test_readme_quick_start_runs_as_written() -> None:
 
 def test_readme_echo_agent_is_examples_echo() -> None:
     block = readme_block("class Echo")
-    definitions = block[block.index("class Greeter") : block.index("services = ")]
+    definitions = block[block.index("class Greeter") : block.index("runtime = ")]
     assert definitions.strip() in example_source("echo.py")
 
 

@@ -133,8 +133,6 @@ def create_app(model: Model | None = None, store: OrderStore | None = None) -> A
         store: The orders. Defaults to a new ``OrderStore``.
     """
     store = store or OrderStore()
-    services = Services()
-    services.add(OrderStore, store)
     host = HostConfig(
         public_url=os.environ.get("ORDERS_PUBLIC_URL", "http://127.0.0.1:8000"),
         # Development placeholder: one API key from the environment, for the
@@ -145,5 +143,8 @@ def create_app(model: Model | None = None, store: OrderStore | None = None) -> A
         role_permissions={"customer": ["orders.cancel"]},
     )
     agent = OrderDesk(model=model or create_model(), tools=[lookup_order, cancel_order])
-    runtime = Runtime(services=services, tool_authorization=OwnOrdersOnly(store))
+    runtime = Runtime(
+        services=Services().add(OrderStore, store),
+        tool_authorization=OwnOrdersOnly(store),
+    )
     return AgentApp(agent=agent, host=host, runtime=runtime)

@@ -24,6 +24,9 @@ changelog.
 
 ### Changed
 
+- `Services.add` and `Services.add_scoped` return the `Services` instead of
+  `None`, so registrations fit on one line:
+  `Runtime(services=Services().add(OrderStore, store))` (#274).
 - Runtime dependencies and the `server`, `ollama`, `foundry` and `entra`
   extras are now compatible ranges instead of exact pins, from the lowest
   tested version up to the next breaking release (next major, or next minor
