@@ -51,6 +51,7 @@ entra = [
     "pyjwt[crypto]>=2.15.1,<3",
 ]
 mcp = ["mcp>=2.3.0,<3"]
+redis = ["redis>=8.1.0,<9"]
 
 [project.scripts]
 agentframe = "agentframe.cli:main"
@@ -74,7 +75,9 @@ dev = [
     # Imported directly by the tests, so pinned rather than left transitive.
     "httpx2==2.16.0",
     "azure-core==1.41.0",
-    "agentframe-py[ollama,foundry,anthropic,entra,mcp]",
+    "agentframe-py[ollama,foundry,anthropic,entra,mcp,redis]",
+    # Tests RedisMessageDedupStore against redis-py without a Redis server.
+    "fakeredis==2.40.0",
     "types-pyyaml==6.0.12.20261111",
 ]
 

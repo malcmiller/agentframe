@@ -392,9 +392,15 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
 - A2A same verified caller + `messageId` within default 10 minutes returns
   original task (M7 #75): `AgentApp(a2a=A2AConfig(dedup_window_seconds=600,
   dedup_store=None))`, atomic `MessageDedupStore.put_if_absent`; in-memory
-  default, not exactly-once. Order size -> auth -> dedupe -> admission (a hit
-  takes no slot); anonymous not deduplicated; answers deduplicated; reused ID
-  with different parts/metadata (SHA-256) -> InvalidParams.
+  default, not exactly-once. Order size -> auth -> rate limit -> dedupe ->
+  admission (a hit takes no slot); anonymous not deduplicated; answers
+  deduplicated; reused ID with different parts/metadata (SHA-256) ->
+  InvalidParams. Shared store (#255): `RedisMessageDedupStore(client,
+  key_prefix=)` (`redis` extra, app-owned client, one `SET NX GET PX`).
+  Opt-in `HostConfig(rate_limit=RateLimit(requests, per_seconds=60))` (#255):
+  per-caller in-process token bucket on `SendMessage` only, HTTP 429 +
+  `Retry-After`, no task; anonymous share one bucket; gateway (APIM) for
+  limits across instances.
 - A2A tasks (#208): `A2AConfig(task_store=None, task_retention_seconds=3600,
   max_retained_tasks=10_000)`; any SDK `TaskStore` (owns its retention, still
   wrapped by `FinalStateStore`); default in-memory store deletes finished

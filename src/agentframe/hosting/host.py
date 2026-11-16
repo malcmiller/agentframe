@@ -12,6 +12,7 @@ from a2a.server.tasks import TaskStore
 from agentframe.dev import DEV_VARIABLE
 from agentframe.errors import DefinitionError
 from agentframe.hosting.dedup import MessageDedupStore
+from agentframe.hosting.rate_limit import RateLimit
 from agentframe.runtime.limits import RunLimits
 from agentframe.security.authentication import AllowAnonymous, Authenticator
 from agentframe.urls import is_loopback_host, is_plain_http_url
@@ -57,6 +58,14 @@ class HostConfig:
             finish, measured once from when shutdown starts. New messages are
             refused meanwhile; runs still going after it are cancelled.
             Defaults to 30.
+        rate_limit: How many ``SendMessage`` requests each verified caller
+            may make, for example ``RateLimit(requests=60, per_seconds=60)``.
+            Another is refused with HTTP 429 and ``Retry-After`` after
+            authentication and before deduplication and admission, and
+            creates no task. Anonymous callers share one allowance. The
+            count is kept per host instance; for one limit across instances,
+            rate-limit at a gateway instead. ``None`` (the default) limits
+            nothing.
 
     Raises:
         DefinitionError: ``auth`` is ``None``; ``public_url`` is not an
@@ -75,6 +84,7 @@ class HostConfig:
     max_request_bytes: int = 1_048_576
     max_response_bytes: int = 4_194_304
     shutdown_grace_seconds: float = 30
+    rate_limit: RateLimit | None = None
 
     def __post_init__(self) -> None:
         _check_public_url(self.public_url)
@@ -105,7 +115,9 @@ class A2AConfig:
             Defaults to 600 (10 minutes).
         dedup_store: Where those ``messageId`` claims are kept. ``None`` (the
             default) keeps them in this process's memory, so they are lost on
-            restart and not shared with other instances.
+            restart and not shared with other instances. Pass a
+            ``RedisMessageDedupStore`` (``redis`` extra), or any
+            ``MessageDedupStore``, to share them between instances.
         task_store: Where A2A tasks are kept: any ``a2a-sdk`` ``TaskStore``,
             such as a database store. It owns its own retention, so the two
             settings below do not apply to it. ``None`` (the default) keeps

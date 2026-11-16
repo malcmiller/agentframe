@@ -51,6 +51,8 @@ from agentframe.hosting.app import AgentApp
 from agentframe.hosting.dedup import MessageDedupStore
 from agentframe.hosting.host import A2AConfig, HostConfig
 from agentframe.hosting.model_router import ModelRouter
+from agentframe.hosting.rate_limit import RateLimit
+from agentframe.hosting.redis_dedup import RedisMessageDedupStore
 from agentframe.mcp.client import MCPClient, MCPTool
 from agentframe.models.base import (
     HostedTool,
@@ -191,6 +193,8 @@ __all__ = [
     "PolicyUnavailableError",
     "Principal",
     "ProviderError",
+    "RateLimit",
+    "RedisMessageDedupStore",
     "Remote",
     "RemoteAgentError",
     "RemoteSkill",
