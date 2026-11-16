@@ -93,6 +93,14 @@ behavior starts with an **Upgrading** section; see the
   host with credential-bearing authentication, or `AllowAnonymous()` on a
   non-loopback `public_url`. Loopback hosts and `AGENTFRAME_DEV=1` (set by
   `agentframe dev` and `agentframe compose`) never warn (#267).
+- `APIKeyAuth(header=...)` accepts the key in another request header, for
+  example `Ocp-Apim-Subscription-Key` behind Azure API Management, matching
+  outbound `APIKeyCredential(header=...)`; the default stays `X-API-Key`. The
+  Agent Card's `apiKey` scheme and the 401 `WWW-Authenticate` challenge name
+  the configured header, and the host keeps it out of the SDK's debug logs
+  like `X-API-Key`. `APIKeyAuth(hashed=True)` takes SHA-256 hex digests as
+  the `keys` mapping's keys, so configuration need not hold plaintext keys
+  (#269).
 
 ### Changed
 

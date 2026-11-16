@@ -50,6 +50,7 @@ from local_server import ServeLocally
 # Test-only values; real applications load keys from the environment.
 READER_KEY = "reader-test-key"
 ADMIN_KEY = "admin-test-key"
+GATEWAY_HEADER = "Ocp-Apim-Subscription-Key"
 
 
 class Greeting(BaseModel):
@@ -178,7 +179,7 @@ async def run_task(
     http: httpx.AsyncClient,
     skill_id: str,
     arguments: Mapping[str, Any] | None = None,
-    key: str = READER_KEY,
+    key: str | None = READER_KEY,
 ) -> dict[str, Any]:
     response = await post(http, send_skill(skill_id, arguments), key)
     assert response.status_code == 200
@@ -574,6 +575,35 @@ async def test_bad_credentials_get_401_and_create_no_task(
     )
     assert response.json() == {"error": "Authentication required."}
     assert await list_tasks(http) == []
+
+
+async def test_custom_api_key_header_is_advertised_challenged_and_accepted(
+    serve: ServeLocally, caplog: pytest.LogCaptureFixture
+) -> None:
+    def make_app(public_url: str) -> AgentApp:
+        auth = APIKeyAuth(keys={READER_KEY: APIKey("reader")}, header=GATEWAY_HEADER)
+        host = HostConfig(public_url=public_url, auth=auth)
+        return AgentApp(agent=Greeter(), host=host, services=clock_services())
+
+    caplog.set_level(logging.DEBUG)
+    async with serve(make_app) as base_url, httpx.AsyncClient(base_url=base_url) as h:
+        card = (await h.get(AGENT_CARD_WELL_KNOWN_PATH)).json()
+        default_header = await post(h, send_skill("greet", {"name": "Ada"}))
+        h.headers[GATEWAY_HEADER] = READER_KEY
+        task = await run_task(h, "greet", {"name": "Ada"}, key=None)
+
+    assert card["securitySchemes"]["apiKey"]["apiKeySecurityScheme"] == {
+        "location": "header",
+        "name": GATEWAY_HEADER,
+    }
+    assert default_header.status_code == 401
+    assert default_header.headers["WWW-Authenticate"] == (
+        f'APIKey location="header", name="{GATEWAY_HEADER}"'
+    )
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    # The custom header is dropped from the SDK's logged call context too.
+    assert "a2a.server" in caplog.text
+    assert READER_KEY not in caplog.text
 
 
 @pytest.mark.parametrize(

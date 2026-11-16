@@ -413,7 +413,7 @@ by a deterministic, I/O-free function from the `@agent`/`@skill` definition and
 | `skills` | Each skill's `id`, `name`, `description` and `tags`; nothing else. |
 | `supportedInterfaces` | `HostConfig.public_url` + `/a2a`, `JSONRPC`, protocol `1.0`. |
 | `capabilities` | `streaming` and `pushNotifications` false; one extension, `https://github.com/malcmiller/agentframe/extensions/skill-call/v1` (`required: false`), whose `params.skills` maps each skill ID to the JSON Schema of its business arguments. |
-| `securitySchemes`, `securityRequirements` | The authenticator's [`card_security()`](authorization.md#declarescardsecurity), all required. `APIKeyAuth`: an `apiKey` scheme in the `X-API-Key` header. `AllowAnonymous`: none (open access). A custom authenticator without `card_security()` makes card generation raise `DefinitionError`, rather than publish a card that looks open. |
+| `securitySchemes`, `securityRequirements` | The authenticator's [`card_security()`](authorization.md#declarescardsecurity), all required. `APIKeyAuth`: an `apiKey` scheme in its header (`X-API-Key` by default). `AllowAnonymous`: none (open access). A custom authenticator without `card_security()` makes card generation raise `DefinitionError`, rather than publish a card that looks open. |
 | `defaultInputModes`, `defaultOutputModes` | `text/plain` and `application/json`. |
 
 `ctx`, `Inject[T]` parameters, method names, instructions, credentials and other

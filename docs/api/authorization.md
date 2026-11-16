@@ -787,7 +787,8 @@ class DeclaresCardSecurity(Protocol):
 | --- | --- | --- |
 | Return | `dict[str, a2a.types.SecurityScheme]` | Card security schemes keyed by name, using the official SDK type. Callers must satisfy all of them. `{}` declares open access. |
 
-`APIKeyAuth` returns an `apiKey` scheme for the `X-API-Key` header,
+`APIKeyAuth` returns an `apiKey` scheme for its header (`X-API-Key` unless
+`header=` says otherwise),
 `EntraIDAuth` an OpenID Connect `entraId` scheme and `AllowAnonymous` returns
 `{}`. See the `ServiceTokenAuth` example under [`Authenticator`](#authenticator)
 for a custom implementation.
@@ -924,17 +925,24 @@ identity and is always explicit; there is no fallback between them. See
 **Purpose / decision:** explicit API-key authentication for development or
 simple service-to-service callers, not credentials embedded in source/cards.
 
-**Signature status:** implemented (M2 story #4).
+**Signature status:** implemented (M2 story #4); `header` and `hashed` added
+in #269.
 
 ```text
-APIKeyAuth(*, keys: Mapping[str, APIKey])
+APIKeyAuth(*, keys: Mapping[str, APIKey], header: str = "X-API-Key",
+           hashed: bool = False)
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `keys` | `Mapping[str, APIKey]` | Required, non-empty | Maps each accepted key to its [`APIKey`](#apikey) identity. Load keys from the environment or a secret store, never source code. |
+| `keys` | `Mapping[str, APIKey]` | Required, non-empty | Maps each accepted key to its [`APIKey`](#apikey) identity. Load keys from the environment or a secret store, never source code. With `hashed=True`, each mapping key is the 64-character hex SHA-256 digest of an accepted key instead (either case; two digests of the same key raise `DefinitionError`). |
+| `header` | `str` | Default `"X-API-Key"` | The request header carrying the key, matched case-insensitively, for example `Ocp-Apim-Subscription-Key` behind Azure API Management. Must be a valid HTTP header name (an RFC 9110 token), else `DefinitionError`. Matches outbound [`APIKeyCredential(header=...)`](#apikeycredential). |
+| `hashed` | `bool` | Default `False` | Whether `keys` holds SHA-256 hex digests rather than plaintext keys. The sent key is hashed and compared in constant time. Use only with long random keys (for example `secrets.token_urlsafe(32)`): an unsalted digest does not protect short or guessable keys. |
 
-Clients send the key in the `X-API-Key` header.
+Clients send the key in the configured header (`X-API-Key` by default). The
+Agent Card's `apiKey` scheme and the 401 `WWW-Authenticate` challenge, for
+example `APIKey location="header", name="Ocp-Apim-Subscription-Key"`, name the
+same header, and the host drops it from the request headers the SDK logs.
 
 ```python
 import os
@@ -953,11 +961,27 @@ host = HostConfig(
 )
 ```
 
+Behind a gateway that forwards its subscription key, with only the key's digest
+in configuration (computed once with
+`hashlib.sha256(key.encode()).hexdigest()`):
+
+```python
+import os
+
+from agentframe import APIKey, APIKeyAuth
+
+auth = APIKeyAuth(
+    keys={os.environ["GATEWAY_KEY_SHA256"]: APIKey(caller_id="gateway")},
+    header="Ocp-Apim-Subscription-Key",
+    hashed=True,
+)
+```
+
 **Behavior / failures:** invalid configuration raises `DefinitionError`. A
 missing header raises `AuthenticationError("Authentication required.")`; an
-unknown key raises `AuthenticationError("Invalid credentials.")`. Keys are
-compared in constant time and never logged, included in errors or shown by
-`repr`. HTTPS, rotation and grant/resource policy remain application
+unknown key raises `AuthenticationError("Invalid credentials.")`. Keys (and
+digests) are compared in constant time and never logged, included in errors or
+shown by `repr`. HTTPS, rotation and grant/resource policy remain application
 responsibilities. This built-in does not claim conforming MCP OAuth or Foundry
 incoming-A2A authentication, which have their own protocol requirements.
 

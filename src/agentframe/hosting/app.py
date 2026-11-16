@@ -358,7 +358,7 @@ def _routes(
     deduplicator = MessageDeduplicator(
         a2a.dedup_window_seconds, a2a.dedup_store or InMemoryMessageDedupStore()
     )
-    context_builder = CallerContextBuilder()
+    context_builder = CallerContextBuilder(card)
     [a2a_route] = create_jsonrpc_routes(
         handler, rpc_url=A2A_PATH, context_builder=context_builder
     )

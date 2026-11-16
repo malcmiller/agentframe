@@ -5,7 +5,9 @@ and produce a verified ``Principal``. The HTTP host turns ``AuthenticationError`
 into a 401 response before any task is created.
 """
 
+import hashlib
 import hmac
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
@@ -16,6 +18,11 @@ from agentframe.errors import AuthenticationError, DefinitionError
 from agentframe.security.principal import Principal
 
 API_KEY_HEADER = "X-API-Key"
+
+# An HTTP field name is an RFC 9110 token. Keeping to it also keeps the name
+# safe inside the quoted ``WWW-Authenticate`` challenge.
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
 
 
 @dataclass(frozen=True)
@@ -102,39 +109,69 @@ class APIKey:
 
 
 class APIKeyAuth(Authenticator, DeclaresCardSecurity):
-    """Authenticate callers by the API key sent in the ``X-API-Key`` header.
+    """Authenticate callers by the API key sent in one request header.
 
     Load keys from secure configuration such as environment variables, never
     from source code. Keys are not logged or included in error messages.
 
     Args:
-        keys: Maps each accepted key to the identity it authenticates.
+        keys: Maps each accepted key to the identity it authenticates. With
+            ``hashed=True``, each mapping key is instead the lowercase or
+            uppercase hex SHA-256 digest of an accepted key.
+        header: The request header carrying the key, for example
+            ``Ocp-Apim-Subscription-Key`` behind Azure API Management. The
+            Agent Card and 401 challenge name the same header.
+        hashed: Whether ``keys`` holds SHA-256 hex digests rather than keys,
+            so configuration need not contain plaintext keys. Use only with
+            long random keys: an unsalted digest does not protect guessable ones.
 
     Raises:
-        DefinitionError: ``keys`` is empty, a key is empty or not a string, or
-            an identity is not an ``APIKey``.
+        DefinitionError: ``keys`` is empty, a key is empty or not a string (or
+            not a SHA-256 hex digest when ``hashed``), two digests name the same
+            key, an identity is not an
+            ``APIKey``, or ``header`` is not a valid HTTP header name.
     """
 
-    def __init__(self, *, keys: Mapping[str, APIKey]) -> None:
+    def __init__(
+        self,
+        *,
+        keys: Mapping[str, APIKey],
+        header: str = API_KEY_HEADER,
+        hashed: bool = False,
+    ) -> None:
+        if not isinstance(header, str) or not _HEADER_NAME.fullmatch(header):
+            raise DefinitionError("APIKeyAuth header must be a valid HTTP header name.")
         if not keys:
             raise DefinitionError("APIKeyAuth requires at least one key.")
         for key, identity in keys.items():
             if not isinstance(key, str) or not key:
                 raise DefinitionError("APIKeyAuth keys must be non-empty strings.")
+            if hashed and not _SHA256_HEX.fullmatch(key):
+                raise DefinitionError(
+                    "APIKeyAuth keys must be SHA-256 hex digests when hashed=True."
+                )
             if not isinstance(identity, APIKey):
                 raise DefinitionError("APIKeyAuth values must be APIKey instances.")
-        self._keys = [(key.encode(), identity) for key, identity in keys.items()]
+        self._header = header
+        self._hashed = hashed
+        self._keys = [
+            (bytes.fromhex(key) if hashed else key.encode(), identity)
+            for key, identity in keys.items()
+        ]
+        if len({key for key, _ in self._keys}) != len(self._keys):
+            # Digests differing only in letter case are the same key.
+            raise DefinitionError("APIKeyAuth keys must be distinct.")
 
     def __repr__(self) -> str:
-        return f"APIKeyAuth(<{len(self._keys)} keys>)"
+        return f"APIKeyAuth(<{len(self._keys)} keys>, header={self._header!r})"
 
     def card_security(self) -> dict[str, SecurityScheme]:
-        """Return the ``apiKey`` scheme: an API key in the ``X-API-Key`` header."""
-        scheme = APIKeySecurityScheme(location="header", name=API_KEY_HEADER)
+        """Return the ``apiKey`` scheme: an API key in the configured header."""
+        scheme = APIKeySecurityScheme(location="header", name=self._header)
         return {"apiKey": SecurityScheme(api_key_security_scheme=scheme)}
 
     async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
-        """Verify the API key in the request's ``X-API-Key`` header.
+        """Verify the API key in the request's configured header.
 
         Args:
             headers: The request's HTTP headers; names match case-insensitively.
@@ -145,10 +182,11 @@ class APIKeyAuth(Authenticator, DeclaresCardSecurity):
         Raises:
             AuthenticationError: The header is missing or the key is unknown.
         """
-        sent_key = find_header(headers, API_KEY_HEADER)
+        sent_key = find_header(headers, self._header)
         if not sent_key:
             raise AuthenticationError("Authentication required.")
-        identity = self._find(sent_key.encode())
+        sent = sent_key.encode()
+        identity = self._find(hashlib.sha256(sent).digest() if self._hashed else sent)
         if identity is None:
             raise AuthenticationError("Invalid credentials.")
         return VerifiedCaller(id=identity.caller_id, roles=identity.roles)
