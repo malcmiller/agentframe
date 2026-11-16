@@ -75,8 +75,9 @@ class DeclaresCardSecurity(Protocol):
     def card_security(self) -> dict[str, SecurityScheme]:
         """Return the security schemes the card advertises, keyed by name.
 
-        Callers must satisfy all returned schemes. An empty mapping declares
-        that the host accepts callers without credentials.
+        Callers must satisfy all returned schemes (``AnyOf`` instead needs
+        only one member's). An empty mapping declares that the host accepts
+        callers without credentials.
         """
         ...
 
@@ -225,6 +226,135 @@ class AllowAnonymous(Authenticator, DeclaresCardSecurity):
             ``None``, meaning no verified caller.
         """
         return None
+
+
+class AnyOf(Authenticator, DeclaresCardSecurity):
+    """Accept callers that any one of several authenticators verifies.
+
+    For example ``AnyOf(EntraIDAuth(...), APIKeyAuth(...))`` lets users sign
+    in with Entra while automation sends API keys. Each request goes to the
+    first member, in the order given, whose credential header it carries:
+    ``Authorization`` for bearer, OAuth 2.0 and OpenID Connect schemes, or the
+    named header for an API key. That member's answer is final, so a wrong
+    credential is never retried with another member. A request carrying no
+    member's header is refused.
+
+    The Agent Card lists every member's schemes and one security requirement
+    per member, which A2A clients read as alternatives. ``OnBehalfOf``
+    remotes use the member that can exchange user tokens, such as an
+    ``EntraIDAuth`` with ``client_credential=``. All members share one
+    ``role_permissions`` mapping, so keep their role names distinct.
+
+    Args:
+        *members: Two or more authenticators, tried in this order.
+
+    Raises:
+        DefinitionError: Fewer than two members are given; a member is an
+            ``AnyOf``, does not implement ``DeclaresCardSecurity``, declares
+            no schemes (anonymous access cannot be combined) or a scheme whose
+            credential header is unknown; or two members read the same header
+            or declare a scheme with the same name.
+    """
+
+    def __init__(self, *members: Authenticator) -> None:
+        if len(members) < 2:
+            raise DefinitionError("AnyOf needs at least two authenticators.")
+        self._members = members
+        self._headers: list[frozenset[str]] = []
+        self._scheme_names: list[list[str]] = []
+        self._schemes: dict[str, SecurityScheme] = {}
+        for member in members:
+            schemes = _member_schemes(member)
+            headers = frozenset(_credential_header(s) for s in schemes.values())
+            if any(headers & seen for seen in self._headers):
+                raise DefinitionError(
+                    "AnyOf members must read different credential headers; "
+                    "a later member would never be tried."
+                )
+            if self._schemes.keys() & schemes.keys():
+                raise DefinitionError(
+                    "AnyOf members must declare security schemes with different names."
+                )
+            self._headers.append(headers)
+            self._scheme_names.append(list(schemes))
+            self._schemes.update(schemes)
+
+    def __repr__(self) -> str:
+        return f"AnyOf({', '.join(repr(member) for member in self._members)})"
+
+    @property
+    def members(self) -> tuple[Authenticator, ...]:
+        """The member authenticators, in the order they are tried."""
+        return self._members
+
+    def card_security(self) -> dict[str, SecurityScheme]:
+        """Return every member's schemes; a caller needs only one member's."""
+        return dict(self._schemes)
+
+    def card_security_requirements(self) -> list[list[str]]:
+        """Return each member's scheme names: the card's alternative requirements."""
+        return [list(names) for names in self._scheme_names]
+
+    async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller | None:
+        """Verify the request with the first member whose header it carries.
+
+        Args:
+            headers: The request's HTTP headers; names match case-insensitively.
+
+        Returns:
+            The caller that member verified.
+
+        Raises:
+            AuthenticationError: No member's header is present, or that
+                member rejects the credentials.
+        """
+        sent = {name.lower() for name in headers}
+        for member, member_headers in zip(self._members, self._headers, strict=True):
+            if member_headers & sent:
+                return await member.authenticate(headers)
+        raise AuthenticationError("Authentication required.")
+
+
+def _member_schemes(member: Authenticator) -> dict[str, SecurityScheme]:
+    """Return an ``AnyOf`` member's card schemes, checking it can be combined."""
+    if isinstance(member, AnyOf):
+        raise DefinitionError("AnyOf members cannot be AnyOf; list them all in one.")
+    if not isinstance(member, DeclaresCardSecurity):
+        raise DefinitionError(
+            f"AnyOf member {type(member).__name__} must implement card_security() "
+            "so AnyOf knows which requests carry its credentials."
+        )
+    schemes = member.card_security()
+    if not schemes:
+        raise DefinitionError(
+            "AnyOf members must require credentials; anonymous access "
+            "cannot be combined with authentication."
+        )
+    return schemes
+
+
+def _credential_header(scheme: SecurityScheme) -> str:
+    """Return the lowercase request header that carries a scheme's credential.
+
+    Raises:
+        DefinitionError: The credential is not sent in a request header.
+    """
+    match scheme.WhichOneof("scheme"):
+        case "api_key_security_scheme" if scheme.api_key_security_scheme.location == (
+            "header"
+        ):
+            return scheme.api_key_security_scheme.name.lower()
+        case (
+            "http_auth_security_scheme"
+            | "oauth2_security_scheme"
+            | "open_id_connect_security_scheme"
+        ):
+            return "authorization"
+        case _:
+            raise DefinitionError(
+                "AnyOf members must send credentials in a request header, such "
+                "as an API key header or Authorization."
+            )
 
 
 def principal_for(

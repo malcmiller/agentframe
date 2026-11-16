@@ -77,6 +77,7 @@ from agentframe.hosting.task_store import BoundedTaskStore, FinalStateStore
 from agentframe.runtime.limits import RunLimits, check_within_ceiling
 from agentframe.runtime.options import merge_settings
 from agentframe.runtime.runtime import Runtime
+from agentframe.security.authentication import AnyOf
 from agentframe.security.authorization import (
     AuthorizationPolicy,
     ToolAuthorizationPolicy,
@@ -179,8 +180,9 @@ class AgentApp:
         remotes: How to authenticate to each remote agent, by name, when
             ``runtime`` is not given; see ``Runtime``. ``OnBehalfOf`` remotes
             need ``host.auth`` to be ``EntraIDAuth`` with ``client_id=`` and
-            ``client_credential=``; each request's verified user token is
-            then exchanged for them, never forwarded.
+            ``client_credential=``, alone or as a member of ``AnyOf``; each
+            request's verified user token is then exchanged for them, never
+            forwarded.
         default_remote: How to authenticate to skill-catalog agents without
             a ``remotes=`` entry, when ``runtime`` is not given; see
             ``Runtime``. An ``OnBehalfOf`` default needs the same
@@ -444,7 +446,8 @@ def _user_token_exchange(
 
     Raises:
         DefinitionError: An ``OnBehalfOf`` remote's or default's host does
-            not authenticate users with ``EntraIDAuth`` configured for it.
+            not authenticate users with ``EntraIDAuth`` configured for it
+            (alone or as the one such member of ``AnyOf``).
     """
     names, default_on_behalf_of = runtime.on_behalf_of_remotes()
     users = [f"Remote '{name}'" for name in names]
@@ -452,14 +455,23 @@ def _user_token_exchange(
         users.append("default_remote")
     if not users:
         return None
-    if not isinstance(host.auth, UserTokenExchange):
+    exchange: object = host.auth
+    if isinstance(host.auth, AnyOf):
+        exchanges = [m for m in host.auth.members if isinstance(m, UserTokenExchange)]
+        if len(exchanges) > 1:
+            raise DefinitionError(
+                "AnyOf can have only one member that exchanges user tokens "
+                "for OnBehalfOf remotes."
+            )
+        exchange = exchanges[0] if exchanges else None
+    if not isinstance(exchange, UserTokenExchange):
         raise DefinitionError(
             f"{users[0]} is called OnBehalfOf the signed-in user, which "
             "needs EntraIDAuth callers; with API-key or anonymous callers, use "
             "Service(credential=...)."
         )
-    host.auth.check_on_behalf_of()
-    return host.auth
+    exchange.check_on_behalf_of()
+    return exchange
 
 
 def _check_limits_within_ceiling(agent: Agent, host: HostConfig) -> None:

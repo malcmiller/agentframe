@@ -34,14 +34,17 @@ from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 
 
 class StaticCredentials(CredentialService):
-    """Hands one API key or bearer token to the SDK for any declared scheme."""
+    """Hands one API key or bearer token to the SDK for one or any declared scheme."""
 
-    def __init__(self, credential: str) -> None:
+    def __init__(self, credential: str, scheme: str | None = None) -> None:
         self.credential = credential
+        self.scheme = scheme
 
     async def get_credentials(
         self, security_scheme_name: str, context: ClientCallContext | None
-    ) -> str:
+    ) -> str | None:
+        if self.scheme not in (None, security_scheme_name):
+            return None
         return self.credential
 
 
@@ -49,19 +52,21 @@ async def connect(
     base_url: str,
     credential: str | None = None,
     *,
+    scheme: str | None = None,
     http: httpx.AsyncClient | None = None,
 ) -> Client:
     """Connect like any A2A caller: resolve the public card, then use it.
 
     ``credential`` is an API key or bearer token; the SDK sends it the way the
-    card's security scheme says. ``http`` replaces the SDK's own HTTP client,
+    card's security scheme says, or only for the card scheme named ``scheme``
+    when the card offers several. ``http`` replaces the SDK's own HTTP client,
     for example one that calls an app in-process through ``httpx.ASGITransport``
     or one with a longer timeout for real models (the SDK's own client uses
     httpx's 5-second default).
     """
     interceptors: list[ClientCallInterceptor] = []
     if credential is not None:
-        interceptors.append(AuthInterceptor(StaticCredentials(credential)))
+        interceptors.append(AuthInterceptor(StaticCredentials(credential, scheme)))
     return await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(
         base_url, interceptors=interceptors
     )

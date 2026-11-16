@@ -1,11 +1,14 @@
 import hashlib
 import logging
+from collections.abc import Mapping
 
 import pytest
+from a2a.types import APIKeySecurityScheme, OpenIdConnectSecurityScheme, SecurityScheme
 
 from agentframe import (
     Agent,
     AllowAnonymous,
+    AnyOf,
     APIKey,
     APIKeyAuth,
     AuthenticationError,
@@ -19,7 +22,7 @@ from agentframe import (
     agent,
     skill,
 )
-from agentframe.security.authentication import principal_for
+from agentframe.security.authentication import find_header, principal_for
 
 # Test-only values; real applications load keys from the environment.
 BILLING_KEY = "test-billing-key"
@@ -228,3 +231,103 @@ async def test_anonymous_caller_is_denied_protected_skills() -> None:
         await Runtime().invoke(
             Documents(), skill="read", arguments={"document_id": "d1"}, principal=None
         )
+
+
+# Combining authenticators (AnyOf)
+
+
+class BearerAuth:
+    """A stand-in for EntraIDAuth: accepts one bearer token."""
+
+    def card_security(self) -> dict[str, SecurityScheme]:
+        scheme = OpenIdConnectSecurityScheme(open_id_connect_url=OIDC_URL)
+        return {"entraId": SecurityScheme(open_id_connect_security_scheme=scheme)}
+
+    async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
+        if find_header(headers, "Authorization") != "Bearer user-token":
+            raise AuthenticationError("Invalid credentials.")
+        return VerifiedCaller(id="user-oid", roles=frozenset({"Reader"}))
+
+
+OIDC_URL = "https://login.example.com/.well-known/openid-configuration"
+
+
+@pytest.fixture
+def users_or_services(auth: APIKeyAuth) -> AnyOf:
+    return AnyOf(BearerAuth(), auth)
+
+
+async def test_any_of_sends_each_request_to_the_member_whose_header_it_carries(
+    users_or_services: AnyOf,
+) -> None:
+    user = await users_or_services.authenticate({"authorization": "Bearer user-token"})
+    service = await users_or_services.authenticate({"x-api-key": BILLING_KEY})
+
+    assert user is not None and user.id == "user-oid"
+    assert service is not None and service.id == "billing-svc"
+
+
+async def test_any_of_tries_members_in_order_when_both_headers_are_sent(
+    users_or_services: AnyOf,
+) -> None:
+    headers = {"Authorization": "Bearer user-token", "X-API-Key": BILLING_KEY}
+
+    caller = await users_or_services.authenticate(headers)
+
+    assert caller is not None and caller.id == "user-oid"
+
+
+async def test_any_of_never_retries_a_rejected_credential_with_another_member(
+    users_or_services: AnyOf,
+) -> None:
+    headers = {"Authorization": "Bearer wrong", "X-API-Key": BILLING_KEY}
+
+    with pytest.raises(AuthenticationError, match="Invalid credentials"):
+        await users_or_services.authenticate(headers)
+
+
+async def test_any_of_refuses_a_request_without_any_member_header(
+    users_or_services: AnyOf,
+) -> None:
+    with pytest.raises(AuthenticationError, match="Authentication required"):
+        await users_or_services.authenticate({"Cookie": "session=1"})
+
+
+def test_any_of_lists_every_scheme_and_one_requirement_per_member(
+    users_or_services: AnyOf,
+) -> None:
+    assert list(users_or_services.card_security()) == ["entraId", "apiKey"]
+    assert users_or_services.card_security_requirements() == [["entraId"], ["apiKey"]]
+
+
+def other_api_key_auth(header: str = "X-Other-Key") -> APIKeyAuth:
+    return APIKeyAuth(keys={REPORTS_KEY: APIKey(caller_id="reports")}, header=header)
+
+
+@pytest.mark.parametrize(
+    ("members", "message"),
+    [
+        ((BearerAuth(),), "at least two"),
+        ((BearerAuth(), AllowAnonymous()), "anonymous"),
+        ((BearerAuth(), object()), "card_security"),
+        ((BearerAuth(), BearerAuth()), "different credential headers"),
+        ((other_api_key_auth(), other_api_key_auth("X-Third-Key")), "different names"),
+        ((AnyOf(BearerAuth(), other_api_key_auth()), BearerAuth()), "cannot be AnyOf"),
+    ],
+    ids=["one", "anonymous", "undescribed", "same-header", "same-name", "nested"],
+)
+def test_any_of_refuses_members_it_cannot_combine(
+    members: tuple[Authenticator, ...], message: str
+) -> None:
+    with pytest.raises(DefinitionError, match=message):
+        AnyOf(*members)
+
+
+def test_any_of_refuses_credentials_outside_request_headers() -> None:
+    class CookieAuth(BearerAuth):
+        def card_security(self) -> dict[str, SecurityScheme]:
+            scheme = APIKeySecurityScheme(location="cookie", name="session")
+            return {"cookie": SecurityScheme(api_key_security_scheme=scheme)}
+
+    with pytest.raises(DefinitionError, match="request header"):
+        AnyOf(BearerAuth(), CookieAuth())

@@ -77,6 +77,7 @@ from agentframe.runtime.options import RunOptions
 from agentframe.runtime.runtime import RunResult, Runtime
 from agentframe.security.authentication import (
     AllowAnonymous,
+    AnyOf,
     APIKey,
     APIKeyAuth,
     Authenticator,
@@ -125,6 +126,7 @@ __all__ = [
     "AgentReference",
     "AgentRegistry",
     "AllowAnonymous",
+    "AnyOf",
     "AuthenticationError",
     "Authenticator",
     "AuthorizationPolicy",

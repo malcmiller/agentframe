@@ -30,6 +30,7 @@ from agentframe import (
     Agent,
     AgentApp,
     AgentDirectory,
+    AnyOf,
     APIKey,
     APIKeyAuth,
     DefinitionError,
@@ -279,6 +280,97 @@ async def test_a_local_run_has_no_user_to_act_for(directory: AgentDirectory) -> 
 
 def unopened_directory(tmp_path: Path) -> AgentDirectory:
     return AgentDirectory(sources=[FileAgentRegistry(tmp_path / "agents.yaml")])
+
+
+PLANNER_KEY = "test-automation-key"
+
+
+@pytest.fixture
+def users_or_services_app(
+    directory: AgentDirectory, entra: FakeEntra, token_endpoint: FakeTokenEndpoint
+) -> AppFactory:
+    auth = AnyOf(
+        planner_auth(entra, token_endpoint),
+        APIKeyAuth(keys={PLANNER_KEY: APIKey(caller_id="nightly-job")}),
+    )
+
+    def app(public_url: str) -> AgentApp:
+        return AgentApp(
+            agent=Planner(),
+            host=HostConfig(public_url=public_url, auth=auth),
+            directory=directory,
+            remotes={"research-agent": OnBehalfOf(scope=TARGET_SCOPE)},
+        )
+
+    return app
+
+
+async def test_any_of_keeps_on_behalf_of_for_users_beside_api_key_callers(
+    serve: ServeLocally,
+    users_or_services_app: AppFactory,
+    entra: FakeEntra,
+    token_endpoint: FakeTokenEndpoint,
+) -> None:
+    user_token = entra.token()
+    async with serve(users_or_services_app) as url:
+        async with await connect(url, user_token, scheme="entraId") as user:
+            user_task = await call_skill(user, "plan", {"goal": "tides"})
+        async with await connect(url, PLANNER_KEY, scheme="apiKey") as service:
+            service_task = await call_skill(service, "plan", {"goal": "tides"})
+
+    assert user_task.status.state == TaskState.TASK_STATE_COMPLETED
+    assert get_artifact_text(user_task.artifacts[0]) == f"Called for {CALLER_OID}"
+    [exchange] = token_endpoint.exchanges
+    assert exchange["assertion"] == user_token
+    # An API-key caller is authenticated but has no user to act for.
+    assert service_task.status.state == TaskState.TASK_STATE_REJECTED
+    reply = get_message_text(service_task.status.message)
+    assert "the caller is not an Entra user" in reply
+
+
+def test_any_of_without_an_on_behalf_of_member_cannot_use_on_behalf_of(
+    tmp_path: Path,
+) -> None:
+    auth = AnyOf(
+        EntraIDAuth(tenant_id=TENANT_ID, audience=API_CLIENT_ID),
+        APIKeyAuth(keys={PLANNER_KEY: APIKey(caller_id="nightly-job")}),
+    )
+
+    with pytest.raises(DefinitionError, match="client_credential"):
+        AgentApp(
+            agent=Planner(),
+            host=HostConfig(public_url="http://127.0.0.1:1", auth=auth),
+            directory=unopened_directory(tmp_path),
+            remotes={"research-agent": OnBehalfOf(scope=TARGET_SCOPE)},
+        )
+
+
+def test_any_of_with_two_on_behalf_of_members_is_refused(tmp_path: Path) -> None:
+    class ExchangingKeyAuth(APIKeyAuth):
+        """An API-key member that also claims to exchange user tokens."""
+
+        def check_on_behalf_of(self) -> None: ...
+
+        async def on_behalf_of(self, caller: VerifiedCaller, scope: str) -> str:
+            return "token"
+
+    auth = AnyOf(
+        EntraIDAuth(
+            tenant_id=TENANT_ID,
+            audience=API_CLIENT_ID,
+            client_id=API_CLIENT_ID,
+            client_credential=PLANNER_SECRET,
+        ),
+        ExchangingKeyAuth(keys={PLANNER_KEY: APIKey(caller_id="nightly-job")}),
+    )
+
+    with pytest.raises(DefinitionError, match="only one member"):
+        AgentApp(
+            agent=Planner(),
+            host=HostConfig(public_url="http://127.0.0.1:1", auth=auth),
+            directory=unopened_directory(tmp_path),
+            remotes={"research-agent": OnBehalfOf(scope=TARGET_SCOPE)},
+        )
 
 
 def test_api_key_callers_cannot_use_on_behalf_of(tmp_path: Path) -> None:

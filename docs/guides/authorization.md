@@ -13,7 +13,7 @@ names. Roles are one application-controlled way to grant permissions.
 
 | Concept | Proposed responsibility |
 | --- | --- |
-| `Authenticator` | Trusted host interface, with `EntraIDAuth`, `APIKeyAuth` and explicit `AllowAnonymous()` built-ins. `async authenticate(headers) -> VerifiedCaller \| None` is implemented with `APIKeyAuth`/`AllowAnonymous` (M2) and `EntraIDAuth` (M7 #76). |
+| `Authenticator` | Trusted host interface, with `EntraIDAuth`, `APIKeyAuth` and explicit `AllowAnonymous()` built-ins. `async authenticate(headers) -> VerifiedCaller \| None` is implemented with `APIKeyAuth`/`AllowAnonymous` (M2) and `EntraIDAuth` (M7 #76); `AnyOf` combines them (#268). |
 | `Principal` | Immutable invocation identity with trusted subject, issuer, tenant where applicable, and verified claims/permission grants. Exact fields remain open. |
 | `@skill(requires_permissions=[...])` | Declare stable permission requirements. All listed permissions are required; metadata does not enforce itself. |
 | `AuthorizationPolicy` | Injected policy interface evaluating principal, skill requirements, and validated resource arguments against authoritative application data. |
@@ -213,6 +213,11 @@ are never sent to callers; operational diagnostics are redacted.
   deliberately; a remote host without an `auth` choice refuses startup even on
   loopback. `APIKeyAuth(keys=...)` is available for development/simple services;
   key-entry schema is still open and keys must come from secure configuration.
+  To accept Entra users and API-key services on one host, combine them with
+  `AnyOf(EntraIDAuth(...), APIKeyAuth(...))` (#268): each request goes to the
+  member whose credential header it carries, the card lists each member as an
+  alternative, and keep the members' role names distinct since they share
+  `role_permissions`.
 - Unprotected model-free local examples need no identity provider. Missing
   identity is never elevated into a trusted service identity for protected work.
 - MCP allowlists control publication, not access. Authorize `tools/call` even if
@@ -248,7 +253,10 @@ app-only token is not automatically an OBO-capable user assertion.
 
 `service` explicitly uses the calling agent's own identity for background/no-user
 work; target permissions apply to that agent. With `APIKeyAuth` or
-`AllowAnonymous` ingress, only service mode is available. Service mode is a
+`AllowAnonymous` ingress, only service mode is available. Behind
+`AnyOf(EntraIDAuth(...), APIKeyAuth(...))`, `OnBehalfOf` works for the Entra
+users, while the API-key callers' `OnBehalfOf` calls raise
+`PermissionDeniedError`. Service mode is a
 deliberate application policy, not an automatic fallback for a denied user.
 Anonymous/API-key access does not itself grant authority to spend broader
 service credentials: still authorize the remote action at the caller boundary.
