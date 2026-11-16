@@ -77,7 +77,7 @@ Do not infer extra public registration/close methods from this description.
 First release owns bounded registered-tool calls/results and generation
 continuations as well as typed structured output; it returns complete validated
 results. It has no built-in human approval pause/resume or automatic multi-agent
-orchestration. Future [streaming/AG-UI](streaming.md) is a separate surface.
+orchestration. [Streaming/AG-UI](streaming.md) is a separate surface.
 
 **Related:** [`Runtime.invoke`](#runtimeinvoke), [`AgentApp`](hosting.md#agentapp),
 [runtime design](../design/base-classes.md#agent-authoring-and-execution).
@@ -303,8 +303,8 @@ decided errors, not a success-shaped `RunResult`; error carries `invocation_id`.
 Exact failed-run usage access/retention remains open.
 
 **Streaming (implemented, #257):** `on_text` is the runtime's streaming
-surface, used by A2A `SendStreamingMessage` and meant for the later AG-UI
-adapter. Every check and limit applies unchanged: pieces are passed on only
+surface, used by A2A `SendStreamingMessage` and the AG-UI
+endpoint (#258). Every check and limit applies unchanged: pieces are passed on only
 after input validation, authorization and input checks, and `RunResult.value`
 is still the complete validated result. Each piece is awaited before the model
 call continues, so a slow sink slows the run within its deadline; an exception

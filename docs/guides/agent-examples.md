@@ -309,7 +309,7 @@ address. Non-local hosting needs explicit authentication and HTTPS.
 
 One server/shared runtime exposes an endpoint per caller audience, not per
 skill: A2A for agent callers, optional allowlisted MCP for LLM apps/tools and
-AG-UI later for frontends. The card's skills alone are descriptive, not remote
+optional AG-UI for frontends. The card's skills alone are descriptive, not remote
 Python-method RPC endpoints.
 
 Prefer structured A2A requests: name the skill and send JSON arguments in a
@@ -430,7 +430,7 @@ with backoff and provider-SDK retries disabled. `@tool(side_effects=True)`
 tools never auto-retry; idempotent declarations are not retry grants.
 Application approval workflows are separate; first
 release has no built-in human pause/resume. These internal tools are not
-automatic A2A skills, MCP publication or future AG-UI frontend tools.
+automatic A2A skills, MCP publication or AG-UI frontend tools.
 
 [`examples/orders.py`](../../examples/orders.py) is a runnable hosted version:
 a read-only `lookup_order` tool, a side-effecting `cancel_order` tool that needs
@@ -596,7 +596,7 @@ limits; a found card is not permission to call an agent. See
 [discovery](../design/discovery.md), its
 [reference](../api/discovery.md) and [local dev/containers](development.md).
 
-## Streaming text and future AG-UI
+## Streaming text and AG-UI
 
 Examples await complete validated results by default. A skill can stream its
 answer text as it is generated (0.5.0, #257) by passing `stream=True`:
@@ -619,10 +619,13 @@ the whole answer; a local caller passes `on_text=` to `Runtime.run`. A
 complete, checked answer. Every limit still applies; see the
 [streaming reference](../api/streaming.md#runtime-streaming-surface).
 
-Future [AG-UI support](../design/streaming.md) (#258) is a scoped optional frontend-protocol
-adapter over managed execution events, not an OTel trace stream, automatic
-frontend tool execution, human approval workflow or durable resume mechanism.
-The later configuration is `AgentApp(..., ag_ui=AGUIConfig(enabled=True))` at
-`/ag-ui`, built on the runtime streaming surface. Stream lifecycle/text deltas,
-tool names/status (not raw arguments by default) and safe errors. Whole-answer
-checks release complete text at end; disconnect cancels, no reconnect/resume.
+[AG-UI support](../api/streaming.md#ag-ui-endpoint) (0.5.0, #258) serves the same
+agent to a frontend: install `agentframe-py[ag-ui]` and pass
+`AgentApp(..., default_skill="draft", ag_ui=AGUIConfig(enabled=True))` (or a
+`router=`), and a frontend `POST`s an AG-UI `RunAgentInput` to `/ag-ui` with
+the same credentials as `/a2a`. It streams run start/finish, the text deltas,
+tool names and status (never their arguments or results) and safe errors.
+Whole-answer checks release complete text at the end; a disconnect cancels
+the run, with no reconnect/resume. It is not an OTel trace stream, frontend
+tool execution, shared state, a human approval workflow or a durable resume
+mechanism.

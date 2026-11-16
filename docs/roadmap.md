@@ -121,7 +121,7 @@ argument extraction and clarification still need an exact contract. Ambiguity
 or missing prompt arguments asks back via `TASK_STATE_INPUT_REQUIRED`, never guesses.
 
 Use one server/shared runtime and an endpoint per audience, not per skill:
-A2A for agent callers, optional MCP for LLM apps/tools, AG-UI later for frontends.
+A2A for agent callers, optional MCP for LLM apps/tools, optional AG-UI for frontends.
 All entry points share authorization, validation, limits, accounting and tracing.
 Do not add a custom REST skill API. Publish only named, allowlisted skills as
 MCP tools (empty by default); keep this
@@ -153,7 +153,7 @@ framework base class.
 | Durable workflows | Revisit after multi-agent usage; no design now. Long work uses native tasks, in-memory default/persistent store pluggable; approvals application-owned. If added, optional separate package (candidate `agentframe-workflows`). | Future evidence/scope; task persistence is not Python crash recovery or durable approval resume. |
 | Evaluation | M9, complete in 0.3.0 ([evaluation](design/evaluation.md), decided 2026-11-13): an AgentFrame-owned harness for local skills and A2A agents in `agentframe.evaluation` in the main wheel, no new dependency or extra; `Case` from Python/JSONL, plain-function scorers, binary rubric judge, concurrency 4, optional evaluation-wide budget, private-by-default reports, no pytest plugin. | Foundry export is a later adapter. |
 | Model-planned orchestration | M10, complete in 0.3.0 ([orchestration](design/orchestration.md), decided 2026-11-13, #177): a catalog of remote skills from the Agent Cards of every registered agent whose card is valid and whose security can be satisfied (the registry is the allowlist), remote skills as model tools, and a model-made, validated execution plan (flat DAG with data references) run with `asyncio.TaskGroup` and the existing deadline, hop, token, identity and policy controls. Revisits #17's orchestration-helper and dynamic-invocation cuts as opt-in features. | Settled in the [API reference](api/orchestration.md); planner quality is measured per model ([guide](guides/orchestration.md#measure-the-planner)). |
-| Streaming | 0.5.0 (#257): opt-in `ctx.generate(stream=True)`, `Runtime.run(on_text=)`, Ollama/Foundry adapter streaming and A2A `SendStreamingMessage` text deltas; output checks turn streaming off, every limit applies. Later (#258) `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`, same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Version/binding, native event mapping, bounds/backpressure and typed final serialization; frontend tools/shared state later opt-in only. |
+| Streaming | 0.5.0 (#257): opt-in `ctx.generate(stream=True)`, `Runtime.run(on_text=)`, Ollama/Foundry adapter streaming and A2A `SendStreamingMessage` text deltas; output checks turn streaming off, every limit applies. 0.5.0 (#258): `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui` (AG-UI 1.0, `ag-ui` extra), same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Frontend tools, shared state, interrupts and terminal usage later opt-in only; no blanket AG-UI conformance. |
 
 ## Architectural rules
 
@@ -734,17 +734,17 @@ direction is implemented in 0.5.0 too (#254):
 serves allowlisted skills as MCP tools at `/mcp` behind the same
 authentication, run slots and limits, tested with the official SDK client.
 
-Text streaming over A2A is implemented in 0.5.0 (#257). AG-UI is another
-separate follow-up after M7, with its existing
-[acceptance criteria](design/streaming.md#open-contracts-and-delivery-gate) for ordering,
-errors/truncation, refusal/incomplete results, safe side effects, isolation and
-no secrets/private reasoning, proven with an independent AG-UI client. Pin the
-feature profile, versions/binding and lifecycle/policy contracts before claiming
-support. Persistent task storage is pluggable for long-running A2A work, not a
-workflow engine. Streaming uses `ag_ui=AGUIConfig(enabled=True)` on `/ag-ui`,
-same server/auth/limits/permissions, lifecycle/text/tool-name-status/error events
-without raw arguments by default. Whole-answer checks emit complete text at end,
-disconnect cancels, and first version has no reconnect/resume. AG-UI does not imply
+Text streaming over A2A (#257) and the AG-UI endpoint (#258) are implemented
+in 0.5.0, the latter meeting its
+[acceptance criteria](design/streaming.md#open-contracts-and-delivery-gate) for
+ordering, errors/truncation, refusals, safe side effects, isolation and no
+secrets/private reasoning, with every event parsed by the official AG-UI SDK.
+It is pinned to AG-UI 1.0 over HTTP/SSE. Persistent task storage is pluggable
+for long-running A2A work, not a workflow engine. Streaming uses
+`ag_ui=AGUIConfig(enabled=True)` on `/ag-ui`, same server/auth/limits/permissions,
+lifecycle/text/tool-name-status/error events without raw arguments.
+Whole-answer checks emit complete text at end, disconnect cancels, and there is
+no reconnect/resume. AG-UI does not imply
 a UI framework or orchestration platform. Each advertised feature
 needs a behavioral/interoperability test. These optional integrations have no
 imposed order relative to one another or M8+; they do not demote multi-agent
@@ -807,10 +807,9 @@ belongs to that release even though telemetry exporters/integration stay optiona
   no first-M8+ orchestration helpers (M10, in 0.3.0, revisits this; decisions in
   [orchestration](design/orchestration.md#decisions-confirmed-2026-11-13)).
   Typed class proxies/templates later.
-- Future runtime streaming API, AG-UI version/transport/native event projection,
-  typed-result serialization, buffer/write/backpressure/shutdown details.
-  `AGUIConfig`, `ag_ui=`, `/ag-ui`, first profile/disconnect cancellation/no
-  reconnect are decided. Frontend tools/state only later opt-in; workflows
+- AG-UI beyond the 0.5.0 profile (#258): frontend tools, shared state,
+  interrupts/resume, terminal usage and other transports. Frontend tools/state
+  only later opt-in; workflows
   revisited after multi-agent usage in a separate optional package if added.
 
 Resolve these with small executable examples before declaring a stable API.

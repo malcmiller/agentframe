@@ -57,6 +57,17 @@ behavior starts with an **Upgrading** section; see the
   shutdown grace period and tracing), never `dev_settings()`, and refuses to
   start when one is missing. The release smoke test now installs the
   `entra` and `otel` extras to run it (#250).
+- **Hosting:** an optional AG-UI 1.0 endpoint for frontends.
+  `AgentApp(ag_ui=AGUIConfig(enabled=True))` serves `POST /ag-ui` over HTTP
+  and server-sent events with the official `ag-ui-protocol` SDK (the new
+  `ag-ui` extra), under the same authentication, rate limit, run slots,
+  permissions, execution policy, limits and tracing as `/a2a` and `/mcp`. Each run is routed by
+  the app's `router` or `default_skill` from the frontend's user and assistant
+  text, and streams `RUN_STARTED`, text deltas, tool names and status (never
+  arguments or results) and `RUN_FINISHED` or a safe `RUN_ERROR`. Output checks
+  release the whole answer at the end; a client disconnect cancels the run;
+  there is no reconnect or resume; frontend tools and shared state are not
+  supported (#258).
 - **Development:** `agentframe new agent NAME` and `agentframe new fleet NAME
   [--planner] [--agents research,writer]` create a working project from
   templates shipped in the wheel: one agent, or specialists with skills

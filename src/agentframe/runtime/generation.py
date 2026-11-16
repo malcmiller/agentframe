@@ -8,7 +8,8 @@ accounting is in ``runtime.accounting``, token estimates and limit checks in
 
 import asyncio
 import random
-from collections.abc import Callable, Iterable, Mapping, Sequence
+import uuid
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -87,6 +88,26 @@ MAX_BACKOFF_SECONDS = 8.0
 NO_BOUND_TOOLS: Mapping[str, BoundTool] = MappingProxyType({})
 
 
+@dataclass(frozen=True)
+class ToolStatus:
+    """A tool call's progress, without its arguments or result.
+
+    Attributes:
+        call_id: A new ID for this call, never the provider's.
+        name: The registered name of the tool, remote entry or MCP tool.
+        finished: ``False`` just before the call runs, ``True`` once it
+            returned a result to the model.
+    """
+
+    call_id: str
+    name: str
+    finished: bool
+
+
+type ToolStatusSink = Callable[[ToolStatus], Awaitable[None]]
+"""Awaited with each tool call's status, for a streaming caller."""
+
+
 @dataclass
 class _SentText:
     """Passes text on to ``sink`` and remembers whether any was sent."""
@@ -127,6 +148,8 @@ class GenerationState:
             whole answer first.
         telemetry: Records model and tool call spans and metrics; disabled
             unless the runtime has tracing configured.
+        tool_sink: Told when each tool call starts and finishes, by name
+            only, or ``None`` when no caller wants tool status.
     """
 
     model: Model | None
@@ -143,6 +166,7 @@ class GenerationState:
     policy: ExecutionPolicy | None = None
     text_sink: TextSink | None = None
     telemetry: Telemetry = NO_TELEMETRY
+    tool_sink: ToolStatusSink | None = None
 
     async def generate_text(
         self,
@@ -371,7 +395,8 @@ class GenerationState:
         response.
 
         With ``on_text``, every call streams, so text the model writes
-        before calling tools is passed on too.
+        before calling tools is passed on too. With ``tool_sink``, each
+        offered tool call is reported by name as it starts and finishes.
         """
         while True:
             request = ModelRequest(
@@ -393,6 +418,9 @@ class GenerationState:
             messages += (assistant_message(response),)
             for call in response.tool_calls:
                 self.accounting.count_tool_call(self.limits)
+                status = await self._report_tool_start(
+                    ctx, call.name, tools, bound_tools
+                )
                 # Only declared names and the ID: arguments and results are
                 # content, and an unknown name is the model's own text.
                 attributes = {
@@ -419,7 +447,34 @@ class GenerationState:
                             self.policy,
                             self.skill,
                         )
+                if status is not None and self.tool_sink is not None:
+                    await self.tool_sink(replace(status, finished=True))
                 messages += (tool_message(call, result),)
+
+    async def _report_tool_start(
+        self,
+        ctx: "RunContext",
+        name: str,
+        tools: Mapping[str, "ToolDefinition"],
+        bound_tools: Mapping[str, BoundTool],
+    ) -> ToolStatus | None:
+        """Tell ``tool_sink`` a call to ``name`` is starting, and return its status.
+
+        Only calls naming a tool the caller was offered are reported, so a
+        name the model made up or guessed never reaches the caller.
+        """
+        if self.tool_sink is None:
+            return None
+        tool = tools.get(name)
+        bound = bound_tools.get(name)
+        offered = (tool is not None and is_permitted(tool, ctx.principal)) or (
+            bound is not None and is_permitted(bound.entry, ctx.principal)
+        )
+        if not offered:
+            return None
+        status = ToolStatus(str(uuid.uuid4()), name, finished=False)
+        await self.tool_sink(status)
+        return status
 
     def _hosted_tool_allowance(
         self, hosted_tools: tuple[HostedTool, ...]

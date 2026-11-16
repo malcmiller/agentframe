@@ -79,11 +79,7 @@ from agentframe.hosting.a2a_executor import (
 )
 from agentframe.hosting.admission import RunAdmission, RunSlot
 from agentframe.hosting.card import skill_arguments_schema
-from agentframe.hosting.endpoints import (
-    caller_check,
-    too_many_requests,
-    unavailable,
-)
+from agentframe.hosting.endpoints import admit, caller_check, rate_limited, unavailable
 from agentframe.hosting.host import HostConfig, MCPConfig
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.rate_limit import CallerRateLimiter
@@ -227,22 +223,19 @@ class MCPEndpoint:
         if method != "tools/call":
             await manager.handle_request(request.scope, request.receive, send)
             return
-        if self._rate_limiter is not None:
-            principal: Principal | None = request.state.principal
-            wait = self._rate_limiter.try_acquire(principal.id if principal else None)
-            if wait is not None:
-                await too_many_requests(wait)(scope, receive, send)
-                return
-        telemetry = self._runtime.telemetry
-        if self._lifecycle.shutting_down:
-            telemetry.record_rejection(agent=self._agent_name, reason="shutting_down")
-            response = unavailable("The agent is shutting down; retry later.")
-            await response(scope, receive, send)
+        principal: Principal | None = request.state.principal
+        refusal = rate_limited(self._rate_limiter, principal)
+        if refusal is not None:
+            await refusal(scope, receive, send)
             return
-        slot = self._admission.try_admit()
-        if slot is None:
-            telemetry.record_rejection(agent=self._agent_name, reason="busy")
-            await unavailable("The agent is busy; retry later.")(scope, receive, send)
+        slot = admit(
+            self._admission,
+            self._lifecycle,
+            self._runtime.telemetry,
+            self._agent_name,
+        )
+        if isinstance(slot, Response):
+            await slot(scope, receive, send)
             return
         request.state.run_slot = slot
         try:

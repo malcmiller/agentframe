@@ -40,7 +40,7 @@ from agentframe.errors import (
 from agentframe.models.base import DEFAULT_MODEL_SETTINGS, ModelSettings, TextSink
 from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation, root_run
-from agentframe.runtime.generation import GenerationState
+from agentframe.runtime.generation import GenerationState, ToolStatusSink
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.remotes import RunRemotes
@@ -97,6 +97,7 @@ class _Invocation:
     own_interface_url: str | None
     conversation_id: str | None
     on_text: TextSink | None = None
+    on_tool: ToolStatusSink | None = None
 
 
 class Runtime:
@@ -412,6 +413,7 @@ class Runtime:
         own_interface_url: str | None = None,
         conversation_id: str | None = None,
         on_text: TextSink | None = None,
+        on_tool: ToolStatusSink | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
@@ -426,8 +428,9 @@ class Runtime:
         request's ``correlation`` with the agents before it (``None`` makes
         the run a root run), the A2A interface URL it advertises, which
         leaves the agent out of its own skill catalog, the task's
-        ``contextId`` as ``conversation_id`` when the caller is verified, and
-        ``on_text`` for a streaming request.
+        ``contextId`` as ``conversation_id`` when the caller is verified,
+        ``on_text`` for a streaming request, and ``on_tool`` for the AG-UI
+        endpoint's tool status.
         """
         started = time.perf_counter()
         accounting = accounting or RunAccounting()
@@ -449,6 +452,7 @@ class Runtime:
             own_interface_url=own_interface_url,
             conversation_id=conversation_id,
             on_text=on_text,
+            on_tool=on_tool,
         )
         try:
             # Unknown skill IDs come from callers, so only defined ones name
@@ -583,6 +587,7 @@ class Runtime:
                 policy=self._policy,
                 text_sink=self._text_sink(run.on_text),
                 telemetry=self._telemetry,
+                tool_sink=run.on_tool,
             )
             run_remotes = self._run_remotes(run, limits, deadline, stack)
             ctx = RunContext(

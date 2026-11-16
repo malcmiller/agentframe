@@ -18,8 +18,8 @@ opt-in model routing and M7 hardening alongside design documentation. Version
 multi-agent release (#83-#97), and version 0.3.0, which adds M9 evaluation
 (#164, #152-#163) and M10 model-planned orchestration (#177, #166-#176), are
 published on PyPI as `agentframe-py` (import `agentframe`). Pre-1.0 there is
-no stable API. MCP client and server (#253, #254) and optional OpenTelemetry
-tracing (`TracingConfig`, `otel` extra, #248) are implemented; AG-UI is not. Keep design API examples beyond
+no stable API. MCP client and server (#253, #254), optional OpenTelemetry
+tracing (`TracingConfig`, `otel` extra, #248) and the AG-UI endpoint (`ag-ui` extra, #258) are implemented. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
@@ -105,7 +105,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
 | `src/agentframe/runtime/` | `Runtime` (`runtime.py`), generation and its tool loop and retries (`generation.py`), run accounting (`accounting.py`, `RunAccounting`), token estimates and fit checks (`tokens.py`), reading the model's final answer (`model_output.py`), skill routing (`routing.py`: `SkillRouter`, `SkillCall`, `Clarification`, `RoutingContext`), `Agent.ask`'s skill choice (`ask.py`), optional OpenTelemetry spans and metrics (`telemetry.py`, `TracingConfig`), `RunLimits`, `RunOptions`, conversation history (`state.py`: `StateStore`, `InMemoryStateStore`, `ConversationKey`). |
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`, `anthropic.py`; `strict_schema.py` (OpenAI strict JSON-schema converter); `env.py` (`model_from_env`, choosing a provider from environment variables). |
-| `src/agentframe/hosting/` | `AgentApp` and its SDK request handler (`app.py`), the health/readiness endpoints and the host's size/authentication checks shared by `/a2a` and `/mcp` (`endpoints.py`), the SDK call/request context builders (`context_builders.py`), `HostConfig`, `A2AConfig`, `MCPConfig`, Agent Card, A2A executor, `ModelRouter`, the `/mcp` endpoint serving allowlisted skills as MCP tools (`mcp_server.py`, imported only with `mcp=`; #254). Other subpackages and the shared leaves never import it (`tests/unit/test_layering.py`). |
+| `src/agentframe/hosting/` | `AgentApp` and its SDK request handler (`app.py`), the health/readiness endpoints and the host's checks shared by `/a2a`, `/mcp` and `/ag-ui` (`endpoints.py`: `caller_check` size/authentication, `rate_limited`, `admit`), the SDK call/request context builders (`context_builders.py`), `HostConfig`, `A2AConfig`, `MCPConfig`, `AGUIConfig`, Agent Card, A2A executor, `ModelRouter`, the `/mcp` endpoint serving allowlisted skills as MCP tools (`mcp_server.py`, imported only with `mcp=`; #254), the AG-UI endpoint (`ag_ui.py`, imported only when enabled, `ag-ui` extra; #258). Other subpackages and the shared leaves never import it (`tests/unit/test_layering.py`). |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
 | `src/agentframe/orchestration/` | `RemoteSkill`, `SkillCatalog`, bounding of untrusted card text, `RemoteTool` (remote entries as model tools, with per-entry permissions and tool checks), `Plan` / `PlanStep` with static checks and reference substitution (`plan.py`), the `ctx.plan` planning call (`planning.py`) and the plan executor behind `ctx.run_plan` (`execution.py`, `PlanResult`, `StepResult`) (M10). |
 | `src/agentframe/mcp/` | MCP client (`mcp` extra): `MCPClient` and its connection held in a background task, `MCPTool` (`client.py`); server tools bound as model tools with permissions and tool checks (`tools.py`) (#253). |
@@ -233,9 +233,9 @@ clients are appropriate when needed. Pydantic is not Pydantic AI. Keep provider
 dependencies optional and reuse protocol types instead of copying schemas.
 The official MCP Python SDK and OpenTelemetry are permitted optional
 protocol/observability dependencies; they do not justify adding an agent framework.
-For future streaming, the official AG-UI Python protocol SDK is an appropriate
-optional dependency to evaluate; do not add a UI framework or another agent
-framework to obtain AG-UI support. No AG-UI dependency/version is selected yet.
+The official AG-UI Python protocol SDK (`ag-ui-protocol>=1.0.0,<2`, the
+`ag-ui` extra, #258) is the selected optional dependency for AG-UI; do not add
+a UI framework or another agent framework to obtain AG-UI support.
 
 Platform/API choices approved on 2026-11-11: support Python 3.13+ and test 3.13,
 3.14 and 3.15; Python has no LTS designation. Target A2A protocol 1.0 via the
@@ -307,7 +307,7 @@ unspecified signatures/extension interfaces still need implementation evidence.
 applies validation, policy, and execution limits. Direct Python method calls
 bypass that pipeline. Use one server/shared runtime and an endpoint per caller
 audience, not per skill: A2A for agents, optional MCP for LLM apps/tools and
-AG-UI later for frontends. All entry points share authorization, validation,
+optional AG-UI for frontends. All entry points share authorization, validation,
 limits, accounting and tracing.
 `invoke` returns a validated value; `Runtime.run` returns `RunResult` with
 value, invocation ID, usage, model/tool calls, duration and finish reason even
@@ -750,34 +750,48 @@ Do not expand scope into UI, RAG infrastructure, evaluation platforms or hosted
 cloud-agent deployment without an explicit request; local/container packaging
 is part of the multi-agent direction, not a hosting service.
 
-### Future streaming and AG-UI
+### Streaming and AG-UI
 
-Future streaming should support a scoped optional AG-UI agent-to-frontend
-adapter, distinct from A2A agent-to-agent, MCP tools and OTel tracing. A2A/card-first
+Streaming supports a scoped optional AG-UI agent-to-frontend
+endpoint, distinct from A2A agent-to-agent, MCP tools and OTel tracing. A2A/card-first
 remains; no UI framework, implicit frontend tool execution, shared-state
 persistence, human approval workflow, resumability or blanket feature/conformance
-claim. Decided later configuration is `AgentApp(ag_ui=AGUIConfig(enabled=True))`
-at `/ag-ui` on the same server/auth/permissions/limits. Stream run start/finish,
-text deltas, tool names/status (not raw arguments by default) and safe errors.
-Whole-answer checks release complete text at end; disconnect cancels run,
-first version has no reconnect/resume. Frontend tools/shared state later opt-in.
-No AG-UI event schema is finalized. Implemented (#257, 0.5.0): opt-in
+claim. Implemented (#257, 0.5.0): opt-in
 `ctx.generate(stream=True)` (text only; with `output=` -> `DefinitionError`),
-`Runtime.run(on_text=TextSink)` (the surface #258 builds on), optional
+`Runtime.run(on_text=TextSink)`, optional
 `StreamingModel.stream(request, on_text)` on Ollama/Foundry/`ScriptedModel`
 (others answer whole), A2A `SendStreamingMessage` with artifact text deltas
 (combined into >=64-byte updates, at most 512 per task, below the SDK's
 1024-event subscriber queue) then one whole final artifact (card
 `streaming=True`). Output checks turn
 streaming off; streamed bytes count toward `max_response_bytes`; no retry
-after text was released; A2A disconnect does not cancel. Use official
-primary sources and native protocol types; select/test compatible AG-UI SDK/schema/
-transport versions later.
+after text was released; A2A disconnect does not cancel.
+Implemented (#258, 0.5.0): `AgentApp(ag_ui=AGUIConfig(enabled=True))` serves
+`POST /ag-ui` (AG-UI 1.0, HTTP+SSE, `ag_ui.core` types and encoder;
+`hosting/ag_ui.py`, imported only when enabled, else `DefinitionError` naming
+the extra). Checks before any event, as HTTP errors: size 413 -> auth 401 ->
+shared rate limit 429 -> valid `RunAgentInput` (threadId/runId 1-256 chars,
+last user/assistant text message is user) 400 -> shutdown/shared run slot 503.
+Free text only: needs `router` or `default_skill` (else `DefinitionError`);
+only user/assistant text reaches the router; other roles, frontend tools,
+state, context, forwardedProps and resume are ignored, never trusted.
+Events: `RUN_STARTED` (echoes threadId/runId, `protocolVersion`, server
+`invocation_id` in metadata), `TEXT_MESSAGE_*` per streamed piece,
+`TOOL_CALL_START`/`END` for offered tools by registered name with a new call
+ID (internal `on_tool` hook on `run_invocation`; never arguments/results), a
+`str` result the latest streamed message does not end with, or a router
+question, as one message, other
+results as `RUN_FINISHED.result` (JSON mode), `RUN_ERROR` with safe message
+and error class as `code`. A verified caller's threadId is its
+`conversation_id`. Events go straight to the connection (backpressure, no
+buffer). Disconnect cancels the run at once (watched while quiet), no terminal
+event, no reconnect/resume/dedup; shutdown cancels runs after the grace with
+a `cancelled` `RUN_FINISHED`. Not on the Agent Card. Frontend tools, shared
+state, interrupts and terminal usage are later opt-in.
 Keep native thread/run/message/tool IDs separate from server invocation identity,
 isolate caller/tenant/history/events, treat frontend messages/state/tools as
 untrusted, gate output/events before release and expose no secrets/raw private
-reasoning. Detailed cancellation translation/buffering/backpressure/shutdown
-remain open; tracing/accounting/enforcement work independently. See
+reasoning; tracing/accounting/enforcement work independently. See
 `docs/design/streaming.md` and `docs/api/streaming.md`.
 
 ## Documentation maintenance

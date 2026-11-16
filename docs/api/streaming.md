@@ -1,102 +1,152 @@
 # Streaming surface
 
 [Reference status conventions](README.md). **Decision:** complete validated
-results by default; streaming is opt-in. **Implemented (0.5.0, #257):** the
+results by default; streaming is opt-in. **Implemented (0.5.0):** the
 [runtime streaming surface](#runtime-streaming-surface), streaming in the
 Ollama and Foundry adapters and A2A `SendStreamingMessage` with text deltas
-([A2A streaming](hosting.md#a2a-streaming)). **Not yet implemented (#258):**
-the optional AG-UI agent-to-frontend adapter below; it is a planned protocol
-surface, not support for every AG-UI feature. A2A/Agent Cards stay
-first-class; MCP and tracing stay separate.
+([A2A streaming](hosting.md#a2a-streaming), #257), and the optional
+[AG-UI endpoint](#ag-ui-endpoint) for frontends (#258). The AG-UI endpoint is
+a scoped profile of AG-UI 1.0, not support for every AG-UI feature.
+A2A/Agent Cards stay first-class; MCP and tracing stay separate.
 
-## Optional AG-UI adapter
+## AG-UI endpoint
 
-**Purpose / decision:** map policy-approved managed execution events to a scoped
-native AG-UI event stream for frontend clients, without another agent framework
-or UI framework dependency.
+**Purpose / decision:** serve frontends a native AG-UI event stream for one
+agent, on the same server and under the same checks as `/a2a`, using the
+official `ag-ui-protocol` SDK's types and encoder, without another agent
+framework or a UI framework.
 
-**Signature status:** `AgentApp(ag_ui=AGUIConfig(enabled=True))` and `/ag-ui`
-are decided for a later release (#258). It is meant to build on the implemented
-[runtime streaming surface](#runtime-streaming-surface); no AG-UI event iterator
-is selected.
-
-| Concern | Type | Required/default status | Meaning, constraints, precedence |
-| --- | --- | --- | --- |
-| Protocol/schema/SDK and transport | Compatible official AG-UI versions; not selected | Future optional adapter, not first release | 1.0 documentation is research evidence, not a pinned compatibility commitment. Evaluate native Python `ag-ui-protocol` types/encoding; no other framework required. |
-| Authentication/caller scope | Shared `Authenticator` / policy; adapter binding open | Explicit auth required remotely | Reuse the decided host auth choice; frontend thread/run IDs are not verified identity; isolate tenant/history/events/state. |
-| Runtime event mapping | Typed managed events; union open | Run start/finish, text deltas, tool names/status and safe errors | No raw arguments by default, frontend execution, shared state or approval/resume. |
-| Output/release policy | Existing authorization/content checks plus adapter gating; syntax open | Required checks precede affected release | Buffer whole validated results or decline streaming when whole-output policy requires it; no unchecked partial JSON. |
-| Buffer/cancel/disconnect/reconnect controls | Detailed interfaces/bounds open | Disconnect cancels run; no reconnect/resume initially | Propagate cancellation; no rollback/free-inference guarantee. Whole-answer checks emit complete text at end, not deltas. |
-
-This dependency-only example uses the **official Python SDK** input type,
-documented in its [core overview](https://docs.ag-ui.com/sdk/python/core/overview.md),
-and an existing proposed `Runtime`. It does not construct an adapter, bypass
-runtime checks, or claim installed packages/compatibility.
+**Status:** implemented (#258). `AgentApp(ag_ui=AGUIConfig(enabled=True))`
+serves `POST /ag-ui`: AG-UI 1.0 (`ag-ui-protocol>=1.0.0,<2`, the `ag-ui`
+extra) over HTTP with server-sent events. Install it with
+`pip install "agentframe-py[ag-ui]"`.
 
 ```python
-from ag_ui.core import RunAgentInput
-from agentframe import Runtime
+from agentframe import (
+    AGUIConfig, Agent, AgentApp, APIKey, APIKeyAuth, HostConfig, RunContext,
+    agent, skill,
+)
 
 
-def describe_frontend_boundary(
-    runtime: Runtime, frontend_input: RunAgentInput,
-) -> tuple[str, str]:
-    return type(runtime).__name__, type(frontend_input).__name__
-```
-
-**Behavior / failures:** eventual admission/validation/auth failures and
-in-stream errors must follow the selected protocol/binding; HTTP success is not
-run success. The cited
-[1.0 HTTP/SSE binding](https://docs.ag-ui.com/spec/1.0/basic/transports/http-sse.md)
-does not resume broken streams. No partial/truncated output becomes a validated
-successful result. No secrets/raw private reasoning or raw provider/OTel
-payloads in events. Map the decided safe error taxonomy to the selected binding;
-in-stream mapping, input downgrade handling and capability declarations still
-need verification before conformance claims.
-
-**Related:** [AG-UI design, event mapping and primary citations](../design/streaming.md),
-[`AgentApp`](hosting.md#agentapp), [`ExecutionPolicy`](authorization.md#executionpolicy).
-
-## `AGUIConfig`
-
-**Purpose / decision:** enable the optional frontend protocol adapter on the
-shared host, separate from A2A/MCP and optional tracing.
-
-**Decided call:** `AGUIConfig(enabled=True)` on `AgentApp(ag_ui=...)`.
-Served at `/ag-ui`; other constructor fields/path configurability unspecified.
-
-| Parameter/concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| `enabled` | `bool` | Explicit opt-in; omitted-object behavior stays off | No implicit streaming from model injection or A2A capability declarations. |
-| Route | `/ag-ui` | Decided served endpoint | Same server/auth/permissions/limits; not per-skill routes or separate grants. |
-
-```python
-from agentframe import AGUIConfig, Agent, AgentApp, HostConfig, Runtime
+@agent(name="Assistant", description="Answers questions.", version="0.1.0")
+class Assistant(Agent):
+    @skill(description="Answers a question.", tags=["chat"])
+    async def answer(self, ctx: RunContext, question: str) -> str:
+        return await ctx.generate(question, stream=True)
 
 
-def frontend_app(agent: Agent, host: HostConfig, runtime: Runtime) -> AgentApp:
+def create_app(assistant: Assistant, frontend_key: str) -> AgentApp:
+    host = HostConfig(
+        public_url="https://assistant.example.com",
+        # Development placeholder: load keys from a secret store.
+        auth=APIKeyAuth(keys={frontend_key: APIKey("web-frontend")}),
+    )
     return AgentApp(
-        agent=agent, host=host, runtime=runtime, ag_ui=AGUIConfig(enabled=True),
+        agent=assistant,
+        host=host,
+        default_skill="answer",
+        ag_ui=AGUIConfig(enabled=True),
     )
 ```
 
-`host` contains an explicit authenticator and `runtime` contains applicable
-resource policy. This is future syntax, not a runnable SDK.
+**Request checks.** Each request is checked in this order; every refusal is an
+HTTP error with a small JSON body, sent before any event, and runs nothing:
 
-**Behavior / failures:** stream safe lifecycle/text/tool-name-status/error events.
-Whole-output checks buffer complete text until approved. Disconnect cancels;
-first version has no reconnect/resume. Frontend tools/shared state are later
-opt-in, never automatic. Protocol version/transport and exact event projection
-remain open. A2A streaming is implemented and advertised separately (#257).
+| Check | Refusal |
+| --- | --- |
+| Body within `HostConfig.max_request_bytes` | 413 |
+| `HostConfig.auth` verifies the caller (same authenticator, role mapping and `OnBehalfOf` exchange as `/a2a`) | 401 with the card's `WWW-Authenticate` challenge |
+| The caller's `HostConfig.rate_limit` allowance, shared with `/a2a` | 429 with `Retry-After` |
+| A valid `RunAgentInput` whose `threadId` and `runId` are 1-256 characters and whose last `user`/`assistant` text message is a `user` message | 400 |
+| Not shutting down, and a free run slot (`max_concurrent_runs`, shared with `/a2a`) | 503 with `Retry-After: 1` |
 
-**Related:** [`AgentApp`](hosting.md#agentapp), [policy gating](../design/streaming.md#policy-gated-output-and-independent-accounting).
+**Input.** A run is free text: the frontend's `user` and `assistant` text
+messages, oldest first, become the conversation the app's
+[`SkillRouter`](hosting.md#skillrouter) routes (a router's question ends the
+run; the frontend's next run, carrying the question and its answer, is routed
+again), or, without a router, the last user message's text goes to
+[`default_skill`](hosting.md#default-skill). An app enabling AG-UI without
+either raises `DefinitionError`. `system`, `developer`, `tool`, reasoning and
+activity messages, and `tools`, `state`, `context`, `forwardedProps` and
+`resume`, are not used: frontend content is never trusted instructions, and
+frontend tools, shared state and interrupts are not supported. A verified
+caller's `threadId` is the run's `conversation_id`, so
+[`ctx.history()`](agents.md#runcontexthistory) is kept per agent, caller and thread;
+anonymous callers get no history.
 
+**Events.** Every event is a native `ag_ui.core` event, one per SSE `data:`
+line:
+
+| Runtime fact | Events |
+| --- | --- |
+| The run starts | `RUN_STARTED` echoing `threadId` and `runId`, with `protocolVersion` `"1.0"` and the server's own `invocation_id` in `metadata`. The frontend's IDs are never identity, correlation or deduplication keys. |
+| Model text from `ctx.generate(..., stream=True)` | `TEXT_MESSAGE_START` (role `assistant`), one `TEXT_MESSAGE_CONTENT` per piece, `TEXT_MESSAGE_END` before a tool call or the end. |
+| A tool call the model makes | `TOOL_CALL_START` with the tool's registered name and a new call ID (never the provider's), then `TOOL_CALL_END` once it returned. Never its arguments or result; a name the caller was not offered is never reported. |
+| A `str` result | Nothing more when the latest streamed message ends with it. Otherwise (no streaming, output checks, or a different final text) one whole assistant message. |
+| Any other result | `RUN_FINISHED.result`, the value in Pydantic JSON mode. |
+| A router's question | One assistant message, then `RUN_FINISHED`. |
+| Success | `RUN_FINISHED` with no outcome (success). |
+| Failure | `RUN_ERROR` with the error's safe message, the AgentFrame error class name as `code` (for example `PermissionDeniedError`) and `invocation_id` in `metadata`. A skill's own exception is `"The skill failed."`; details stay in the operator log. |
+| Shutdown cancels the run | Open message and tool calls closed, then `RUN_FINISHED` with the `cancelled` outcome. |
+
+**Behavior / failures:**
+
+- Authorization, validation, input checks, limits and the execution policy
+  apply exactly as for `/a2a`, since both run through the same `Runtime`.
+- **Whole-output checks:** with any `ExecutionPolicy` output check, nothing
+  streams; the whole answer is sent once, after the checks pass. A denied
+  answer ends the run with `RUN_ERROR` and is never sent.
+- Streamed text counts toward `HostConfig.max_response_bytes`, as does a whole
+  answer, question or JSON result; over it, the run ends with `RUN_ERROR`
+  (`LimitExceededError`) and no more text is sent. Text already sent stays sent.
+- Events are written straight to the connection, so a slow client slows the
+  model call (backpressure) within the run's deadline; nothing is buffered
+  without bound.
+- **A client disconnect cancels the run** at once, even while it is quiet;
+  per-run services are cleaned up and no terminal event is sent. There is no
+  reconnect, replay or resume, and no deduplication of runs.
+- Shutdown refuses new runs with 503, waits up to `shutdown_grace_seconds`
+  for open runs, then cancels the rest with a cancelled `RUN_FINISHED`, also
+  when the server cancels the requests itself at the end of its grace, as
+  `agentframe run`'s Uvicorn does.
+- With `tracing=`, each run is recorded like an A2A message or MCP tool call:
+  a server `invoke_agent` span continuing the request's `traceparent`, run
+  metrics, and busy or shutting-down refusals counted. The valid trace
+  context is also forwarded to remote agents.
+- `/ag-ui` is not on the Agent Card, and enabling it does not change A2A.
+- Not supported: frontend tools, shared state, interrupts and resume, reasoning
+  or raw events, tool arguments or results, usage on terminal events,
+  WebSockets or other transports.
+
+**Related:** [AG-UI design and primary sources](../design/streaming.md),
+[`AgentApp`](hosting.md#agentapp), [`ExecutionPolicy`](authorization.md#executionpolicy),
+[limits](../guides/limits.md).
+
+## `AGUIConfig`
+
+**Purpose / decision:** enable the optional AG-UI endpoint on the shared
+host, separate from A2A/MCP and optional tracing.
+
+**Signature status:** implemented (#258) as `AGUIConfig(enabled=False)`, a
+frozen dataclass passed as `AgentApp(ag_ui=...)`.
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `enabled` | `bool` | Optional; default `False` | `True` serves `POST /ag-ui`. `AGUIConfig()` and `ag_ui=None` serve nothing; nothing turns it on implicitly. |
+
+The path `/ag-ui` is fixed. See the [example above](#ag-ui-endpoint).
+
+**Behavior / failures:** `AgentApp` raises `DefinitionError` when it is
+enabled without `router` or `default_skill`, or without the `ag-ui` extra
+installed (`pip install "agentframe-py[ag-ui]"`).
+
+**Related:** [AG-UI endpoint](#ag-ui-endpoint), [`AgentApp`](hosting.md#agentapp).
 ## Runtime streaming surface
 
 **Purpose / decision:** pass a run's answer text on as it is generated, under
 the same validation, authorization, tool/action checks and limits as a
 complete-result run. Implemented in 0.5.0 (#257); A2A `SendStreamingMessage`
-uses it, and the AG-UI adapter (#258) is meant to build on it. This is not an
+and the [AG-UI endpoint](#ag-ui-endpoint) (#258) use it. This is not an
 OTel trace stream or automatic multi-agent orchestration.
 
 **Signature status:** implemented (#257). Three small pieces, no event union:
@@ -148,11 +198,10 @@ async def print_as_generated(runtime: Runtime, writer: Writer) -> RunResult:
 - Refusals, reasoning and tool-call arguments are never streamed. With
   `tools=`, text the model writes before its tool calls is streamed.
 
-**Still open (for #258):** the AG-UI event mapping (tool names/status, run
-lifecycle events), disconnect cancellation for frontend streams and any
-structured-result envelope. Native A2A streaming is advertised separately on
-the Agent Card ([A2A streaming](hosting.md#a2a-streaming)); AG-UI support alone
-does not enable it.
+The [AG-UI endpoint](#ag-ui-endpoint) (#258) adds run lifecycle events and
+tool names and status on top of this surface. Native A2A streaming is
+advertised separately on the Agent Card ([A2A streaming](hosting.md#a2a-streaming));
+AG-UI support does not change it.
 
 **Related:** [`Runtime.run`](runtime.md#runtimerun),
 [`RunContext.generate`](agents.md#runcontextgenerate),

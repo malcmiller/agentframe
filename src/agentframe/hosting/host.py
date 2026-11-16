@@ -208,6 +208,23 @@ class MCPConfig:
         object.__setattr__(self, "exposed_skills", exposed)
 
 
+@dataclass(frozen=True)
+class AGUIConfig:
+    """Settings for the optional AG-UI endpoint for frontends.
+
+    With ``enabled=True``, ``AgentApp`` also serves ``POST /ag-ui``: an
+    AG-UI 1.0 run over HTTP and server-sent events, under the same
+    authentication, permissions and limits as ``/a2a``. It needs the
+    ``ag-ui`` extra (``pip install "agentframe-py[ag-ui]"``).
+
+    Args:
+        enabled: Serve ``/ag-ui``. Defaults to ``False``, so
+            ``AGUIConfig()`` serves nothing.
+    """
+
+    enabled: bool = False
+
+
 def warn_if_insecure(host: HostConfig) -> None:
     """Log a warning for a legal but insecure ``host`` outside development.
 

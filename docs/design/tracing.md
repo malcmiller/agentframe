@@ -119,7 +119,7 @@ Do not treat opt-in content capture as a security bypass.
 
 ## Propagation and transport boundaries
 
-Future [AG-UI streaming](streaming.md) is a frontend protocol event stream, not
+[AG-UI streaming](streaming.md) (#258) is a frontend protocol event stream, not
 an OTel trace stream. Do not pipe spans, raw provider/tool payloads or private
 reasoning to clients. Keep native thread/run/message/tool IDs distinct from
 server-generated invocation IDs and optional trace IDs; none is caller identity.

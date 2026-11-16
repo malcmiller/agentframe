@@ -49,7 +49,7 @@ from agentframe.errors import (
 )
 from agentframe.hosting.app import AgentApp
 from agentframe.hosting.dedup import MessageDedupStore
-from agentframe.hosting.host import A2AConfig, HostConfig, MCPConfig
+from agentframe.hosting.host import A2AConfig, AGUIConfig, HostConfig, MCPConfig
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.rate_limit import RateLimit
 from agentframe.hosting.redis_dedup import RedisMessageDedupStore
@@ -129,6 +129,7 @@ __version__ = "0.3.0"
 
 __all__ = [
     "A2AConfig",
+    "AGUIConfig",
     "APIKey",
     "APIKeyAuth",
     "APIKeyCredential",

@@ -11,7 +11,7 @@ not another agent framework underneath AgentFrame.
 
 Use one server and one shared runtime, with an endpoint per caller audience,
 not per skill: A2A is the main agent-facing interface; optional MCP serves LLM
-apps/tools through an explicit skill allowlist; future AG-UI serves frontends.
+apps/tools through an explicit skill allowlist; optional AG-UI (0.5.0) serves frontends.
 All entry points use the same authorization, validation, limits, accounting and
 tracing pipeline. Protocol-specific authentication and responses remain native.
 This composition does not move MCP or AG-UI into the M7 release or select an
@@ -25,8 +25,8 @@ AG-UI route/constructor. Agent Cards are discovery documents, not per-skill rout
 | MCP | `tools/list` with tool descriptions and input schemas | `tools/call` explicitly selects a published tool. |
 | Local runtime | Registered skill metadata | `Runtime.invoke(agent, skill=..., arguments=...)`. |
 
-Future [AG-UI streaming](streaming.md) is a distinct optional frontend event
-adapter, not an MCP replacement or publication of internal/frontend tools.
+[AG-UI streaming](streaming.md) (#258) is a distinct optional frontend event
+endpoint, not an MCP replacement or publication of internal/frontend tools.
 First release returns complete validated results, including typed structured
 generation and bounded registered-tool continuations; protocol tool/schema
 mapping is still separate from those internal execution features.

@@ -246,7 +246,7 @@ idempotency key to the backend (see
 default. Validated tool results will feed generation continuations under the
 same budgets, deadlines and outbound checks; defaults are 20 tool calls, 10 model
 attempts and 120 seconds per run. Application approval workflows are separate;
-no built-in human pause/resume in first release. Future AG-UI tool visibility
+no built-in human pause/resume in first release. AG-UI tool status (#258)
 grants no frontend execution authority.
 
 **Related:** [`Agent`](agents.md#agent), [`ExecutionPolicy`](authorization.md#executionpolicy),
