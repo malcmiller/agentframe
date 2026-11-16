@@ -153,7 +153,7 @@ framework base class.
 | Durable workflows | Revisit after multi-agent usage; no design now. Long work uses native tasks, in-memory default/persistent store pluggable; approvals application-owned. If added, optional separate package (candidate `agentframe-workflows`). | Future evidence/scope; task persistence is not Python crash recovery or durable approval resume. |
 | Evaluation | M9, complete in 0.3.0 ([evaluation](design/evaluation.md), decided 2026-11-13): an AgentFrame-owned harness for local skills and A2A agents in `agentframe.evaluation` in the main wheel, no new dependency or extra; `Case` from Python/JSONL, plain-function scorers, binary rubric judge, concurrency 4, optional evaluation-wide budget, private-by-default reports, no pytest plugin. | Foundry export is a later adapter. |
 | Model-planned orchestration | M10, complete in 0.3.0 ([orchestration](design/orchestration.md), decided 2026-11-13, #177): a catalog of remote skills from the Agent Cards of every registered agent whose card is valid and whose security can be satisfied (the registry is the allowlist), remote skills as model tools, and a model-made, validated execution plan (flat DAG with data references) run with `asyncio.TaskGroup` and the existing deadline, hop, token, identity and policy controls. Revisits #17's orchestration-helper and dynamic-invocation cuts as opt-in features. | Settled in the [API reference](api/orchestration.md); planner quality is measured per model ([guide](guides/orchestration.md#measure-the-planner)). |
-| Streaming | Later `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`, same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Version/binding, native event mapping, bounds/backpressure and typed final serialization; frontend tools/shared state later opt-in only. |
+| Streaming | 0.5.0 (#257): opt-in `ctx.generate(stream=True)`, `Runtime.run(on_text=)`, Ollama/Foundry adapter streaming and A2A `SendStreamingMessage` text deltas; output checks turn streaming off, every limit applies. Later (#258) `AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`, same checks, lifecycle/text/tool-name-status/errors, whole-answer buffering, disconnect cancels, no reconnect/resume. | Version/binding, native event mapping, bounds/backpressure and typed final serialization; frontend tools/shared state later opt-in only. |
 
 ## Architectural rules
 
@@ -730,7 +730,8 @@ The client direction is implemented in 0.5.0 (#253): an application-configured
 [`MCPClient`](api/mcp.md) offers selected MCP server tools to `ctx.generate`
 under the same tool limits, permissions and policy tool checks.
 
-Streaming/AG-UI is another separate follow-up after M7, with its existing
+Text streaming over A2A is implemented in 0.5.0 (#257). AG-UI is another
+separate follow-up after M7, with its existing
 [acceptance criteria](design/streaming.md#open-contracts-and-delivery-gate) for ordering,
 errors/truncation, refusal/incomplete results, safe side effects, isolation and
 no secrets/private reasoning, proven with an independent AG-UI client. Pin the
@@ -740,7 +741,7 @@ workflow engine. Streaming uses `ag_ui=AGUIConfig(enabled=True)` on `/ag-ui`,
 same server/auth/limits/permissions, lifecycle/text/tool-name-status/error events
 without raw arguments by default. Whole-answer checks emit complete text at end,
 disconnect cancels, and first version has no reconnect/resume. AG-UI does not imply
-a UI framework, orchestration platform or A2A streaming. Each advertised feature
+a UI framework or orchestration platform. Each advertised feature
 needs a behavioral/interoperability test. These optional integrations have no
 imposed order relative to one another or M8+; they do not demote multi-agent
 composition from the next core release. Cross-agent trace/correlation propagation

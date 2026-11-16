@@ -18,17 +18,23 @@ try:
     from azure.core.credentials_async import AsyncTokenCredential
     from azure.core.exceptions import ClientAuthenticationError
     from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+    from openai import Omit
     from openai.types.responses import (
         EasyInputMessageParam,
         FileSearchToolParam,
         FunctionToolParam,
         Response,
+        ResponseCompletedEvent,
+        ResponseErrorEvent,
+        ResponseFailedEvent,
         ResponseFunctionToolCall,
         ResponseFunctionToolCallParam,
         ResponseIncludable,
+        ResponseIncompleteEvent,
         ResponseInputItemParam,
         ResponseInputParam,
         ResponseTextConfigParam,
+        ResponseTextDeltaEvent,
         ResponseUsage,
         ToolParam,
         WebSearchToolParam,
@@ -58,6 +64,7 @@ from agentframe.models.base import (
     ModelResponse,
     OutputSchema,
     Role,
+    TextSink,
     ToolCall,
     ToolSpec,
 )
@@ -95,6 +102,9 @@ HOSTED_CALL_TYPES = frozenset(
 )
 """Output item types of hosted tool calls Foundry ran during a response."""
 
+_FINAL_EVENTS = (ResponseCompletedEvent, ResponseIncompleteEvent, ResponseFailedEvent)
+"""Stream events that carry the whole final response."""
+
 
 class FoundryModel:
     """A GPT deployment in Microsoft Foundry, called through the Responses API.
@@ -109,6 +119,11 @@ class FoundryModel:
 
     ``max_output_tokens`` caps visible output plus reasoning tokens, so
     reasoning models need a larger cap than their visible answer.
+
+    ``stream`` uses the Responses API's streamed events, passing on each
+    output text delta; the final response comes from the completed,
+    incomplete or failed event. A stream that ends without one is a
+    transient ``ProviderError``.
 
     Structured output uses the Responses API's strict JSON-schema format. The
     output model's schema is converted to the strict subset by
@@ -216,14 +231,6 @@ class FoundryModel:
                 including a rejected output or tool schema, are not.
         """
         instructions, conversation = _split_instructions(request.messages)
-        text = openai.omit if request.output is None else _text_format(request.output)
-        tools = [_function_tool(spec) for spec in request.tools] + [
-            _hosted_tool(hosted) for hosted in request.hosted_tools
-        ]
-        # Stateless tool calls lose reasoning between turns unless it comes
-        # back encrypted and is replayed.
-        include = REASONING_INCLUDE if tools and not self.store else openai.omit
-        max_tool_calls = request.max_hosted_tool_calls
         async with _provider_errors(self.deployment, _rejection_hint(request)):
             response = await self._client.responses.create(
                 model=self.deployment,
@@ -231,13 +238,67 @@ class FoundryModel:
                 input=conversation,
                 max_output_tokens=request.settings.max_output_tokens,
                 store=self.store,
-                text=text,
-                tools=tools or openai.omit,
-                include=include,
-                max_tool_calls=openai.omit
-                if max_tool_calls is None
-                else max_tool_calls,
+                text=_text_config(request),
+                tools=_tools(request) or openai.omit,
+                include=self._include(request),
+                max_tool_calls=_max_tool_calls(request),
             )
+        return self._model_response(response, request)
+
+    async def stream(self, request: ModelRequest, on_text: TextSink) -> ModelResponse:
+        """Like ``generate``, but awaits ``on_text`` with each piece of text.
+
+        Only output text deltas are passed on; refusal text is not.
+
+        Raises:
+            UnsupportedCapabilityError: As for ``generate``.
+            IncompleteOutputError: As for ``generate``.
+            ProviderError: As for ``generate``, also when the stream ends
+                without a final response (transient).
+        """
+        instructions, conversation = _split_instructions(request.messages)
+        final: Response | None = None
+        async with _provider_errors(self.deployment, _rejection_hint(request)):
+            events = await self._client.responses.create(
+                model=self.deployment,
+                instructions=instructions,
+                input=conversation,
+                max_output_tokens=request.settings.max_output_tokens,
+                store=self.store,
+                text=_text_config(request),
+                tools=_tools(request) or openai.omit,
+                include=self._include(request),
+                max_tool_calls=_max_tool_calls(request),
+                stream=True,
+            )
+            async with events:
+                async for event in events:
+                    if isinstance(event, ResponseTextDeltaEvent) and event.delta:
+                        await on_text(event.delta)
+                    elif isinstance(event, _FINAL_EVENTS):
+                        final = event.response
+                    elif isinstance(event, ResponseErrorEvent):
+                        raise ProviderError(
+                            "The model service reported a stream error "
+                            f"(code {event.code or 'unknown'})",
+                            transient=event.code in TRANSIENT_FAILURE_CODES,
+                        )
+        if final is None:
+            raise ProviderError(
+                "The model service ended the stream without a final response",
+                transient=True,
+            )
+        return self._model_response(final, request)
+
+    def _include(self, request: ModelRequest) -> list[ResponseIncludable] | Omit:
+        # Stateless tool calls lose reasoning between turns unless it comes
+        # back encrypted and is replayed.
+        if (request.tools or request.hosted_tools) and not self.store:
+            return REASONING_INCLUDE
+        return openai.omit
+
+    @staticmethod
+    def _model_response(response: Response, request: ModelRequest) -> ModelResponse:
         model_response = _model_response(response, request.tools)
         if request.output is None:
             return model_response
@@ -407,6 +468,35 @@ def _hosted_tool(hosted: HostedTool) -> ToolParam:
     raise UnsupportedCapabilityError(
         f"FoundryModel does not support the hosted tool {type(hosted).__name__}"
     )
+
+
+def _tools(request: ModelRequest) -> list[ToolParam]:
+    """Return the request's tools: strict function tools, then hosted tools.
+
+    Raises:
+        UnsupportedCapabilityError: A tool's parameters cannot be made strict,
+            or a hosted tool is not a Foundry hosted tool.
+    """
+    functions: list[ToolParam] = [_function_tool(spec) for spec in request.tools]
+    return functions + [_hosted_tool(hosted) for hosted in request.hosted_tools]
+
+
+def _max_tool_calls(request: ModelRequest) -> int | Omit:
+    """Return the request's cap on hosted tool calls, or omit it when uncapped."""
+    if request.max_hosted_tool_calls is None:
+        return openai.omit
+    return request.max_hosted_tool_calls
+
+
+def _text_config(request: ModelRequest) -> ResponseTextConfigParam | Omit:
+    """Return the ``text`` setting: a strict JSON schema for structured output.
+
+    Raises:
+        UnsupportedCapabilityError: The output schema cannot be made strict.
+    """
+    if request.output is None:
+        return openai.omit
+    return _text_format(request.output)
 
 
 def _function_tool(spec: ToolSpec) -> FunctionToolParam:

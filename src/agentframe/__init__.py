@@ -62,6 +62,8 @@ from agentframe.models.base import (
     ModelSettings,
     OutputSchema,
     Role,
+    StreamingModel,
+    TextSink,
     ToolCall,
     ToolSpec,
 )
@@ -209,6 +211,8 @@ __all__ = [
     "SkillRouter",
     "StateStore",
     "StepResult",
+    "StreamingModel",
+    "TextSink",
     "TimeoutLimitExceededError",
     "TokenLimitExceededError",
     "ToolAuthorizationPolicy",

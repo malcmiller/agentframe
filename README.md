@@ -28,6 +28,8 @@ Microsoft Agent Framework or similar packages.
 - **Tool calling** in a bounded, authorized loop.
 - **Conversation history:** multi-turn `ctx.generate` with a pluggable
   `StateStore`, kept per verified caller and A2A `contextId`.
+- **Streaming:** opt-in text streaming from Ollama and Foundry over A2A
+  `SendStreamingMessage`, with output checks and limits still applied.
 - **Model routing:** opt-in routing of free-text requests to skills.
 - **Multi-agent composition:** `Remote` calls carrying deadlines, budgets and
   identity; `agentframe dev` and `agentframe compose`.

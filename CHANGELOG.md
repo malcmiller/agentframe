@@ -37,6 +37,10 @@ behavior starts with an **Upgrading** section; see the
   `SkillCall`, `Clarification`, `RoutingContext`) are unchanged (#280).
 - `FoundryModel` error messages no longer say "Foundry" (see **Changed**);
   code that matches their text should match the new wording (#259).
+- The Agent Card now advertises `capabilities.streaming`, so official A2A SDK
+  clients use `SendStreamingMessage` by default. Their final task is the same
+  as before; clients that need a single response can turn streaming off in
+  their client configuration (#257).
 
 ### Added
 
@@ -148,6 +152,19 @@ behavior starts with an **Upgrading** section; see the
   class or alias is needed; `docs/api/models.md#plain-openai` documents it, and
   opt-in `openai` real-provider tests (`AGENTFRAME_TEST_OPENAI=1`) run the
   shared provider tests against it (#259).
+- **Streaming (#257):** a skill opts in per call with
+  `ctx.generate(..., stream=True)`, and its answer text is passed on as it is
+  generated: over A2A `SendStreamingMessage` (the Agent Card now advertises
+  `capabilities.streaming`) as artifact text deltas (combined into a bounded
+  number of updates per task) followed by the whole
+  validated answer, and locally through `Runtime.run(..., on_text=...)`.
+  `OllamaModel`, `FoundryModel` and `ScriptedModel` implement the new optional
+  `StreamingModel.stream`; other models answer whole. Output checks turn
+  streaming off, so only checked answers are released; every run limit and
+  `max_response_bytes` still apply, and a model call that already sent text is
+  never retried. Official SDK clients now stream by default against
+  AgentFrame agents, since the card advertises it; pass
+  `ClientConfig(streaming=False)` to keep using `SendMessage`.
 
 - **Conversation history:** `ctx.generate(history=...)` sends earlier
   `user` and `assistant` messages, keeping the newest that fit the first

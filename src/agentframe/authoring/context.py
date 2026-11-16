@@ -64,6 +64,7 @@ class RunContext:
         instructions: str | None = None,
         tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool | MCPTool] = (),
         history: Sequence[Message] = (),
+        stream: bool = False,
     ) -> str: ...
 
     @overload
@@ -85,6 +86,7 @@ class RunContext:
         output: type[BaseModel] | None = None,
         tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool | MCPTool] = (),
         history: Sequence[Message] = (),
+        stream: bool = False,
     ) -> str | BaseModel:
         """Generate text, or a validated ``output`` instance, with the agent's model.
 
@@ -123,6 +125,16 @@ class RunContext:
                 limit, the context window and the run's remaining tokens,
                 each less the output cap; what is kept starts with a
                 ``user`` message. Later tool continuations are not trimmed.
+            stream: Pass the model's text on to a streaming caller as it
+                arrives, such as an A2A ``SendStreamingMessage`` client.
+                Mark only text that is (part of) the caller's answer. Does
+                nothing when the caller does not stream, when the runtime's
+                execution policy has output checks (they must see the whole
+                answer first), or when the model has no ``stream`` method.
+                The complete answer is still returned, and the skill's
+                validated value is still the run's result. Text passed on
+                cannot be taken back: a transient provider failure after it
+                is not retried. Not allowed with ``output``.
 
         Returns:
             The model's complete answer, or an ``output`` instance when
@@ -132,8 +144,9 @@ class RunContext:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
                 a ``RootModel``, a selected tool is not registered on the
                 agent or is selected twice, a hosted tool type is selected
-                twice, or ``history`` holds a message with another role or
-                with tool calls. Raised before anything is sent.
+                twice, ``history`` holds a message with another role or
+                with tool calls, or ``stream`` is combined with ``output``.
+                Raised before anything is sent.
             UnsupportedCapabilityError: The agent has no model configured, or
                 the model lacks something the request needs, such as
                 structured output, tool calling or a hosted tool. Raised
@@ -228,6 +241,11 @@ class RunContext:
         reserved before the call, and provider fees for the tools are not
         in ``Usage``.
         """
+        if stream and output is not None:
+            raise DefinitionError(
+                "generate() cannot stream structured output; pass stream=True "
+                "only for text"
+            )
         selected = list(tools)  # May be a one-shot iterator.
         hosted = [item for item in selected if isinstance(item, HostedTool)]
         entries = [item for item in selected if isinstance(item, RemoteSkill)]
@@ -261,7 +279,14 @@ class RunContext:
         bound: dict[str, BoundTool] = {**remote, **mcp}
         if output is None:
             return await self._generation.generate_text(
-                self, text, instructions, functions, bound, hosted, history
+                self,
+                text,
+                instructions,
+                functions,
+                bound,
+                hosted,
+                history,
+                stream=stream,
             )
         return await self._generation.generate_output(
             self, text, instructions, output, functions, bound, hosted, history

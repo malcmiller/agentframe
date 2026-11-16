@@ -25,6 +25,7 @@ implementations do not inherit from an AgentFrame or vendor base.
 | Member | Signature | Meaning and constraints |
 | --- | --- | --- |
 | [`generate`](#modelgenerate) | `async generate(request: ModelRequest) -> ModelResponse` | One complete, non-streaming call. |
+| [`stream`](#streamingmodelstream) (optional) | `async stream(request: ModelRequest, on_text: TextSink) -> ModelResponse` | See [`StreamingModel`](#streamingmodel). |
 | [`capabilities`](#modelcapabilities-1) | `async capabilities() -> ModelCapabilities` | What the model actually supports; fetched lazily, then cached. |
 | [`close`](#modelclose) | `async close() -> None` | Releases only the clients the model created. |
 | `__aenter__` / `__aexit__` | `async with model:` | Enter returns the model; exit closes it. |
@@ -88,9 +89,9 @@ and the managed tool loop (`tools=`, #61) are implemented (M5 #59, #61).
 [`OllamaModel`](#tool-calling-ollama) (M5 #65),
 [`FoundryModel`](#tool-calling) (M5 #64) and
 [`AnthropicModel`](#tool-calling-anthropic) (#262) map tools to their
-providers' function calling. Streaming remains later, with
-optional [AG-UI](streaming.md) mapping from managed execution, not raw
-provider events.
+providers' function calling. Models may add [`stream`](#streamingmodel) to pass
+on their answer text as it arrives (#257); the managed layer, not the adapter,
+decides when streamed text is released.
 
 **Related:** [`ModelRequest`](#modelrequest), [`ModelResponse`](#modelresponse),
 [model interface rationale](../design/base-classes.md#model-interfaces).
@@ -131,6 +132,81 @@ see [retries](../guides/limits.md#retries-and-duplicate-requests).
 
 **Related:** [`Model`](#model), [`RunLimits`](configuration.md#runlimits),
 [provider boundaries](../roadmap.md#initial-adapters).
+
+## `StreamingModel`
+
+**Purpose / decision:** the optional `stream` method a [`Model`](#model) adds
+to pass on its answer text as it is generated (0.5.0, #257). A structural
+`typing.Protocol` checkable with `isinstance`; `FoundryModel`, `OllamaModel`
+and `ScriptedModel` implement it. Models without `stream` still work: the
+runtime calls `generate` for them and streams nothing.
+
+**Signature status:** implemented (#257).
+
+| Member | Signature | Meaning and constraints |
+| --- | --- | --- |
+| [`stream`](#streamingmodelstream) | `async stream(request: ModelRequest, on_text: TextSink) -> ModelResponse` | Like `generate`, passing each piece of answer text to `on_text` as it arrives. |
+
+**Related:** [`TextSink`](#textsink), [`RunContext.generate`](agents.md#runcontextgenerate)
+`stream=True`, [streaming surface](streaming.md).
+
+## `StreamingModel.stream`
+
+**Purpose / decision:** one streamed provider call, used by the runtime only
+when a skill calls `ctx.generate(..., stream=True)` for a streaming caller.
+
+**Signature (implemented, #257):**
+
+```python
+async def stream(self, request: ModelRequest, on_text: TextSink) -> ModelResponse: ...
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `request` | [`ModelRequest`](#modelrequest) | Required | As for [`generate`](#modelgenerate). |
+| `on_text` | [`TextSink`](#textsink) | Required | Awaited with each new, non-empty piece of visible answer text, in order. |
+
+```python
+from agentframe import ModelRequest, ModelResponse, StreamingModel
+
+
+async def printed(model: StreamingModel, request: ModelRequest) -> ModelResponse:
+    async def show(text: str) -> None:
+        print(text, end="", flush=True)
+
+    return await model.stream(request, show)
+```
+
+**Behavior / failures:** returns the same complete `ModelResponse` as
+`generate`, whose `text` is all the pieces joined. Refusals, reasoning and
+tool-call arguments are never passed on. Exceptions raised by `on_text`
+propagate unchanged. Raises `ProviderError` like `generate`, possibly after
+some text was passed on; a stream that ends before the provider's final event
+is a transient `ProviderError`. The runtime never retries a call that already
+passed text on.
+
+**Related:** [`StreamingModel`](#streamingmodel), [retries](../guides/limits.md#retries-and-duplicate-requests).
+
+## `TextSink`
+
+**Purpose / decision:** the type of a streaming callback (#257):
+`type TextSink = Callable[[str], Awaitable[None]]`. Each call is awaited
+before the next piece is passed on, so a slow sink slows the model call
+(backpressure) within the run's deadline.
+
+```python
+from agentframe import TextSink
+
+
+def collector(pieces: list[str]) -> TextSink:
+    async def collect(text: str) -> None:
+        pieces.append(text)
+
+    return collect
+```
+
+Used by [`StreamingModel.stream`](#streamingmodelstream) and
+[`Runtime.run`](runtime.md#runtimerun)'s `on_text`.
 
 ## `FoundryModel`
 
@@ -192,7 +268,11 @@ credential chain is selected implicitly. `AzureCliCredential` signs in through
 `DefaultAzureCredential` or `ManagedIdentityCredential` with the `foundry` extra.
 
 **Behavior / failures:** implements [`Model.generate`](#modelgenerate) with one
-non-streaming Responses call.
+non-streaming Responses call, and [`stream`](#streamingmodelstream) with one
+streamed call (`stream=True`) that passes on each output text delta and takes
+the final response from the completed, incomplete or failed event. An error
+event raises `ProviderError` (transient for rate limits and server errors);
+a stream that ends without a final event is a transient `ProviderError`.
 
 - Construction does no I/O. The adapter owns and [`close`](#modelclose)s a
   client it created; an injected client stays open.
@@ -440,7 +520,10 @@ model = OllamaModel(
 ```
 
 **Behavior / failures:** implements [`Model.generate`](#modelgenerate) with
-one non-streaming call to Ollama's chat API. Never downloads a model, starts a
+one non-streaming call to Ollama's chat API, and
+[`stream`](#streamingmodelstream) with one streamed chat call that passes on
+each piece of answer text; a stream that ends before its final chunk is a
+transient `ProviderError`. Never downloads a model, starts a
 server, silently switches models, or enables cloud execution.
 
 - Construction does no I/O. The adapter creates and owns its client;
@@ -990,8 +1073,9 @@ capabilities = ModelCapabilities(context_window=128000)
 
 **Behavior / failures:** unknown support counts as unsupported. Unsupported
 requested capabilities fail before sending with `UnsupportedCapabilityError`.
-Streaming and additional modalities remain later; fields arrive only when a
-milestone needs them.
+Additional modalities remain later; fields arrive only when a
+milestone needs them. Streaming support is the optional
+[`stream`](#streamingmodel) method, not a capability field.
 
 **Related:** [`Model`](#model), [context capacity](../guides/limits.md#separate-the-scopes).
 

@@ -205,7 +205,10 @@ the partial text (M4 #54).
 value, invocation ID, usage, model/tool call counts, duration and finish reason,
 even with tracing off. Usage marks completeness/estimation and never turns
 unknown into zero. Exact usage marker fields/failed-run retrieval remain open.
-Future [AG-UI streaming](../design/streaming.md) must bound buffering,
+Streamed text (#257) is awaited piece by piece, so a slow consumer slows the
+model call within the run's deadline rather than buffering without bound, and
+over A2A streamed bytes count toward `max_response_bytes`.
+Future [AG-UI streaming](../design/streaming.md) must likewise bound buffering,
 slow-consumer/backpressure and write/shutdown time within execution deadlines.
 AG-UI disconnect cancels the run; its first version has no reconnect/resume.
 This does not redefine A2A task-disconnect semantics or retry completed actions.

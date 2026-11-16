@@ -1,12 +1,52 @@
-# Future streaming and AG-UI
+# Streaming and AG-UI
 
-**Confirmed direction:** the first usable release returns complete validated
-results. Streaming is a later deliverable and should support **AG-UI** through a
+**Confirmed direction:** results are complete and validated by default.
+**Implemented in 0.5.0 (#257):** opt-in text streaming, from the Ollama and
+Foundry adapters through the runtime to A2A `SendStreamingMessage`; see
+[A2A text streaming (implemented)](#a2a-text-streaming-implemented). Streaming
+should also support **AG-UI** (#258, not yet implemented) through a
 scoped optional agent-to-frontend protocol adapter. A2A/native Agent Cards remain
 first-class; MCP remains a separate tool interface. No UI framework, other agent
 framework, automatic orchestration, or blanket AG-UI conformance is authorized.
 The [surface reference](../api/streaming.md) records decided configuration and
 still-open event/wire details.
+
+## A2A text streaming (implemented)
+
+Implemented in 0.5.0 (#257) with no new dependency. Decisions:
+
+- **Opt-in per call, text only.** A skill passes `stream=True` to
+  `ctx.generate`; nothing streams otherwise. `stream=True` with `output=`
+  raises `DefinitionError`, since partial JSON is not a validated result.
+  Routing, planning and judge calls never stream.
+- **One small runtime surface.** `Runtime.run(..., on_text=sink)` takes an
+  async `TextSink`; models implement the optional `StreamingModel.stream`
+  (Ollama, Foundry and `ScriptedModel` do), and other models answer whole. No
+  event union is chosen; the AG-UI adapter (#258) builds on this surface.
+- **Whole-output checks.** With any `ExecutionPolicy` output check, nothing is
+  streamed: the complete answer is released once, after the checks pass.
+  Input checks, authorization and validation run before any text is released.
+- **Every limit applies.** Tokens, model/tool calls and the deadline are
+  unchanged. Streamed bytes count toward `max_response_bytes`; once exceeded,
+  the task fails and no more text is sent. The local sink is awaited per piece,
+  so a slow `on_text` consumer applies backpressure to the model call within
+  the deadline. Over A2A the SDK queues events per subscriber and drops one
+  more than 1024 behind, so the first piece is sent at once, later pieces are
+  combined into updates of at least 64 bytes and at most 512 updates are sent
+  per task; the rest arrives with the final answer.
+- **No retry after release.** A model call that already passed text on is never
+  retried (released text cannot be withdrawn); failures before the first piece
+  keep the usual retries. Text released before a later failure stays released
+  and the task fails; there is never a truncated success.
+- **A2A mapping.** Text arrives as artifact updates (`append=true`), then one
+  final update (`append=false`, `lastChunk=true`) holding the whole validated
+  answer, so the stored task equals a `SendMessage` result. Size,
+  authentication, deduplication and admission refusals run first; a dedup
+  repeat yields the original task once. The card advertises
+  `capabilities.streaming`, which also enables the SDK's `SubscribeToTask`.
+- **Disconnect.** A2A clients that disconnect do not cancel the task (A2A
+  semantics; `CancelTask` does). The AG-UI rule "disconnect cancels" below
+  applies to the frontend adapter only.
 
 ## Protocol scope and sources
 
@@ -98,7 +138,8 @@ Do not invent a cancellation endpoint or guarantee rollback/free cancellation.
 Clean termination must follow the selected version's ordering rules.
 
 Future AG-UI streaming does not automatically enable model streaming on every
-deployment, advertise A2A streaming in a card, or make MCP async behavior conformant.
+deployment or make MCP async behavior conformant; A2A streaming is advertised
+because it is implemented and tested (#257).
 Each adapter must separately implement and verify what it advertises.
 
 ## Identity, input and application state
@@ -139,7 +180,7 @@ schema-valid events alone cannot prove lifecycle/ordering/conformance.
 
 ## Policy-gated output and independent accounting
 
-The first release returns only complete validated results. For later streaming,
+The first release returned only complete validated results. For streaming,
 configured output checks must run before affected content/events reach a client.
 Skills whose checks require the whole answer send complete text at the end,
 after validation/policy, rather than text deltas. Structured-output checks
@@ -164,12 +205,13 @@ zero or imply a hard remote billing guarantee.
 
 `AGUIConfig(enabled=True)`, `AgentApp(ag_ui=...)`, `/ag-ui`, the initial event
 profile, disconnect cancellation and no reconnect/resume are decided.
-No runtime stream method, event union, structured-result envelope or explicit
+The runtime streaming surface (`ctx.generate(stream=True)`,
+`Runtime.run(on_text=)`, `StreamingModel`) is implemented (#257); no AG-UI
+event union, structured-result envelope or explicit
 cancellation method has been selected. A future adapter consumes managed execution events, not SDK/provider
 events that bypass validation/policy.
 `Runtime.run` / `RunResult`, `ctx.generate(..., output=Summary)` and
-`ctx.generate(..., tools=[...])` are decided complete-result surfaces; they do
-not choose a streaming API or finalize the combination of output and tools.
+`ctx.generate(..., tools=[...])` are decided complete-result surfaces.
 Reuse the safe error hierarchy
 with a future verified event mapping, not provider error payloads.
 

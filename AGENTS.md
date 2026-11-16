@@ -18,7 +18,7 @@ opt-in model routing and M7 hardening alongside design documentation. Version
 multi-agent release (#83-#97), and version 0.3.0, which adds M9 evaluation
 (#164, #152-#163) and M10 model-planned orchestration (#177, #166-#176), are
 published on PyPI as `agentframe-py` (import `agentframe`). Pre-1.0 there is
-no stable API. Later features (MCP, telemetry, streaming) are not implemented. Keep design API examples beyond
+no stable API. Later features (MCP, telemetry, AG-UI) are not implemented. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
@@ -747,9 +747,18 @@ at `/ag-ui` on the same server/auth/permissions/limits. Stream run start/finish,
 text deltas, tool names/status (not raw arguments by default) and safe errors.
 Whole-answer checks release complete text at end; disconnect cancels run,
 first version has no reconnect/resume. Frontend tools/shared state later opt-in.
-No runtime stream method or event schema is finalized. Use official
-primary sources and native protocol types; select/test compatible SDK/schema/
-transport versions later. Do not advertise A2A streaming before implementation.
+No AG-UI event schema is finalized. Implemented (#257, 0.5.0): opt-in
+`ctx.generate(stream=True)` (text only; with `output=` -> `DefinitionError`),
+`Runtime.run(on_text=TextSink)` (the surface #258 builds on), optional
+`StreamingModel.stream(request, on_text)` on Ollama/Foundry/`ScriptedModel`
+(others answer whole), A2A `SendStreamingMessage` with artifact text deltas
+(combined into >=64-byte updates, at most 512 per task, below the SDK's
+1024-event subscriber queue) then one whole final artifact (card
+`streaming=True`). Output checks turn
+streaming off; streamed bytes count toward `max_response_bytes`; no retry
+after text was released; A2A disconnect does not cancel. Use official
+primary sources and native protocol types; select/test compatible AG-UI SDK/schema/
+transport versions later.
 Keep native thread/run/message/tool IDs separate from server invocation identity,
 isolate caller/tenant/history/events, treat frontend messages/state/tools as
 untrusted, gate output/events before release and expose no secrets/raw private

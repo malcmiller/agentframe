@@ -1,9 +1,13 @@
-# Future streaming surface
+# Streaming surface
 
 [Reference status conventions](README.md). **Decision:** complete validated
-results first; streaming later with optional AG-UI agent-to-frontend support.
-This is a planned protocol surface, not a new implemented class or support for
-every AG-UI feature. A2A/Agent Cards stay first-class; MCP and tracing stay separate.
+results by default; streaming is opt-in. **Implemented (0.5.0, #257):** the
+[runtime streaming surface](#runtime-streaming-surface), streaming in the
+Ollama and Foundry adapters and A2A `SendStreamingMessage` with text deltas
+([A2A streaming](hosting.md#a2a-streaming)). **Not yet implemented (#258):**
+the optional AG-UI agent-to-frontend adapter below; it is a planned protocol
+surface, not support for every AG-UI feature. A2A/Agent Cards stay
+first-class; MCP and tracing stay separate.
 
 ## Optional AG-UI adapter
 
@@ -12,7 +16,9 @@ native AG-UI event stream for frontend clients, without another agent framework
 or UI framework dependency.
 
 **Signature status:** `AgentApp(ag_ui=AGUIConfig(enabled=True))` and `/ag-ui`
-are decided for a later release. No `Runtime.stream` or event iterator selected.
+are decided for a later release (#258). It is meant to build on the implemented
+[runtime streaming surface](#runtime-streaming-surface); no AG-UI event iterator
+is selected.
 
 | Concern | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
@@ -81,44 +87,73 @@ resource policy. This is future syntax, not a runnable SDK.
 Whole-output checks buffer complete text until approved. Disconnect cancels;
 first version has no reconnect/resume. Frontend tools/shared state are later
 opt-in, never automatic. Protocol version/transport and exact event projection
-remain open; advertise A2A streaming only after independent implementation/tests.
+remain open. A2A streaming is implemented and advertised separately (#257).
 
 **Related:** [`AgentApp`](hosting.md#agentapp), [policy gating](../design/streaming.md#policy-gated-output-and-independent-accounting).
 
-## Runtime streaming boundary
+## Runtime streaming surface
 
-**Purpose / decision:** later supply execution events under the same validation,
-authorization, tool/action checks and limits as complete-result invocation.
-This is not an OTel trace stream or automatic multi-agent orchestration.
+**Purpose / decision:** pass a run's answer text on as it is generated, under
+the same validation, authorization, tool/action checks and limits as a
+complete-result run. Implemented in 0.5.0 (#257); A2A `SendStreamingMessage`
+uses it, and the AG-UI adapter (#258) is meant to build on it. This is not an
+OTel trace stream or automatic multi-agent orchestration.
 
-**Signature status:** no `Runtime.stream`, `RunContext.stream` or stream iterator
-has been selected. Complete-result `Runtime.run` / `RunResult` and
-`ctx.generate(..., output=Summary)` are decided, not a streaming event API.
+**Signature status:** implemented (#257). Three small pieces, no event union:
 
-| Contract concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Event/result model | Typed execution event/result representation; open | Future streaming contract | Distinguish partials, validated completion, refusal, incomplete generation, errors and cancellation. |
-| Identity/usage metadata | Native protocol IDs plus server invocation metadata; mapping open | Independent of optional tracing | Never substitute frontend IDs or trace IDs for trusted caller identity; unknown usage stays unknown. |
-| Tool continuation/action state | AgentFrame-owned normalized contracts; field layouts open | First-release `tools=[...]` and bounded continuations decided | Future tool visibility grants no action authority, frontend tools or built-in approval pause/resume. |
+| Piece | Where | Meaning |
+| --- | --- | --- |
+| `ctx.generate(text, stream=True)` | [`RunContext.generate`](agents.md#runcontextgenerate) | The skill opts in per call; text only (`output=` with `stream=True` raises `DefinitionError`). |
+| `Runtime.run(..., on_text=sink)` | [`Runtime.run`](runtime.md#runtimerun) | The caller receives the pieces through a [`TextSink`](models.md#textsink); `RunResult.value` is still the whole validated result. |
+| `StreamingModel.stream(request, on_text)` | [`StreamingModel`](models.md#streamingmodel) | Implemented by `FoundryModel`, `OllamaModel` and `ScriptedModel`; other models answer whole. |
 
 ```python
-from agentframe import Agent, Runtime
+from agentframe import Agent, RunContext, RunResult, Runtime, agent, skill
 
 
-async def complete_echo(runtime: Runtime, echo: Agent) -> str:
-    return await runtime.invoke(
-        echo, skill="echo", arguments={"text": "Complete results first"},
+@agent(name="Writer", description="Drafts short texts.", version="0.1.0")
+class Writer(Agent):
+    @skill(description="Drafts a paragraph.", tags=["text"])
+    async def draft(self, ctx: RunContext, topic: str) -> str:
+        return await ctx.generate(f"Write a paragraph about {topic}.", stream=True)
+
+
+async def print_as_generated(runtime: Runtime, writer: Writer) -> RunResult:
+    async def show(text: str) -> None:
+        print(text, end="", flush=True)
+
+    return await runtime.run(
+        writer, skill="draft", arguments={"topic": "tides"}, on_text=show
     )
 ```
 
-Supply the [`Echo`](agents.md#agent) instance; no streaming method is invented.
+**Behavior / failures:**
 
-**Behavior / failures:** enforce budget/deadlines with buffering/slow consumers;
-never silently weaken required policy to stream. Disconnect cancels the run;
-no reconnect/resume initially. Backpressure, cancellation translation and graceful
-shutdown details remain open. Native A2A streaming must be separately implemented/verified before
-card advertisement; AG-UI support alone does not enable it.
+- Text is passed on only after input validation, authorization and input
+  checks. Routing, planning and structured-output calls never stream.
+- **Whole-output checks:** when the runtime's `ExecutionPolicy` has output
+  checks, nothing is streamed; the complete answer is released only after the
+  checks pass (A2A sends it as one final artifact).
+- Every limit applies unchanged: tokens, model and tool calls, deadline and,
+  over A2A, `max_response_bytes`, which streamed bytes count toward. The sink
+  is awaited for each piece, so a slow consumer slows the model call
+  (backpressure) within the run's deadline instead of buffering without bound.
+  A2A delivery combines pieces into fewer updates and caps them per task (see
+  [A2A streaming](hosting.md#a2a-streaming)).
+- A model call that already passed text on is never retried, because the text
+  cannot be withdrawn. Text passed on before a later failure stays released;
+  the run still fails with the decided error, never a truncated success.
+- An exception from the sink fails the run; cancelling the run cancels the
+  model call.
+- Refusals, reasoning and tool-call arguments are never streamed. With
+  `tools=`, text the model writes before its tool calls is streamed.
 
-**Related:** [`Runtime.invoke`](runtime.md#runtimeinvoke),
+**Still open (for #258):** the AG-UI event mapping (tool names/status, run
+lifecycle events), disconnect cancellation for frontend streams and any
+structured-result envelope. Native A2A streaming is advertised separately on
+the Agent Card ([A2A streaming](hosting.md#a2a-streaming)); AG-UI support alone
+does not enable it.
+
+**Related:** [`Runtime.run`](runtime.md#runtimerun),
 [`RunContext.generate`](agents.md#runcontextgenerate),
 [streaming delivery gate](../design/streaming.md#open-contracts-and-delivery-gate).

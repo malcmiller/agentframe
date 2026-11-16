@@ -4,7 +4,7 @@ These documents record decided design contracts and still-open API details,
 not a stable agent SDK. The repository implements milestones M0 to M10;
 version 0.3.0 is
 [published on PyPI](https://pypi.org/project/agentframe-py/0.3.0/) as
-`agentframe-py`. Features not yet implemented (MCP, telemetry, streaming)
+`agentframe-py`. Features not yet implemented (MCP, telemetry, AG-UI)
 remain design proposals. See the
 [setup and check commands](../CONTRIBUTING.md).
 
@@ -25,7 +25,7 @@ unresolved defaults or interfaces.
 | Evaluation (M9, 0.3.0) | [Cases, datasets, local and A2A targets, scorers, rubric judge, reports and `agentframe eval`](api/evaluation.md) |
 | Model-planned orchestration (M10, 0.3.0) | [Remote skill catalog: `remote_skills`, `RemoteSkill`, `SkillCatalog`, `default_remote`; remote skills as model tools; `Plan`, `PlanStep`, `SkillCatalog.check`; `RunContext.plan` and `run_plan`, `PlanResult`, `StepResult`; plan logs and usage; permissions, tool checks and plan checks](api/orchestration.md) |
 | MCP client (0.5.0) | [`MCPClient`, `MCPClient.tools`, `connect`, `aclose`, `MCPTool`, `MCPServerError`; MCP server tools offered to `ctx.generate` with permissions, tool checks, timeouts and result bounds](api/mcp.md) |
-| Future streaming | [Optional AG-UI adapter and runtime event boundary](api/streaming.md) |
+| Streaming | [Runtime streaming surface and optional AG-UI adapter](api/streaming.md) |
 
 ## Roadmap, guides and design discussion
 
@@ -79,8 +79,8 @@ specification are not a promise of automatic compatibility with future releases.
 
 The [reviewed release decisions](roadmap.md#reviewed-release-decisions)
 include built-in opt-in model routing plus custom routers, first-release typed
-structured outputs/bounded tools and complete validated results. Streaming
-(with planned AG-UI support) is later; discovery/remote invocation belongs to
+structured outputs/bounded tools and complete validated results. Opt-in text
+streaming over A2A arrives in 0.5.0, with AG-UI support planned; discovery/remote invocation belongs to
 the next core multi-agent release after M7. Applications own human
 approval workflows; none of those protocol surfaces implies built-in pause/resume.
 The [audience/request-style design](design/mcp-skills.md#a2a-request-styles-and-extension-boundary)

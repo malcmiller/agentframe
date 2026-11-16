@@ -24,6 +24,7 @@ To script a model that asks to call a tool before answering::
     )
 """
 
+import re
 from collections import deque
 from collections.abc import Iterable
 from types import TracebackType
@@ -33,6 +34,7 @@ from agentframe.models.base import (
     ModelCapabilities,
     ModelRequest,
     ModelResponse,
+    TextSink,
     ToolCall,
 )
 from agentframe.usage import FinishReason, Usage
@@ -55,7 +57,8 @@ class ScriptedModel:
     a ``str`` returns a completed response with unknown usage; a ``ToolCall``
     or a tuple of them returns a ``TOOL_CALLS`` response with no text and
     unknown usage; a ``ModelResponse`` is returned as given; and an exception
-    is raised.
+    is raised. ``stream`` does the same, then passes the reply's text on
+    word by word.
 
     Args:
         replies: The replies for successive ``generate`` calls.
@@ -112,6 +115,19 @@ class ScriptedModel:
                 tool_calls=reply,
             )
         return reply
+
+    async def stream(self, request: ModelRequest, on_text: TextSink) -> ModelResponse:
+        """Like ``generate``, then pass the reply's text on word by word.
+
+        The text is split after each space, so ``"Hello there"`` arrives as
+        ``"Hello "`` and ``"there"``. A scripted exception is raised before
+        any text is passed on.
+        """
+        response = await self.generate(request)
+        for piece in re.split(r"(?<= )", response.text):
+            if piece:
+                await on_text(piece)
+        return response
 
     async def capabilities(self) -> ModelCapabilities:
         """Return the scripted capabilities."""

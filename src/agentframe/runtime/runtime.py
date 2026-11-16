@@ -37,7 +37,7 @@ from agentframe.errors import (
     TimeoutLimitExceededError,
     describe_validation_error,
 )
-from agentframe.models.base import DEFAULT_MODEL_SETTINGS, ModelSettings
+from agentframe.models.base import DEFAULT_MODEL_SETTINGS, ModelSettings, TextSink
 from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation, root_run
 from agentframe.runtime.generation import GenerationState
@@ -95,6 +95,7 @@ class _Invocation:
     correlation: RunCorrelation
     own_interface_url: str | None
     conversation_id: str | None
+    on_text: TextSink | None = None
 
 
 class Runtime:
@@ -310,6 +311,7 @@ class Runtime:
         principal: Principal | None = None,
         options: RunOptions | None = None,
         conversation_id: str | None = None,
+        on_text: TextSink | None = None,
     ) -> RunResult[Any]:
         """Run a skill and return its value with execution metadata.
 
@@ -324,6 +326,13 @@ class Runtime:
                 ``ctx.history()`` and ``ctx.save_turn()``. Needs a
                 ``principal``: conversations are kept per agent, caller and
                 ID. ``None`` means the run has no conversation.
+            on_text: Awaited with each piece of model text the skill
+                generates with ``ctx.generate(..., stream=True)``, as it
+                arrives, within the run's deadline. Not called when the
+                execution policy has output checks, so nothing is released
+                before they pass. Streamed text is a preview: the result is
+                still the skill's validated value. Its exceptions fail the
+                run unchanged. ``None`` streams nothing.
 
         Returns:
             A ``RunResult`` holding the validated value.
@@ -364,6 +373,7 @@ class Runtime:
             principal,
             options or RunOptions(),
             conversation_id=conversation_id,
+            on_text=on_text,
         )
 
     async def run_invocation(
@@ -382,6 +392,7 @@ class Runtime:
         correlation: RunCorrelation | None = None,
         own_interface_url: str | None = None,
         conversation_id: str | None = None,
+        on_text: TextSink | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
@@ -397,6 +408,8 @@ class Runtime:
         the run a root run), the A2A interface URL it advertises, which
         leaves the agent out of its own skill catalog, and the task's
         ``contextId`` as ``conversation_id`` when the caller is verified.
+        leaves the agent out of its own skill catalog, and ``on_text`` for a
+        streaming request.
         """
         started = time.perf_counter()
         accounting = accounting or RunAccounting()
@@ -417,6 +430,7 @@ class Runtime:
             correlation=correlation,
             own_interface_url=own_interface_url,
             conversation_id=conversation_id,
+            on_text=on_text,
         )
         try:
             value = await self._run(invocation)
@@ -538,6 +552,7 @@ class Runtime:
                 tool_authorization=self._tool_authorization,
                 skill=skill,
                 policy=self._policy,
+                text_sink=self._text_sink(run.on_text),
             )
             run_remotes = self._run_remotes(run, limits, deadline, stack)
             ctx = RunContext(
@@ -555,6 +570,12 @@ class Runtime:
                 assert run_remotes is not None  # Checked before the run starts.
                 remotes[parameter_name] = await run_remotes.bind(name)
             return await method(**arguments, **injected, **remotes, ctx=ctx)
+
+    def _text_sink(self, on_text: TextSink | None) -> TextSink | None:
+        """Return ``on_text``, unless output checks must see the answer first."""
+        if self._policy is not None and self._policy.output_checks:
+            return None
+        return on_text
 
     def _run_remotes(
         self,

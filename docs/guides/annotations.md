@@ -219,8 +219,9 @@ instance. Unsupported requested capability fails before sending; refusal raises
 that accepts truncated text catches the error and reads `.partial_text` (text
 only); each adapter documents its provider's schema subset; see
 [structured generation examples](agent-examples.md#typed-structured-output-and-bounded-tools).
-Return complete validated results first; future [streaming/AG-UI](../design/streaming.md)
-does not authorize partial output or automatic frontend tools.
+Return complete validated results by default; opt-in text streaming
+(`ctx.generate(..., stream=True)`, [streaming](../api/streaming.md#runtime-streaming-surface))
+does not authorize partial structured output or automatic frontend tools.
 
 Publishing a skill as an MCP tool is a separate host allowlist decision, not a
 new decorator and not automatic publication of `@tool` callables. Token budgets

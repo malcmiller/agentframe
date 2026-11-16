@@ -4,9 +4,10 @@ Model adapters translate these AgentFrame-owned types to and from their
 provider's types, so skills never see provider SDKs.
 """
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, fields
 from types import TracebackType
-from typing import Any, Literal, Protocol, Self
+from typing import Any, Literal, Protocol, Self, runtime_checkable
 
 from agentframe.errors import DefinitionError
 from agentframe.usage import FinishReason, Usage
@@ -296,4 +297,34 @@ class Model(Protocol):
         traceback: TracebackType | None,
     ) -> None:
         """Close the model."""
+        ...
+
+
+type TextSink = Callable[[str], Awaitable[None]]
+"""Receives each piece of answer text as it arrives. Awaited before the next."""
+
+
+@runtime_checkable
+class StreamingModel(Protocol):
+    """The optional ``stream`` method a ``Model`` may add to stream its text.
+
+    The runtime streams only with models that have ``stream``, and calls
+    ``generate`` for the others. Adapters must let exceptions raised by
+    ``on_text`` propagate unchanged.
+    """
+
+    async def stream(self, request: ModelRequest, on_text: TextSink) -> ModelResponse:
+        """Generate a response to ``request``, passing on its text as it arrives.
+
+        Awaits ``on_text`` with each new piece of visible answer text, in
+        order and never empty; refusals, reasoning and tool-call arguments
+        are not passed on. Returns the same complete response ``generate``
+        would, whose ``text`` is all the pieces joined.
+
+        Raises:
+            ProviderError: The provider call failed, possibly after some
+                text was passed on.
+            UnsupportedCapabilityError: The request needs something the model
+                does not support. Raised before anything is sent.
+        """
         ...

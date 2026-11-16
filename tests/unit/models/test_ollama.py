@@ -684,3 +684,94 @@ async def test_the_planning_reply_schema_is_sent_as_format_with_its_enum(
         "writer-agent",
     ]
     assert step["properties"]["arguments"] == {"title": "Arguments", "type": "string"}
+
+
+def stream_reply(*chunks: dict[str, Any]) -> Handler:
+    """Answer /api/chat with newline-delimited JSON chunks, as Ollama streams."""
+    body = "".join(json.dumps(chunk) + "\n" for chunk in chunks)
+    return lambda request: httpx.Response(200, content=body.encode())
+
+
+def piece(text: str) -> dict[str, Any]:
+    return {
+        "model": "llama3.2:3b",
+        "message": {"role": "assistant", "content": text},
+        "done": False,
+    }
+
+
+async def test_stream_passes_each_piece_on_and_returns_the_whole_reply(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    server = FakeOllama(
+        chat=stream_reply(
+            piece("Hel"),
+            piece(""),
+            piece("lo!"),
+            chat_reply("", prompt_eval_count=12, eval_count=3),
+        )
+    )
+    use_server(server)
+    pieces: list[str] = []
+
+    async def collect(text: str) -> None:
+        pieces.append(text)
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        response = await model.stream(ask("Say hello"), collect)
+
+    assert pieces == ["Hel", "lo!"]  # Empty pieces are not passed on.
+    assert response.text == "Hello!"
+    assert response.finish_reason is FinishReason.COMPLETED
+    assert response.usage.total_tokens == 15
+    assert server.chat_bodies()[0]["stream"] is True
+
+
+async def test_stream_collects_tool_calls(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    call = {"function": {"name": "lookup", "arguments": {"order_id": "A1"}}}
+    final = chat_reply("")
+    final["message"]["tool_calls"] = [call]
+    use_server(FakeOllama(chat=stream_reply(final)))
+
+    async def ignore(text: str) -> None:
+        raise AssertionError("No text expected")
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        response = await model.stream(ask("Where is A1?"), ignore)
+
+    assert [c.name for c in response.tool_calls] == ["lookup"]
+    assert response.finish_reason is FinishReason.TOOL_CALLS
+
+
+async def test_stream_that_ends_early_is_a_transient_provider_error(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    use_server(FakeOllama(chat=stream_reply(piece("Hel"))))
+
+    async def ignore(text: str) -> None:
+        pass
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        with pytest.raises(ProviderError, match="ended the stream early") as caught:
+            await model.stream(ask("Say hello"), ignore)
+
+    assert caught.value.transient is True
+
+
+async def test_stream_stops_when_the_sink_raises(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    use_server(FakeOllama(chat=stream_reply(piece("Hel"), piece("lo"), chat_reply(""))))
+    pieces: list[str] = []
+
+    async def refuse(text: str) -> None:
+        pieces.append(text)
+        raise RuntimeError("Caller went away")
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        with pytest.raises(RuntimeError, match="Caller went away"):
+            await model.stream(ask("Say hello"), refuse)
+
+    assert pieces == ["Hel"]

@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from typing import Any, Protocol
 
 from a2a.server.context import ServerCallContext
+from a2a.server.events import Event
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
     create_agent_card_routes,
@@ -44,6 +45,7 @@ from agentframe.discovery.identity import (
 )
 from agentframe.errors import DefinitionError
 from agentframe.hosting.a2a_executor import (
+    STREAMING_STATE_KEY,
     RuntimeExecutor,
     incoming_context,
     is_skill_call,
@@ -591,6 +593,7 @@ class _RequestHandler(DefaultRequestHandler):
       The SDK already hides other callers' tasks behind ``TaskNotFoundError``,
       so only the task's owner can answer its question.
 
+    ``SendStreamingMessage`` gets the same refusals as ``SendMessage``.
     Anonymous callers cannot list tasks. They share one task namespace:
     fetching or cancelling a task needs its unguessable ID, but listing would
     hand every anonymous caller the IDs, inputs and results of every other
@@ -647,6 +650,37 @@ class _RequestHandler(DefaultRequestHandler):
     async def on_message_send(
         self, params: SendMessageRequest, context: ServerCallContext
     ) -> Message | Task:
+        original = await self._check_message(params, context)
+        if original is not None:
+            return original
+        response: Message | Task = await super().on_message_send(params, context)
+        return response
+
+    async def on_message_send_stream(
+        self, params: SendMessageRequest, context: ServerCallContext
+    ) -> AsyncGenerator[Event]:
+        """Run a message like ``on_message_send``, streaming the task's events.
+
+        A repeated message gets its original task as it is now, as the only
+        event. Otherwise the executor also streams model text the skill
+        marks with ``stream=True``.
+        """
+        original = await self._check_message(params, context)
+        if original is not None:
+            yield original
+            return
+        context.state[STREAMING_STATE_KEY] = True
+        async for event in super().on_message_send_stream(params, context):
+            yield event
+
+    async def _check_message(
+        self, params: SendMessageRequest, context: ServerCallContext
+    ) -> Task | None:
+        """Refuse a message that must not run, or find the task it repeats.
+
+        Returns:
+            The original task of a repeated message, else ``None``.
+        """
         dedup: DedupOutcome | None = context.state.get(DEDUP_STATE_KEY)
         if dedup is not None and dedup.conflict:
             raise InvalidParamsError(
@@ -665,8 +699,7 @@ class _RequestHandler(DefaultRequestHandler):
             )
         if params.message.task_id:
             await self._prepare_answer(params.message, context)
-        response: Message | Task = await super().on_message_send(params, context)
-        return response
+        return None
 
     async def _prepare_answer(
         self, message: Message, context: ServerCallContext
