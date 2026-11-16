@@ -20,7 +20,7 @@ from agentframe import (
 )
 from agentframe.dev_server import DevError, child_environment, run_dev
 from agentframe.project import ProjectAgent
-from local_server import ServeLocally
+from local_server import Lifespan, ServeLocally
 
 RESEARCH = ProjectAgent("research-agent", "myapp.research:create_app", 8001)
 PLANNER = ProjectAgent("planner", "myapp.planner:create_app", 8002)
@@ -112,11 +112,11 @@ class Research(Agent):
 
 
 @pytest.mark.usefixtures("dev_environment")
-def test_the_dev_directory_leaves_no_connection_open(
+def test_the_app_opens_and_closes_the_dev_directory(
     serve: ServeLocally, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The directory's client is never closed, so an idle connection it kept
-    # would be left open when the client is discarded (#221).
+    # An app factory has no 'async with', so AgentApp opens the directory and
+    # closes its client, leaving no connection open (#221, #264).
     monkeypatch.delenv("AGENTFRAME_DEV_REGISTRY")
 
     def research_app(public_url: str) -> AgentApp:
@@ -129,7 +129,15 @@ def test_the_dev_directory_leaves_no_connection_open(
             monkeypatch.setenv("AGENTFRAME_AGENTS", f"research-agent={card_url}")
             directory = dev_settings().directory
             assert directory is not None
+            assert not directory.is_open
+            host = HostConfig(public_url="http://127.0.0.1:8002", auth=AllowAnonymous())
+            lifespan = Lifespan(
+                AgentApp(agent=Research(), host=host, directory=directory)
+            )
+            assert await lifespan.startup() == "lifespan.startup.complete"
             await directory.get("research-agent")
+            await lifespan.shutdown()
+            assert not directory.is_open
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

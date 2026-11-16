@@ -1173,7 +1173,8 @@ def planner_runtime(
 
 `directory` is the application's opened
 [`AgentDirectory`](discovery.md#agentdirectory); the credential is the
-application's own and is never closed by AgentFrame.
+application's own; AgentFrame closes it only when listed in
+[`AgentApp(resources=...)`](hosting.md#app-owned-resources).
 
 **Behavior / failures:**
 
@@ -1420,7 +1421,7 @@ or an [`EntraIDAuth`](#entraidauth) agent. Implemented (#92).
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `credential` | Any `azure.core` async token credential | Required | For example `azure.identity.aio.ClientSecretCredential`, `CertificateCredential` or `ManagedIdentityCredential`. Typed structurally (only `get_token(scope)` is used), so AgentFrame's core install does not need `azure-identity`. It stays yours: AgentFrame never closes it. |
+| `credential` | Any `azure.core` async token credential | Required | For example `azure.identity.aio.ClientSecretCredential`, `CertificateCredential` or `ManagedIdentityCredential`. Typed structurally (only `get_token(scope)` is used), so AgentFrame's core install does not need `azure-identity`. It stays yours: AgentFrame closes it only when listed in [`AgentApp(resources=...)`](hosting.md#app-owned-resources). |
 | `scope` | `str` | Required, non-empty | The remote's scope: `api://<client-id>/.default` for an `EntraIDAuth` agent, `https://ai.azure.com/.default` for Foundry agents. |
 
 ```python

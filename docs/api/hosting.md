@@ -15,10 +15,10 @@ agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 **Constructor status:** implemented in M2 (#3, #6) as
 `AgentApp(*, agent, host, runtime=None, services=None, authorization=None,
 tool_authorization=None, policy=None, router=None, default_skill=None, a2a=None,
-directory=None, remotes=None, default_remote=None)`, with `policy=` from M7 #77,
-`a2a=` from M7 #75, `directory=` from M8+ #87, `remotes=` from #92 (`OnBehalfOf`
-entries #93), `default_remote=` from M10 #175, `default_skill=` from #270 and
-`tool_authorization=` from #266; the other parameters
+directory=None, remotes=None, default_remote=None, resources=())`, with `policy=`
+from M7 #77, `a2a=` from M7 #75, `directory=` from M8+ #87, `remotes=` from #92
+(`OnBehalfOf` entries #93), `default_remote=` from M10 #175, `default_skill=`
+from #270, `tool_authorization=` from #266 and `resources=` from #264; the other parameters
 below arrive with their stories (`mcp=` later, later `ag_ui=`). `services=` and
 `ag_ui=` are decided; unspecified omission details remain illustrative.
 
@@ -30,6 +30,7 @@ AgentApp(
     tool_authorization: ToolAuthorizationPolicy | None = None,
     directory: AgentDirectory = ..., remotes: Mapping[str, Service] = ...,
     default_remote: Service | OnBehalfOf | None = None,
+    resources: Sequence[AbstractAsyncContextManager | SupportsAclose] = (),
     ag_ui: AGUIConfig = ...,
 )
 ```
@@ -41,15 +42,16 @@ AgentApp(
 | `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization, tool_authorization=tool_authorization, policy=policy, directory=directory, remotes=remotes, default_remote=default_remote)` | The single authoritative runtime and service container for every request. Passing it together with `services=`, `authorization=`, `tool_authorization=`, `policy=`, `directory=`, `remotes=` or `default_remote=` raises `DefinitionError`. |
 | `a2a` | [`A2AConfig`](#a2aconfig) | Optional; `None` means `A2AConfig()` (M7 #75) | A2A endpoint settings: [message deduplication](#a2aconfig) and the [task store and its retention](#task-retention) (#208). A2A is always served. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
-| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model, unless `default_skill` is set | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable model routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app never closes a router's model. When given, it decides instead of `default_skill`. |
+| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model, unless `default_skill` is set | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable model routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app closes a router's model only when it is listed in `resources=`. When given, it decides instead of `default_skill`. |
 | `default_skill` | `str \| None` | Optional; default `None` (#270) | ID of the skill that receives free-text messages when there is no `router`, with no model call. Its only business parameter must be a `str`; see [default skill](#default-skill). |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
 | `authorization` | `AuthorizationPolicy` | Optional; only without `runtime=` | Resource policy applied to every run, as on [`Runtime`](runtime.md#runtime). |
 | `tool_authorization` | [`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy)` \| None` | Optional; only without `runtime=`; default `None` (#266) | Checks every tool call a model asks for, with its validated arguments, before it runs, as on [`Runtime`](runtime.md#runtime) (M5 #62). `None` checks only each tool's `requires_permissions`. Strongly advised for tools with side effects: `AgentApp(agent=..., host=..., services=services, tool_authorization=OwnOrdersOnly(store))`. |
 | `policy` | [`ExecutionPolicy`](authorization.md#executionpolicy) | Optional; only without `runtime=` (M7 #77) | Input, model-request and output checks for every run, as on [`Runtime`](runtime.md#runtime). Model-request checks also cover routing model calls, with `skill=None`. |
-| `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; only without `runtime=`; required when a skill takes a `Remote` parameter (M8+ #87) | Where [`Remote[Literal["name"]]`](discovery.md#remoteliteralname) parameters find their agents. Construction fails without it; server startup looks up every name with [`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes) and fails for an unknown name, an invalid card, or a card requiring credentials that `remotes=` cannot provide. The application opens and closes it; the app never does. |
+| `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; only without `runtime=`; required when a skill takes a `Remote` parameter (M8+ #87) | Where [`Remote[Literal["name"]]`](discovery.md#remoteliteralname) parameters find their agents. Construction fails without it; server startup looks up every name with [`Runtime.validate_remotes`](runtime.md#runtimevalidate_remotes) and fails for an unknown name, an invalid card, or a card requiring credentials that `remotes=` cannot provide. Unless it is already open (entered with `async with`, or given an `http_client=`), the app opens it at server startup, after `resources=`, and closes it after shutdown (#264); an open directory stays the application's to close. A directory passed only through `runtime=` is not opened: list it in `resources=`. |
 | `remotes` | `Mapping[str, `[`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)`]` | Optional; only without `runtime=` (M8+ #92, #93) | How to authenticate to each remote agent, by name, as on [`Runtime`](runtime.md#runtime). Never forwards the incoming caller's credentials. `OnBehalfOf` needs `auth=EntraIDAuth(client_id=..., client_credential=...)`, alone or as the one such member of [`AnyOf`](authorization.md#anyof), else `DefinitionError` at construction. |
 | `default_remote` | [`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)` \| None` | Optional; only without `runtime=`; default `None` (M10 #175) | How to authenticate to [skill-catalog](orchestration.md#default_remote) agents without a `remotes=` entry, only where their card requires credentials it meets; never used for `Remote` parameters. It is sent to every such registered agent (token audience or shared key), so read the [security note](orchestration.md#default_remote). An `OnBehalfOf` default needs `auth=EntraIDAuth(client_id=..., client_credential=...)`, alone or as the one such member of [`AnyOf`](authorization.md#anyof), else `DefinitionError` at construction. |
+| `resources` | Sequence of async context managers or objects with `async aclose()` | Optional; default `()` (#264) | Application-owned objects that live as long as the server, such as models, Azure credentials or `httpx.AsyncClient`s. See [app-owned resources](#app-owned-resources). Not a list or tuple, an item that is neither, or an object listed twice raises `DefinitionError` at construction. |
 | `ag_ui` | `AGUIConfig` | Later explicit opt-in, off unless enabled | `AGUIConfig(enabled=True)` serves `/ag-ui` with the same auth/permissions/limits. |
 
 Supply an instance of [`Echo`](agents.md#agent) for this single-skill
@@ -100,8 +102,10 @@ authenticator; no remote host starts without a choice.
   selection and extraction schemas, and startup checks its model: see
   [`ModelRouter` hosting](#modelrouter-hosting). Custom routers are not
   checked; they own their own validation.
-- The app never closes the agent's or the router's model; the application
-  owns them. The same model instance may serve both.
+- The app closes only what `resources=` lists and a `directory=` it opened
+  itself; an unlisted agent or router model stays the application's to close.
+  The same model instance may serve both; list it once. See
+  [app-owned resources](#app-owned-resources).
 - `GET /.well-known/agent-card.json` serves the generated card publicly, without
   credentials.
 - `POST /a2a` is the A2A 1.0 JSON-RPC endpoint from the official SDK. Every
@@ -429,14 +433,65 @@ optional MCP Streamable HTTP at `/mcp`; binding/version choices still need
 verification. No extra public `serve()`, card-generation, or lifecycle method
 signature is specified here.
 
-For [discovery](discovery.md#agentdirectory), `directory=` does not transfer
-ownership: the application opens the directory before serving and closes it
-after. Directory refresh/removal is not A2A task cancellation or agent
+For [discovery](discovery.md#agentdirectory), the app opens a `directory=`
+that is not open yet and closes it after shutdown; see
+[app-owned resources](#app-owned-resources). Directory refresh/removal is not A2A task cancellation or agent
 deployment.
 Future [AG-UI streaming](streaming.md) is a separate optional frontend adapter;
 `ag_ui=AGUIConfig(enabled=True)` and `/ag-ui` are decided, not implemented
 conformance. Disconnect cancels the AG-UI run with no first-version resume;
 this does not redefine A2A stream-disconnect task semantics.
+
+### App-owned resources
+
+**Status:** implemented (#264). An [`agentframe run`](#agentframe-run) factory
+is synchronous and has no `async with`, so `AgentApp` opens and closes the
+objects that should live as long as the server:
+
+```python
+import os
+
+from azure.identity.aio import DefaultAzureCredential
+
+from agentframe import (
+    AgentApp, AgentDirectory, EnvironmentAgentRegistry, HostConfig,
+)
+from agentframe.models.foundry import FoundryModel
+from myapp.agents import Writer  # Your @agent class.
+from myapp.security import authenticator  # Your production Authenticator.
+
+
+def create_app() -> AgentApp:
+    credential = DefaultAzureCredential()
+    model = FoundryModel(
+        endpoint=os.environ["FOUNDRY_ENDPOINT"],
+        deployment=os.environ["FOUNDRY_DEPLOYMENT"],
+        credential=credential,
+    )
+    return AgentApp(
+        agent=Writer(model=model),
+        host=HostConfig(public_url=os.environ["PUBLIC_URL"], auth=authenticator()),
+        directory=AgentDirectory(sources=[EnvironmentAgentRegistry("AGENTS")]),
+        resources=[credential, model],
+    )
+```
+
+- At server startup (the ASGI lifespan), before the startup checks, the app
+  opens each of `resources` in order: an async context manager is entered
+  (`async with`); an object with only `aclose()` needs no opening. It then
+  opens `directory=` unless it is already open, so the directory's sources may
+  use a listed credential.
+- After shutdown has drained or cancelled every run, the app closes them in
+  reverse order: the directory it opened first, then `resources` from last
+  to first. When startup fails, everything already opened is closed before
+  the error is reported. If a close raises, the others are still closed and
+  lifespan shutdown then reports the error.
+- Ownership stays explicit: only what is listed, and a directory the app
+  opened itself, is closed. A model, credential or directory the application
+  opened with its own `async with` is not listed and stays the application's.
+  A model's `close()` closes only clients it created, so list an injected
+  credential too.
+- A closed resource is not reopened: serve an app's lifespan once.
 
 **Related:** [`HostConfig`](#hostconfig), [`SkillRouter`](#skillrouter),
 [combined server example](../design/mcp-skills.md#proposed-server-composition).
@@ -730,7 +785,7 @@ not build it.
 | --- | --- | --- |
 | `public_url` | `str` | `AGENTFRAME_PUBLIC_URL`, for `HostConfig(public_url=...)`. Required. |
 | `auth` | `APIKeyAuth` | Accepts `AGENTFRAME_DEV_API_KEYS`, each verified as its caller name, for `HostConfig(auth=...)`. At least one key is required. |
-| `directory` | `AgentDirectory \| None` | For `AgentApp(directory=...)`: a `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY` and/or an `EnvironmentAgentRegistry` of `AGENTFRAME_AGENTS` (set by [`agentframe compose`](#agentframe-compose)), whichever are set, or `None` when neither is. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It has its own `httpx.AsyncClient` (no redirects, no idle connections kept) open for the life of the process, because a factory has no `async with` to open it in. |
+| `directory` | `AgentDirectory \| None` | For `AgentApp(directory=...)`: a `FileAgentRegistry` of `AGENTFRAME_DEV_REGISTRY` and/or an `EnvironmentAgentRegistry` of `AGENTFRAME_AGENTS` (set by [`agentframe compose`](#agentframe-compose)), whichever are set, or `None` when neither is. `AGENTFRAME_ALLOW_HTTP_HOSTS` (comma-separated hosts) becomes `allow_http_hosts=`. It is not open yet: `AgentApp(directory=...)` opens it at server startup and closes it after shutdown (#264); elsewhere, open it with `async with`. |
 | `remotes` | `Mapping[str, Service]` | For `AgentApp(remotes=...)`: `Service(credential=APIKeyCredential(key))` per `AGENTFRAME_DEV_REMOTE_KEYS` entry, sent in the default `X-API-Key` header. |
 
 ```python
@@ -1508,8 +1563,9 @@ serving. Custom routers skip these checks.
 Whether a model's adapter accepts each schema (for example Foundry strict
 mode and a `dict` argument) is only known at the first routing call, which
 fails with `UnsupportedCapabilityError`; there is no adapter schema check at
-startup. The router model is application-owned: `AgentApp` never closes it,
-and it may be the agent's own model instance. The Agent Card does not change:
+startup. The router model is application-owned: `AgentApp` closes it only when it
+is listed in [`resources=`](#app-owned-resources), and it may be the agent's
+own model instance. The Agent Card does not change:
 routing is not a capability claim.
 
 Hosted outcomes of a free-text message:

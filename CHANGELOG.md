@@ -167,6 +167,13 @@ behavior starts with an **Upgrading** section; see the
   Card lists one security requirement per member as alternatives, and
   `OnBehalfOf` remotes keep working for Entra users through the member that
   exchanges user tokens (#268).
+- `AgentApp(resources=[...])` opens app-owned resources, such as models and
+  Azure credentials (async context managers or objects with `aclose()`), at
+  server startup before the startup checks and closes them in reverse order
+  after shutdown, or when startup fails. Only what is listed is closed. An
+  `AgentApp(directory=...)` that is not open yet is now opened and closed the
+  same way, so an `agentframe run` factory no longer needs its own
+  `http_client=` (#264).
 
 ### Changed
 
@@ -199,6 +206,9 @@ behavior starts with an **Upgrading** section; see the
   service rejected the credentials (HTTP 401)"). An unknown deployment or
   model reads "Model or deployment '<name>' was not found", now also when the
   service answers HTTP 400 with code `model_not_found`, as OpenAI may (#259).
+- `dev_settings().directory` no longer creates its own never-closed HTTP
+  client: `AgentApp(directory=...)` opens it at startup and closes it after
+  shutdown. Code using it outside `AgentApp` opens it with `async with` (#264).
 - Runtime dependencies and the `server`, `ollama`, `foundry` and `entra`
   extras are now compatible ranges instead of exact pins, from the lowest
   tested version up to the next breaking release (next major, or next minor

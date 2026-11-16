@@ -81,8 +81,8 @@ def create_app(model: Model | None = None) -> AgentApp:
     """Serve the assistant over A2A.
 
     Args:
-        model: The model to use. Defaults to ``model_from_env()``; the
-            model lives as long as the server process.
+        model: The model to use, which stays the caller's to close. Defaults
+            to ``model_from_env()``, which the app closes when the server stops.
     """
     host = HostConfig(
         public_url=os.environ.get("ASSISTANT_PUBLIC_URL", "http://127.0.0.1:8000"),
@@ -90,4 +90,7 @@ def create_app(model: Model | None = None) -> AgentApp:
         # only. Production hosts need real authentication and authorization.
         auth=AllowAnonymous(),
     )
-    return AgentApp(agent=Assistant(model=model or model_from_env()), host=host)
+    if model is not None:
+        return AgentApp(agent=Assistant(model=model), host=host)
+    model = model_from_env()
+    return AgentApp(agent=Assistant(model=model), host=host, resources=[model])

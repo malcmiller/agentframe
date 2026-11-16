@@ -633,9 +633,12 @@ automatic delegation or A2A task lifecycle.
 
 Register a shared directory with `Services.add(AgentDirectory, directory)` and
 inject `Inject[AgentDirectory]` into skills; the application opens and closes
-it. For `Remote` parameters, pass it as `Runtime(directory=...)` or
-`AgentApp(directory=...)` instead (see [`Remote`](#remoteliteralname)); the
-application still opens and closes it.
+it, or lists it in [`AgentApp(resources=...)`](hosting.md#app-owned-resources).
+For `Remote` parameters, pass it as `Runtime(directory=...)` or
+`AgentApp(directory=...)` instead (see [`Remote`](#remoteliteralname)).
+`AgentApp(directory=...)` opens a directory that is not open yet at server
+startup and closes it after shutdown (#264); a directory passed through
+`Runtime(directory=...)` stays the application's to open and close.
 
 **Related:** [`get`](#agentdirectoryget), [`refresh`](#agentdirectoryrefresh),
 [`DiscoveredAgent`](#discoveredagent),
@@ -892,7 +895,7 @@ are implemented. `Remote[ResearchAgent]` typed proxies are later only.
 | --- | --- | --- | --- |
 | Name | One string in a `Literal` | Required | The agent's name in the directory; never a caller-supplied URL. Anything else (bare `Remote`, `Remote[str]`, two names) raises `DefinitionError` naming the parameter when the class is defined. `type` aliases are read through, including aliases of aliases up to 10 levels; a deeper or self-referencing alias raises `DefinitionError`. |
 | Injection | Library-managed binding | New per run | Excluded from caller arguments, the Agent Card and every schema, like `Inject[T]`. A caller sending an argument with the parameter's name is rejected as an unknown argument. Tools cannot take `Remote` parameters. |
-| Directory | `Runtime(directory=...)` / `AgentApp(directory=...)` | Required when a skill takes `Remote` | Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. The application opens and closes it. |
+| Directory | `Runtime(directory=...)` / `AgentApp(directory=...)` | Required when a skill takes `Remote` | Same rule as `services=`: pass it to `AgentApp` or to its `Runtime`, not both. `AgentApp` opens it at startup and closes it after shutdown unless it is already open (#264); with `Runtime`, the application opens and closes it. |
 | Card security | The card's `security_schemes`/`security_requirements` | Checked at startup and each run | A card that declares no security is called without credentials. One that declares security needs a `remotes=` entry whose credential satisfies one of its requirements, otherwise `DefinitionError` naming the remote. Foundry A2A agents need [`EntraAppCredential`](authorization.md#entraappcredential) with `https://ai.azure.com/.default`. A source's `card_headers` are used only to fetch cards, never to call agents. |
 | Identity mode | [`Service(credential=...)`](authorization.md#service) (#92) or [`OnBehalfOf(scope=...)`](authorization.md#onbehalfof) (#93) in `remotes=` | Per remote; no implicit mode | No token forwarding, authority amplification or stronger-identity fallback. |
 | Hop limit (#89) | [`RunLimits.max_remote_hops`](configuration.md#runlimits) | `5` | A run at that depth cannot call another agent: `ask` and `call` raise `LimitExceededError` before sending. The depth (`RunContext.hops`) and remaining time go to peers that advertise them; see [`Remote.ask`](#remoteask). |
