@@ -911,7 +911,7 @@ RateLimit(requests: int, per_seconds: float = 60)
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `requests` | `int` | Required; at least 1 or `DefinitionError` | How many `SendMessage` requests a caller may make in `per_seconds`, and also the largest burst. |
-| `per_seconds` | `float` | `60`; positive or `DefinitionError` | The period `requests` is spread over. |
+| `per_seconds` | `float` | `60`; positive and finite or `DefinitionError` | The period `requests` is spread over. |
 
 ```python
 from agentframe import Authenticator, HostConfig, RateLimit
@@ -1192,7 +1192,7 @@ def shared_a2a(redis: Redis, tasks: TaskStore) -> A2AConfig:
   itself decides which concurrent claim wins, across every instance. `SET`
   with both `NX` and `GET` needs Redis 7.0 or later (or a compatible server).
 - Each claim expires after `dedup_window_seconds`, rounded up to whole
-  milliseconds.
+  milliseconds; an infinite window stores claims with no expiry.
 - **Share the task store too.** A repeat reaching another instance must find
   its original task there; with per-instance task stores it runs again. Use
   a shared `A2AConfig(task_store=...)`, such as the SDK's database store.

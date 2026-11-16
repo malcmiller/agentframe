@@ -39,8 +39,13 @@ class RedisMessageDedupStore:
         self, key: str, task_id: str, ttl_seconds: float
     ) -> str | None:
         """Store ``task_id`` unless ``key`` is present; return the stored ID if so."""
-        # Redis expiries are whole milliseconds; round up so none is zero.
-        ttl_ms = max(1, math.ceil(ttl_seconds * 1000))
+        # An infinite window never expires, as in the in-memory store. Redis
+        # expiries are whole milliseconds; round up so none is zero.
+        ttl_ms = (
+            max(1, math.ceil(ttl_seconds * 1000))
+            if math.isfinite(ttl_seconds)
+            else None
+        )
         existing = await self._client.set(
             self._key_prefix + key, task_id, nx=True, get=True, px=ttl_ms
         )

@@ -5,6 +5,7 @@ calls run without one. Two hosts sharing one Redis and one task store act as
 two instances of the same agent behind a load balancer.
 """
 
+import math
 from collections.abc import AsyncIterator
 
 import pytest
@@ -73,6 +74,15 @@ async def test_a_claim_expires_after_its_ttl(redis: FakeAsyncRedis) -> None:
     await store.put_if_absent("key", "task-1", 0.5)
 
     assert 0 < await redis.pttl("echo:key") <= 500
+
+
+async def test_an_infinite_window_never_expires(redis: FakeAsyncRedis) -> None:
+    store = RedisMessageDedupStore(redis, key_prefix="echo:")
+
+    await store.put_if_absent("key", "task-1", math.inf)
+
+    assert await redis.pttl("echo:key") == -1  # Present, with no expiry.
+    assert await store.put_if_absent("key", "task-2", math.inf) == "task-1"
 
 
 async def test_a_client_decoding_responses_works_too() -> None:

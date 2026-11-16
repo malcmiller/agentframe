@@ -33,7 +33,7 @@ class RateLimit:
 
     Raises:
         DefinitionError: ``requests`` is less than 1 or ``per_seconds`` is
-            not positive.
+            not positive and finite.
     """
 
     requests: int
@@ -42,8 +42,9 @@ class RateLimit:
     def __post_init__(self) -> None:
         if self.requests < 1:
             raise DefinitionError("RateLimit requests must be at least 1")
-        if not self.per_seconds > 0:
-            raise DefinitionError("RateLimit per_seconds must be positive")
+        # An infinite period would never refill, leaving no Retry-After to give.
+        if not (self.per_seconds > 0 and math.isfinite(self.per_seconds)):
+            raise DefinitionError("RateLimit per_seconds must be positive and finite")
 
 
 class CallerRateLimiter:

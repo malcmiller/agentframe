@@ -5,6 +5,7 @@ localhost HTTP to an ``AgentApp`` served by Uvicorn. Hosts here allow each
 caller two messages an hour, so no allowance refills during a test.
 """
 
+import math
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
@@ -92,7 +93,14 @@ def test_a_caller_idle_for_a_period_is_forgotten() -> None:
     assert list(limiter._buckets) == ["bob"]
 
 
-@pytest.mark.parametrize("fields", [{"requests": 0}, {"requests": 1, "per_seconds": 0}])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"requests": 0},
+        {"requests": 1, "per_seconds": 0},
+        {"requests": 1, "per_seconds": math.inf},
+    ],
+)
 def test_the_rate_limit_must_be_positive(fields: dict[str, Any]) -> None:
     with pytest.raises(DefinitionError):
         RateLimit(**fields)
