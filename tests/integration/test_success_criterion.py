@@ -14,10 +14,10 @@ from a2a.helpers import get_artifact_text, get_data_parts
 from a2a.types import TaskState
 
 from a2a_client import call_skill, connect
-from agentframe import AgentApp, FoundryModel, ModelResponse, OllamaModel
+from agentframe import AgentApp, ModelResponse
 from agentframe.testing import ScriptedModel
 from agentframe.usage import FinishReason, Usage
-from examples.assistant import create_app, create_model
+from examples.assistant import create_app
 from local_server import ServeLocally
 
 QUESTION = "What is the capital of France?"
@@ -67,35 +67,3 @@ async def test_the_same_agent_serves_either_model_over_a2a(
     assert get_data_parts(counted.artifacts[0].parts) == [{"value": 2}]
     assert counted.metadata["usage"]["model_calls"] == 0
     assert len(model.requests) == 1
-
-
-async def test_ollama_is_chosen_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTFRAME_MODEL_PROVIDER", "ollama")
-    monkeypatch.setenv("AGENTFRAME_OLLAMA_MODEL", "llama3.2:3b")
-
-    model = create_model()
-
-    assert isinstance(model, OllamaModel)
-    assert model.model == "llama3.2:3b"
-    await model.close()
-
-
-async def test_foundry_is_chosen_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTFRAME_MODEL_PROVIDER", "foundry")
-    monkeypatch.setenv(
-        "AGENTFRAME_FOUNDRY_ENDPOINT", "https://example.openai.azure.com/openai/v1/"
-    )
-    monkeypatch.setenv("AGENTFRAME_FOUNDRY_DEPLOYMENT", "gpt-test")
-
-    model = create_model()
-
-    assert isinstance(model, FoundryModel)
-    assert model.deployment == "gpt-test"
-    await model.close()
-
-
-def test_an_unknown_provider_fails_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTFRAME_MODEL_PROVIDER", "elsewhere")
-
-    with pytest.raises(ValueError, match="elsewhere"):
-        create_model()

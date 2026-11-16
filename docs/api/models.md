@@ -466,6 +466,68 @@ Each [`ToolSpec`](#toolspec) is sent as
 **Related:** [`ModelCapabilities`](#modelcapabilities),
 [local model guide](../guides/agent-examples.md#choose-local-llama-through-ollama).
 
+## `model_from_env()`
+
+**Purpose / decision:** choose [`OllamaModel`](#ollamamodel) or
+[`FoundryModel`](#foundrymodel) with environment variables, so switching
+providers changes configuration, not code, and applications need no copied
+selection helper or deep provider imports. It is an explicit call: nothing is
+read at import time, the call does no network I/O, and only the selected
+provider's module is imported.
+
+**Signature (implemented, #265):**
+
+```python
+def model_from_env(
+    prefix: str = "AGENTFRAME_",
+    *,
+    credential: str | AsyncTokenCredential | None = None,
+) -> Model: ...
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `prefix` | `str` | `"AGENTFRAME_"` | Prefix of every variable name below, so several models can be configured side by side (for example `"PLANNER_"`). |
+| `credential` | `str \| AsyncTokenCredential \| None` | `None` | Foundry only: an API key or async Azure token credential, which stays caller-owned. `None` creates a `DefaultAzureCredential` that the returned model owns and closes in [`close()`](#modelclose). Ignored for Ollama. |
+
+| Variable (after the prefix) | Needed | Meaning |
+| --- | --- | --- |
+| `MODEL_PROVIDER` | Always | `ollama` or `foundry`, exactly. |
+| `OLLAMA_MODEL` | Ollama | Tag of an installed model, such as `llama3.2:3b` (never pulled). |
+| `OLLAMA_ENDPOINT` | Optional | Ollama server URL; default `http://localhost:11434`. |
+| `FOUNDRY_ENDPOINT` | Foundry | OpenAI v1 base URL `https://<resource>.openai.azure.com/openai/v1/`. |
+| `FOUNDRY_DEPLOYMENT` | Foundry | Deployment name. |
+| `MODEL_CONTEXT_WINDOW` | Optional | Tokens of input plus output, a whole number greater than 0. Ollama defaults to 8192, since Ollama allocates memory for the whole window and a model's maximum is often far larger; Foundry defaults to unknown (`None`), so the agent needs `RunLimits(max_input_tokens=...)`. |
+
+```python
+from agentframe import AgentApp, AllowAnonymous, HostConfig, model_from_env
+
+# Assistant is an Agent subclass with model-backed skills.
+host = HostConfig(public_url="http://127.0.0.1:8000", auth=AllowAnonymous())
+app = AgentApp(agent=Assistant(model=model_from_env()), host=host)
+```
+
+```shell
+AGENTFRAME_MODEL_PROVIDER=ollama AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \
+    agentframe run examples.assistant:create_app
+```
+
+**Behavior / failures:** an empty variable counts as unset. A missing required
+variable, an unknown provider or an invalid context window raises
+[`DefinitionError`](runtime.md#definitionerror) naming the variable; messages
+never include a variable's value. A selected provider whose optional extra is
+not installed raises `ImportError` naming the extra. The default Foundry
+credential is `azure.identity.aio.DefaultAzureCredential`, which tries
+environment credentials, workload and managed identity, then developer sign-ins
+such as `az login`. The returned model is application-owned, like any model:
+`AgentApp` never closes it, so close it (or use `async with`) when the
+application stops. No API key variable is read: pass an API key with
+`credential=` from the application's own secret store.
+
+**Related:** [`OllamaModel`](#ollamamodel), [`FoundryModel`](#foundrymodel),
+[`examples/assistant.py`](../../examples/assistant.py),
+[choosing the host by configuration](../guides/agent-examples.md#choose-the-host-by-configuration).
+
 ## `ScriptedModel`
 
 **Purpose / decision:** a deterministic [`Model`](#model) for testing
@@ -755,7 +817,9 @@ async def finish(model: Model) -> None:
 ```
 
 **Behavior / failures:** closes only clients the model created; injected
-clients stay caller-owned. `async with model:` calls `close()` on exit.
+clients stay caller-owned. A `FoundryModel` from
+[`model_from_env()`](#model_from_env) without `credential=` also closes the
+`DefaultAzureCredential` it created. `async with model:` calls `close()` on exit.
 
 **Related:** [`Model`](#model).
 

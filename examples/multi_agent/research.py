@@ -104,7 +104,7 @@ def create_model() -> Model | None:
             "brief, and so the planner's plan, will fail"
         )
         return None
-    from agentframe.models.ollama import OllamaModel
+    from agentframe import OllamaModel
 
     return OllamaModel(model=tag, context_window=8192)
 

@@ -36,10 +36,10 @@ from agentframe import (
     Services,
     ToolDefinition,
     agent,
+    model_from_env,
     skill,
     tool,
 )
-from examples.assistant import create_model
 
 
 class Order(BaseModel):
@@ -129,7 +129,7 @@ def create_app(model: Model | None = None, store: OrderStore | None = None) -> A
     """Serve the order desk over A2A.
 
     Args:
-        model: The model to use. Defaults to ``create_model()``.
+        model: The model to use. Defaults to ``model_from_env()``.
         store: The orders. Defaults to a new ``OrderStore``.
     """
     store = store or OrderStore()
@@ -142,7 +142,9 @@ def create_app(model: Model | None = None, store: OrderStore | None = None) -> A
         ),
         role_permissions={"customer": ["orders.cancel"]},
     )
-    agent = OrderDesk(model=model or create_model(), tools=[lookup_order, cancel_order])
+    agent = OrderDesk(
+        model=model or model_from_env(), tools=[lookup_order, cancel_order]
+    )
     runtime = Runtime(
         services=Services().add(OrderStore, store),
         tool_authorization=OwnOrdersOnly(store),

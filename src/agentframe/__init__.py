@@ -68,6 +68,7 @@ from agentframe.models.base import (
     ToolCall,
     ToolSpec,
 )
+from agentframe.models.env import model_from_env
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog
 from agentframe.orchestration.execution import PlanResult, StepResult
 from agentframe.orchestration.plan import Plan, PlanStep
@@ -197,6 +198,7 @@ __all__ = [
     "__version__",
     "agent",
     "dev_settings",
+    "model_from_env",
     "skill",
     "tool",
 ]

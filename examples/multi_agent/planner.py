@@ -272,7 +272,7 @@ def create_model() -> Model | None:
             "AGENTFRAME_OLLAMA_MODEL is not set; propose and planned will fail"
         )
         return None
-    from agentframe.models.ollama import OllamaModel
+    from agentframe import OllamaModel
 
     return OllamaModel(model=tag, context_window=8192)
 

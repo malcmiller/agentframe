@@ -16,7 +16,7 @@ try:
     import openai
     from azure.core.credentials_async import AsyncTokenCredential
     from azure.core.exceptions import ClientAuthenticationError
-    from azure.identity.aio import get_bearer_token_provider
+    from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
     from openai.types.responses import (
         EasyInputMessageParam,
         FunctionToolParam,
@@ -155,6 +155,8 @@ class FoundryModel:
         self._context_window = context_window
         self._owns_client = client is None
         self._client = _resolve_client(endpoint, credential, client)
+        # Set only by default_credential_model(), which creates the credential.
+        self._owned_credential: AsyncTokenCredential | None = None
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Send ``request`` to the Responses API and return the full reply.
@@ -211,9 +213,17 @@ class FoundryModel:
         )
 
     async def close(self) -> None:
-        """Close the client this model created; an injected client stays open."""
-        if self._owns_client:
-            await self._client.close()
+        """Close the client this model created; an injected client stays open.
+
+        A credential that ``model_from_env()`` created for the model is closed
+        too; a credential the caller passed in stays open.
+        """
+        try:
+            if self._owns_client:
+                await self._client.close()
+        finally:
+            if self._owned_credential is not None:
+                await self._owned_credential.close()
 
     async def __aenter__(self) -> Self:
         """Return the model itself."""
@@ -227,6 +237,25 @@ class FoundryModel:
     ) -> None:
         """Close the model."""
         await self.close()
+
+
+def default_credential_model(
+    *, endpoint: str, deployment: str, context_window: int | None
+) -> FoundryModel:
+    """Return a ``FoundryModel`` signed in with its own ``DefaultAzureCredential``.
+
+    Unlike a credential passed to ``FoundryModel``, this one belongs to the
+    model, so closing the model closes it.
+    """
+    credential = DefaultAzureCredential()
+    model = FoundryModel(
+        endpoint=endpoint,
+        deployment=deployment,
+        credential=credential,
+        context_window=context_window,
+    )
+    model._owned_credential = credential
+    return model
 
 
 def _resolve_client(

@@ -28,9 +28,9 @@ from agentframe import (
     RunContext,
     RunLimits,
     agent,
+    model_from_env,
     skill,
 )
-from examples.assistant import create_model
 
 
 class Temperature(BaseModel):
@@ -66,9 +66,9 @@ def create_app(model: Model | None = None) -> AgentApp:
 
     Args:
         model: The model for both the skills and the router. Defaults to
-            ``create_model()``; it lives as long as the server process.
+            ``model_from_env()``; it lives as long as the server process.
     """
-    model = model or create_model()
+    model = model or model_from_env()
     host = HostConfig(
         public_url=os.environ.get("ASSISTANT_PUBLIC_URL", "http://127.0.0.1:8000"),
         # Development placeholder: anonymous access, for a localhost server
