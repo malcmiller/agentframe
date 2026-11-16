@@ -62,6 +62,7 @@ from agentframe.hosting.dedup import (
     InMemoryMessageDedupStore,
     MessageDeduplicator,
 )
+from agentframe.hosting.default_skill import DefaultSkill
 from agentframe.hosting.endpoints import (
     acknowledge_skill_call_extension,
     guard_a2a_endpoint,
@@ -101,7 +102,8 @@ class AgentApp:
     store whose tasks are lost on restart; anonymous callers share one
     namespace and cannot list tasks. Messages that
     do not name a skill through the skill-call extension are free text, routed
-    by ``router``. A caller's deadline and call depth, sent in the extension,
+    by ``router``, or else passed to ``default_skill``. A caller's deadline
+    and call depth, sent in the extension,
     shorten hosted runs and reject requests deeper than
     ``RunLimits.max_remote_hops``. Constructing
     the app validates everything that needs no I/O and starts nothing; serve
@@ -152,8 +154,14 @@ class AgentApp:
             given. Its model-request checks also cover routing requests.
         router: Selects the skill for free-text messages or asks the caller a
             question. ``None`` refuses free text with a protocol error, even
-            when the agent has a model. A ``ModelRouter``'s schemas are built
-            here and its model is checked at server startup.
+            when the agent has a model, unless ``default_skill`` is set. A
+            ``ModelRouter``'s schemas are built here and its model is
+            checked at server startup.
+        default_skill: ID of the skill that receives free-text messages when
+            there is no ``router``, with no model call: the message's text
+            parts, joined with newlines, become its only business argument,
+            which must be a ``str`` (checked here). A message without text
+            is rejected. A ``router``, when given, decides instead.
         a2a: A2A endpoint settings: message deduplication and the task store. Defaults
             to ``A2AConfig()``.
         directory: Where ``Remote[Literal["name"]]`` parameters find their
@@ -182,8 +190,10 @@ class AgentApp:
             an ``OnBehalfOf`` remote's or default's host does not
             authenticate with ``EntraIDAuth`` configured for on-behalf-of
             (API-key and anonymous callers support only ``Service``), the authenticator
-            cannot describe its security on the Agent Card, or a
-            ``ModelRouter`` cannot describe a skill's arguments as a JSON schema.
+            cannot describe its security on the Agent Card, a
+            ``ModelRouter`` cannot describe a skill's arguments as a JSON
+            schema, or ``default_skill`` is not one of the agent's skills or
+            takes anything but exactly one ``str`` business argument.
     """
 
     def __init__(
@@ -196,6 +206,7 @@ class AgentApp:
         authorization: AuthorizationPolicy | None = None,
         policy: ExecutionPolicy | None = None,
         router: SkillRouter | None = None,
+        default_skill: str | None = None,
         a2a: A2AConfig | None = None,
         directory: AgentDirectory | None = None,
         remotes: Mapping[str, Service | OnBehalfOf] | None = None,
@@ -217,10 +228,17 @@ class AgentApp:
         definition = type(agent).definition()
         if isinstance(router, ModelRouter):
             router.validate_skills(definition.skills.values())
+        text_skill = (
+            DefaultSkill.for_agent(definition, default_skill)
+            if default_skill is not None
+            else None
+        )
         card = build_agent_card(definition, host)
         a2a = a2a or A2AConfig()
         task_store = FinalStateStore(_task_store(a2a))
-        handler = _request_handler(agent, runtime, router, host, card, task_store)
+        handler = _request_handler(
+            agent, runtime, router, text_skill, host, card, task_store
+        )
         self._host = host
         admission = RunAdmission(host.max_concurrent_runs)
         lifecycle = Lifecycle(host.shutdown_grace_seconds)
@@ -303,13 +321,14 @@ def _request_handler(
     agent: Agent,
     runtime: Runtime,
     router: SkillRouter | None,
+    default_skill: DefaultSkill | None,
     host: HostConfig,
     card: AgentCard,
     task_store: FinalStateStore,
 ) -> "_RequestHandler":
     """Return the SDK request handler that runs every message through ``runtime``."""
     return _RequestHandler(
-        router=router,
+        accepts_free_text=router is not None or default_skill is not None,
         agent_executor=RuntimeExecutor(
             agent,
             runtime,
@@ -318,6 +337,7 @@ def _request_handler(
             host.max_response_bytes,
             own_interface_url=card.supported_interfaces[0].url,
             final_states=task_store,
+            default_skill=default_skill,
         ),
         task_store=task_store,
         agent_card=card,
@@ -456,7 +476,7 @@ class _RequestHandler(DefaultRequestHandler):
     message that must get a protocol error instead must be refused here:
 
     - a malformed skill call, or malformed caller context in the extension;
-    - free text when no ``SkillRouter`` is configured;
+    - free text when there is neither a ``SkillRouter`` nor a default skill;
     - a message for one of the caller's tasks that is not waiting for input.
       The SDK already hides other callers' tasks behind ``TaskNotFoundError``,
       so only the task's owner can answer its question.
@@ -467,7 +487,8 @@ class _RequestHandler(DefaultRequestHandler):
     anonymous caller's tasks.
 
     Args:
-        router: The executor's router; ``None`` refuses free text.
+        accepts_free_text: Whether the executor can run free-text messages
+            (it has a router or a default skill); ``False`` refuses them.
         agent_executor: Runs each message.
         **sdk_options: Passed to the SDK's ``DefaultRequestHandler``.
     """
@@ -475,12 +496,12 @@ class _RequestHandler(DefaultRequestHandler):
     def __init__(
         self,
         *,
-        router: SkillRouter | None,
+        accepts_free_text: bool,
         agent_executor: RuntimeExecutor,
         **sdk_options: Any,
     ) -> None:
         super().__init__(agent_executor=agent_executor, **sdk_options)
-        self._router = router
+        self._accepts_free_text = accepts_free_text
         self._executor = agent_executor
 
     async def cancel_running_tasks(self) -> None:
@@ -526,10 +547,11 @@ class _RequestHandler(DefaultRequestHandler):
         incoming_context(context.requested_extensions, params.message)
         if is_skill_call(context.requested_extensions, params.message):
             read_skill_call(params.message)
-        elif self._router is None:
+        elif not self._accepts_free_text:
             raise UnsupportedOperationError(
-                "This agent has no skill router for free-text requests. Activate "
-                f"the '{SKILL_CALL_EXTENSION_URI}' extension and name a skill."
+                "This agent has no skill router or default skill for free-text "
+                f"requests. Activate the '{SKILL_CALL_EXTENSION_URI}' extension "
+                "and name a skill."
             )
         if params.message.task_id:
             await self._prepare_answer(params.message, context)

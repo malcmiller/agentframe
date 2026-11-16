@@ -74,7 +74,8 @@ A structured `SendMessage` for `summarize`, sent with the header
 }
 ```
 
-**Free-text requests** go through a configured custom router (M2) or explicitly
+**Free-text requests** go through a configured custom router (M2), an explicit
+`AgentApp(default_skill=...)` taking one `str` (#270, no model call), or explicitly
 opted-in built-in `ModelRouter` (M6, [`examples/routed_assistant.py`](../../examples/routed_assistant.py)). The router selects an authorized candidate
 and extracts business arguments; the runtime validates them before invocation.
 Ask back through the input-required state for ambiguity or missing arguments,

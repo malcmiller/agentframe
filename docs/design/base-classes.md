@@ -92,7 +92,8 @@ cost, not the common runtime's validation, authorization, limits, accounting or
 tracing. The extension URI/schema/advertisement details remain open; local
 skill-ID invocation is not a base A2A wire operation.
 Free-text requests use an explicitly configured custom or opt-in model router
-for selection/extraction. Ambiguous/missing input asks back via an
+for selection/extraction, or an explicit `AgentApp(default_skill=...)` whose
+only business parameter is a `str` (no model call, #270). Ambiguous/missing input asks back via an
 input-required task; invalid/unknown structured selection fails explicitly,
 never silently reroutes. See [routing boundaries](../guides/annotations.md#skill-registration-versus-request-routing).
 Task state transitions and cancellation must follow the selected A2A version.
