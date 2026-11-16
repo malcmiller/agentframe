@@ -31,6 +31,13 @@ behavior starts with an **Upgrading** section; see the
   longer say tasks are always lost on restart, since `A2AConfig(task_store=...)`
   can keep them, and `docs/api/decorators.md` no longer says tools are not
   registered or executed (#251).
+- **Hosting:** `AgentApp(default_skill="answer")` sends free-text A2A messages to that
+  skill with no router and no model call, so plain A2A clients can call a
+  text agent. The skill's only business parameter must be a `str`, checked
+  at construction (`DefinitionError` otherwise); the message's text parts
+  become that argument and a message without text is `REJECTED`. Validation,
+  permissions and policies still apply, and a `router` decides instead when
+  given (#270).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

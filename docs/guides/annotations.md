@@ -136,7 +136,10 @@ not using the extension, use a configured custom router (M2) or opt-in built-in
 [`ModelRouter`](../api/hosting.md#modelrouter) (M6 #68). It selects an eligible skill and extracts validated business
 arguments; ambiguity or missing input asks back via an A2A
 `TASK_STATE_INPUT_REQUIRED` task, never guesses. A matching single skill still
-needs valid arguments.
+needs valid arguments. A single-purpose text agent can instead name a
+[default skill](../api/hosting.md#default-skill) whose only business parameter
+is a `str`: `AgentApp(default_skill="answer")` passes every free-text message to
+it with no model call (#270).
 
 The extension's [wire format](../api/hosting.md#structured-skill-call-wire-format)
 is implemented (M2 #5), and so are the router decision and clarification

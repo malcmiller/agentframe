@@ -271,6 +271,7 @@ skill ID.
 | `model_settings` | `ModelSettings \| None` | Skill-level model settings, or `None` when not set. |
 | `method_name` | `str` | The decorated method's name. |
 | `argument_names` | `tuple[str, ...]` | Business parameters, in declaration order. |
+| `text_argument` | `str \| None` | The only business parameter's name when it is a `str` (including `Annotated[str, ...]`), else `None`. Skills with one are the ones that can take plain text, such as an [`AgentApp` default skill](hosting.md#default-skill) (#270). |
 | `injected` | `dict[str, object]` | `Inject[T]` parameters mapped to their service types. |
 | `remotes` | `dict[str, str]` | `Remote[Literal["name"]]` parameters mapped to their agent names. |
 | `arguments_adapter` | `TypeAdapter` | Validates business arguments; unknown names are rejected. |

@@ -14,10 +14,10 @@ agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 
 **Constructor status:** implemented in M2 (#3, #6) as
 `AgentApp(*, agent, host, runtime=None, services=None, authorization=None,
-policy=None, router=None, a2a=None, directory=None, remotes=None,
-default_remote=None)`, with `policy=` from M7 #77, `a2a=` from M7 #75,
-`directory=` from M8+ #87, `remotes=` from #92 (`OnBehalfOf` entries #93) and
-`default_remote=` from M10 #175; the other parameters
+policy=None, router=None, default_skill=None, a2a=None, directory=None,
+remotes=None, default_remote=None)`, with `policy=` from M7 #77, `a2a=` from
+M7 #75, `directory=` from M8+ #87, `remotes=` from #92 (`OnBehalfOf` entries
+#93), `default_remote=` from M10 #175 and `default_skill=` from #270; the other parameters
 below arrive with their stories (`mcp=` later, later `ag_ui=`). `services=` and
 `ag_ui=` are decided; unspecified omission details remain illustrative.
 
@@ -25,7 +25,7 @@ below arrive with their stories (`mcp=` later, later `ag_ui=`). `services=` and
 AgentApp(
     *, agent: Agent, host: HostConfig, runtime: Runtime = ...,
     a2a: A2AConfig = ..., mcp: MCPConfig = ..., router: SkillRouter = ...,
-    services: Services = ...,
+    default_skill: str | None = None, services: Services = ...,
     directory: AgentDirectory = ..., remotes: Mapping[str, Service] = ...,
     default_remote: Service | OnBehalfOf | None = None,
     ag_ui: AGUIConfig = ...,
@@ -39,7 +39,8 @@ AgentApp(
 | `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization, policy=policy, directory=directory, remotes=remotes, default_remote=default_remote)` | The single authoritative runtime and service container for every request. Passing it together with `services=`, `authorization=`, `policy=`, `directory=`, `remotes=` or `default_remote=` raises `DefinitionError`. Pass a runtime to authorize tool calls: `AgentApp(runtime=Runtime(services=..., tool_authorization=...))`; there is no separate host setting (M5 #62). |
 | `a2a` | [`A2AConfig`](#a2aconfig) | Optional; `None` means `A2AConfig()` (M7 #75) | A2A endpoint settings: [message deduplication](#a2aconfig) and the [task store and its retention](#task-retention) (#208). A2A is always served. |
 | `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
-| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app never closes a router's model. |
+| `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model, unless `default_skill` is set | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable model routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app never closes a router's model. When given, it decides instead of `default_skill`. |
+| `default_skill` | `str \| None` | Optional; default `None` (#270) | ID of the skill that receives free-text messages when there is no `router`, with no model call. Its only business parameter must be a `str`; see [default skill](#default-skill). |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
 | `authorization` | `AuthorizationPolicy` | Optional; only without `runtime=` | Resource policy applied to every run, as on [`Runtime`](runtime.md#runtime). |
 | `policy` | [`ExecutionPolicy`](authorization.md#executionpolicy) | Optional; only without `runtime=` (M7 #77) | Input, model-request and output checks for every run, as on [`Runtime`](runtime.md#runtime). Model-request checks also cover routing model calls, with `skill=None`. |
@@ -114,7 +115,8 @@ authenticator; no remote host starts without a choice.
 - Messages are skill calls through the AgentFrame
   [skill-call extension](#structured-skill-call-wire-format) (M2 #5). A message
   sent without activating the extension is free text, routed by the
-  configured [`SkillRouter`](#skillrouter) (M2 #6). Without a router, free
+  configured [`SkillRouter`](#skillrouter) (M2 #6), or else passed to the
+  [default skill](#default-skill) (#270). Without either, free
   text is refused with the JSON-RPC `UnsupportedOperationError` (`-32004`)
   and creates no task.
 - A message naming a `taskId` continues that task only while it is
@@ -323,9 +325,9 @@ X-API-Key: <development key>
 | --- | --- |
 | Extension activated, valid skill ID and arguments | The skill runs through `Runtime.run`; the task completes with its result. |
 | Extension activated, an empty or non-string skill ID, not exactly one part, a part that is not a JSON-object data part, an unknown `agentframe.` metadata field, or a malformed `deadline_ms`/`hops`/`max_total_tokens` | JSON-RPC `InvalidParamsError` (`-32602`); no task is created. Never reinterpreted as free text. |
-| Extension activated without `agentframe.skill` | Free text carrying the caller context: routed by the [`SkillRouter`](#skillrouter), or refused with `-32004` when none is configured. |
+| Extension activated without `agentframe.skill` | Free text carrying the caller context: routed by the [`SkillRouter`](#skillrouter) or passed to the [default skill](#default-skill), or refused with `-32004` when neither is configured. |
 | Extension activated, unknown skill ID or invalid arguments | Task `REJECTED` with a safe message. |
-| Extension not activated | Free text, even if `agentframe.` metadata is present (it is ignored): routed by the [`SkillRouter`](#skillrouter), or refused with `-32004` when none is configured. |
+| Extension not activated | Free text, even if `agentframe.` metadata is present (it is ignored): routed by the [`SkillRouter`](#skillrouter) or passed to the [default skill](#default-skill), or refused with `-32004` when neither is configured. |
 
 With the official Python client, activate the extension per call:
 
@@ -1025,6 +1027,59 @@ This is guidance, not an enforced restriction on model-backed MCP tools.
 [schema mapping](../design/mcp-skills.md#schema-and-call-mapping),
 [shared security](../design/mcp-skills.md#shared-execution-and-security).
 
+## Default skill
+
+**Purpose / decision:** let plain A2A clients, which mostly send free text,
+call a single-purpose text agent without paying for a
+[`ModelRouter`](#modelrouter). `AgentApp(default_skill="answer")` sends every
+free-text message to that skill, with no guessing and no model call (#270).
+
+**Signature status:** implemented (#270) as the `default_skill: str | None =
+None` parameter of [`AgentApp`](#agentapp).
+
+```python
+from agentframe import Agent, AgentApp, AllowAnonymous, HostConfig, RunContext
+from agentframe import agent, skill
+
+
+@agent(version="1.0.0")
+class Answerer(Agent):
+    """Answers questions."""
+
+    @skill("answer", tags=["qa"])
+    async def answer(self, question: str, ctx: RunContext) -> str:
+        """Answer a question."""
+        return f"You asked: {question}"
+
+
+app = AgentApp(
+    agent=Answerer(),
+    host=HostConfig(public_url="http://127.0.0.1:8000", auth=AllowAnonymous()),
+    default_skill="answer",
+)
+```
+
+**Implemented behavior (#270):**
+
+- Construction checks the skill: it must exist and its only business
+  parameter must be a `str` (`Annotated[str, ...]` included). `ctx`,
+  `Inject[T]` and `Remote` parameters don't count. Anything else, such as two
+  business parameters, `int` or `str | None`, raises `DefinitionError`.
+- A free-text message's text parts, joined with newlines, become that
+  argument; other parts are ignored. A message without text ends its task
+  `REJECTED` (`InputValidationError`).
+- The skill runs like any other call: argument validation (for example a
+  `Field(max_length=...)`), permissions, the authorization policy, execution
+  policy and limits all apply. A caller without the skill's permissions gets a
+  `REJECTED` task.
+- It never asks the caller a question, so its tasks never wait for input.
+- Skill calls through the [skill-call extension](#structured-skill-call-wire-format)
+  still reach every skill.
+- A `router`, when given, decides instead; the default skill is still checked
+  at construction.
+
+**Related:** [`SkillRouter`](#skillrouter), [`ModelRouter`](#modelrouter).
+
 ## `SkillRouter`
 
 **Purpose / decision:** select an eligible skill and extract its arguments for
@@ -1101,7 +1156,7 @@ Pass it as `AgentApp(agent=..., host=..., router=GreetingRouter())`.
 
 | Situation | Result |
 | --- | --- |
-| No router configured, free text | JSON-RPC `UnsupportedOperationError` (`-32004`), no task and no model call, even when the agent has a model (M6 #69). |
+| No router configured, free text | JSON-RPC `UnsupportedOperationError` (`-32004`), no task and no model call, even when the agent has a model (M6 #69), unless a [default skill](#default-skill) is set (#270). |
 | `SkillCall` to an offered skill | The skill runs through the runtime: argument validation, permissions and the authorization policy all apply. |
 | `SkillCall` to a skill not offered (unknown, or the caller lacks its permissions), invalid arguments, an empty question or any other return value | Task `REJECTED` with a safe message that does not echo the skill ID. |
 | `Clarification` | Task `INPUT_REQUIRED` with the question as the status message. |

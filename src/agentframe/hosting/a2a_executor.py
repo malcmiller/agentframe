@@ -21,7 +21,9 @@ Outcomes map to native A2A results as follows:
 - Any other message is free text, including one that activates the
   extension without naming a skill. The application's
   ``SkillRouter`` selects the skill and its arguments from the task's
-  conversation, or asks the caller a question; without a router free text is
+  conversation, or asks the caller a question. Without a router, an app's
+  ``default_skill`` gets the message's text as its only argument, with no
+  model call; with neither, free text is
   refused before a task exists. Routing time counts against the run's timeout,
   and the router's model calls (through ``RoutingContext.generate``) are
   charged to the same run as the selected skill.
@@ -87,6 +89,7 @@ from agentframe.errors import (
 )
 from agentframe.hosting.admission import RUN_SLOT_STATE_KEY, RunSlot
 from agentframe.hosting.caller_context import CallerContext, read_caller_context
+from agentframe.hosting.default_skill import DefaultSkill
 from agentframe.hosting.routing import (
     Clarification,
     SkillCall,
@@ -235,7 +238,9 @@ class RuntimeExecutor(AgentExecutor):
         agent: The hosted agent instance.
         runtime: The runtime that validates, authorizes and limits every run.
         router: Selects the skill for free-text messages. ``None`` means the
-            request handler refuses free text before it reaches the executor.
+            request handler refuses free text before it reaches the executor,
+            unless there is a ``default_skill``.
+        default_skill: Receives free-text messages when there is no router.
         limits_ceiling: The host's ceiling, which caps the limits of every
             run and of routing. ``None`` caps nothing.
         max_response_bytes: The largest result or question a task may
@@ -258,11 +263,13 @@ class RuntimeExecutor(AgentExecutor):
         max_response_bytes: int | None = None,
         own_interface_url: str | None = None,
         final_states: FinalStateStore | None = None,
+        default_skill: DefaultSkill | None = None,
     ) -> None:
         self._agent = agent
         self._own_interface_url = own_interface_url
         self._runtime = runtime
         self._router = router
+        self._default_skill = default_skill
         self._limits_ceiling = limits_ceiling
         self._max_response_bytes = max_response_bytes
         self._final_states = final_states
@@ -471,18 +478,23 @@ class RuntimeExecutor(AgentExecutor):
     async def _choose_skill(
         self, context: RequestContext, message: Message, run: _HostedRun
     ) -> SkillCall | Clarification:
-        """Read the skill call, or ask the router about the free-text message.
+        """Read the skill call, or route the free-text message.
 
-        ``run.ceiling`` is the host's, capped by the caller's deadline.
+        A router decides when there is one; otherwise the default skill
+        gets the message's text. ``run.ceiling`` is the host's, capped by
+        the caller's deadline.
 
         Raises:
-            RuntimeError: Free text arrived without a router, which never
-                happens: the request handler refuses it first.
+            RuntimeError: Free text arrived without a router or default
+                skill, which never happens: the request handler refuses it
+                first.
         """
         if is_skill_call(context.requested_extensions, message):
             # The request handler has already refused malformed skill calls.
             return read_skill_call(message)
         if self._router is None:
+            if self._default_skill is not None:
+                return self._default_skill.call(message)
             raise RuntimeError("A free-text message reached an app with no router")
         conversation = [*_earlier_messages(context.current_task), message]
         definition = type(self._agent).definition()

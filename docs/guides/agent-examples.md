@@ -318,7 +318,9 @@ validation, authorization, limits, accounting or tracing. The skill itself
 may still call a model. Unknown skill/invalid arguments fail explicitly.
 
 Free-text callers use the configured custom router (M2) or opt-in built-in
-`ModelRouter` (M6) for selection and argument extraction. Ambiguity or missing
+`ModelRouter` (M6) for selection and argument extraction. A single-purpose
+text agent can instead name one `str` skill with `AgentApp(default_skill=...)`,
+which gets every free-text message with no model call (#270). Ambiguity or missing
 arguments asks back through `TASK_STATE_INPUT_REQUIRED`, not a guessed skill;
 the answer continues the same task. A clarification is not an approval
 workflow or a successful completed result.

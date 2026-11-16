@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 from pydantic import (
     ConfigDict,
@@ -61,6 +61,8 @@ class SkillDefinition:
     remotes: dict[str, str]
     arguments_adapter: TypeAdapter[Any]
     return_adapter: TypeAdapter[Any]
+    # The only business parameter when it is a plain ``str``, else ``None``.
+    text_argument: str | None
 
 
 @dataclass(frozen=True)
@@ -150,7 +152,50 @@ def build_skill_definition(
         remotes=remotes,
         arguments_adapter=arguments_adapter,
         return_adapter=return_adapter,
+        text_argument=_text_argument(arguments, hints),
     )
+
+
+def text_skill_argument(agent: AgentDefinition, skill_id: str) -> str:
+    """Return the parameter that receives the caller's text for ``skill_id``.
+
+    A skill can take plain text when its only business parameter is a
+    ``str`` (``Annotated[str, ...]`` included). ``ctx``, ``Inject[T]`` and
+    ``Remote`` parameters are not business parameters, so they don't count.
+
+    Args:
+        agent: The agent's definition.
+        skill_id: The skill that should receive plain text.
+
+    Returns:
+        The name of the skill's ``str`` parameter.
+
+    Raises:
+        DefinitionError: The agent has no such skill, or the skill takes
+            anything other than exactly one ``str`` business parameter.
+    """
+    skill = agent.skills.get(skill_id)
+    if skill is None:
+        raise DefinitionError(f"Agent '{agent.name}' has no skill '{skill_id}'")
+    if skill.text_argument is None:
+        raise DefinitionError(
+            f"Agent '{agent.name}': skill '{skill_id}' cannot take plain text; "
+            "its only parameter besides ctx, Inject[T] and Remote parameters "
+            "must be a str"
+        )
+    return skill.text_argument
+
+
+def _text_argument(
+    arguments: list[inspect.Parameter], hints: dict[str, Any]
+) -> str | None:
+    """Return the only business parameter's name when it is a ``str``."""
+    if len(arguments) != 1:
+        return None
+    annotation = hints[arguments[0].name]
+    if get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    return arguments[0].name if annotation is str else None
 
 
 def build_tool_definition(
