@@ -1,0 +1,21 @@
+
+## The planner
+
+`$package/planner.py` never names an agent. Each `run_goal` call asks the
+registry for every skill tagged `content`, lets its model plan the goal over
+those skills (at most three steps), and runs the plan. Add another agent with
+a `content` skill to `agentframe.yaml` and the planner can use it, with no
+code change.
+
+The planner calls the specialists with its own development key, so
+`run_goal` requires the `plans:run` permission, which only the development
+client holds here, and a plan check refuses longer plans before anything is
+sent. A production planner calls the specialists on behalf of the signed-in
+user instead: `default_remote=OnBehalfOf(scope=...)` with `EntraIDAuth`.
+
+The planner chooses its model with `model_from_env()`, which needs a model
+with structured output. Call it on `http://127.0.0.1:$planner_port` with:
+
+```json
+{"goal": "Describe what you want done, in plain words."}
+```

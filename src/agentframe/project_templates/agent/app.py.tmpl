@@ -1,0 +1,86 @@
+"""$class_name: one AgentFrame agent, served over A2A.
+
+Run it with a model chosen by environment variables (see README.md)::
+
+    ${env_prefix}_API_KEY=dev-only-key \\
+        AGENTFRAME_MODEL_PROVIDER=ollama AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \\
+        agentframe run $package.app:create_app
+"""
+
+import os
+
+from agentframe import (
+    Agent,
+    AgentApp,
+    APIKey,
+    APIKeyAuth,
+    DefinitionError,
+    HostConfig,
+    Model,
+    ModelSettings,
+    RunContext,
+    RunLimits,
+    agent,
+    model_from_env,
+    skill,
+)
+
+API_KEY_VARIABLE = "${env_prefix}_API_KEY"
+PUBLIC_URL_VARIABLE = "${env_prefix}_PUBLIC_URL"
+
+
+@agent(version="0.1.0")
+class $class_name(Agent):
+    """Answers questions in one short sentence."""
+
+    instructions = "Answer in one short sentence."
+    # Every run is bounded: time, tokens across all model calls, and calls.
+    limits = RunLimits(timeout_seconds=60, max_total_tokens=20_000, max_model_calls=4)
+    model_settings = ModelSettings(max_output_tokens=512)
+
+    @skill(tags=["questions"])
+    async def answer(self, question: str, ctx: RunContext) -> str:
+        """Answer a question briefly."""
+        return await ctx.generate(question)
+
+
+def development_auth() -> APIKeyAuth:
+    """Accept one development API key, which callers send as ``X-API-Key``.
+
+    Development placeholder. Production hosts use real authentication
+    instead, such as Microsoft Entra ID with the ``entra`` extra:
+    ``EntraIDAuth(tenant_id=..., audience=...)``.
+
+    Raises:
+        DefinitionError: ``${env_prefix}_API_KEY`` is not set.
+    """
+    key = os.environ.get(API_KEY_VARIABLE)
+    if not key:
+        raise DefinitionError(
+            f"Set {API_KEY_VARIABLE} to the API key callers send as X-API-Key."
+        )
+    return APIKeyAuth(keys={key: APIKey("developer")})
+
+
+def create_app(model: Model | None = None) -> AgentApp:
+    """Serve the agent over A2A.
+
+    Args:
+        model: The model to use, which stays the caller's to close. Defaults
+            to ``model_from_env()``, which the app closes when the server stops.
+    """
+    host = HostConfig(
+        public_url=os.environ.get(PUBLIC_URL_VARIABLE, "http://127.0.0.1:8000"),
+        auth=development_auth(),
+    )
+    if model is not None:
+        return AgentApp(
+            agent=$class_name(model=model),
+            host=host,
+        )
+    model = model_from_env()
+    return AgentApp(
+        agent=$class_name(model=model),
+        host=host,
+        resources=[model],
+    )

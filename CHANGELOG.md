@@ -40,6 +40,16 @@ behavior starts with an **Upgrading** section; see the
 
 ### Added
 
+- **Development:** `agentframe new agent NAME` and `agentframe new fleet NAME
+  [--planner] [--agents research,writer]` create a working project from
+  templates shipped in the wheel: one agent, or specialists with skills
+  tagged `content` plus an optional tag-discovering planner, with
+  `create_app()` factories, `agentframe.yaml`, `agents.yaml`, tests, a
+  `pyproject.toml` with Ruff, mypy and pytest configured, and a README. The
+  generated code passes those checks, uses a development API key,
+  `model_from_env()` and `resources=`, and is yours to edit; nothing is
+  regenerated. Existing files are never overwritten without `--force`
+  (#277).
 - **Examples:** [`examples/dynamic_agents`](examples/dynamic_agents), a
   planner that names no agent. Its `run_goal` skill plans over every
   registered skill tagged `content` (`ctx.remote_skills(tags=["content"])`),

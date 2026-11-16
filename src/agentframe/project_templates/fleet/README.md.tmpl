@@ -1,0 +1,49 @@
+# $project
+
+A fleet of [AgentFrame](https://github.com/malcmiller/agentframe) agents, each
+served over A2A as its own process. Created by `agentframe new fleet`; the code
+is yours to edit.
+
+| Path | Contents |
+| --- | --- |
+$agent_rows| `agentframe.yaml` | The agents `agentframe dev` starts, in order, with their ports. |
+| `agents.yaml` | A registry of the specialists, for agents you start yourself. |
+| `tests/` | Tests that never call a model provider or start a server. |
+
+Each specialist's skill is tagged `content`. Its placeholder body marks the
+text it receives; replace it with real work and describe that work in the
+skill's docstring, which callers (and planning models) read.
+$planner_section
+## Set up and check
+
+```shell
+uv sync
+uv run ruff format --check
+uv run ruff check
+uv run mypy
+uv run pytest
+```
+
+## Run
+
+`agentframe dev` starts every agent in `agentframe.yaml` on `127.0.0.1`,
+generates one development API key per agent, and gives each agent a registry
+of the others. Set your own key to call them:
+
+```shell
+${dev_command}```
+
+Call an agent's skill with the header `X-API-Key: dev-only-key`. `agents.yaml`
+lists the same specialists for agents you start yourself with
+`agentframe run`; `agentframe dev` writes its own registry instead.
+
+## Before production
+
+- The keys from `dev_settings()` are **development placeholders**:
+  `dev_settings()` refuses to run without `AGENTFRAME_DEV=1`. Use real
+  authentication, such as Microsoft Entra ID:
+  `HostConfig(auth=EntraIDAuth(tenant_id=..., audience=...))` with the `entra`
+  extra, and a registry of the deployed agents' HTTPS card URLs.
+- Review each agent's `limits`, which bound every run.
+- `agentframe compose` writes a development `compose.yaml` from
+  `agentframe.yaml`, to run the agents as containers.

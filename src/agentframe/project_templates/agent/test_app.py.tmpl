@@ -1,0 +1,41 @@
+"""Tests for the agent, with a scripted model instead of a real one."""
+
+import pytest
+from agentframe import AgentApp, DefinitionError
+from agentframe.testing import ScriptedModel
+
+from $package.app import (
+    API_KEY_VARIABLE,
+    $class_name,
+    create_app,
+)
+
+
+async def test_answer_returns_the_model_reply() -> None:
+    model = ScriptedModel(["Paris."])
+
+    answer = await $class_name(model=model).invoke(
+        "answer", question="What is the capital of France?"
+    )
+
+    assert answer == "Paris."
+    assert model.requests[0].messages[-1].content == "What is the capital of France?"
+
+
+def test_create_app_serves_the_agent_with_an_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(API_KEY_VARIABLE, "test-key")
+
+    app = create_app(model=ScriptedModel())
+
+    assert isinstance(app, AgentApp)
+
+
+def test_create_app_refuses_to_start_without_an_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(API_KEY_VARIABLE, raising=False)
+
+    with pytest.raises(DefinitionError, match=API_KEY_VARIABLE):
+        create_app(model=ScriptedModel())

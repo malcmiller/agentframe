@@ -1,0 +1,52 @@
+"""Tests for the planner, without a model server or running specialists."""
+
+from pathlib import Path
+
+import pytest
+from agentframe import AgentApp, ModelCapabilities, Plan, PlanStep
+from agentframe.testing import ScriptedModel
+
+from $package.planner import (
+    MAX_PLAN_STEPS,
+    Planner,
+    create_app,
+    small_plans_only,
+)
+
+PROJECT = Path(__file__).parent.parent
+SKILL = "$first_agent.$first_module"
+STRUCTURED = ModelCapabilities(context_window=8192, structured_output=True)
+
+
+def plan_of(size: int) -> Plan:
+    steps = [PlanStep(id=f"s{index}", use=SKILL, arguments={}) for index in range(size)]
+    return Plan(steps=steps, result="s0")
+
+
+async def test_the_plan_check_refuses_plans_longer_than_the_limit() -> None:
+    run_goal = Planner.definition().skills["run_goal"]
+
+    assert await small_plans_only(run_goal, None, plan_of(MAX_PLAN_STEPS))
+    assert not await small_plans_only(run_goal, None, plan_of(MAX_PLAN_STEPS + 1))
+
+
+def test_running_a_goal_needs_the_plans_run_permission() -> None:
+    run_goal = Planner.definition().skills["run_goal"]
+
+    assert run_goal.requires_permissions == frozenset({"plans:run"})
+
+
+def test_create_app_serves_the_planner_over_the_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTFRAME_DEV", "1")
+    monkeypatch.setenv("AGENTFRAME_PUBLIC_URL", "http://127.0.0.1:$planner_port")
+    monkeypatch.setenv("AGENTFRAME_DEV_API_KEYS", "developer=test-key")
+    monkeypatch.setenv("AGENTFRAME_DEV_REGISTRY", str(PROJECT / "agents.yaml"))
+    monkeypatch.setenv(
+        "AGENTFRAME_DEV_REMOTE_KEYS",
+        "$first_agent=test-key",
+    )
+    model = ScriptedModel([], capabilities=STRUCTURED)
+
+    assert isinstance(create_app(model), AgentApp)

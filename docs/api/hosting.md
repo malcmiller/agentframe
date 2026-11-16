@@ -737,6 +737,47 @@ URLs. No secret value is written to any file.
 **Related:** [containers](../guides/development.md#containers),
 [`dev_settings()`](#dev_settings).
 
+## `agentframe new`
+
+**Purpose / decision:** create a working project from templates shipped in
+the wheel (#277). Generation runs once, from templates to ordinary code the
+user owns and edits; there is no hidden metadata and no round-tripping. No
+network access is needed.
+
+```text
+agentframe new agent NAME [--directory DIR] [--force]
+agentframe new fleet NAME [--agents NAMES] [--planner] [--directory DIR] [--force]
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `NAME` | str | Required | Project name: lowercase words joined by hyphens, starting with a letter, at most 30 characters. The package is the name with underscores. Names of packages the project imports (such as `agentframe`, `pydantic`, `tests`), Python keywords, standard library modules and, for `agent`, names whose class would hide an AgentFrame name (such as `agent-app`) are refused. |
+| `--directory` | path | Default `NAME` | Folder to write to; created if missing. |
+| `--force` | flag | Default off | Overwrite files that already exist. |
+| `--agents` | str | Fleet only; default `research,writer` | Comma-separated specialist names, with the same rules as `NAME`. A name may not clash with an `Agent` attribute or an AgentFrame public name, repeat, or be `planner` with `--planner`. |
+| `--planner` | flag | Fleet only; default off | Add a planner that plans over every registered skill tagged `content`. |
+
+`agent` writes `pyproject.toml`, `.gitignore`, `README.md`,
+`PACKAGE/app.py` (the agent with one model-backed skill, `answer`, and
+`create_app()`) and `tests/test_app.py`. `fleet` writes one
+`PACKAGE/SPECIALIST.py` module and test per specialist, `PACKAGE/planner.py`
+and its test with `--planner`, `agentframe.yaml` for
+[`agentframe dev`](#agentframe-dev) (planner on port 8000, specialists from
+8001), `agents.yaml` for a
+[`FileAgentRegistry`](discovery.md#fileagentregistry), `pyproject.toml`,
+`.gitignore` and `README.md`. Generated apps authenticate with a development
+API key, set `RunLimits` and `ModelSettings`, choose their model with
+[`model_from_env()`](models.md#model_from_env) and close it through
+`AgentApp(resources=...)`.
+
+**Behavior / failures:** an invalid name, or any file to write that already
+exists without `--force`, exits with code 1 and one `agentframe: error: ...`
+line listing the problem or the existing files, and nothing is written. Each
+written path is printed.
+
+**Related:** [create a project](../guides/development.md#create-a-project-agentframe-new),
+[`examples/dynamic_agents`](../../examples/dynamic_agents).
+
 ## `dev_settings()`
 
 **Purpose / decision:** turn the environment `agentframe dev` gives an agent
