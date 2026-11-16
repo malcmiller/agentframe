@@ -149,6 +149,13 @@ behavior starts with an **Upgrading** section; see the
   its catalog passes the new `allow_any_caller=True`; `OnBehalfOf` and open
   agents pass. The first catalog built for each hosted skill logs its agents'
   identity mode (`Service`, `OnBehalfOf`, `none` or `mixed`) at INFO.
+- **Examples:** `examples/assistant.py`, `orders.py` and `routed_assistant.py`
+  no longer cap `max_input_tokens` on the agent class for Foundry's sake; the
+  context window is model configuration, so their Foundry instructions set
+  `AGENTFRAME_MODEL_CONTEXT_WINDOW` for `model_from_env()`. `examples/echo.py`
+  drops its `DevelopmentPolicy`: `authorization=` is for resource checks, and
+  authenticated callers can already run skills without `requires_permissions`
+  (#272).
 - `Services.add` and `Services.add_scoped` return the `Services` instead of
   `None`, so registrations fit on one line:
   `Runtime(services=Services().add(OrderStore, store))` (#274).

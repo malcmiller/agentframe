@@ -546,7 +546,7 @@ def model_from_env(
 | `OLLAMA_ENDPOINT` | Optional | Ollama server URL; default `http://localhost:11434`. |
 | `FOUNDRY_ENDPOINT` | Foundry | OpenAI v1 base URL `https://<resource>.openai.azure.com/openai/v1/`. |
 | `FOUNDRY_DEPLOYMENT` | Foundry | Deployment name. |
-| `MODEL_CONTEXT_WINDOW` | Optional | Tokens of input plus output, a whole number greater than 0. Ollama defaults to 8192, since Ollama allocates memory for the whole window and a model's maximum is often far larger; Foundry defaults to unknown (`None`), so the agent needs `RunLimits(max_input_tokens=...)`. |
+| `MODEL_CONTEXT_WINDOW` | Optional | Tokens of input plus output, a whole number greater than 0. Ollama defaults to 8192, since Ollama allocates memory for the whole window and a model's maximum is often far larger; Foundry defaults to unknown (`None`), so set it for Foundry (or give each skill `RunLimits(max_input_tokens=...)`), keeping the window out of the agent class. |
 
 ```python
 from agentframe import AgentApp, AllowAnonymous, HostConfig, model_from_env
