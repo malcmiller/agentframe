@@ -35,6 +35,14 @@ with its milestone. Implemented members:
 | `instructions` | `ClassVar[str \| None]` (M3 #35) | `None` | Trusted shared instructions, sent as the first `system` message of every `ctx.generate` call. `None` or empty sends none. |
 | `model_settings` | `ClassVar[ModelSettings]` (M3 #35) | `ModelSettings()` (all unset) | Default settings for this agent's model calls, merged field by field with the library defaults, skill and per-run settings ([precedence](configuration.md#precedence)). |
 | `definition()` | class method returning the validated agent definition | — | Returns metadata built by `@agent`; raises `DefinitionError` if this exact class was not decorated. |
+| `router` | `SkillRouter \| None` (#280) | `None` | Chooses the skill for [`ask`](#agentask) prompts, for example `ModelRouter(model)`. Used only by `ask`; an `AgentApp` takes its own `router=`. |
+| `invoke(skill, **arguments)` | async method (#280) | — | Runs one skill locally; see [`Agent.invoke`](#agentinvoke). |
+| `ask(prompt)` | async method (#280) | — | Answers a plain prompt with one skill; see [`Agent.ask`](#agentask). |
+
+Skill methods cannot be named like `Agent`'s own attributes, such as `invoke`,
+`ask`, `router` or `definition`: `@agent` raises `DefinitionError`. Give the
+method another name and keep the skill ID, for example
+`@skill("ask") async def answer(...)`.
 
 | Parameter/configuration | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
@@ -71,6 +79,86 @@ and scoped ownership follows the explicit rules below.
 **Related:** [`@agent`](decorators.md#agent), [`@skill`](decorators.md#skill),
 [`AgentConfig`](configuration.md#agentconfig),
 [mixed-skill guide](../guides/agent-examples.md#mixing-both-kinds-of-skill).
+
+## `Agent.invoke`
+
+**Purpose / decision (implemented, #280):** run one of the agent's skills
+locally without building a `Runtime`, and return its validated value.
+
+```text
+await agent.invoke(skill, /, *, runtime=None, principal=None, options=None, **arguments) -> Any
+```
+
+| Parameter | Type | Required/default | Meaning |
+| --- | --- | --- | --- |
+| `skill` | `str` | Required, positional | The skill ID. |
+| `runtime` | `Runtime \| None` | `None` | The runtime to run in, with the application's services, directory, authorization and policies. `None` uses a new `Runtime()` for this call, which has none of them. |
+| `principal` | `Principal \| None` | `None` | Verified caller identity supplied by trusted code. |
+| `options` | `RunOptions \| None` | `None` | Limits and model settings for this run only. |
+| `**arguments` | `Any` | — | The skill's business arguments. Arguments named `runtime`, `principal` or `options` cannot be passed this way; use `Runtime.invoke`. |
+
+```python
+from agentframe import Agent, RunContext, agent, skill
+
+
+@agent(version="1.0.0")
+class Echo(Agent):
+    """Returns supplied text."""
+
+    @skill(tags=["text"])
+    async def echo(self, text: str, ctx: RunContext) -> str:
+        """Return the text unchanged."""
+        return text
+
+
+value = await Echo().invoke("echo", text="hi")  # "hi"
+```
+
+**Behavior / failures:** the same pipeline as
+[`Runtime.invoke`](runtime.md): argument validation, permissions, limits,
+policy and services. It raises what `Runtime.run` raises, for example
+`InputValidationError` for an unknown skill. A new `Runtime` per call is cheap
+and shares no state; pass `runtime=` to reuse the application's. There is no
+`run` shortcut: call `Runtime.run` for the full `RunResult`.
+
+## `Agent.ask`
+
+**Purpose / decision (implemented, #280):** answer a plain prompt with one
+of the agent's skills, chosen without guessing, and return its validated
+value.
+
+```text
+await agent.ask(prompt, /, *, router=None, runtime=None, principal=None, options=None) -> Any
+```
+
+| Parameter | Type | Required/default | Meaning |
+| --- | --- | --- | --- |
+| `prompt` | `str` | Required, positional | The caller's text. A blank prompt raises `InputValidationError`. |
+| `router` | `SkillRouter \| None` | `None`, then the agent's `router` | Chooses the skill and its arguments, for example `ModelRouter(model)`. |
+| `runtime`, `principal`, `options` | as for `invoke` | `None` | As for [`Agent.invoke`](#agentinvoke); `options` applies to the chosen skill's run. |
+
+The skill is chosen in this order:
+
+1. If exactly one skill's only business parameter is a `str` (`ctx`,
+   `Inject[T]` and `Remote` parameters don't count, the same rule as an
+   app's [default skill](hosting.md#default-skill)), that skill gets the prompt.
+   No model is called, even when there is a router.
+2. Otherwise the router chooses among the skills the principal may run, as
+   an `AgentApp` routes free text. Its model calls and tokens count toward the
+   run's limits, and routing time toward its timeout. A question from the
+   router raises `ClarificationNeededError` (with no `task_id`).
+3. Otherwise `DefinitionError` lists the agent's skill IDs.
+
+```python
+from agentframe import ModelRouter, OllamaModel
+
+orders = Orders(router=ModelRouter(OllamaModel("llama3.2:3b")))
+answer = await orders.ask("Where is order A1?")
+```
+
+`Orders` is an application agent with several skills; the model is an
+application choice. The chosen skill runs through the full `Runtime`
+pipeline.
 
 ## `RunContext`
 
@@ -294,7 +382,7 @@ async def lookup_order(order_id: str, orders: Inject[OrderStore]) -> str:
 @agent(name="Orders", description="Answers order questions.", version="0.1.0")
 class Orders(Agent):
     @skill(id="ask", description="Answer an order question.", tags=["orders"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         return await ctx.generate(question, tools=[lookup_order])
 
 
@@ -361,7 +449,7 @@ from agentframe import Agent, FoundryWebSearch, RunContext, agent, skill
 @agent(name="Researcher", description="Answers with web sources.", version="0.1.0")
 class Researcher(Agent):
     @skill(id="ask", description="Answer a question.", tags=["research"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         search = FoundryWebSearch(allowed_domains=("learn.microsoft.com",))
         return await ctx.generate(question, tools=[search])
 

@@ -78,7 +78,7 @@ class OrderAssistant(Agent):
     """Answers questions about orders and cancels them."""
 
     @skill("ask", tags=["orders"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer with the order tools."""
         return await ctx.generate(question, tools=[lookup_order, cancel_order])
 
@@ -323,7 +323,7 @@ async def test_hosted_denial_and_outage_map_to_task_states(
         """Answers questions about orders for anyone."""
 
         @skill("ask", tags=["orders"])
-        async def ask(self, question: str, ctx: RunContext) -> str:
+        async def answer(self, question: str, ctx: RunContext) -> str:
             """Answer with the lookup tool."""
             return await ctx.generate(question, tools=[public_lookup])
 

@@ -7,7 +7,7 @@ from a2a.types import Message
 
 from agentframe.authoring.definitions import AgentDefinition, text_skill_argument
 from agentframe.errors import InputValidationError
-from agentframe.hosting.routing import SkillCall
+from agentframe.runtime.routing import SkillCall
 
 
 @dataclass(frozen=True)

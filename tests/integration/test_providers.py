@@ -847,7 +847,7 @@ class ShippingDesk(Agent):
     limits = RunLimits(max_input_tokens=2000)
 
     @skill("ask", tags=["orders"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer with the shipping tool."""
         return await ctx.generate(question, tools=[ship_date])
 

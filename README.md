@@ -94,9 +94,15 @@ class Echo(Agent):
 
 runtime = Runtime(services=Services().add(Greeter, Greeter()))
 
-value = await runtime.invoke(Echo(), skill="echo", arguments={"text": "hi"})
+value = await Echo().invoke("echo", text="hi")
 result = await runtime.run(Echo(), skill="greet", arguments={"name": "Ada"})
 ```
+
+`agent.invoke(skill, **arguments)` is a shortcut for a local call; a
+`Runtime` supplies services and returns the full `RunResult`. An agent with
+exactly one skill that takes a single `str` can also be called with
+`await agent.ask("prompt")`; see
+[`Agent.ask`](https://github.com/malcmiller/agentframe/blob/main/docs/api/agents.md#agentask).
 
 Agent names default to the class name, skill IDs and names to the method name,
 and descriptions to docstrings. The

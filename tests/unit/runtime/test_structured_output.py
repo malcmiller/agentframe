@@ -194,7 +194,7 @@ async def test_unsupported_output_types_fail_before_sending(output: Any) -> None
         """Asks for an unsupported output type."""
 
         @skill("ask", tags=["text"])
-        async def ask(self, text: str, ctx: RunContext) -> Any:
+        async def answer(self, text: str, ctx: RunContext) -> Any:
             """Ask with an unsupported output type."""
             return await ctx.generate(text, output=output)
 
@@ -218,7 +218,7 @@ async def test_the_schema_counts_toward_the_token_reservation() -> None:
         limits = RunLimits(max_total_tokens=500)
 
         @skill("ask", tags=["text"])
-        async def ask(self, text: str, ctx: RunContext) -> int:
+        async def answer(self, text: str, ctx: RunContext) -> int:
             """Ask for a wide object."""
             return len((await ctx.generate(text, output=Wide)).counts)
 

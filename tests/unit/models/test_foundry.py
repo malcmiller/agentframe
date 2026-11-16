@@ -839,7 +839,7 @@ class OrderAssistant(Agent):
     """Answers questions about orders."""
 
     @skill("ask", tags=["orders"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer with the lookup tool."""
         return await ctx.generate(question, tools=[lookup_order])
 
@@ -1221,7 +1221,7 @@ class SearchingAssistant(Agent):
     """Answers questions about orders, searching the web when it needs to."""
 
     @skill("ask", tags=["orders"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer with the lookup tool and web search."""
         return await ctx.generate(question, tools=[lookup_order, FoundryWebSearch()])
 
@@ -1286,7 +1286,7 @@ class BrokenAssistant(Agent):
     """Uses a tool that fails."""
 
     @skill("ask", tags=["orders"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer with the broken tool."""
         return await ctx.generate(question, tools=[broken])
 

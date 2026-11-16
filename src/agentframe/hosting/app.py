@@ -72,10 +72,10 @@ from agentframe.hosting.endpoints import (
 from agentframe.hosting.host import A2AConfig, HostConfig, warn_if_insecure
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
-from agentframe.hosting.routing import SkillRouter, routing_limits
 from agentframe.hosting.task_store import BoundedTaskStore, FinalStateStore
 from agentframe.runtime.limits import RunLimits, check_within_ceiling
 from agentframe.runtime.options import merge_settings
+from agentframe.runtime.routing import SkillRouter, routing_limits
 from agentframe.runtime.runtime import Runtime
 from agentframe.security.authentication import AnyOf
 from agentframe.security.authorization import (
