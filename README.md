@@ -211,7 +211,7 @@ Each example has a `create_app()` you can serve with
 `agentframe run examples.<name>:create_app`. Model-backed examples choose
 Ollama or Foundry with `model_from_env()`, as in
 [using a model](https://github.com/malcmiller/agentframe/blob/main/README.md#using-a-model);
-`examples/multi_agent` uses local Llama only, through `AGENTFRAME_OLLAMA_MODEL`.
+`examples/multi_agent` and `examples/dynamic_agents` use local Llama only, through `AGENTFRAME_OLLAMA_MODEL`.
 
 | Example | Shows |
 | --- | --- |
@@ -220,6 +220,7 @@ Ollama or Foundry with `model_from_env()`, as in
 | [`examples/orders.py`](https://github.com/malcmiller/agentframe/blob/main/examples/orders.py) | Tool calling with permissions and a tool policy. |
 | [`examples/routed_assistant.py`](https://github.com/malcmiller/agentframe/blob/main/examples/routed_assistant.py) | Free text routed to a skill by the built-in `ModelRouter`. |
 | [`examples/multi_agent`](https://github.com/malcmiller/agentframe/tree/main/examples/multi_agent) | A planner calling research and writer agents, by hand and by model-made plan; run with `agentframe dev`. |
+| [`examples/dynamic_agents`](https://github.com/malcmiller/agentframe/tree/main/examples/dynamic_agents) | A planner that names no agent: it plans over every registered skill tagged `content`, so a new agent joins with no code change. |
 | [`examples/plan_approval.py`](https://github.com/malcmiller/agentframe/blob/main/examples/plan_approval.py) | Human approval of model-made plans before they run. |
 
 `uv run python -m examples.smoke` checks every example with a scripted model.

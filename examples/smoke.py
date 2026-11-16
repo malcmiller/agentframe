@@ -40,6 +40,9 @@ from examples import (
     plan_approval,
     routed_assistant,
 )
+from examples.dynamic_agents import planner as dynamic_planner
+from examples.dynamic_agents import research as dynamic_research
+from examples.dynamic_agents import writer as dynamic_writer
 from examples.multi_agent import planner, research, writer
 
 STRUCTURED = ModelCapabilities(context_window=8192, structured_output=True)
@@ -300,6 +303,63 @@ async def check_multi_agent() -> None:
             )
 
 
+async def check_dynamic_agents() -> None:
+    """A planner that finds its specialists' skills by tag, never by name."""
+    os.environ["AGENTFRAME_DEV"] = "1"
+    os.environ["AGENTFRAME_DEV_API_KEYS"] = "planner=smoke-planner-key"
+    os.environ.pop("AGENTFRAME_DEV_REGISTRY", None)
+    steps = [
+        planned_step("sources", "research-agent.find_sources", {"topic": "waves"}),
+        planned_step(
+            "post",
+            "writer-agent.write_post",
+            {"title": "Waves", "sources": {"$ref": "sources"}},
+        ),
+    ]
+    reply = json.dumps({"steps": steps, "result": "post", "reason": None})
+
+    def create_research(base_url: str) -> AgentApp:
+        os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
+        return dynamic_research.create_app()
+
+    def create_writer(base_url: str) -> AgentApp:
+        os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
+        return dynamic_writer.create_app()
+
+    async with (
+        serve(create_research) as research_url,
+        serve(create_writer) as writer_url,
+    ):
+
+        def create_planner(base_url: str) -> AgentApp:
+            os.environ["AGENTFRAME_PUBLIC_URL"] = base_url
+            os.environ["AGENTFRAME_DEV_API_KEYS"] = "developer=smoke-client-key"
+            os.environ["AGENTFRAME_DEV_REMOTE_KEYS"] = (
+                "research-agent=smoke-planner-key,writer-agent=smoke-planner-key"
+            )
+            os.environ["AGENTFRAME_AGENTS"] = (
+                f"research-agent={research_url}/.well-known/agent-card.json,"
+                f"writer-agent={writer_url}/.well-known/agent-card.json"
+            )
+            model = ScriptedModel([reply], capabilities=STRUCTURED)
+            return dynamic_planner.create_app(model)
+
+        async with (
+            serve(create_planner) as planner_url,
+            connect(planner_url, "smoke-client-key") as a2a,
+        ):
+            task = await call_skill(a2a, "run_goal", {"goal": "A post about waves"})
+            outcome = dynamic_planner.PlanOutcome.model_validate(data_result(task))
+            expect(
+                outcome.skills,
+                ["research-agent.find_sources", "writer-agent.write_post"],
+            )
+            expect(
+                outcome.value,
+                "# Waves\n\n- [Wind and waves](https://example.org/waves)",
+            )
+
+
 async def check_evaluation() -> None:
     """The assistant evaluated in process, with a rubric judge."""
     report = await evaluation.create_evaluation().run()
@@ -355,6 +415,7 @@ async def main() -> None:
         check_orders,
         check_routed_assistant,
         check_multi_agent,
+        check_dynamic_agents,
         check_evaluation,
         check_plan_approval,
     )
