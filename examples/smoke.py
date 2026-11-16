@@ -104,7 +104,8 @@ async def connect(base_url: str, api_key: str | None = None) -> AsyncIterator[Cl
     """Connect with the official A2A client from the app's public Agent Card."""
     headers = {"X-API-Key": api_key} if api_key else {}
     async with httpx.AsyncClient(headers=headers) as http:
-        factory = ClientFactory(ClientConfig(httpx_client=http))
+        # Blocking SendMessage: one response holding the finished task.
+        factory = ClientFactory(ClientConfig(httpx_client=http, streaming=False))
         yield await factory.create_from_url(base_url)
 
 

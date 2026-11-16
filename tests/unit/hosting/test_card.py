@@ -179,13 +179,13 @@ async def test_card_publishes_skill_argument_schemas_on_the_extension() -> None:
     }
 
 
-def test_card_never_advertises_streaming_or_push_notifications() -> None:
+def test_card_advertises_streaming_but_not_push_notifications() -> None:
     card = build_agent_card(
         Writer.definition(),
         HostConfig(public_url="https://writer.example.com", auth=AllowAnonymous()),
     )
 
-    assert card.capabilities.streaming is False
+    assert card.capabilities.streaming is True
     assert card.capabilities.push_notifications is False
     assert card.capabilities.extensions[0].required is False
 

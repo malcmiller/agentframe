@@ -141,17 +141,21 @@ def _unavailable(error: str) -> Response:
 
 
 async def _is_send_message(request: Request) -> bool:
-    """Return whether the JSON-RPC request is ``SendMessage``.
+    """Return whether the JSON-RPC request is ``SendMessage`` or
+    ``SendStreamingMessage``.
 
-    It is the only method that runs a skill: task reads, lists and cancels
-    take no run slot, and the SDK refuses streaming, which the card does not
-    advertise. Malformed JSON is left for the SDK to report.
+    They are the only methods that run a skill, so both get deduplication
+    and admission: task reads, lists, cancels and resubscriptions take no
+    run slot. Malformed JSON is left for the SDK to report.
     """
     try:
         body = await request.json()
     except ValueError:
         return False
-    return isinstance(body, dict) and body.get("method") == "SendMessage"
+    return isinstance(body, dict) and body.get("method") in _SEND_METHODS
+
+
+_SEND_METHODS = ("SendMessage", "SendStreamingMessage")
 
 
 async def _read_message(request: Request) -> Message | None:

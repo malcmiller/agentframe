@@ -399,8 +399,9 @@ do not expose instructions, secrets, private tools, or imaginary capabilities.
 Reject invalid definitions/configuration and unsupported required adapters.
 Messages, tasks, artifacts, cancellation, and safe failures follow the selected
 official protocol/SDK version. Stream disconnection is not automatically task
-cancellation; in-memory task storage is ephemeral and [bounded](#task-retention). First release returns
-complete validated results and must not advertise A2A streaming. Protocol tasks
+cancellation; in-memory task storage is ephemeral and [bounded](#task-retention).
+`SendStreamingMessage` is implemented (#257); see
+[A2A streaming](#a2a-streaming). Protocol tasks
 do not establish built-in human approval pause/resume. Ordinary A2A callers receive only
 the invocation ID in response metadata, not internal `RunResult` fields.
 Safe failures map to failed/rejected task states as applicable; protocol failures
@@ -412,6 +413,36 @@ same verified caller with the same `messageId` within
 original task, whatever its state, instead of running again; see
 [`A2AConfig`](#a2aconfig) for the full behavior and its limits.
 
+### A2A streaming
+
+**Implemented (#257):** the card advertises `capabilities.streaming`, and
+`SendStreamingMessage` (plus the SDK's `SubscribeToTask`) answers over
+server-sent events through the official SDK. Every `SendMessage` refusal applies
+first, in the same order: request size, authentication, deduplication (a repeat
+yields the original task once) and admission.
+
+- The stream carries the task, its status updates and the answer. When the
+  skill calls [`ctx.generate(..., stream=True)`](agents.md#runcontextgenerate)
+  with a [`StreamingModel`](models.md#streamingmodel), text arrives as
+  artifact updates with `append=true`, followed by one final update
+  (`append=false`, `lastChunk=true`) holding the whole validated answer, which
+  replaces the pieces; the stored task then equals a `SendMessage` result.
+  Skills that don't stream send just the final answer.
+- [Output checks](authorization.md#executionpolicy) need the whole answer, so
+  with any output check nothing streams: the final answer is sent once, after
+  the checks pass. A denied answer is never sent.
+- Streamed bytes count toward `HostConfig.max_response_bytes`; once the pieces
+  would exceed it, the task fails with `LimitExceededError` and no more text is
+  sent. Pieces already sent stay sent, also when the run fails later.
+- Every run limit and deadline applies unchanged. To keep a briefly stalled
+  client within the SDK's per-subscriber queue (a subscriber more than 1024
+  events behind is dropped), the first piece is sent at once, later pieces are
+  combined into updates of at least 64 bytes, and at most 512 updates are sent
+  per task; text after that arrives with the final answer. The model call is
+  not slowed by the client.
+- A client disconnect does not cancel the task (A2A semantics); `CancelTask`
+  does. Disconnect-cancels is the AG-UI rule, not A2A's.
+
 **Agent Card (implemented, M2 #2):** the card is built with official SDK types
 by a deterministic, I/O-free function from the `@agent`/`@skill` definition and
 `HostConfig`:
@@ -421,7 +452,7 @@ by a deterministic, I/O-free function from the `@agent`/`@skill` definition and
 | `name`, `description`, `version` | `@agent` identity. |
 | `skills` | Each skill's `id`, `name`, `description` and `tags`; nothing else. |
 | `supportedInterfaces` | `HostConfig.public_url` + `/a2a`, `JSONRPC`, protocol `1.0`. |
-| `capabilities` | `streaming` and `pushNotifications` false; one extension, `https://github.com/malcmiller/agentframe/extensions/skill-call/v1` (`required: false`), whose `params.skills` maps each skill ID to the JSON Schema of its business arguments. |
+| `capabilities` | `streaming` true ([A2A streaming](#a2a-streaming), #257) and `pushNotifications` false; one extension, `https://github.com/malcmiller/agentframe/extensions/skill-call/v1` (`required: false`), whose `params.skills` maps each skill ID to the JSON Schema of its business arguments. |
 | `securitySchemes`, `securityRequirements` | The authenticator's [`card_security()`](authorization.md#declarescardsecurity), all required. `APIKeyAuth`: an `apiKey` scheme in its header (`X-API-Key` by default). `AllowAnonymous`: none (open access). A custom authenticator without `card_security()` makes card generation raise `DefinitionError`, rather than publish a card that looks open. |
 | `defaultInputModes`, `defaultOutputModes` | `text/plain` and `application/json`. |
 
@@ -1030,7 +1061,7 @@ A2AConfig(
 | `enabled` | `bool` | Proposed, not implemented | Would control the adapter, not caller authorization. |
 | `path` | `str` | Proposed, not implemented; today always `/a2a` | Selected A2A binding endpoint, not a route per skill. |
 | Binding | No constructor field | JSON-RPC over HTTP, A2A 1.0 only (decided M2) | Advertised as `protocolBinding: "JSONRPC"`, `protocolVersion: "1.0"`. No gRPC, HTTP+JSON/REST or 0.3 compatibility; requests without `A2A-Version: 1.0` are rejected. |
-| Supported capabilities | Exact fields/types open | Select/verify before release | Reuse SDK interfaces; first-release complete results only. Do not advertise streaming/push/task features the host cannot execute. |
+| Supported capabilities | Exact fields/types open | Select/verify before release | Reuse SDK interfaces. A2A streaming is advertised since #257; do not advertise push/task features the host cannot execute. |
 | Structured requests | A2A extension declaration/activation, data-part arguments; [wire format implemented (M2 #5)](#structured-skill-call-wire-format) | Preferred request style; no constructor keyword | Card declares support; caller selects a skill under that extension, bypassing routing but not authorization/typed validation/limits/accounting/tracing. |
 | Prompt clarification | Native A2A task/status message; exact contract open | Required for ambiguous/missing prompt input | Return `TASK_STATE_INPUT_REQUIRED` with an ask-back, not a guessed invocation or successful final result. |
 | Response correlation/errors | Native response metadata/task states; exact mappings open | The invocation ID and a safe usage snapshot (token counts, estimated flag, model and tool call counts) (M3 #36) | Safe failed/rejected states as appropriate; no `RunResult`, raw provider exception, stack trace or secrets. |

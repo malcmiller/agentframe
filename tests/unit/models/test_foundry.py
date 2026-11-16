@@ -1380,3 +1380,115 @@ async def test_the_planning_reply_schema_converts_to_a_strict_format(
         "research-agent.find_sources",
         "writer-agent",
     ]
+
+
+def sse(*events: dict[str, Any]) -> Handler:
+    """Answer with server-sent events, as the Responses API streams."""
+    body = "".join(
+        f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events
+    )
+    headers = {"content-type": "text/event-stream"}
+    return lambda request: httpx2.Response(200, content=body.encode(), headers=headers)
+
+
+def delta(text: str, number: int) -> dict[str, Any]:
+    return {
+        "type": "response.output_text.delta",
+        "item_id": "msg_1",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": text,
+        "logprobs": [],
+        "sequence_number": number,
+    }
+
+
+def final(kind: str, response: dict[str, Any]) -> dict[str, Any]:
+    return {"type": f"response.{kind}", "response": response, "sequence_number": 9}
+
+
+async def test_stream_passes_each_delta_on_and_returns_the_whole_reply(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry(
+        sse(delta("Hel", 1), delta("", 2), delta("lo!", 3), final("completed", reply()))
+    )
+    use_server(server)
+    pieces: list[str] = []
+
+    async def collect(text: str) -> None:
+        pieces.append(text)
+
+    async with foundry() as model:
+        response = await model.stream(ask(), collect)
+
+    assert pieces == ["Hel", "lo!"]
+    assert response.text == "Hello!"
+    assert response.finish_reason is FinishReason.COMPLETED
+    assert response.usage.total_tokens == 15
+    assert server.bodies()[0]["stream"] is True
+
+
+async def test_stream_maps_an_incomplete_final_response_like_generate(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    use_server(FakeFoundry(sse(final("incomplete", incomplete("max_output_tokens")))))
+
+    async def ignore(text: str) -> None:
+        pass
+
+    async with foundry() as model:
+        response = await model.stream(ask(), ignore)
+
+    assert response.finish_reason is FinishReason.LENGTH
+
+
+async def test_stream_error_event_is_a_provider_error(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    error = {
+        "type": "error",
+        "code": "server_error",
+        "message": "secret details",
+        "param": None,
+        "sequence_number": 1,
+    }
+    use_server(FakeFoundry(sse(error)))
+
+    async def ignore(text: str) -> None:
+        pass
+
+    async with foundry() as model:
+        with pytest.raises(ProviderError) as caught:
+            await model.stream(ask(), ignore)
+
+    assert "secret" not in caught.value.message
+
+
+async def test_stream_without_a_final_response_is_a_transient_provider_error(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    use_server(FakeFoundry(sse(delta("Hel", 1))))
+
+    async def ignore(text: str) -> None:
+        pass
+
+    async with foundry() as model:
+        with pytest.raises(ProviderError, match="without a final") as caught:
+            await model.stream(ask(), ignore)
+
+    assert caught.value.transient is True
+
+
+async def test_stream_passes_errors_from_the_sink_on_unchanged(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    use_server(FakeFoundry(sse(delta("Hel", 1), final("completed", reply()))))
+
+    async def refuse(text: str) -> None:
+        # An OpenAI error of the sink's own, not the Foundry call's.
+        raise openai.OpenAIError("Caller went away")
+
+    async with foundry() as model:
+        with pytest.raises(openai.OpenAIError, match="Caller went away"):
+            await model.stream(ask(), refuse)

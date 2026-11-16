@@ -36,7 +36,7 @@ Configuration and composition are intentional alternatives to inheritance.
 | Discovery sources (next core release) | Small abstract base and supplied adapters | Extend read-only `AgentRegistry`; validated references and supported queries do not require registration writes. |
 | Card discovery lifecycle (next core release) | Library-managed composition | `AgentDirectory` combines registry/resolver/cache/refresh and owned-resource lifecycle; no per-backend user HTTP loops. |
 | Remote invocation (M8+) | `Remote[Literal["name"]]` skill annotation | Structured `call`, plain-text `ask`, bounded task waiting; underlying client distinct from discovery. No initial helper/graph engine. |
-| Streaming (later) | Optional protocol adapter | Planned AG-UI frontend events, separate from A2A/MCP/OTel; no first-release streaming or UI dependency. |
+| Streaming (0.5.0, AG-UI later) | `ctx.generate(stream=True)` plus optional protocol adapters | Text streaming over A2A `SendStreamingMessage` (#257); planned AG-UI frontend events (#258), separate from A2A/MCP/OTel; no UI dependency. |
 
 These are design responsibilities, not a requirement to implement every
 extension in the first release. One `Agent` subclass is enough for the normal
@@ -97,7 +97,7 @@ only business parameter is a `str` (no model call, #270). Ambiguous/missing inpu
 input-required task; invalid/unknown structured selection fails explicitly,
 never silently reroutes. See [routing boundaries](../guides/annotations.md#skill-registration-versus-request-routing).
 Task state transitions and cancellation must follow the selected A2A version.
-First release returns complete validated results; streaming is later.
+Results are complete and validated; opt-in text streaming arrives in 0.5.0 (#257).
 Native task support does not imply application approval pause/resume.
 
 ## Model interfaces
@@ -120,8 +120,9 @@ and validated. Unsupported model features fail explicitly; normalized messages,
 tool calls/results, structured-output capability checks, usage, refusal and
 incomplete-generation representations still need concrete contracts.
 There is no claim that every deployment supports every feature or produces
-identical results. Streaming is a later delivery with scoped optional
-[AG-UI frontend support](streaming.md), not automatic A2A streaming.
+identical results. Text streaming is an optional `stream` method on a model
+(`StreamingModel`, #257), served over A2A `SendStreamingMessage`; scoped
+optional [AG-UI frontend support](streaming.md) is later.
 
 Resource ownership must be explicit: library-created clients are closed by the
 library; injected clients remain caller-owned unless ownership is explicitly
@@ -161,7 +162,7 @@ schema still open). No first-release orchestration helpers; use Python TaskGroup
 See [remote budgets](../guides/limits.md#cross-agent-budgets-and-depth-m8) and
 [development/packaging](../guides/development.md).
 
-Later streaming uses `AGUIConfig(enabled=True)` on `AgentApp(ag_ui=...)` at
+Later AG-UI streaming uses `AGUIConfig(enabled=True)` on `AgentApp(ag_ui=...)` at
 `/ag-ui`. Shared checks, lifecycle/text/tool-name-status/errors, whole-answer
 buffering, disconnect cancellation and no reconnect/resume are decided; exact
 event projection remains open. Durable workflows are revisited after M8+ real

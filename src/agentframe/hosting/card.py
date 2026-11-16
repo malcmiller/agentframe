@@ -40,7 +40,8 @@ def build_agent_card(definition: AgentDefinition, host: HostConfig) -> AgentCard
     """Build the public Agent Card for an agent served by ``host``.
 
     The card advertises only what the host implements: the JSON-RPC binding for
-    A2A 1.0, the skill-call extension, no streaming or push notifications, and
+    A2A 1.0, the skill-call extension, streaming (``SendStreamingMessage`` and
+    ``SubscribeToTask``), no push notifications, and
     the security scheme of the configured authenticator. Instructions, injected
     services, ``ctx`` and other internals never appear on it.
 
@@ -69,7 +70,7 @@ def build_agent_card(definition: AgentDefinition, host: HostConfig) -> AgentCard
             )
         ],
         capabilities=AgentCapabilities(
-            streaming=False,
+            streaming=True,
             push_notifications=False,
             extensions=[_skill_call_extension(skills)],
         ),

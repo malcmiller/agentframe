@@ -34,6 +34,14 @@ Outcomes map to native A2A results as follows:
   it in ``CANCELED`` through AgentFrame's ``CancelledError``.
 - A result or question larger than the host's ``max_response_bytes`` ends the
   task in ``FAILED`` with ``LimitExceededError``; none of it is sent.
+- On ``SendStreamingMessage``, model text the skill generates with
+  ``stream=True`` is published as it arrives, combined into a bounded number
+  of chunks of the ``result`` artifact (see ``_ArtifactStream``), unless the
+  execution policy has output
+  checks. The final result then replaces those chunks, so the stored task is
+  the same as without streaming. Streamed text counts against
+  ``max_response_bytes``; going over it fails the task, and text already
+  streamed stays released.
 - A router's question leaves the task in ``INPUT_REQUIRED``; the caller answers
   with a new message in the same task, which is routed again with the earlier
   messages.
@@ -123,6 +131,9 @@ TRACE_STATE_KEY = "agentframe.trace"
 """``ServerCallContext.state`` key holding the request's valid W3C trace
 context, when it has one."""
 
+STREAMING_STATE_KEY = "agentframe.streaming"
+"""``ServerCallContext.state`` key set for a ``SendStreamingMessage`` request."""
+
 SKILL_FAILED_MESSAGE = "The skill failed."
 """What callers see when a skill raises an exception that is not AgentFrame's."""
 
@@ -202,6 +213,87 @@ def read_skill_call(message: Message) -> SkillCall:
             "JSON object of arguments."
         )
     return SkillCall(skill_id, data[0])
+
+
+@dataclass(frozen=True)
+class _Answer:
+    """A skill's result part, and the ID of the artifact its text streamed to."""
+
+    part: Part
+    artifact_id: str | None
+
+
+MIN_STREAMED_UPDATE_BYTES = 64
+"""Pieces after the first are sent together once they reach this size."""
+
+MAX_STREAMED_UPDATES = 512
+"""Text updates sent per task; later text arrives with the final result.
+
+The SDK drops a streaming subscriber that falls more than 1024 events behind
+(``a2a.server.events.event_queue.DEFAULT_MAX_QUEUE_SIZE``), ending its stream
+without the result. Staying well below that means a briefly stalled client
+still receives the whole answer and the task's final state.
+"""
+
+
+class _ArtifactStream:
+    """Publishes streamed model text as chunks of the task's result artifact.
+
+    The first piece is sent at once; later pieces are collected and sent
+    together once they reach ``MIN_STREAMED_UPDATE_BYTES``, up to
+    ``MAX_STREAMED_UPDATES`` updates. The first update creates the artifact
+    and each later one is appended to it; the final result then replaces the
+    streamed text (see ``publish_result``), so text still collected is never
+    lost. Streamed bytes count against ``max_response_bytes`` as they arrive,
+    so a stream can never release more than a result could.
+
+    Args:
+        task: The task to publish on.
+        max_bytes: The host's ``max_response_bytes``; ``None`` bounds nothing.
+        invocation_id: The run producing the text, for the error.
+    """
+
+    def __init__(
+        self, task: TaskUpdater, max_bytes: int | None, invocation_id: str
+    ) -> None:
+        self._task = task
+        self._max_bytes = max_bytes
+        self._invocation_id = invocation_id
+        self._received_bytes = 0
+        self._pending = ""
+        self._updates = 0
+        self.artifact_id = str(uuid.uuid4())
+
+    async def __call__(self, text: str) -> None:
+        """Receive one piece of text, sending it when an update is due.
+
+        Raises:
+            LimitExceededError: The text streamed so far would exceed
+                ``max_response_bytes``; the piece is not sent and the run fails.
+        """
+        size = self._received_bytes + len(text.encode())
+        if self._max_bytes is not None and size > self._max_bytes:
+            raise LimitExceededError(
+                RESPONSE_TOO_LARGE_MESSAGE, invocation_id=self._invocation_id
+            )
+        self._received_bytes = size
+        if self._updates >= MAX_STREAMED_UPDATES:
+            return
+        self._pending += text
+        if self._updates == 0 or len(self._pending.encode()) >= (
+            MIN_STREAMED_UPDATE_BYTES
+        ):
+            await self._send()
+
+    async def _send(self) -> None:
+        await self._task.add_artifact(
+            [new_text_part(self._pending)],
+            artifact_id=self.artifact_id,
+            name="result",
+            append=self._updates > 0,
+        )
+        self._pending = ""
+        self._updates += 1
 
 
 @dataclass(frozen=True)
@@ -373,7 +465,7 @@ class RuntimeExecutor(AgentExecutor):
         )
         # noinspection PyBroadException
         try:
-            part = await self._answer(context, message, task, run)
+            answer = await self._answer(context, message, task, run)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
             _log_failed_run(error, run.correlation)
@@ -391,9 +483,11 @@ class RuntimeExecutor(AgentExecutor):
             )
             await publish_failure(task, failure, accounting)
             return
-        if part is None:
+        if answer is None:
             return  # The router asked the caller a question instead.
-        await publish_result(task, part, invocation_id, accounting)
+        await publish_result(
+            task, answer.part, invocation_id, accounting, answer.artifact_id
+        )
         logger.info(
             "Run completed (invocation_id=%s)",
             invocation_id,
@@ -442,11 +536,14 @@ class RuntimeExecutor(AgentExecutor):
         message: Message,
         task: TaskUpdater,
         run: _HostedRun,
-    ) -> Part | None:
+    ) -> _Answer | None:
         """Run the chosen skill, or publish the router's question.
 
+        For a streaming request, model text the skill marks with
+        ``stream=True`` is published as it arrives (see ``_ArtifactStream``).
+
         Returns:
-            The skill's result part, or ``None`` once the question is published.
+            The skill's result, or ``None`` once the question is published.
         """
         call = await self._choose_skill(context, message, run)
         if isinstance(call, Clarification):
@@ -458,6 +555,11 @@ class RuntimeExecutor(AgentExecutor):
             )
             return None
         # The executor shares the runtime's pipeline under its own invocation ID.
+        stream = (
+            _ArtifactStream(task, self._max_response_bytes, run.invocation_id)
+            if context.call_context.state.get(STREAMING_STATE_KEY)
+            else None
+        )
         result = await self._runtime.run_invocation(
             run.invocation_id,
             self._agent,
@@ -474,8 +576,10 @@ class RuntimeExecutor(AgentExecutor):
             run.correlation,
             own_interface_url=self._own_interface_url,
             conversation_id=hosted_conversation_id(context.context_id, run.principal),
+            on_text=stream,
         )
-        return result_part(result.value, run.invocation_id, self._max_response_bytes)
+        part = result_part(result.value, run.invocation_id, self._max_response_bytes)
+        return _Answer(part, stream.artifact_id if stream else None)
 
     async def _choose_skill(
         self, context: RequestContext, message: Message, run: _HostedRun
@@ -616,10 +720,24 @@ def failure_state(error: AgentFrameError) -> TaskState:
 
 
 async def publish_result(
-    task: TaskUpdater, part: Part, invocation_id: str, accounting: RunAccounting
+    task: TaskUpdater,
+    part: Part,
+    invocation_id: str,
+    accounting: RunAccounting,
+    artifact_id: str | None = None,
 ) -> None:
-    """Publish a run's result as the task's artifact and complete the task."""
-    await task.add_artifact([part], name="result")
+    """Publish a run's result as the task's artifact and complete the task.
+
+    With the ``artifact_id`` of streamed text, the result replaces it as that
+    artifact's last chunk, so the task holds the same artifact as without
+    streaming.
+    """
+    if artifact_id is None:
+        await task.add_artifact([part], name="result")
+    else:
+        await task.add_artifact(
+            [part], artifact_id=artifact_id, name="result", last_chunk=True
+        )
     await task.update_status(
         TaskState.TASK_STATE_COMPLETED,
         metadata=run_metadata(invocation_id, accounting),

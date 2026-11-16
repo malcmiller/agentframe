@@ -54,6 +54,7 @@ async def connect(
     *,
     scheme: str | None = None,
     http: httpx.AsyncClient | None = None,
+    streaming: bool = False,
 ) -> Client:
     """Connect like any A2A caller: resolve the public card, then use it.
 
@@ -62,12 +63,15 @@ async def connect(
     when the card offers several. ``http`` replaces the SDK's own HTTP client,
     for example one that calls an app in-process through ``httpx.ASGITransport``
     or one with a longer timeout for real models (the SDK's own client uses
-    httpx's 5-second default).
+    httpx's 5-second default). ``streaming`` sends ``SendStreamingMessage``,
+    yielding every event, instead of the blocking ``SendMessage``, which
+    returns only the task.
     """
     interceptors: list[ClientCallInterceptor] = []
     if credential is not None:
         interceptors.append(AuthInterceptor(StaticCredentials(credential, scheme)))
-    return await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(
+    config = ClientConfig(httpx_client=http, streaming=streaming)
+    return await ClientFactory(config).create_from_url(
         base_url, interceptors=interceptors
     )
 

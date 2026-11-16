@@ -34,6 +34,8 @@ from agentframe.models.base import (
     ModelResponse,
     ModelSettings,
     OutputSchema,
+    StreamingModel,
+    TextSink,
     ToolSpec,
 )
 from agentframe.runtime.accounting import UNKNOWN_USAGE, RunAccounting
@@ -80,6 +82,18 @@ NO_BOUND_TOOLS: Mapping[str, BoundTool] = MappingProxyType({})
 
 
 @dataclass
+class _SentText:
+    """Passes text on to ``sink`` and remembers whether any was sent."""
+
+    sink: TextSink
+    started: bool = False
+
+    async def __call__(self, text: str) -> None:
+        self.started = True
+        await self.sink(text)
+
+
+@dataclass
 class GenerationState:
     """One run's model, effective settings, accounting, tools and services.
 
@@ -101,6 +115,10 @@ class GenerationState:
         policy: Execution policy whose model-request checks run before every
             model request and whose tool checks run before every tool call,
             or ``None`` for no checks.
+        text_sink: Where ``generate_text(stream=True)`` sends answer text as
+            it arrives, or ``None`` when the run's caller does not stream.
+            The runtime leaves it ``None`` when output checks must see the
+            whole answer first.
     """
 
     model: Model | None
@@ -115,6 +133,7 @@ class GenerationState:
     tool_authorization: "ToolAuthorizationPolicy | None" = None
     skill: "SkillDefinition | None" = None
     policy: ExecutionPolicy | None = None
+    text_sink: TextSink | None = None
 
     async def generate_text(
         self,
@@ -125,6 +144,8 @@ class GenerationState:
         bound_tools: Mapping[str, BoundTool] = NO_BOUND_TOOLS,
         hosted_tools: Sequence[HostedTool] = (),
         history: Sequence[Message] = (),
+        *,
+        stream: bool = False,
     ) -> str:
         """Send ``text`` to the model and return its complete answer.
 
@@ -147,6 +168,9 @@ class GenerationState:
                 oldest first, sent between the instructions and ``text``. The
                 oldest are left out when they would not fit (see
                 ``fit_history``).
+            stream: Send the model's text to ``text_sink`` as it arrives.
+                Ignored without a sink or with a model that has no
+                ``stream`` method.
 
         Raises:
             DefinitionError: A selected tool is not registered on the agent
@@ -169,12 +193,22 @@ class GenerationState:
                 text received so far.
             ProviderError: The provider call failed, and was not transient,
                 used every retry, or would have to wait past the deadline.
+                A call that already streamed text is never retried.
             OutputValidationError: A tool returned an invalid value.
             TimeoutLimitExceededError: The run's deadline passed during a
                 model or tool call.
         """
+        on_text = self.text_sink if stream else None
         response = await self._generate(
-            ctx, text, instructions, None, tools, bound_tools, hosted_tools, history
+            ctx,
+            text,
+            instructions,
+            None,
+            tools,
+            bound_tools,
+            hosted_tools,
+            history,
+            on_text,
         )
         if response.finish_reason is FinishReason.LENGTH and response.text:
             # Only text keeps what arrived before the limit, so a skill can
@@ -224,7 +258,15 @@ class GenerationState:
         """
         schema = output_schema(output)
         response = await self._generate(
-            ctx, text, instructions, schema, tools, bound_tools, hosted_tools, history
+            ctx,
+            text,
+            instructions,
+            schema,
+            tools,
+            bound_tools,
+            hosted_tools,
+            history,
+            None,
         )
         return validate_output(text_from(response), output)
 
@@ -238,6 +280,7 @@ class GenerationState:
         bound_tools: Mapping[str, BoundTool],
         hosted_tools: Sequence[HostedTool],
         history: Sequence[Message],
+        on_text: TextSink | None,
     ) -> ModelResponse:
         """Run the model and the tools it calls within the run's deadline.
 
@@ -278,6 +321,7 @@ class GenerationState:
                     selected_tools,
                     bound_tools,
                     tuple(hosted_tools),
+                    on_text,
                 )
         except TimeoutError:
             if not timeout.expired():
@@ -296,6 +340,7 @@ class GenerationState:
         tools: Mapping[str, "ToolDefinition"],
         bound_tools: Mapping[str, BoundTool],
         hosted_tools: tuple[HostedTool, ...],
+        on_text: TextSink | None,
     ) -> ModelResponse:
         """Call the model, run the tools it asks for, and repeat until it answers.
 
@@ -315,6 +360,9 @@ class GenerationState:
         provider at the run's remaining tool calls, and fails before sending
         when none remain; the calls the provider ran are counted after each
         response.
+
+        With ``on_text``, every call streams, so text the model writes
+        before calling tools is passed on too.
         """
         while True:
             request = ModelRequest(
@@ -326,7 +374,9 @@ class GenerationState:
                 max_hosted_tool_calls=self._hosted_tool_allowance(hosted_tools),
             )
             await self._check_request(request, ctx)
-            response = await self._call_with_retries(model, request, ctx.deadline)
+            response = await self._call_with_retries(
+                model, request, ctx.deadline, on_text
+            )
             self.accounting.count_hosted_tool_calls(
                 response.hosted_tool_calls, self.limits
             )
@@ -453,7 +503,11 @@ class GenerationState:
         return MappingProxyType(selected)
 
     async def _call_with_retries(
-        self, model: Model, request: ModelRequest, deadline: float
+        self,
+        model: Model,
+        request: ModelRequest,
+        deadline: float,
+        on_text: TextSink | None = None,
     ) -> ModelResponse:
         """Call the model, retrying transient provider failures with backoff.
 
@@ -462,15 +516,18 @@ class GenerationState:
         incomplete output, are raised at once. When the wait before a retry
         would reach the deadline, the provider error is raised instead. A
         retry offering hosted tools is capped at the tool calls left after the
-        failed attempt's.
+        failed attempt's. A call that already passed text to ``on_text`` is
+        never retried: that text cannot be taken back, and a retry would send
+        it again.
         """
+        sent = _SentText(on_text) if on_text is not None else None
         max_retries = self.limits.max_model_retries
         assert max_retries is not None  # Set by defaults.
         for retry in range(max_retries):
             try:
-                return await self._call(model, request)
+                return await self._call(model, request, sent)
             except ProviderError as error:
-                if not error.transient:
+                if not error.transient or (sent is not None and sent.started):
                     raise
                 delay = backoff_seconds(error, retry)
                 if asyncio.get_running_loop().time() + delay >= deadline:
@@ -480,10 +537,15 @@ class GenerationState:
                 request,
                 max_hosted_tool_calls=self._hosted_tool_allowance(request.hosted_tools),
             )
-        return await self._call(model, request)
+        return await self._call(model, request, sent)
 
-    async def _call(self, model: Model, request: ModelRequest) -> ModelResponse:
-        """Reserve tokens, call the model, then settle the call's actual usage."""
+    async def _call(
+        self, model: Model, request: ModelRequest, on_text: TextSink | None
+    ) -> ModelResponse:
+        """Reserve tokens, call the model, then settle the call's actual usage.
+
+        Streams to ``on_text`` when given and the model can stream.
+        """
         capabilities = await model.capabilities()
         check_supports(request, capabilities)
         input_estimate = estimate_input_tokens(request)
@@ -493,7 +555,10 @@ class GenerationState:
         reservation = input_estimate + max_output_tokens
         self.accounting.reserve(reservation, self.limits)
         try:
-            response = await model.generate(request)
+            if on_text is not None and isinstance(model, StreamingModel):
+                response = await model.stream(request, on_text)
+            else:
+                response = await model.generate(request)
         except UnsupportedCapabilityError:
             self.accounting.release(reservation)  # Raised before anything was sent.
             raise

@@ -347,7 +347,7 @@ skills require explicit composition, not automatic orchestration.
 Both capabilities belong in the first usable release, while each agent may
 still be model-free or omit tools. Structured output (M4 #53) and bounded
 tool calling (M5) are implemented. Both return complete validated
-results; streaming is later.
+results; text can also be streamed as it is generated (see below).
 
 The decided author API uses one `ctx.generate` method: omit `output` for text,
 or pass a Pydantic `BaseModel` subclass for a validated instance (type checkers
@@ -596,13 +596,33 @@ limits; a found card is not permission to call an agent. See
 [discovery](../design/discovery.md), its
 [reference](../api/discovery.md) and [local dev/containers](development.md).
 
-## Future streaming and AG-UI
+## Streaming text and future AG-UI
 
-First-release examples await complete validated results, not token streams.
-Future [AG-UI support](../design/streaming.md) is a scoped optional frontend-protocol
+Examples await complete validated results by default. A skill can stream its
+answer text as it is generated (0.5.0, #257) by passing `stream=True`:
+
+```python
+from agentframe import Agent, RunContext, agent, skill
+
+
+@agent(name="Writer", description="Drafts short texts.", version="0.1.0")
+class Writer(Agent):
+    @skill(description="Drafts a paragraph.", tags=["text"])
+    async def draft(self, ctx: RunContext, topic: str) -> str:
+        return await ctx.generate(f"Write a paragraph about {topic}.", stream=True)
+```
+
+An A2A `SendStreamingMessage` caller receives the text in updates as it arrives
+and then
+the whole answer; a local caller passes `on_text=` to `Runtime.run`. A
+`SendMessage` caller, or a run whose policy has output checks, gets only the
+complete, checked answer. Every limit still applies; see the
+[streaming reference](../api/streaming.md#runtime-streaming-surface).
+
+Future [AG-UI support](../design/streaming.md) (#258) is a scoped optional frontend-protocol
 adapter over managed execution events, not an OTel trace stream, automatic
 frontend tool execution, human approval workflow or durable resume mechanism.
 The later configuration is `AgentApp(..., ag_ui=AGUIConfig(enabled=True))` at
-`/ag-ui`; no runtime stream method is selected. Stream lifecycle/text deltas,
+`/ag-ui`, built on the runtime streaming surface. Stream lifecycle/text deltas,
 tool names/status (not raw arguments by default) and safe errors. Whole-answer
 checks release complete text at end; disconnect cancels, no reconnect/resume.

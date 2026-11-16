@@ -71,10 +71,12 @@ checks in its generation layer, before every request is sent: routing calls
 (with no skill yet), structured output and each tool-loop continuation all
 pass through that one point.
 
-First release returns complete validated results. For later streamed responses,
-including the proposed [AG-UI adapter](streaming.md), configured output checks
-must run before affected content is released. Buffer or decline streaming when the policy requires
-whole-output inspection; a later rejection cannot retract already sent data.
+Results are complete and validated by default. For streamed responses (A2A
+`SendStreamingMessage`, implemented in 0.5.0, and the proposed
+[AG-UI adapter](streaming.md)), configured output checks must run before
+affected content is released: with any output check, AgentFrame streams
+nothing and releases the complete answer only after the checks pass; a later
+rejection could not retract already sent data.
 Output rejection also cannot undo actions already performed, so action checks
 and approvals must occur before side effects.
 

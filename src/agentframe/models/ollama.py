@@ -5,11 +5,11 @@ Needs the optional ``ollama`` package: ``pip install agentframe-py[ollama]``.
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 try:
     import httpx
@@ -26,6 +26,7 @@ from agentframe.models.base import (
     ModelCapabilities,
     ModelRequest,
     ModelResponse,
+    TextSink,
     ToolCall,
     ToolSpec,
 )
@@ -62,6 +63,10 @@ class OllamaModel:
 
     Every request sends the context window explicitly (Ollama's ``num_ctx``),
     so the server never silently truncates input to a smaller default.
+
+    ``stream`` uses Ollama's streamed chat, passing on each piece of answer
+    text; a stream that ends before its final chunk is a transient
+    ``ProviderError``.
 
     For structured output, the request's JSON schema is sent as Ollama's
     ``format``, which constrains generation to that schema. Nothing is added
@@ -124,6 +129,64 @@ class OllamaModel:
                 rate limits and server errors are transient; an unknown model
                 or a rejected request is not.
         """
+        options = await self._options(request)
+        async with _provider_errors(self.model):
+            response = await self._client.chat(
+                model=self.model,
+                messages=[_ollama_message(message) for message in request.messages],
+                tools=[_ollama_tool(spec) for spec in request.tools],
+                options=options,
+                format=request.output.json_schema if request.output else None,
+            )
+        return _model_response(
+            response, response.message.content or "", response.message.tool_calls
+        )
+
+    async def stream(self, request: ModelRequest, on_text: TextSink) -> ModelResponse:
+        """Like ``generate``, but awaits ``on_text`` with each piece of text.
+
+        Raises:
+            UnsupportedCapabilityError: As for ``generate``.
+            ProviderError: As for ``generate``, also when the server ends the
+                stream without its final chunk (transient).
+        """
+        options = await self._options(request)
+        text: list[str] = []
+        tool_calls: list[ollama.Message.ToolCall] = []
+        last: ollama.ChatResponse | None = None
+        async with _provider_errors(self.model):
+            chunks = await self._client.chat(
+                model=self.model,
+                messages=[_ollama_message(message) for message in request.messages],
+                tools=[_ollama_tool(spec) for spec in request.tools],
+                options=options,
+                format=request.output.json_schema if request.output else None,
+                stream=True,
+            )
+        # The client returns an async generator; closing it ends the HTTP
+        # response at once when on_text raises or the run is cancelled.
+        # Only reading chunks maps errors, so on_text's own errors, even
+        # connection errors, propagate unchanged.
+        async with aclosing(cast(AsyncGenerator[ollama.ChatResponse], chunks)):
+            while (chunk := await _next_chunk(chunks, self.model)) is not None:
+                if chunk.message.content:
+                    text.append(chunk.message.content)
+                    await on_text(chunk.message.content)
+                tool_calls.extend(chunk.message.tool_calls or ())
+                last = chunk
+        if last is None or not last.done:
+            raise ProviderError(
+                "The Ollama server ended the stream early", transient=True
+            )
+        return _model_response(last, "".join(text), tool_calls)
+
+    async def _options(self, request: ModelRequest) -> dict[str, Any]:
+        """Return the request's Ollama options, checking tool support first.
+
+        Raises:
+            UnsupportedCapabilityError: The request offers hosted tools, or
+                uses tools the model does not support.
+        """
         if request.hosted_tools:
             raise UnsupportedCapabilityError(
                 "Ollama does not support hosted tool "
@@ -134,26 +197,10 @@ class OllamaModel:
             raise UnsupportedCapabilityError(
                 f"Ollama model {self.model!r} does not support tools"
             )
-        options = {
+        return {
             "num_ctx": metadata.context_window,
             "num_predict": request.settings.max_output_tokens,
         }
-        output_format = request.output.json_schema if request.output else None
-        async with _provider_errors(self.model):
-            response = await self._client.chat(
-                model=self.model,
-                messages=[_ollama_message(message) for message in request.messages],
-                tools=[_ollama_tool(spec) for spec in request.tools],
-                options=options,
-                format=output_format,
-            )
-        tool_calls = _tool_calls(response.message)
-        return ModelResponse(
-            text=response.message.content or "",
-            usage=_usage(response),
-            finish_reason=_finish_reason(response.done_reason, tool_calls),
-            tool_calls=tool_calls,
-        )
 
     async def capabilities(self) -> ModelCapabilities:
         """Return the context window, structured-output and tool support.
@@ -263,7 +310,22 @@ def _ollama_message(message: Message) -> dict[str, Any]:
     return ollama_message
 
 
-def _tool_calls(message: ollama.Message) -> tuple[ToolCall, ...]:
+def _model_response(
+    response: ollama.ChatResponse,
+    text: str,
+    calls: Sequence[ollama.Message.ToolCall] | None,
+) -> ModelResponse:
+    """Return the reply, given its final chunk (or whole reply) and its text."""
+    tool_calls = _tool_calls(calls or ())
+    return ModelResponse(
+        text=text,
+        usage=_usage(response),
+        finish_reason=_finish_reason(response.done_reason, tool_calls),
+        tool_calls=tool_calls,
+    )
+
+
+def _tool_calls(calls: Sequence[ollama.Message.ToolCall]) -> tuple[ToolCall, ...]:
     """Return the reply's tool calls, numbered because Ollama has no call IDs.
 
     Ollama returns arguments already parsed; they are turned back into JSON
@@ -275,8 +337,20 @@ def _tool_calls(message: ollama.Message) -> tuple[ToolCall, ...]:
             name=call.function.name,
             arguments=json.dumps(call.function.arguments),
         )
-        for number, call in enumerate(message.tool_calls or (), start=1)
+        for number, call in enumerate(calls, start=1)
     )
+
+
+async def _next_chunk(
+    chunks: AsyncIterator[ollama.ChatResponse], model: str
+) -> ollama.ChatResponse | None:
+    """Return the stream's next chunk, or ``None`` at its end.
+
+    Raises:
+        ProviderError: Reading the stream failed.
+    """
+    async with _provider_errors(model):
+        return await anext(chunks, None)
 
 
 @asynccontextmanager

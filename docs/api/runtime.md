@@ -279,6 +279,7 @@ await runtime.run(
 | `principal` | Trusted `Principal` | Needed for protected local work | Never supplied as business data. |
 | `options` | `RunOptions \| None` | Default `None` | Same as [`invoke`](#runtimeinvoke): per-run limits and model settings, merged field by field. |
 | `conversation_id` | `str \| None` | Default `None` | Same as [`invoke`](#runtimeinvoke): the caller's conversation for history. |
+| `on_text` | [`TextSink \| None`](models.md#textsink) | Default `None` (nothing streamed; #257) | Receives answer text as it is generated, from model calls the skill makes with [`ctx.generate(..., stream=True)`](agents.md#runcontextgenerate). Ignored (nothing streamed) when the runtime's [`ExecutionPolicy`](authorization.md#executionpolicy) has output checks, so only checked results are released. |
 
 ```python
 from agentframe import Agent, RunResult, Runtime
@@ -286,11 +287,31 @@ from agentframe import Agent, RunResult, Runtime
 
 async def inspect_run(runtime: Runtime, echo: Agent) -> RunResult:
     return await runtime.run(echo, skill="echo", arguments={"text": "Hello"})
+
+
+async def print_as_generated(runtime: Runtime, writer: Agent) -> RunResult:
+    async def show(text: str) -> None:
+        print(text, end="", flush=True)
+
+    return await runtime.run(
+        writer, skill="draft", arguments={"topic": "tides"}, on_text=show
+    )
 ```
 
 **Behavior / failures:** metadata works with tracing off. Failures raise the
 decided errors, not a success-shaped `RunResult`; error carries `invocation_id`.
 Exact failed-run usage access/retention remains open.
+
+**Streaming (implemented, #257):** `on_text` is the runtime's streaming
+surface, used by A2A `SendStreamingMessage` and meant for the later AG-UI
+adapter. Every check and limit applies unchanged: pieces are passed on only
+after input validation, authorization and input checks, and `RunResult.value`
+is still the complete validated result. Each piece is awaited before the model
+call continues, so a slow sink slows the run within its deadline; an exception
+from `on_text` fails the run. A model call that already passed text on is never
+retried, and text passed on before a later failure is not withdrawn. Only
+models implementing [`StreamingModel`](models.md#streamingmodel) stream; others
+answer whole. `invoke` takes no `on_text`.
 
 **Related:** [`Runtime.invoke`](#runtimeinvoke), [`RunResult`](#runresult).
 

@@ -67,9 +67,8 @@ async def test_readme_hosting_example(
         serve(make_app) as base_url,
         httpx.AsyncClient(headers={"X-API-Key": "dev-only-key"}) as http,
     ):
-        client = await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(
-            base_url
-        )
+        config = ClientConfig(httpx_client=http, streaming=False)
+        client = await ClientFactory(config).create_from_url(base_url)
         message = Message(
             message_id="m-1",
             role=Role.ROLE_USER,
