@@ -51,6 +51,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [Orchestration](guides/orchestration.md) | M10: choosing plain `await`, remote skills as tools or plans; the `examples/multi_agent` planner and writer; the catalog, plans, a safety checklist with open-proxy and `default_remote` warnings, logs and usage, measuring the planner with an evaluation, and the release acceptance tests. |
 | [Real-provider tests](guides/provider-tests.md) | Opt-in tests against real Ollama and Foundry, the expected Ollama planner failures, and the one-time setup of the manual Foundry workflow with OpenID Connect. |
 | [Releasing](guides/releasing.md) | Maintainer one-time PyPI trusted-publisher and environment setup, and the steps to publish a release. |
+| [Stability and upgrading](guides/stability.md) | What the public API is, what may change before 1.0, how deprecations are signposted, changelog **Upgrading** notes and the criteria for 1.0. |
 
 ### Design
 

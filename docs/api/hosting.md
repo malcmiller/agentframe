@@ -133,8 +133,10 @@ authenticator; no remote host starts without a choice.
   ordinary `asyncio` cancellation, so its per-run (scoped) services are still
   cleaned up. Cancelling a finished task returns the standard
   `TaskNotCancelableError`.
-- Tasks live only in the SDK's in-memory store and are lost on restart; a
-  durable store is pluggable later.
+- By default tasks live in a bounded in-memory store and are lost on restart;
+  pass any `a2a-sdk` `TaskStore`, for example a database store, as
+  [`A2AConfig(task_store=...)`](#a2aconfig) to keep them (#208). See
+  [task retention](#task-retention).
 - All `AllowAnonymous()` callers share one task namespace, so any anonymous
   caller holding a task's ID can get or cancel it. IDs are random UUIDs, but
   treat them as bearer secrets. `ListTasks` is refused to anonymous callers with

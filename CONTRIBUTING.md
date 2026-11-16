@@ -69,7 +69,9 @@ run in normal CI; see [real-provider tests](docs/guides/provider-tests.md).
 - CI must pass: the checks on Python 3.13, 3.14 and 3.15, `build` and
   `lowest-deps`.
 - Add an entry under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) for every
-  user-visible change.
+  user-visible change. A change that breaks or deprecates public API also
+  needs an **Upgrading** note and follows the
+  [stability policy](docs/guides/stability.md).
 - Keep documentation consistent with the change (see
   [documentation maintenance](AGENTS.md#documentation-maintenance)).
 
