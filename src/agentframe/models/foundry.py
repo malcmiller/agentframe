@@ -1,6 +1,7 @@
 """``FoundryModel``: an adapter for GPT deployments in Microsoft Foundry.
 
-Calls the OpenAI v1 Responses API through the official ``openai`` package.
+Calls the OpenAI v1 Responses API through the official ``openai`` package, so
+it also serves plain OpenAI through ``FoundryModel(client=openai.AsyncOpenAI())``.
 Needs the optional extra: ``pip install agentframe-py[foundry]``.
 """
 
@@ -133,8 +134,13 @@ class FoundryModel:
 
     Credentials are never logged or included in error messages.
 
+    Plain OpenAI serves the same Responses API, so the same class calls it:
+    pass ``client=openai.AsyncOpenAI()`` (which reads ``OPENAI_API_KEY``) and
+    the OpenAI model name as ``deployment``.
+
     Args:
-        deployment: Name of the model deployment, for example ``"gpt-5.4"``.
+        deployment: Name of the model deployment, for example ``"gpt-5.4"``;
+            for plain OpenAI, the model name.
         endpoint: OpenAI v1 base URL, such as
             ``"https://<resource>.openai.azure.com/openai/v1/"``.
         credential: An API key, or an async Azure token credential such as
@@ -143,11 +149,11 @@ class FoundryModel:
             can use ``DefaultAzureCredential()`` or managed identity; the
             ``foundry`` extra installs the ``aiohttp`` transport they need.
         client: An existing ``openai.AsyncOpenAI`` client to use instead of
-            ``endpoint`` and ``credential``. It is used with retries disabled
-            and is never closed by the model.
+            ``endpoint`` and ``credential``, for example one for plain OpenAI.
+            It is used with retries disabled and is never closed by the model.
         context_window: Tokens of input plus output the deployment accepts,
             or ``None`` when unknown.
-        store: Whether Foundry stores responses server-side. This controls
+        store: Whether the service stores responses server-side. This controls
             response storage only, not every provider retention mechanism.
         structured_output: Whether to report structured-output support. The
             Responses API defines it, so it is on by default; turn it off for
@@ -413,7 +419,7 @@ def _function_tool(spec: ToolSpec) -> FunctionToolParam:
         parameters = strict_schema(spec.parameters)
     except UnsupportedCapabilityError as error:
         raise UnsupportedCapabilityError(
-            f"Tool '{spec.name}' cannot be offered to Foundry: {error}"
+            f"Tool '{spec.name}' cannot be offered as a strict function tool: {error}"
         ) from None
     return {
         "type": "function",
@@ -548,21 +554,21 @@ def _unfinished_response_error(
     if response.status == "failed":
         code = response.error.code if response.error else None
         return ProviderError(
-            f"Foundry reported a failed response (code {code or 'unknown'})",
+            f"The model service reported a failed response (code {code or 'unknown'})",
             transient=code in TRANSIENT_FAILURE_CODES,
             usage=usage,
             hosted_tool_calls=hosted_calls,
         )
     if response.status == "cancelled":
         return ProviderError(
-            "Foundry cancelled the response",
+            "The model service cancelled the response",
             transient=False,
             usage=usage,
             hosted_tool_calls=hosted_calls,
         )
     # queued and in_progress only happen for background responses, never sent.
     return ProviderError(
-        f"Foundry returned an unfinished response (status {response.status})",
+        f"The model service returned an unfinished response (status {response.status})",
         transient=False,
         usage=usage,
         hosted_tool_calls=hosted_calls,
@@ -587,7 +593,7 @@ def _incomplete_finish_reason(
     if reason == "content_filter":
         return FinishReason.CONTENT_FILTER
     raise IncompleteOutputError(
-        f"Foundry stopped the response early (reason {reason or 'unknown'})",
+        f"The model service stopped the response early (reason {reason or 'unknown'})",
         usage=usage,
         hosted_tool_calls=hosted_calls,
     )
@@ -631,7 +637,9 @@ async def _provider_errors(
     try:
         yield
     except openai.APIConnectionError as error:  # Includes timeouts.
-        raise ProviderError("Could not reach Foundry", transient=True) from error
+        raise ProviderError(
+            "Could not reach the model service", transient=True
+        ) from error
     except openai.APIStatusError as error:
         raise _status_error(error, deployment, features) from error
     except ClientAuthenticationError as error:
@@ -639,7 +647,7 @@ async def _provider_errors(
             "Could not get a Microsoft Entra token for Foundry", transient=False
         ) from error
     except openai.OpenAIError as error:
-        raise ProviderError("The Foundry call failed", transient=False) from error
+        raise ProviderError("The model call failed", transient=False) from error
 
 
 def _status_error(
@@ -648,26 +656,29 @@ def _status_error(
     status_code = error.status_code
     if status_code in (401, 403):
         return ProviderError(
-            f"Foundry rejected the credentials (HTTP {status_code})", transient=False
+            f"The model service rejected the credentials (HTTP {status_code})",
+            transient=False,
         )
-    if status_code == 404:
+    # Plain OpenAI may report an unknown model as HTTP 400 with this code.
+    if status_code == 404 or error.code == "model_not_found":
         return ProviderError(
-            f"Foundry deployment {deployment!r} was not found", transient=False
+            f"Model or deployment {deployment!r} was not found", transient=False
         )
     if status_code in (408, 429) or status_code >= 500:
         return ProviderError(
-            f"Foundry could not handle the call now (HTTP {status_code})",
+            f"The model service could not handle the call now (HTTP {status_code})",
             transient=True,
             retry_after=_retry_after(error.response.headers),
         )
     if features:
         return ProviderError(
-            f"Foundry rejected the request (HTTP {status_code}); the deployment "
+            f"The model service rejected the request (HTTP {status_code}); the model "
             f"may not support {features}, or these schemas",
             transient=False,
         )
     return ProviderError(
-        f"Foundry rejected the request (HTTP {status_code})", transient=False
+        f"The model service rejected the request (HTTP {status_code})",
+        transient=False,
     )
 
 

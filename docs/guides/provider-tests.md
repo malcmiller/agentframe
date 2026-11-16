@@ -1,9 +1,9 @@
 # Real-provider tests
 
-Tests against a real Ollama server, Foundry deployment or Anthropic model are
-opt-in and never run in normal CI. They are marked `ollama` / `foundry` /
-`anthropic` (and `entra` for a real
-Entra token) and skipped unless enabled, so the default `uv run pytest` never
+Tests against a real Ollama server, Foundry deployment, Anthropic model or
+plain OpenAI model are opt-in and never run in normal CI. They are marked
+`ollama` / `foundry` / `anthropic` / `openai` (and `entra` for a real Entra
+token) and skipped unless enabled, so the default `uv run pytest` never
 calls a provider. [AGENTS.md](../../AGENTS.md#real-provider-tests-opt-in-local-only)
 lists what each test covers.
 
@@ -22,10 +22,14 @@ Endpoints and model names come only from environment variables:
 | `AGENTFRAME_TEST_ANTHROPIC=1` | Anthropic | Enables the `anthropic` tests. |
 | `AGENTFRAME_ANTHROPIC_MODEL` | Anthropic | Model ID, for example `claude-haiku-4-5`. |
 | `ANTHROPIC_API_KEY` | Anthropic | API key, passed explicitly to `AnthropicModel(api_key=...)`. |
+| `AGENTFRAME_TEST_OPENAI=1` | OpenAI | Enables the `openai` tests: the shared provider tests against plain OpenAI through `FoundryModel(client=openai.AsyncOpenAI())`. |
+| `AGENTFRAME_OPENAI_MODEL` | OpenAI | Model name, for example `gpt-5.4-mini`. |
+| `OPENAI_API_KEY` | OpenAI | OpenAI API key, read by the `openai` client; never logged. |
 
 Foundry signs in with the Azure CLI credential (run `az login`; no API key).
-Foundry and Anthropic calls cost money, so prompts and caps are tiny; run them
-sparingly. The Anthropic tests are the same shared tests as Ollama and Foundry.
+Foundry, Anthropic and OpenAI calls cost money, so prompts and caps are tiny;
+run them sparingly. The Anthropic tests are the same shared tests as Ollama
+and Foundry.
 An enabled provider with a missing required variable fails rather than skips.
 
 ```bash
@@ -34,7 +38,14 @@ AGENTFRAME_TEST_FOUNDRY=1 AGENTFRAME_FOUNDRY_ENDPOINT=<base-url> \
   AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> uv run pytest -m foundry
 AGENTFRAME_TEST_ANTHROPIC=1 AGENTFRAME_ANTHROPIC_MODEL=claude-haiku-4-5 \
   ANTHROPIC_API_KEY=<key> uv run pytest -m anthropic
+AGENTFRAME_TEST_OPENAI=1 AGENTFRAME_OPENAI_MODEL=<model> OPENAI_API_KEY=<key> \
+  uv run pytest -m openai
 ```
+
+The `openai` tests are the same agent tests as the `foundry` ones (text,
+output limits, an unknown model, structured output, tools, judges, planning
+and routing); the Foundry-only test that turns on reasoning through a
+Foundry client does not run against OpenAI. There is no OpenAI CI workflow.
 
 The M10 planner tests in `test_providers.py` run the `examples/multi_agent`
 planner with the real model (the specialists use stand-in models): one plans

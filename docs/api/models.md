@@ -161,10 +161,10 @@ FoundryModel(
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `deployment` | `str` | Required | Deployment name; no automatic provisioning or fallback. |
+| `deployment` | `str` | Required | Deployment name; for plain OpenAI, the model name. No automatic provisioning or fallback. |
 | `endpoint` | `str \| None` | Required unless `client` is given | OpenAI v1 base URL `https://<resource>.openai.azure.com/openai/v1/`. Not a Foundry project agents endpoint. |
 | `credential` | `str \| AsyncTokenCredential \| None` | Required unless `client` is given | An API key, or an async Azure token credential (`azure.identity.aio`). The adapter wraps a token credential with `get_bearer_token_provider(credential, "https://ai.azure.com/.default")`. The credential stays application-owned and is never logged. |
-| `client` | `openai.AsyncOpenAI \| None` | `None` | An application-created client used instead of `endpoint`/`credential` (giving both fails). Used through `with_options(max_retries=0)`; it stays caller-owned and is never closed by the model. |
+| `client` | `openai.AsyncOpenAI \| None` | `None` | An application-created client used instead of `endpoint`/`credential` (giving both fails), for example `openai.AsyncOpenAI()` for [plain OpenAI](#plain-openai). Used through `with_options(max_retries=0)`; it stays caller-owned and is never closed by the model. |
 | `context_window` | `int \| None` | `None` | Tokens of input plus output the deployment accepts. The API does not report it, so `None` means unknown, never guessed. Must be greater than zero. |
 | `store` | `bool` | `False` | Whether Foundry stores responses server-side. Controls response storage only, not every provider retention mechanism. |
 | `structured_output` | `bool` | `True` | Whether `capabilities()` reports structured output. The Responses API defines it, so it is on by default (relaxing "unknown = unsupported" for Foundry only); pass `False` for a deployment that rejects it. A rejection fails the call with a non-transient `ProviderError`, never a retry or success. |
@@ -217,8 +217,9 @@ non-streaming Responses call.
 - HTTP 408, 429 and 5xx, connection failures and timeouts are transient
   `ProviderError`s (with the retry hint as `retry_after` in seconds, read from
   `retry-after-ms` when present, else a numeric `Retry-After`);
-  401/403, 404, other 4xx and Entra token failures are not. Messages never
-  include the service's error text or credentials.
+  401/403, 404, other 4xx and Entra token failures are not. An unknown
+  deployment or model (404, or 400 with code `model_not_found`) names it as
+  not found. Messages never include the service's error text or credentials.
 - [`capabilities`](#modelcapabilities-1) does no I/O and reports the
   configured `context_window` (or `None`), `structured_output` and `tools`.
   Without `context_window=`, an agent using this model needs an
@@ -229,6 +230,38 @@ non-streaming Responses call.
   set `AGENTFRAME_TEST_FOUNDRY=1`, `AGENTFRAME_FOUNDRY_ENDPOINT` and
   `AGENTFRAME_FOUNDRY_DEPLOYMENT`; they sign in with the Azure CLI credential.
   Default test runs and CI never call Foundry. See `AGENTS.md`.
+
+### Plain OpenAI
+
+Plain OpenAI serves the same v1 Responses API, so `FoundryModel` calls it
+unchanged through an injected client (#259); there is no separate OpenAI class
+or alias. Pass the OpenAI model name as `deployment`:
+
+```python
+import openai
+
+from agentframe import FoundryModel
+
+
+async def main() -> None:
+    # Reads OPENAI_API_KEY from the environment.
+    async with (
+        openai.AsyncOpenAI() as client,
+        FoundryModel(deployment="gpt-5.4-mini", client=client) as model,
+    ):
+        ...  # Inject the model into an agent and serve or run it.
+```
+
+Everything above applies as is: the request is the same (with `store=False`
+and, for tool calls, encrypted reasoning replay), the client is used with
+retries off and stays application-owned, and `context_window` is still
+unknown unless given. Error messages name "the model service" rather than
+Foundry, and an unknown model is reported as "not found" whether OpenAI
+answers HTTP 404 or HTTP 400 with code `model_not_found`. The `foundry` extra
+is still the one to install; it also brings `azure-identity`, which plain
+OpenAI does not use. Opt-in real tests: marker `openai`, with
+`AGENTFRAME_TEST_OPENAI=1`, `AGENTFRAME_OPENAI_MODEL` and `OPENAI_API_KEY`
+([provider tests](../guides/provider-tests.md)).
 
 ### Structured output
 
