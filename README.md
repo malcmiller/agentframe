@@ -26,6 +26,8 @@ Microsoft Agent Framework or similar packages.
   Claude through the Anthropic API.
 - **Structured output** as validated Pydantic instances.
 - **Tool calling** in a bounded, authorized loop.
+- **Conversation history:** multi-turn `ctx.generate` with a pluggable
+  `StateStore`, kept per verified caller and A2A `contextId`.
 - **Model routing:** opt-in routing of free-text requests to skills.
 - **Multi-agent composition:** `Remote` calls carrying deadlines, budgets and
   identity; `agentframe dev` and `agentframe compose`.

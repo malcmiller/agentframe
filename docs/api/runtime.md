@@ -13,7 +13,8 @@ adds the `FinishReason` model values and the `ModelError` family; M3 #36 adds
 and real `RunResult.tool_calls` counts. M7 #77 adds `Runtime(policy=...)`; M8+ #84 adds `RemoteAgentError` and #87 adds
 `Runtime(directory=...)`, `Runtime.validate_remotes` and `ClarificationNeededError`;
 #92 adds `Runtime(remotes=...)` and #93 its `OnBehalfOf` entries. M10 #175
-adds `Runtime(default_remote=...)`.
+adds `Runtime(default_remote=...)`. 0.5.0 #252 adds `Runtime(state_store=...)`,
+`conversation_id=`, `StateStore`, `InMemoryStateStore` and `ConversationKey`.
 The remaining parameters and errors
 arrive in later milestones. Managed local invocation is
 not an A2A wire operation.
@@ -32,6 +33,7 @@ Runtime(
     policy: ExecutionPolicy = ..., tracing: TracingConfig = ..., services: Services = ...,
     directory: AgentDirectory = ..., remotes: Mapping[str, Service] = ...,
     default_remote: Service | OnBehalfOf | None = None,
+    state_store: StateStore | None = None,
 )
 ```
 
@@ -45,6 +47,7 @@ Runtime(
 | `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; required when a skill takes a [`Remote`](discovery.md#remoteliteralname) parameter (M8+ #87) | Where `Remote[Literal["name"]]` parameters find their agents; each run binds them at its start, within its deadline. The application opens and closes it. |
 | `remotes` | `Mapping[str, `[`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)`]` | Optional; default no credentials (M8+ #92, #93) | How to authenticate to each remote agent, by directory name. A remote without an entry is called without credentials, which only works when its card declares no security. Any other value raises `DefinitionError`. Local runs have no signed-in user, so an `OnBehalfOf` remote fails them with `PermissionDeniedError`. |
 | `default_remote` | [`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)` \| None` | Optional; default `None` (M10 #175) | How to authenticate to [skill-catalog](orchestration.md#runcontextremote_skills) agents without a `remotes=` entry, only where their card requires credentials it meets; others are skipped. Never used for `Remote` parameters. Sent to every such registered agent, so read the [security note](orchestration.md#default_remote) first. Any other value raises `DefinitionError`. |
+| `state_store` | [`StateStore`](#statestore) | Optional; default a new [`InMemoryStateStore`](#inmemorystatestore) (0.5.0 #252) | Where conversation history is kept, keyed by [`ConversationKey`](#conversationkey). Hosted apps pass it through `AgentApp(runtime=Runtime(state_store=...))`. |
 
 ```python
 from agentframe import Runtime
@@ -188,7 +191,7 @@ return its validated value through the managed execution pipeline.
 async def invoke(
     self, agent: Agent, *, skill: str,
     arguments: Mapping[str, Any] | None = None, principal: Principal | None = None,
-    options: RunOptions | None = None,
+    options: RunOptions | None = None, conversation_id: str | None = None,
 ) -> Any: ...
 ```
 
@@ -205,6 +208,7 @@ containing execution metadata; both paths use the same pipeline.
 | `arguments` | String-keyed mapping of business values | Optional; `None` (default) means no arguments | Validated against selected skill. No `self`, `ctx`, `Inject[T]` parameters, principal, credentials or execution-policy overrides: those names count as unknown arguments. |
 | `principal` | Trusted `Principal \| None` | Default `None`; required for skills with `requires_permissions` | Supplied by trusted application code, never deserialized from untrusted arguments. `None` means no identity. |
 | `options` | [`RunOptions \| None`](configuration.md#runoptions) | Default `None` (no per-run overrides; M3 #42) | Limits and model settings for this run only, kept apart from business arguments. Each field set overrides the skill's, agent's and library's value ([precedence](configuration.md#precedence)). Hosted callers cannot supply them. |
+| `conversation_id` | `str \| None` | Default `None` (0.5.0 #252) | Selects the caller's conversation for [`RunContext.history`](agents.md#runcontexthistory) and [`save_turn`](agents.md#runcontextsave_turn), kept per agent, `principal` and ID. Needs a `principal` (`DefinitionError` otherwise); 1 to 256 characters (`InputValidationError` otherwise). Hosted runs use the A2A `contextId` instead. |
 
 Supply the [`Echo`](agents.md#agent) instance defined in the agent reference.
 `Echo` is an author-defined class, not an AgentFrame export.
@@ -264,7 +268,8 @@ result typing remains open):
 
 ```text
 await runtime.run(
-    agent, skill=..., arguments=..., principal=..., options=...
+    agent, skill=..., arguments=..., principal=..., options=...,
+    conversation_id=...,
 ) -> RunResult
 ```
 
@@ -273,6 +278,7 @@ await runtime.run(
 | `agent`, `skill`, `arguments` | Same as `invoke` | Required as above | Same validation, injection, authorization and limits; no implicit routing. |
 | `principal` | Trusted `Principal` | Needed for protected local work | Never supplied as business data. |
 | `options` | `RunOptions \| None` | Default `None` | Same as [`invoke`](#runtimeinvoke): per-run limits and model settings, merged field by field. |
+| `conversation_id` | `str \| None` | Default `None` | Same as [`invoke`](#runtimeinvoke): the caller's conversation for history. |
 
 ```python
 from agentframe import Agent, RunResult, Runtime
@@ -886,32 +892,160 @@ A remote task's own status text is never put in the message.
 **Related:** [`AgentDirectory`](discovery.md#agentdirectory),
 [`AgentFrameError`](#agentframeerror).
 
-## `StateStore` (deferred)
+## `StateStore`
 
-**Purpose / direction:** an injected structural interface for isolated
-conversation state, distinct from an A2A task store. It is not a prerequisite
-for the first usable release (text, typed structured generation and bounded
-tools with complete validated results).
+**Purpose / decision:** the injected structural interface where conversation
+history is kept between runs (0.5.0 #252). It is distinct from an A2A task
+store: tasks hold one exchange's protocol state, a `StateStore` holds the
+`user` and `assistant` messages a skill chooses to remember. Any class with
+these two methods is a `StateStore`; no base class is needed.
 
-**Signature status:** no constructor, methods, or field names have been proposed.
-
-| Concern | Type | Required/default status | Meaning and constraints |
-| --- | --- | --- | --- |
-| Conversation storage dependency | Future structural protocol | Deferred; state methods open | Service injection uses `Inject[T]` / `Services`; isolate state by trusted caller/conversation boundaries, not untrusted context/session IDs. |
+**Implemented protocol:**
 
 ```python
-from agentframe import StateStore
+from collections.abc import Sequence
+from typing import Protocol
+
+from agentframe import ConversationKey, Message
 
 
-def describe_store(store: StateStore) -> str:
-    return type(store).__name__
+class StateStore(Protocol):
+    async def load(self, key: ConversationKey) -> Sequence[Message]: ...
+    async def append(
+        self, key: ConversationKey, messages: Sequence[Message]
+    ) -> None: ...
 ```
 
-This only illustrates the future dependency type, not a usable storage API.
+| Method | Meaning and constraints |
+| --- | --- |
+| `load(key)` | Return the conversation's messages, oldest first; an empty sequence for an unknown key. |
+| `append(key, messages)` | Add `messages` to the end of the conversation, creating it if needed. A store may drop the oldest messages to stay within its own bounds. |
 
-**Behavior / failures:** no durability, persistence methods, or automatic state
-attachment is promised. Never store mutable per-caller state on a shared agent.
-Storage failure semantics and lifecycle must be specified before support.
+Pass one as `Runtime(state_store=...)`; hosted apps use
+`AgentApp(runtime=Runtime(state_store=...))`. Without one, each `Runtime`
+uses its own [`InMemoryStateStore`](#inmemorystatestore).
 
-**Related:** [extension responsibilities](../design/base-classes.md#authoring-and-extension-decisions),
+**Behavior / failures:** the runtime builds every
+[`ConversationKey`](#conversationkey) from the agent's name, the verified
+caller's `Principal.id` and the conversation ID. A store must treat all three
+fields together as the key, never the conversation ID alone, since any caller
+can send any ID. Stores hold only `user` and `assistant` text messages;
+provider-specific data is never passed to them. Exceptions a store raises
+propagate unchanged and fail the run (hosted callers see the generic failure
+message). The protocol has no delete method: bounds, expiry and erasure are
+the store's own policy.
+
+**External store recipe.** A store shared by several replicas or kept across
+restarts implements the same two methods. This Redis sketch keeps the newest
+200 messages per conversation for a day; `redis` and its client are
+application-supplied, not AgentFrame dependencies:
+
+```python
+import json
+from collections.abc import Sequence
+
+from redis.asyncio import Redis
+
+from agentframe import ConversationKey, Message
+
+
+class RedisStateStore:
+    def __init__(self, redis: Redis, *, max_messages: int = 200) -> None:
+        self._redis = redis
+        self._max_messages = max_messages
+
+    def _name(self, key: ConversationKey) -> str:
+        # JSON keeps the three fields apart, so no ID can collide with another.
+        return "agentframe:conversation:" + json.dumps(
+            [key.agent, key.caller, key.conversation]
+        )
+
+    async def load(self, key: ConversationKey) -> Sequence[Message]:
+        items = await self._redis.lrange(self._name(key), 0, -1)
+        return [Message(**json.loads(item)) for item in items]
+
+    async def append(self, key: ConversationKey, messages: Sequence[Message]) -> None:
+        name = self._name(key)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.rpush(
+                name,
+                *(json.dumps({"role": m.role, "content": m.content}) for m in messages),
+            )
+            pipe.ltrim(name, -self._max_messages, -1)
+            pipe.expire(name, 86_400)
+            await pipe.execute()
+```
+
+A SQL store works the same way: one row per message with `agent`, `caller`,
+`conversation`, a sequence number and the JSON message, read in order by the
+three key columns. Never build the key from request arguments, and keep the
+store's own bounds, since AgentFrame trims what it sends to the model, not
+what the store keeps.
+
+**Related:** [`RunContext.history`](agents.md#runcontexthistory),
+[`RunContext.save_turn`](agents.md#runcontextsave_turn),
+[multi-turn guide](../guides/agent-examples.md#multi-turn-conversations),
 [A2A task-store boundary](hosting.md#a2aconfig).
+
+## `InMemoryStateStore`
+
+**Purpose / decision:** the default [`StateStore`](#statestore): bounded, in
+this process only, lost on restart (0.5.0 #252).
+
+**Implemented constructor:**
+
+```text
+InMemoryStateStore(
+    *, max_conversations: int = 1_000, max_chars_per_conversation: int = 100_000,
+    ttl_seconds: float = 3_600, clock: Callable[[], float] = time.monotonic,
+)
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `max_conversations` | `int` | Default `1_000` | Most conversations kept at once; the least recently used is dropped first. |
+| `max_chars_per_conversation` | `int` | Default `100_000` | Most characters of message content kept per conversation, each message counting one more than its text so empty messages still count; the oldest messages are dropped first, and a kept conversation always starts with a `user` message. |
+| `ttl_seconds` | `float` | Default `3_600` | A conversation not loaded or appended to for this long is dropped. |
+| `clock` | `Callable[[], float]` | Default `time.monotonic` | Current time in seconds; tests replace it. |
+
+```python
+from agentframe import InMemoryStateStore, Runtime
+
+
+runtime = Runtime(state_store=InMemoryStateStore(max_conversations=100))
+```
+
+**Behavior / failures:** a bound not above 0 raises `DefinitionError`.
+`load` returns a copy, so changing it does not change the store. Several
+replicas each keep their own conversations, so a caller reaching another
+replica starts afresh; use an [external store](#statestore) when that matters.
+
+**Related:** [`StateStore`](#statestore), [`Runtime`](#runtime).
+
+## `ConversationKey`
+
+**Purpose / decision:** identifies one verified caller's conversation with
+one agent (0.5.0 #252). Built only by the runtime, never from request
+arguments; a frozen dataclass, so it is hashable.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `agent` | `str` | The agent's name. |
+| `caller` | `str` | The verified caller's `Principal.id`. |
+| `conversation` | `str` | The A2A `contextId` for hosted runs, or `conversation_id=` for local runs: 1 to 256 characters, caller-chosen, so meaningful only together with `caller`. |
+
+```python
+from agentframe import ConversationKey
+
+
+key = ConversationKey(agent="Chat", caller="alice", conversation="trip-planning")
+```
+
+**Behavior / failures:** a run has a conversation only with both a verified
+principal and a conversation ID. Hosted anonymous callers, and a `contextId`
+longer than 256 characters, get none (their skills see an empty history and
+save nothing); a local `conversation_id`
+without a `principal` raises `DefinitionError`, and an empty or longer than
+256-character ID raises `InputValidationError`.
+
+**Related:** [`StateStore`](#statestore), [`Principal`](authorization.md#principal).

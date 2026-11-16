@@ -34,6 +34,7 @@ from agentframe.models.base import (
     ModelResponse,
     ModelSettings,
     OutputSchema,
+    ToolSpec,
 )
 from agentframe.runtime.accounting import UNKNOWN_USAGE, RunAccounting
 from agentframe.runtime.limits import RunLimits
@@ -43,10 +44,13 @@ from agentframe.runtime.model_output import (
     text_from,
     validate_output,
 )
+from agentframe.runtime.state import newest_within
 from agentframe.runtime.tokens import (
     check_fits_model,
     estimate_input_tokens,
+    estimate_message_tokens,
     estimate_output_tokens,
+    input_token_limit,
     with_estimates,
 )
 from agentframe.runtime.tools import (
@@ -120,6 +124,7 @@ class GenerationState:
         tools: Iterable[Callable[..., Any]] = (),
         remote_tools: "Mapping[str, RemoteTool]" = NO_REMOTE_TOOLS,
         hosted_tools: Sequence[HostedTool] = (),
+        history: Sequence[Message] = (),
     ) -> str:
         """Send ``text`` to the model and return its complete answer.
 
@@ -138,13 +143,18 @@ class GenerationState:
                 bound to this run, by tool name.
             hosted_tools: Provider-run tools to offer the model. Each call
                 the provider ran counts toward ``max_tool_calls``.
+            history: Earlier untrusted ``user`` and ``assistant`` messages,
+                oldest first, sent between the instructions and ``text``. The
+                oldest are left out when they would not fit (see
+                ``fit_history``).
 
         Raises:
             DefinitionError: A selected tool is not registered on the agent
                 or is selected twice, a remote tool has the same name as a
-                selected tool, a hosted tool type is selected twice, or the
-                model reports no context window and no ``max_input_tokens``
-                is set.
+                selected tool, a hosted tool type is selected twice, ``history``
+                holds a message that is not a plain ``user`` or ``assistant``
+                message, or the model reports no context window and no
+                ``max_input_tokens`` is set.
             UnsupportedCapabilityError: The agent has no model, or the model
                 lacks something the request needs, such as a hosted tool.
             TokenLimitExceededError: A call does not fit the input limit,
@@ -164,7 +174,7 @@ class GenerationState:
                 model or tool call.
         """
         response = await self._generate(
-            ctx, text, instructions, None, tools, remote_tools, hosted_tools
+            ctx, text, instructions, None, tools, remote_tools, hosted_tools, history
         )
         if response.finish_reason is FinishReason.LENGTH and response.text:
             # Only text keeps what arrived before the limit, so a skill can
@@ -181,6 +191,7 @@ class GenerationState:
         tools: Iterable[Callable[..., Any]] = (),
         remote_tools: "Mapping[str, RemoteTool]" = NO_REMOTE_TOOLS,
         hosted_tools: Sequence[HostedTool] = (),
+        history: Sequence[Message] = (),
     ) -> T:
         """Send ``text`` to the model and return its reply validated as ``output``.
 
@@ -201,6 +212,7 @@ class GenerationState:
                 (see ``generate_text``).
             hosted_tools: Provider-run tools to offer the model (see
                 ``generate_text``).
+            history: Earlier messages (see ``generate_text``).
 
         Raises:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
@@ -212,7 +224,7 @@ class GenerationState:
         """
         schema = output_schema(output)
         response = await self._generate(
-            ctx, text, instructions, schema, tools, remote_tools, hosted_tools
+            ctx, text, instructions, schema, tools, remote_tools, hosted_tools, history
         )
         return validate_output(text_from(response), output)
 
@@ -225,6 +237,7 @@ class GenerationState:
         tools: Iterable[Callable[..., Any]],
         remote_tools: "Mapping[str, RemoteTool]",
         hosted_tools: Sequence[HostedTool],
+        history: Sequence[Message],
     ) -> ModelResponse:
         """Run the model and the tools it calls within the run's deadline.
 
@@ -233,16 +246,35 @@ class GenerationState:
         """
         selected_tools = self.select_tools(tools)
         check_unique_tool_names(selected_tools, remote_tools)
+        check_history(history)
         if self.model is None:
             raise UnsupportedCapabilityError("This agent has no model configured")
-        messages = build_messages(self.instructions, instructions, text)
+        # Tools and remote entries the caller lacks a required permission for
+        # are left out of the request.
+        specs = tuple(
+            tool_spec(tool)
+            for tool in selected_tools.values()
+            if is_permitted(tool, ctx.principal)
+        ) + tuple(
+            remote.spec()
+            for remote in remote_tools.values()
+            if is_permitted(remote.entry, ctx.principal)
+        )
         try:
             async with asyncio.timeout_at(ctx.deadline) as timeout:
+                if history:
+                    history = await self.fit_history(
+                        self.model, history, instructions, text, output, specs
+                    )
+                messages = build_messages(
+                    self.instructions, instructions, text, history
+                )
                 return await self._tool_loop(
                     self.model,
                     ctx,
                     messages,
                     output,
+                    specs,
                     selected_tools,
                     remote_tools,
                     tuple(hosted_tools),
@@ -260,6 +292,7 @@ class GenerationState:
         ctx: "RunContext",
         messages: tuple[Message, ...],
         output: OutputSchema | None,
+        specs: tuple[ToolSpec, ...],
         tools: Mapping[str, "ToolDefinition"],
         remote_tools: "Mapping[str, RemoteTool]",
         hosted_tools: tuple[HostedTool, ...],
@@ -272,11 +305,10 @@ class GenerationState:
         ``max_tool_calls`` before it runs. The loop ends because those limits
         are finite. A tool call, local or remote, is never retried.
 
-        Tools and remote entries the caller lacks a required permission for
-        are left out of the request, and every call is authorized again,
-        then passes the execution policy's tool checks, before it runs.
-        Every request, including each continuation, passes the execution
-        policy's model-request checks before it is sent.
+        ``specs`` offers only the tools the caller is permitted, and every call
+        is authorized again, then passes the execution policy's tool checks,
+        before it runs. Every request, including each continuation, passes
+        the execution policy's model-request checks before it is sent.
 
         Hosted tools run on the provider's side, so they bypass tool
         authorization and tool checks. A request offering them caps the
@@ -284,15 +316,6 @@ class GenerationState:
         when none remain; the calls the provider ran are counted after each
         response.
         """
-        specs = tuple(
-            tool_spec(tool)
-            for tool in tools.values()
-            if is_permitted(tool, ctx.principal)
-        ) + tuple(
-            remote.spec()
-            for remote in remote_tools.values()
-            if is_permitted(remote.entry, ctx.principal)
-        )
         while True:
             request = ModelRequest(
                 messages=messages,
@@ -348,6 +371,42 @@ class GenerationState:
                 "tool calls, so it cannot offer hosted tools"
             )
         return remaining
+
+    async def fit_history(
+        self,
+        model: Model,
+        history: Sequence[Message],
+        instructions: str | None,
+        text: str | Sequence[Message],
+        output: OutputSchema | None,
+        specs: tuple[ToolSpec, ...],
+    ) -> list[Message]:
+        """Return the newest whole ``history`` messages that fit the first request.
+
+        The request must fit the input limit, the context window less the
+        output cap, and the run's remaining tokens less the output cap. The
+        oldest messages are left out until the rest fits, and what is kept
+        starts with a ``user`` message. Only the first request is fitted:
+        tool results added later may still exceed a limit and fail as usual.
+        """
+        max_output = self.settings.max_output_tokens
+        max_total = self.limits.max_total_tokens
+        assert max_output is not None and max_total is not None  # Set by defaults.
+        capabilities = await model.capabilities()
+        bounds = [
+            input_token_limit(self.limits, capabilities),
+            self.accounting.remaining_tokens(max_total) - max_output,
+        ]
+        if capabilities.context_window is not None:
+            bounds.append(capabilities.context_window - max_output)
+        without_history = ModelRequest(
+            messages=build_messages(self.instructions, instructions, text),
+            settings=self.settings,
+            output=output,
+            tools=specs,
+        )
+        budget = min(bounds) - estimate_input_tokens(without_history)
+        return newest_within(history, budget, estimate_message_tokens)
 
     async def _check_request(self, request: ModelRequest, ctx: "RunContext") -> None:
         """Run the model-request checks once for a logical request.
@@ -510,16 +569,34 @@ def check_supports(request: ModelRequest, capabilities: ModelCapabilities) -> No
             )
 
 
+def check_history(history: Sequence[Message]) -> None:
+    """Check that ``history`` holds only plain ``user`` and ``assistant`` messages.
+
+    History is untrusted, so it can never add instructions as a ``system``
+    message, or tool calls and results the run did not make.
+
+    Raises:
+        DefinitionError: A message has another role or carries tool calls.
+    """
+    for message in history:
+        if message.role not in ("user", "assistant") or message.tool_calls:
+            raise DefinitionError(
+                "history may only hold user and assistant messages without tool calls"
+            )
+
+
 def build_messages(
     agent_instructions: str | None,
     call_instructions: str | None,
     text: str | Sequence[Message],
+    history: Sequence[Message] = (),
 ) -> tuple[Message, ...]:
     """Put trusted instructions in ``system`` messages, then the untrusted ``text``.
 
-    ``text`` is one ``user`` message, or a conversation of messages sent as
-    given after the instructions. Untrusted text is never merged into
-    instructions. This keeps the roles separate; it does not guarantee
+    ``history``, earlier messages of the conversation, comes between the
+    instructions and ``text``. ``text`` is one ``user`` message, or a
+    conversation of messages sent as given. Untrusted text is never merged
+    into instructions. This keeps the roles separate; it does not guarantee
     resistance to prompt injection.
     """
     messages = [
@@ -527,6 +604,7 @@ def build_messages(
         for instructions in (agent_instructions, call_instructions)
         if instructions
     ]
+    messages.extend(history)
     if isinstance(text, str):
         messages.append(Message(role="user", content=text))
     else:

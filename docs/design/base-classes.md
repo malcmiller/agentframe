@@ -25,7 +25,7 @@ Configuration and composition are intentional alternatives to inheritance.
 | Tools | Annotation-based with explicit registration | `@tool(...)` defines typed callables for first-release bounded execution/continuations; registration and action authorization remain separate. |
 | Execution loop | Library default with a replaceable interface | First release owns bounded tool execution/results and generation continuations; advanced executors remain later. |
 | Run context and services | Library-managed context, annotated injection | `RunContext` supplies generation/control signals; `Inject[T]` resolves registered `Services`. Do not subclass context to store application state. |
-| Conversation state | Injected interface implementation | A future `StateStore` protocol isolates conversation state. It is not the A2A task store. |
+| Conversation state | Injected interface implementation | The [`StateStore`](../api/runtime.md#statestore) protocol (0.5.0 #252, in-memory by default) keeps conversation history per agent, verified caller and conversation ID. It is not the A2A task store. |
 | Knowledge / retrieval | Injected interface or annotated tool | Application-directed retrieval uses a dependency; model-directed retrieval uses an explicitly registered tool. |
 | Execution policy | Typed configuration and policy interface | Limits and runtime checks enforce policy; metadata may declare requirements but cannot enforce them. |
 | Authorization | Skill permission annotations and an injected policy | `requires_permissions` declares all-of grants; verified identity and resource policy govern execution. Roles remain application-owned. |

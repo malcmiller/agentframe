@@ -455,6 +455,52 @@ reports input/output/total tokens with completeness/estimate information;
 unknown usage is never assumed zero. Ordinary remote A2A gets the invocation ID and
 a safe usage snapshot (token counts, estimated flag, model and tool call counts), not this internal result object.
 
+## Multi-turn conversations
+
+A skill remembers earlier turns by reading the caller's history, passing it
+to `generate` and saving the new exchange (0.5.0 #252):
+
+```python
+from agentframe import Agent, RunContext, agent, skill
+
+
+@agent(name="Chat", description="Chats, remembering earlier turns.", version="0.1.0")
+class Chat(Agent):
+    @skill(id="chat", name="Chat", description="Answer.", tags=["chat"])
+    async def chat(self, text: str, ctx: RunContext) -> str:
+        history = await ctx.history()
+        answer = await ctx.generate(text, history=history)
+        await ctx.save_turn(text, answer)
+        return answer
+```
+
+Hosted, an A2A caller continues a conversation by sending the same
+`contextId`. Locally, pass a principal and `conversation_id=`:
+
+```python
+from agentframe import Agent, Principal, Runtime
+
+
+async def two_turns(runtime: Runtime, chat: Agent) -> str:
+    alice = Principal(id="alice")
+    await runtime.invoke(
+        chat, skill="chat", arguments={"text": "My name is Alice."},
+        principal=alice, conversation_id="intro",
+    )
+    return await runtime.invoke(
+        chat, skill="chat", arguments={"text": "What is my name?"},
+        principal=alice, conversation_id="intro",
+    )
+```
+
+Conversations are kept per agent, verified caller and ID, so two callers
+sending the same `contextId` never see each other's messages, and anonymous
+callers have no history. `generate` drops the oldest messages that do not fit
+the request's limits. The default store is in memory, bounded and per
+process; pass `Runtime(state_store=...)` (hosted:
+`AgentApp(runtime=Runtime(state_store=...))`) for a shared or durable one, as
+in the [external store recipe](../api/runtime.md#statestore).
+
 ## Limits, tracing, and optional MCP
 
 The same skills inherit token budgets/deadlines; use

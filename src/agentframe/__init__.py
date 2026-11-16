@@ -81,6 +81,7 @@ from agentframe.runtime.routing import (
     SkillRouter,
 )
 from agentframe.runtime.runtime import RunResult, Runtime
+from agentframe.runtime.state import ConversationKey, InMemoryStateStore, StateStore
 from agentframe.security.authentication import (
     AllowAnonymous,
     AnyOf,
@@ -139,6 +140,7 @@ __all__ = [
     "CancelledError",
     "Clarification",
     "ClarificationNeededError",
+    "ConversationKey",
     "DeclaresCardSecurity",
     "DefinitionError",
     "DevSettings",
@@ -153,6 +155,7 @@ __all__ = [
     "FoundryWebSearch",
     "HostConfig",
     "HostedTool",
+    "InMemoryStateStore",
     "IncompleteOutputError",
     "Inject",
     "InputCheck",
@@ -199,6 +202,7 @@ __all__ = [
     "SkillCatalog",
     "SkillDefinition",
     "SkillRouter",
+    "StateStore",
     "StepResult",
     "TimeoutLimitExceededError",
     "TokenLimitExceededError",

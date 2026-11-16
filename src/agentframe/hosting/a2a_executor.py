@@ -105,6 +105,7 @@ from agentframe.runtime.routing import (
     routing_limits,
 )
 from agentframe.runtime.runtime import Runtime
+from agentframe.runtime.state import MAX_CONVERSATION_ID_LENGTH
 from agentframe.security.principal import Principal
 from agentframe.skill_call import (
     SKILL_CALL_EXTENSION_URI,
@@ -472,6 +473,7 @@ class RuntimeExecutor(AgentExecutor):
             run.user_token,
             run.correlation,
             own_interface_url=self._own_interface_url,
+            conversation_id=hosted_conversation_id(context.context_id, run.principal),
         )
         return result_part(result.value, run.invocation_id, self._max_response_bytes)
 
@@ -780,3 +782,20 @@ def _task_ids(context: RequestContext) -> tuple[str, str]:
 
 def _new_invocation_id() -> str:
     return str(uuid.uuid4())
+
+
+def hosted_conversation_id(
+    context_id: str | None, principal: Principal | None
+) -> str | None:
+    """Return the run's conversation ID from the A2A ``contextId``, or ``None``.
+
+    Any caller can send any ``contextId``, so only a verified caller gets a
+    conversation, and the runtime keys it by that caller. An empty or
+    over-long ``contextId`` gives no conversation rather than failing a run
+    whose skill may never use history.
+    """
+    if principal is None or not context_id:
+        return None
+    if len(context_id) > MAX_CONVERSATION_ID_LENGTH:
+        return None
+    return context_id

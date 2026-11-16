@@ -149,6 +149,17 @@ behavior starts with an **Upgrading** section; see the
   opt-in `openai` real-provider tests (`AGENTFRAME_TEST_OPENAI=1`) run the
   shared provider tests against it (#259).
 
+- **Conversation history:** `ctx.generate(history=...)` sends earlier
+  `user` and `assistant` messages, keeping the newest that fit the first
+  request's input, context-window and remaining-token limits.
+  `ctx.history()` and `ctx.save_turn()` read and add to the caller's
+  conversation in the runtime's `StateStore`, a structural protocol
+  (`load`, `append`) set with `Runtime(state_store=...)`. The default
+  `InMemoryStateStore` is bounded (1000 conversations, 100000 characters
+  each, one hour idle). Conversations are keyed by `ConversationKey`: the
+  agent, the verified caller and the A2A `contextId` (or `conversation_id=`
+  on `Runtime.invoke` / `run`), so a context ID alone never reaches another
+  caller's history; anonymous hosted callers get none (#252).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,
