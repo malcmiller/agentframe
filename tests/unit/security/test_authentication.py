@@ -293,6 +293,40 @@ async def test_any_of_refuses_a_request_without_any_member_header(
         await users_or_services.authenticate({"Cookie": "session=1"})
 
 
+class UserTokenAuth(BearerAuth):
+    """A bearer member that keeps the user's token, like EntraIDAuth."""
+
+    async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
+        caller = await super().authenticate(headers)
+        return VerifiedCaller(id=caller.id, user_assertion="user-token")
+
+
+class ExchangingUserTokenAuth(UserTokenAuth):
+    """A member that can also exchange the user tokens it verifies."""
+
+    def check_on_behalf_of(self) -> None: ...
+
+    def on_behalf_of(self, user_assertion: str) -> object:
+        return object()
+
+
+@pytest.mark.parametrize(
+    ("member", "kept"),
+    [(UserTokenAuth(), None), (ExchangingUserTokenAuth(), "user-token")],
+    ids=["other-member", "exchanging-member"],
+)
+async def test_any_of_keeps_user_tokens_only_from_the_member_that_exchanges_them(
+    auth: APIKeyAuth, member: BearerAuth, kept: str | None
+) -> None:
+    users_or_services = AnyOf(member, auth)
+
+    caller = await users_or_services.authenticate(
+        {"Authorization": "Bearer user-token"}
+    )
+
+    assert caller is not None and caller.user_assertion == kept
+
+
 def test_any_of_lists_every_scheme_and_one_requirement_per_member(
     users_or_services: AnyOf,
 ) -> None:

@@ -1110,7 +1110,9 @@ can exchange user tokens, such as an `EntraIDAuth` with `client_id=` and
 `client_credential=`. Runs for its signed-in users exchange their tokens as
 usual; runs for other members' callers (API keys, app-only tokens) fail the
 `OnBehalfOf` call with `PermissionDeniedError`, as they would with `EntraIDAuth`
-alone. `Service` remotes work for every caller.
+alone. Only that member's verified user tokens are exchanged: `AnyOf` drops
+the `user_assertion` of callers that other members verify. `Service` remotes
+work for every caller.
 
 **Behavior / failures:** construction raises `DefinitionError` when fewer than
 two members are given, a member is itself an `AnyOf` (list them all in one), a

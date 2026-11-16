@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol, runtime_checkable
 
 from a2a.types import APIKeySecurityScheme, SecurityScheme
@@ -302,7 +302,8 @@ class AnyOf(Authenticator, DeclaresCardSecurity):
             headers: The request's HTTP headers; names match case-insensitively.
 
         Returns:
-            The caller that member verified.
+            The caller that member verified. Its ``user_assertion`` is kept
+            only when that member can exchange user tokens itself.
 
         Raises:
             AuthenticationError: No member's header is present, or that
@@ -311,8 +312,22 @@ class AnyOf(Authenticator, DeclaresCardSecurity):
         sent = {name.lower() for name in headers}
         for member, member_headers in zip(self._members, self._headers, strict=True):
             if member_headers & sent:
-                return await member.authenticate(headers)
+                caller = await member.authenticate(headers)
+                if caller is not None and not _exchanges_user_tokens(member):
+                    # The host exchanges user tokens with the member that can,
+                    # so it must only ever see tokens that member verified.
+                    caller = replace(caller, user_assertion=None)
+                return caller
         raise AuthenticationError("Authentication required.")
+
+
+def _exchanges_user_tokens(member: Authenticator) -> bool:
+    """Return whether ``member`` can exchange user tokens, like ``EntraIDAuth``.
+
+    This is ``discovery.identity.UserTokenExchange``, checked by name because
+    importing it here would be circular.
+    """
+    return callable(getattr(member, "on_behalf_of", None))
 
 
 def _member_schemes(member: Authenticator) -> dict[str, SecurityScheme]:

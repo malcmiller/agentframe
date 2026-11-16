@@ -262,7 +262,8 @@ their `remotes=` entry counts, checked at startup.
   never across redirects; a redirect-following directory client raises
   `DefinitionError` when the default would be used (#84, #92).
 - An `OnBehalfOf` default needs `AgentApp` with
-  `auth=EntraIDAuth(client_id=..., client_credential=...)`; any other
+  `auth=EntraIDAuth(client_id=..., client_credential=...)`, alone or as the
+  one such member of [`AnyOf`](authorization.md#anyof); any other
   authenticator raises `DefinitionError` at construction, as for `OnBehalfOf`
   entries (#93). A run without a signed-in user (app-only token, API-key or
   anonymous caller, or a local run) raises `PermissionDeniedError` when an
