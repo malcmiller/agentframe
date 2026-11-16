@@ -4,7 +4,7 @@ from a2a.auth.user import UnauthenticatedUser, User
 from a2a.server.agent_execution import RequestContext, SimpleRequestContextBuilder
 from a2a.server.context import ServerCallContext
 from a2a.server.routes import DefaultServerCallContextBuilder
-from a2a.types import SendMessageRequest, Task
+from a2a.types import AgentCard, SendMessageRequest, Task
 from starlette.requests import Request
 
 from agentframe.hosting.a2a_executor import (
@@ -30,7 +30,22 @@ _CREDENTIAL_HEADERS = frozenset(
 
 class CallerContextBuilder(DefaultServerCallContextBuilder):
     """Add the caller, any run slot, any dedup outcome and any valid W3C trace
-    context to the call context."""
+    context to the call context.
+
+    Args:
+        card: The served Agent Card. Headers its API-key schemes name, such as
+            a custom ``APIKeyAuth(header=...)``, are dropped like the
+            standard credential headers.
+    """
+
+    def __init__(self, card: AgentCard) -> None:
+        super().__init__()
+        self._credential_headers = _CREDENTIAL_HEADERS | {
+            scheme.api_key_security_scheme.name.lower()
+            for scheme in card.security_schemes.values()
+            if scheme.WhichOneof("scheme") == "api_key_security_scheme"
+            and scheme.api_key_security_scheme.location == "header"
+        }
 
     def build(self, request: Request) -> ServerCallContext:
         context = super().build(request)
@@ -40,7 +55,7 @@ class CallerContextBuilder(DefaultServerCallContextBuilder):
         context.state["headers"] = {
             name: value
             for name, value in context.state.get("headers", {}).items()
-            if name.lower() not in _CREDENTIAL_HEADERS
+            if name.lower() not in self._credential_headers
         }
         context.state[PRINCIPAL_STATE_KEY] = request.state.principal
         context.state[USER_TOKEN_STATE_KEY] = request.state.user_token

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 
 import pytest
@@ -97,7 +98,61 @@ async def test_invalid_key_is_rejected_without_revealing_it(
 
 def test_configured_keys_are_not_revealed_by_repr(auth: APIKeyAuth) -> None:
     assert BILLING_KEY not in repr(auth)
-    assert repr(auth) == "APIKeyAuth(<3 keys>)"
+    assert repr(auth) == "APIKeyAuth(<3 keys>, header='X-API-Key')"
+
+
+async def test_custom_header_carries_the_key_instead_of_x_api_key() -> None:
+    auth = APIKeyAuth(
+        keys={BILLING_KEY: APIKey(caller_id="billing-svc")},
+        header="Ocp-Apim-Subscription-Key",
+    )
+
+    caller = await auth.authenticate({"ocp-apim-subscription-key": BILLING_KEY})
+
+    assert caller.id == "billing-svc"
+    with pytest.raises(AuthenticationError, match="Authentication required"):
+        await auth.authenticate({"X-API-Key": BILLING_KEY})
+
+
+def test_card_scheme_names_the_configured_header(auth: APIKeyAuth) -> None:
+    custom = APIKeyAuth(keys={BILLING_KEY: APIKey("billing-svc")}, header="X-Key")
+
+    default_scheme = auth.card_security()["apiKey"].api_key_security_scheme
+    custom_scheme = custom.card_security()["apiKey"].api_key_security_scheme
+
+    assert (default_scheme.location, default_scheme.name) == ("header", "X-API-Key")
+    assert (custom_scheme.location, custom_scheme.name) == ("header", "X-Key")
+
+
+@pytest.mark.parametrize("header", ["", "X API Key", 'X-Key"', "X-Key\r\n", 42])
+def test_invalid_header_name_is_rejected(header: object) -> None:
+    with pytest.raises(DefinitionError, match="header"):
+        APIKeyAuth(keys={BILLING_KEY: APIKey("billing-svc")}, header=header)  # type: ignore[arg-type]
+
+
+async def test_hashed_keys_match_the_sha256_digest_of_the_sent_key() -> None:
+    digest = hashlib.sha256(BILLING_KEY.encode()).hexdigest()
+    auth = APIKeyAuth(keys={digest.upper(): APIKey("billing-svc")}, hashed=True)
+
+    caller = await auth.authenticate({"X-API-Key": BILLING_KEY})
+
+    assert caller.id == "billing-svc"
+    with pytest.raises(AuthenticationError, match="Invalid credentials"):
+        await auth.authenticate({"X-API-Key": digest})
+
+
+@pytest.mark.parametrize("key", [BILLING_KEY, "ab" * 31, "zz" * 32])
+def test_hashed_keys_must_be_sha256_hex_digests(key: str) -> None:
+    with pytest.raises(DefinitionError, match="SHA-256"):
+        APIKeyAuth(keys={key: APIKey("billing-svc")}, hashed=True)
+
+
+def test_hashed_keys_differing_only_in_case_are_rejected() -> None:
+    digest = hashlib.sha256(BILLING_KEY.encode()).hexdigest()
+    keys = {digest: APIKey("billing-svc"), digest.upper(): APIKey("admin-svc")}
+
+    with pytest.raises(DefinitionError, match="distinct"):
+        APIKeyAuth(keys=keys, hashed=True)
 
 
 def test_permissions_are_the_union_of_role_permissions() -> None:
