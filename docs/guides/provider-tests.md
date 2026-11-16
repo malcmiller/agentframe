@@ -44,7 +44,9 @@ nondeterministic and `llama3.2:3b` often plans badly, so for Ollama an
 invalid or empty plan, a plan the example's checks refuse, or (for the
 evaluation) more than half the plans erroring is an expected failure (xfail);
 any other failure still fails. The same applies to the two-step planning test,
-and to the judge example test when the small judge fails correct answers;
+to the `examples/dynamic_agents` planner test (where a step the model gave bad
+arguments, leaving the outcome incomplete, is also an expected failure), and
+to the judge example test when the small judge fails correct answers;
 measured rates are in the
 [orchestration guide](orchestration.md#measure-the-planner).
 For example:

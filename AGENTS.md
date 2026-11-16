@@ -113,7 +113,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
 | `tests/benchmarks/` | Opt-in overhead and throughput benchmarks (`AGENTFRAME_BENCHMARK=1`, marker `benchmark`); baseline in `docs/guides/performance.md`. |
 | `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`); `agent_processes.py` starts agents (`agentframe run`) and the plain A2A peer (`peer_process.py`) as separate processes for release tests. |
-| `examples/` | Runnable examples, each with `create_app()` (`evaluation.py` has `create_evaluation()` instead; `multi_agent/planner_evaluation.py` has `create_planner_evaluation(model, runtime)`); `smoke.py` checks them all against the installed wheel in CI. `multi_agent/` holds the research, writer and planner agents (hand-written `plan`, model-planned `propose` / `planned`, M10). |
+| `examples/` | Runnable examples, each with `create_app()` (`evaluation.py` has `create_evaluation()` instead; `multi_agent/planner_evaluation.py` has `create_planner_evaluation(model, runtime)`); `smoke.py` checks them all against the installed wheel in CI. `multi_agent/` holds the research, writer and planner agents (hand-written `plan`, model-planned `propose` / `planned`, M10); `dynamic_agents/` holds a planner that plans over skills tagged `content`, naming no agent (#245). |
 | `docs/roadmap.md` | Product boundaries, decisions and milestones. |
 | `docs/guides/` | How to use AgentFrame and how its behavior works. |
 | `docs/design/` | Rationale and proposed designs. |
@@ -147,7 +147,9 @@ post with the real model and the planner evaluation with `report.require`
 (M10 #176, `-k real_planner`; specialists use stand-in models; for Ollama only
 model-quality outcomes xfail: an invalid or empty plan, a plan the example's
 checks refuse, or more than half the evaluation's plans erroring that way;
-any other failure fails), a Foundry one-tool round trip that replays encrypted
+any other failure fails), the `examples/dynamic_agents` planner finding its
+skills by tag and running its post (#245; an incomplete outcome is also an
+Ollama xfail), a Foundry one-tool round trip that replays encrypted
 reasoning items and one unambiguous free-text request routed by
 `examples/routed_assistant.py` over A2A (checking only the selected skill and
 that its argument is present, since routing is nondeterministic). They are marked

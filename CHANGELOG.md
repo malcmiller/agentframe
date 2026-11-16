@@ -31,6 +31,18 @@ behavior starts with an **Upgrading** section; see the
 
 ### Added
 
+- **Examples:** [`examples/dynamic_agents`](examples/dynamic_agents), a
+  planner that names no agent. Its `run_goal` skill plans over every
+  registered skill tagged `content` (`ctx.remote_skills(tags=["content"])`),
+  runs the plan with `ctx.run_plan(..., on_failure="continue")` and reports
+  each step's status; registering a third tagged agent needs no code change.
+  It calls the model-free research and writer specialists with its own
+  development key through `default_remote=` (the docstring explains
+  `OnBehalfOf` for production), requires `plans:run` and refuses plans of
+  more than three steps with an `ExecutionPolicy` plan check. Planning uses
+  Ollama through `AGENTFRAME_OLLAMA_MODEL`; without it the agent starts and
+  `run_goal` fails clearly. Run it with `agentframe dev`; `agents.yaml` serves
+  agents started by hand (#245).
 - **Discovery:** `FoundryA2AToolRegistry(project_endpoint=..., credential=...)`
   lists a Microsoft Foundry project's A2A connections (type `RemoteA2A`) as
   agent references, following every page: each is named after its connection,

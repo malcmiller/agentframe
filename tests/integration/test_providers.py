@@ -66,6 +66,9 @@ from agentframe.models.ollama import DEFAULT_ENDPOINT
 from agentframe.orchestration.plan import dependencies
 from agentframe.orchestration.planning import NO_PLAN_MESSAGE
 from examples.assistant import Summary, create_app
+from examples.dynamic_agents import planner as dynamic_planner
+from examples.dynamic_agents import research as dynamic_research
+from examples.dynamic_agents import writer as dynamic_writer
 from examples.evaluation import create_answer_evaluation
 from examples.multi_agent.planner import create_app as create_planner_app
 from examples.multi_agent.planner_evaluation import create_planner_evaluation
@@ -798,6 +801,61 @@ async def test_a_real_planner_passes_its_evaluation(
     if len(errored) > 3:
         pytest.xfail(f"The small Ollama model planned {len(errored)} goals badly")
     report.require(min_pass_rate=0.0, max_errors=3)
+
+
+async def test_a_real_planner_finds_the_dynamic_example_skills_by_tag(
+    serve: ServeLocally,
+    model: Model,
+    http: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="agentframe.orchestration")
+    monkeypatch.setenv("AGENTFRAME_DEV", "1")
+    monkeypatch.setenv("AGENTFRAME_DEV_API_KEYS", f"planner={SPECIALIST_KEY}")
+
+    def dev_app(create_app: Callable[[], AgentApp]) -> Callable[[str], AgentApp]:
+        def make_app(public_url: str) -> AgentApp:
+            monkeypatch.setenv("AGENTFRAME_PUBLIC_URL", public_url)
+            return create_app()
+
+        return make_app
+
+    async with (
+        serve(dev_app(dynamic_research.create_app)) as research_url,
+        serve(dev_app(dynamic_writer.create_app)) as writer_url,
+    ):
+        monkeypatch.setenv(
+            "AGENTFRAME_AGENTS",
+            f"research-agent={research_url}{CARD},writer-agent={writer_url}{CARD}",
+        )
+        monkeypatch.setenv("AGENTFRAME_DEV_API_KEYS", f"developer={CLIENT_KEY}")
+        monkeypatch.setenv(
+            "AGENTFRAME_DEV_REMOTE_KEYS",
+            f"research-agent={SPECIALIST_KEY},writer-agent={SPECIALIST_KEY}",
+        )
+        async with (
+            serve(dev_app(lambda: dynamic_planner.create_app(model))) as planner_url,
+            await connect(planner_url, CLIENT_KEY, http=http) as client,
+        ):
+            goal = "Write a post titled Tides from sources about tides."
+            task = await call_skill(client, "run_goal", {"goal": goal})
+
+    # Planning is nondeterministic: only the skills used and completion are
+    # checked, not step IDs, arguments or the post's wording. A step the
+    # model gave bad arguments fails, and the outcome reports it incomplete.
+    if isinstance(model, OllamaModel) and post_planned_badly(task, caplog.records):
+        reason = get_message_text(task.status.message)
+        pytest.xfail(f"The small Ollama model planned badly: {reason}")
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED, task.status
+    outcome = get_data_parts(task.artifacts[0].parts)[0]["value"]
+    if isinstance(model, OllamaModel) and not outcome["complete"]:
+        pytest.xfail(f"The small Ollama model planned a failing step: {outcome}")
+    assert outcome["complete"] is True, outcome
+    [created] = [r for r in caplog.records if r.getMessage().startswith("Plan created")]
+    uses = getattr(created, "uses")  # noqa: B009 - a log record's extra field
+    assert {"research-agent.find_sources", "writer-agent.write_post"} <= set(uses)
+    print(f"plan: {uses}; tokens: {task.metadata['usage']['total_tokens']}")
 
 
 # Model routing: free text over A2A, routed by the built-in router

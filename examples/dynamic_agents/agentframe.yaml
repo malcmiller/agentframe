@@ -1,0 +1,15 @@
+# Run the agents locally from this directory: agentframe dev
+# Set AGENTFRAME_OLLAMA_MODEL to an installed tag, such as llama3.2:3b, for
+# the planner's plans.
+# To add a specialist, add it here (and to agents.yaml): the planner uses
+# every registered skill tagged "content", with no code change.
+agents:
+  research-agent:
+    app: research:create_app
+    port: 8011
+  writer-agent:
+    app: writer:create_app
+    port: 8012
+  planner:
+    app: planner:create_app
+    port: 8010

@@ -1,0 +1,9 @@
+# The registry the planner reads when you start the agents yourself with
+# agentframe run (agentframe dev writes its own from agentframe.yaml):
+#     AGENTFRAME_DEV_REGISTRY=agents.yaml
+# The planner finds skills by tag, so listing an agent here is all it takes to
+# offer its "content" skills to the planner's model.
+- name: research-agent
+  url: http://127.0.0.1:8011/.well-known/agent-card.json
+- name: writer-agent
+  url: http://127.0.0.1:8012/.well-known/agent-card.json

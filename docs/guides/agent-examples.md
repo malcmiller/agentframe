@@ -541,7 +541,11 @@ to know:
 
 An orchestrator is ordinary Python: no workflow engine. M10 (0.3.0) adds
 opt-in model-planned orchestration; see the
-[orchestration guide](orchestration.md). Remote services authenticate callers and enforce their own policy and
+[orchestration guide](orchestration.md).
+[`examples/dynamic_agents`](../../examples/dynamic_agents) is the opposite of
+the named `Remote` parameters above: its planner names no agent and plans over
+every registered skill tagged `content`
+([finding skills by tag](orchestration.md#finding-skills-by-tag)). Remote services authenticate callers and enforce their own policy and
 limits; a found card is not permission to call an agent. See
 [discovery](../design/discovery.md), its
 [reference](../api/discovery.md) and [local dev/containers](development.md).

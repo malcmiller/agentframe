@@ -148,6 +148,62 @@ other shape: `propose` and a separate, permission-protected `execute` with a
 person reviewing the plan in between
 ([propose, review, execute](../api/orchestration.md#propose-review-execute)).
 
+### Finding skills by tag
+
+[`examples/dynamic_agents`](../../examples/dynamic_agents) goes one step
+further: its planner names no agent at all. It has no `Remote` parameters and
+no `remotes=` entries; each run plans over every registered skill tagged
+`content`, so registering another agent with a `content` skill makes it
+available with no code change:
+
+```python
+TAG = "content"
+MAX_PLAN_STEPS = 3
+
+
+@agent(name="Planner", version="0.1.0")
+class Planner(Agent):
+    @skill(id="run_goal", tags=["planning"], requires_permissions=["plans:run"])
+    async def run_goal(self, goal: str, ctx: RunContext) -> PlanOutcome:
+        skills = await ctx.remote_skills(tags=[TAG])
+        plan = await ctx.plan(goal, skills, max_steps=MAX_PLAN_STEPS)
+        result = await ctx.run_plan(
+            plan,
+            skills,
+            max_steps=MAX_PLAN_STEPS,
+            max_tokens_per_step=STEP_TOKENS,
+            on_failure="continue",
+        )
+        ...
+
+
+async def small_plans_only(
+    skill: SkillDefinition, principal: Principal | None, plan: Plan
+) -> bool:
+    """The operator's guard, whatever max_steps a skill passes."""
+    return len(plan.steps) <= MAX_PLAN_STEPS
+
+
+AgentApp(
+    agent=Planner(model=model),
+    host=HostConfig(...),
+    directory=dev.directory,
+    default_remote=own_identity(dev),  # this agent's development key
+    policy=ExecutionPolicy(plan_checks=[small_plans_only]),
+)
+```
+
+Because every agent is reached through
+[`default_remote`](../api/orchestration.md#default_remote) with the planner's
+own key, this is the open-proxy shape the [safety checklist](#safety-checklist)
+warns about: the tag narrows the catalog, `requires_permissions` limits who
+may run a goal, and `max_steps` tells the model the plan size that the plan
+check then enforces. A production host would
+call the specialists `OnBehalfOf` the signed-in user instead. Run it from
+`examples/dynamic_agents` with `agentframe dev` as above, calling `run_goal`
+on `http://127.0.0.1:8010`; `agents.yaml` is the same registry for agents
+started by hand with `agentframe run`.
+
 ## The catalog
 
 `ctx.remote_skills(...)` builds the options a model may choose from the Agent
