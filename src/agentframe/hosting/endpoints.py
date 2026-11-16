@@ -68,10 +68,76 @@ def guard_a2a_endpoint(
 
     Every refusal happens before the SDK sees the request, so no task exists.
     """
+    check_caller = caller_check(host, user_token_exchange, card)
+
+    async def guarded_endpoint(request: Request) -> Response:
+        checked = await check_caller(request)
+        if isinstance(checked, Response):
+            return checked
+        request = checked
+
+        if not await _is_send_message(request):
+            return await sdk_endpoint(request)
+        principal: Principal | None = request.state.principal
+        if rate_limiter is not None:
+            wait = rate_limiter.try_acquire(principal.id if principal else None)
+            if wait is not None:
+                return too_many_requests(wait)
+        message = await _read_message(request)
+        # Anonymous callers share one namespace, so a guessable messageId
+        # would hand one of them another's task.
+        if principal is None or message is None or not message.message_id:
+            return await admit_and_send(request)
+        find_task = task_finder(request)
+        async with deduplicator.check(principal.id, message, find_task) as outcome:
+            request.state.dedup = outcome
+            if outcome.is_repeat:
+                return await sdk_endpoint(request)
+            return await admit_and_send(request)
+
+    async def admit_and_send(request: Request) -> Response:
+        if lifecycle.shutting_down:
+            telemetry.record_rejection(agent=card.name, reason="shutting_down")
+            return unavailable("The agent is shutting down; retry later.")
+        slot = admission.try_admit()
+        if slot is None:
+            # Overload fails fast: the caller retries rather than waiting here.
+            telemetry.record_rejection(agent=card.name, reason="busy")
+            return unavailable("The agent is busy; retry later.")
+        request.state.run_slot = slot
+        try:
+            with lifecycle.track_send():
+                return await sdk_endpoint(request)
+        finally:
+            # A started run releases its own slot when it ends, which can be
+            # after a non-blocking response. A message the SDK refused never
+            # started a run.
+            if not slot.started:
+                slot.release()
+
+    return guarded_endpoint
+
+
+type CallerCheck = Callable[[Request], Awaitable[Request | Response]]
+
+
+def caller_check(
+    host: HostConfig, user_token_exchange: UserTokenExchange | None, card: AgentCard
+) -> CallerCheck:
+    """Return the size and authentication checks every agent endpoint shares.
+
+    The returned function reads the body within ``host.max_request_bytes``
+    (HTTP 413 otherwise), then authenticates the caller with ``host.auth``
+    (HTTP 401 with the card's ``WWW-Authenticate`` challenges otherwise). It
+    returns either that refusal or a copy of the request that replays the
+    body, with ``request.state.principal`` (``None`` for an anonymous caller)
+    and ``request.state.user_token`` (a signed-in user's verified token,
+    kept only when ``user_token_exchange`` is given) set.
+    """
     challenge = www_authenticate(card.security_schemes)
     challenge_headers = {"WWW-Authenticate": challenge} if challenge else None
 
-    async def guarded_endpoint(request: Request) -> Response:
+    async def check(request: Request) -> Request | Response:
         body = await read_body_within(request, host.max_request_bytes)
         if body is None:
             # Nothing about the body is logged or echoed back.
@@ -93,54 +159,22 @@ def guard_a2a_endpoint(
             request.state.user_token = UserToken(
                 caller.user_assertion, user_token_exchange
             )
+        return request
 
-        if not await _is_send_message(request):
-            return await sdk_endpoint(request)
-        principal: Principal | None = request.state.principal
-        if rate_limiter is not None:
-            wait = rate_limiter.try_acquire(principal.id if principal else None)
-            if wait is not None:
-                return JSONResponse(
-                    {"error": "Too many requests; retry later."},
-                    429,
-                    headers={"Retry-After": retry_after_header(wait)},
-                )
-        message = await _read_message(request)
-        # Anonymous callers share one namespace, so a guessable messageId
-        # would hand one of them another's task.
-        if principal is None or message is None or not message.message_id:
-            return await admit_and_send(request)
-        find_task = task_finder(request)
-        async with deduplicator.check(principal.id, message, find_task) as outcome:
-            request.state.dedup = outcome
-            if outcome.is_repeat:
-                return await sdk_endpoint(request)
-            return await admit_and_send(request)
-
-    async def admit_and_send(request: Request) -> Response:
-        if lifecycle.shutting_down:
-            telemetry.record_rejection(agent=card.name, reason="shutting_down")
-            return _unavailable("The agent is shutting down; retry later.")
-        slot = admission.try_admit()
-        if slot is None:
-            # Overload fails fast: the caller retries rather than waiting here.
-            telemetry.record_rejection(agent=card.name, reason="busy")
-            return _unavailable("The agent is busy; retry later.")
-        request.state.run_slot = slot
-        try:
-            with lifecycle.track_send():
-                return await sdk_endpoint(request)
-        finally:
-            # A started run releases its own slot when it ends, which can be
-            # after a non-blocking response. A message the SDK refused never
-            # started a run.
-            if not slot.started:
-                slot.release()
-
-    return guarded_endpoint
+    return check
 
 
-def _unavailable(error: str) -> Response:
+def too_many_requests(wait: float) -> Response:
+    """Return HTTP 429 with a ``Retry-After`` of ``wait`` seconds."""
+    return JSONResponse(
+        {"error": "Too many requests; retry later."},
+        429,
+        headers={"Retry-After": retry_after_header(wait)},
+    )
+
+
+def unavailable(error: str) -> Response:
+    """Return HTTP 503 with ``Retry-After: 1``: busy or shutting down."""
     return JSONResponse({"error": error}, 503, headers={"Retry-After": "1"})
 
 

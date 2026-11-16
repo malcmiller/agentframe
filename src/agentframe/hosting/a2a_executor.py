@@ -492,7 +492,7 @@ class RuntimeExecutor(AgentExecutor):
         except AgentFrameError as error:
             error.invocation_id = invocation_id
             span.fail(error)
-            _log_failed_run(error, run.correlation)
+            log_failed_run(error, run.correlation)
             await publish_failure(task, error, accounting)
             return
         except Exception as error:
@@ -788,7 +788,7 @@ async def publish_failure(
     raised before any run started) is given a new one, so every task reports
     an ID.
     """
-    message = task.new_agent_message([new_text_part(_safe_message(error))])
+    message = task.new_agent_message([new_text_part(safe_message(error))])
     await task.update_status(
         state or failure_state(error),
         message=message,
@@ -879,13 +879,13 @@ def _earlier_messages(task: Task | None) -> list[Message]:
     return earlier
 
 
-def _log_failed_run(error: AgentFrameError, correlation: RunCorrelation) -> None:
+def log_failed_run(error: AgentFrameError, correlation: RunCorrelation) -> None:
     """Log a run that ends ``FAILED``, so operators can find it by its ID.
 
     Only the error's class and safe message are logged: never its cause,
     which may hold arguments, prompts or provider payloads. Rejections are
     the caller's doing and are not logged; definition errors are logged by
-    ``_safe_message``.
+    ``safe_message``.
     """
     if isinstance(error, DefinitionError) or failure_state(error) != (
         TaskState.TASK_STATE_FAILED
@@ -900,7 +900,12 @@ def _log_failed_run(error: AgentFrameError, correlation: RunCorrelation) -> None
     )
 
 
-def _safe_message(error: AgentFrameError) -> str:
+def safe_message(error: AgentFrameError) -> str:
+    """Return what callers may see of ``error``: its safe message.
+
+    A ``DefinitionError`` names agent internals, so it is logged and a
+    generic message returned instead.
+    """
     if isinstance(error, DefinitionError):
         logger.error(
             "Agent definition error (invocation_id=%s): %s",

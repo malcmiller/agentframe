@@ -49,7 +49,7 @@ from agentframe.errors import (
 )
 from agentframe.hosting.app import AgentApp
 from agentframe.hosting.dedup import MessageDedupStore
-from agentframe.hosting.host import A2AConfig, HostConfig
+from agentframe.hosting.host import A2AConfig, HostConfig, MCPConfig
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.rate_limit import RateLimit
 from agentframe.hosting.redis_dedup import RedisMessageDedupStore
@@ -169,6 +169,7 @@ __all__ = [
     "InputValidationError",
     "LimitExceededError",
     "MCPClient",
+    "MCPConfig",
     "MCPServerError",
     "MCPTool",
     "Message",

@@ -1,7 +1,10 @@
 # A2A hosting and optional MCP skill exposure
 
-This is a proposed design, not an implemented server or MCP compatibility claim.
-A2A remains first-class. MCP is an optional adapter for explicit skill invocation,
+The MCP server side is implemented (#254): `AgentApp(mcp=MCPConfig(
+exposed_skills=[...]))` serves the listed skills as MCP tools at `/mcp`; see
+[implemented server](#implemented-server-254) for what was decided and the
+[`MCPConfig` reference](../api/hosting.md#mcpconfig). The rest of this page
+keeps the original rationale. A2A remains first-class. MCP is an optional adapter for explicit skill invocation,
 not another agent framework underneath AgentFrame.
 
 ## One server, audience-specific endpoints
@@ -293,10 +296,9 @@ See [limits](../guides/limits.md) and [tracing](tracing.md) for the enforcement 
 ## MCP client: server tools for `ctx.generate`
 
 Implemented (#253). The other direction: an agent's model calls the tools of
-an MCP server the application configured. MAF has `MCPStdioTool` and
-`MCPStreamableHTTPTool`; AgentFrame has one `MCPClient` for both transports,
-built on the official SDK's `mcp.Client` (optional `mcp` extra, which #254's
-server side will share).
+an MCP server the application configured. One `MCPClient` covers both stdio
+and streamable HTTP, built on the official SDK's `mcp.Client` (optional `mcp`
+extra, shared with the server side, #254).
 
 ```python
 from mcp import StdioServerParameters
@@ -365,6 +367,48 @@ sampling and elicitation, and OAuth flows. `max_result_bytes` applies to the
 result the SDK has already read: SDK 2.3 does not bound a single stdio line
 or HTTP response body, so connect only to servers the application trusts not
 to flood it.
+
+## Implemented server (#254)
+
+Decisions taken when the server side was built on the official SDK 2.x
+(`mcp.server.Server` with a `StreamableHTTPSessionManager`):
+
+- **Configuration.** `MCPConfig(exposed_skills=())` is the only setting; an
+  `AgentApp` without `mcp=` serves no MCP, and one with an empty allowlist
+  serves `/mcp` with no tools. The path is fixed at `/mcp`, like `/a2a`; the
+  proposed `enabled=` and `path=` fields were not needed. Unknown skill IDs,
+  IDs that are not MCP tool names, results without a JSON schema and a
+  missing `mcp` extra fail `AgentApp` construction. Skill IDs are unique, so
+  tool names cannot collide.
+- **Stateless JSON transport.** The SDK runs statelessly and answers each
+  POST with JSON. Every request is authenticated on its own, so there is no
+  MCP session one caller could reuse for another, and nothing for the server
+  to send back to the client (no sampling or elicitation). GET streams and
+  batches are not served, and a client cannot cancel a running call: it
+  finishes, or is cancelled at shutdown.
+- **Shared host checks.** `/mcp` reuses `/a2a`'s request size limit and
+  authenticator (one `caller_check`), in the same order, before the SDK
+  parses anything. Each `tools/call` takes a run slot from the same
+  `max_concurrent_runs` pool, or gets HTTP 503, and shutdown drains and
+  then cancels it like an A2A run.
+- **Discovery and invocation agree.** `tools/list` filters the allowlist by
+  the caller's permissions; `tools/call` runs through
+  `Runtime.run_invocation`, which checks the same permissions again plus the
+  authorization and execution policies. Unpublished names are an
+  `Invalid params` protocol error and never run.
+- **Results.** `str` results are text; anything else is `structuredContent`
+  `{"value": ...}` with a matching `outputSchema` (definitions hoisted to the
+  root) plus the JSON as text. Failures are tool errors (`isError`) with the
+  same safe messages A2A tasks carry, and `_meta` reports
+  `agentframe/invocation_id` and `agentframe/usage`.
+- **AgentFrame telemetry only.** The SDK's built-in OpenTelemetry middleware
+  is removed. With `tracing=`, each tool call is recorded like an A2A run (a
+  server `invoke_agent` span and run metrics) and admission refusals are
+  counted; without it, nothing is recorded.
+
+Still open: the MCP authorization specification's OAuth discovery
+(protected resource metadata), MCP stdio serving, long-running/task
+semantics, clarification questions for MCP callers, and per-request limits.
 
 ## Dependency and delivery boundary
 

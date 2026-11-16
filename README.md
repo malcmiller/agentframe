@@ -21,7 +21,7 @@ Microsoft Agent Framework or similar packages.
 - **Authoring:** `@agent`, `@skill` and `Inject[T]`, with inputs and outputs
   validated by Python types.
 - **A2A 1.0 hosting:** an Agent Card and JSON-RPC endpoint per agent, served
-  with `agentframe run`.
+  with `agentframe run`, plus optional MCP tools for allowlisted skills.
 - **Models:** local Llama through Ollama, Microsoft Foundry GPT deployments or
   Claude through the Anthropic API.
 - **Structured output** as validated Pydantic instances.
@@ -58,7 +58,7 @@ The extras add what a deployment needs:
 | `foundry` | `FoundryModel`, `FoundryAgentRegistry` and `FoundryA2AToolRegistry`, for Microsoft Foundry. |
 | `anthropic` | `AnthropicModel`, for Claude through the Anthropic API. |
 | `entra` | `EntraIDAuth` and `OnBehalfOf`, for Microsoft Entra ID. |
-| `mcp` | `MCPClient`, offering an MCP server's tools to `ctx.generate`. |
+| `mcp` | `MCPClient`, offering an MCP server's tools to `ctx.generate`, and `AgentApp(mcp=MCPConfig(...))`, serving allowlisted skills as MCP tools. |
 | `otel` | The OpenTelemetry API, for `TracingConfig`. |
 
 Pre-1.0: public APIs may change in minor releases; changes are listed in the

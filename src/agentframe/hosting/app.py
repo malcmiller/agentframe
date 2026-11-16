@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from a2a.server.context import ServerCallContext
 from a2a.server.events import Event
@@ -71,7 +71,7 @@ from agentframe.hosting.endpoints import (
     health,
     readiness_endpoint,
 )
-from agentframe.hosting.host import A2AConfig, HostConfig, warn_if_insecure
+from agentframe.hosting.host import A2AConfig, HostConfig, MCPConfig, warn_if_insecure
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.rate_limit import CallerRateLimiter
@@ -97,6 +97,10 @@ READY_PATH = "/ready"
 _CANCEL_SECONDS = 5
 """How long shutdown waits for runs to unwind once it has cancelled them."""
 
+if TYPE_CHECKING:
+    # The MCP SDK is the optional ``mcp`` extra, imported only when used.
+    from agentframe.hosting.mcp_server import MCPEndpoint
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,8 +119,9 @@ type _AppResource = AbstractAsyncContextManager[Any] | _SupportsAclose
 class AgentApp:
     """An ASGI application that hosts one agent over A2A 1.0.
 
-    Serves the public Agent Card at ``/.well-known/agent-card.json`` and the
-    JSON-RPC A2A endpoint at ``/a2a``. Every request to ``/a2a`` must pass the
+    Serves the public Agent Card at ``/.well-known/agent-card.json``, the
+    JSON-RPC A2A endpoint at ``/a2a`` and, with ``mcp=``, an MCP endpoint at
+    ``/mcp``. Every request to ``/a2a`` must pass the
     host's authenticator, then runs through the runtime. Tasks are scoped to
     the caller and kept in ``a2a.task_store``, by default a bounded in-memory
     store whose tasks are lost on restart; anonymous callers share one
@@ -152,7 +157,8 @@ class AgentApp:
     back, whatever its state, and takes no run slot. Reusing a ``messageId``
     for a different message is refused with ``InvalidParams``. Anonymous
     callers are not deduplicated. This is not exactly-once execution.
-    With ``host.rate_limit``, a caller's ``SendMessage`` beyond its allowance
+    With ``host.rate_limit``, a caller's ``SendMessage`` or MCP ``tools/call``
+    beyond its allowance (one allowance for both)
     gets HTTP 429 with ``Retry-After`` before deduplication and admission,
     and creates no task.
 
@@ -222,6 +228,15 @@ class AgentApp:
             when ``runtime`` is not given; see ``Runtime``. Each run
             continues the request's ``traceparent``, and requests refused
             for being busy or shutting down are counted.
+        mcp: Serves MCP (Streamable HTTP) at ``/mcp`` on the same server,
+            publishing only ``mcp.exposed_skills`` as tools; see
+            ``MCPConfig``. Every ``/mcp`` request passes the same size limit
+            and authentication as ``/a2a``, and each ``tools/call`` takes a
+            run slot and ``host.rate_limit`` allowance and runs through the
+            runtime with the caller's permissions and the host's limits.
+            ``tools/list`` shows only the published skills whose permissions
+            the caller holds. Needs the ``mcp`` extra. ``None`` (the
+            default) serves no MCP.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
@@ -241,7 +256,10 @@ class AgentApp:
             schema, ``default_skill`` is not one of the agent's skills or
             takes anything but exactly one ``str`` business argument, or
             ``resources`` is not a list of async context managers and
-            ``aclose()`` objects, or lists one object twice.
+            ``aclose()`` objects, or lists one object twice, or ``mcp`` is
+            given without the ``mcp`` extra installed, lists a skill the
+            agent does not have, or lists one whose ID is not a valid MCP
+            tool name or whose result has no JSON schema.
     """
 
     def __init__(
@@ -262,6 +280,7 @@ class AgentApp:
         default_remote: Service | OnBehalfOf | None = None,
         resources: Sequence[_AppResource] = (),
         tracing: TracingConfig | None = None,
+        mcp: MCPConfig | None = None,
     ) -> None:
         resources = _checked_resources(resources)
         runtime = _runtime_for(
@@ -297,17 +316,35 @@ class AgentApp:
         admission = RunAdmission(host.max_concurrent_runs)
         lifecycle = Lifecycle(host.shutdown_grace_seconds)
         self._lifecycle = lifecycle
-        self._app = Starlette(
-            routes=_routes(
-                card,
-                handler,
+        # One allowance per caller, shared by A2A messages and MCP tool calls.
+        rate_limiter = CallerRateLimiter(host.rate_limit) if host.rate_limit else None
+        routes = _routes(
+            card,
+            handler,
+            host,
+            user_token_exchange,
+            a2a,
+            admission,
+            lifecycle,
+            rate_limiter,
+            runtime.telemetry,
+        )
+        mcp_endpoint = None
+        if mcp is not None:
+            mcp_endpoint = _mcp_endpoint(
+                agent,
+                runtime,
                 host,
+                mcp,
                 user_token_exchange,
-                a2a,
+                card,
                 admission,
                 lifecycle,
-                runtime.telemetry,
-            ),
+                rate_limiter,
+            )
+            routes.append(Route(mcp_endpoint.path, mcp_endpoint, methods=["POST"]))
+        self._app = Starlette(
+            routes=routes,
             lifespan=_lifespan(
                 agent,
                 runtime,
@@ -319,6 +356,7 @@ class AgentApp:
                 handler,
                 resources,
                 directory,
+                mcp_endpoint,
             ),
         )
 
@@ -430,6 +468,7 @@ def _routes(
     a2a: A2AConfig,
     admission: RunAdmission,
     lifecycle: Lifecycle,
+    rate_limiter: CallerRateLimiter | None,
     telemetry: Telemetry,
 ) -> list[BaseRoute]:
     """Return the Agent Card, health, readiness and guarded A2A routes."""
@@ -455,7 +494,7 @@ def _routes(
                 _task_finder(handler, context_builder),
                 admission,
                 lifecycle,
-                CallerRateLimiter(host.rate_limit) if host.rate_limit else None,
+                rate_limiter,
                 telemetry,
             ),
             methods=["POST"],
@@ -474,6 +513,7 @@ def _lifespan(
     handler: "_RequestHandler",
     resources: Sequence[_AppResource],
     directory: AgentDirectory | None,
+    mcp_endpoint: "MCPEndpoint | None",
 ) -> Callable[[Starlette], AbstractAsyncContextManager[None]]:
     """Return the app's lifespan: open resources, startup checks, then shutdown."""
 
@@ -494,6 +534,10 @@ def _lifespan(
             await runtime.validate_remotes(agent)
             if isinstance(router, ModelRouter):
                 await router.validate_model(routing_limits(agent, host.limits_ceiling))
+            if mcp_endpoint is not None:
+                # Closed after the A2A handler, cancelling any tool call
+                # still running once the grace period has ended.
+                await opened.enter_async_context(mcp_endpoint.running())
             lifecycle.mark_started()
             yield
             await lifecycle.wait_for_runs(admission, task_store)
@@ -501,6 +545,42 @@ def _lifespan(
             await handler.aclose()
 
     return lifespan
+
+
+def _mcp_endpoint(
+    agent: Agent,
+    runtime: Runtime,
+    host: HostConfig,
+    mcp: MCPConfig,
+    user_token_exchange: UserTokenExchange | None,
+    card: AgentCard,
+    admission: RunAdmission,
+    lifecycle: Lifecycle,
+    rate_limiter: CallerRateLimiter | None,
+) -> "MCPEndpoint":
+    """Return the ``/mcp`` endpoint, importing the optional MCP SDK.
+
+    Raises:
+        DefinitionError: The ``mcp`` extra is not installed, or ``mcp`` is
+            invalid for the agent (see ``MCPEndpoint``).
+    """
+    try:
+        from agentframe.hosting.mcp_server import MCPEndpoint
+    except ImportError as error:
+        raise DefinitionError(
+            "MCPConfig needs the MCP SDK: install agentframe-py[mcp]."
+        ) from error
+    return MCPEndpoint(
+        agent=agent,
+        runtime=runtime,
+        host=host,
+        mcp=mcp,
+        user_token_exchange=user_token_exchange,
+        card=card,
+        admission=admission,
+        lifecycle=lifecycle,
+        rate_limiter=rate_limiter,
+    )
 
 
 async def _open(resource: _AppResource, opened: AsyncExitStack) -> None:

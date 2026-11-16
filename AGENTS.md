@@ -18,8 +18,8 @@ opt-in model routing and M7 hardening alongside design documentation. Version
 multi-agent release (#83-#97), and version 0.3.0, which adds M9 evaluation
 (#164, #152-#163) and M10 model-planned orchestration (#177, #166-#176), are
 published on PyPI as `agentframe-py` (import `agentframe`). Pre-1.0 there is
-no stable API. Later features (MCP, AG-UI) are not implemented; optional OpenTelemetry
-tracing (`TracingConfig`, `otel` extra, #248) is. Keep design API examples beyond
+no stable API. MCP client and server (#253, #254) and optional OpenTelemetry
+tracing (`TracingConfig`, `otel` extra, #248) are implemented; AG-UI is not. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
@@ -105,7 +105,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
 | `src/agentframe/runtime/` | `Runtime` (`runtime.py`), generation and its tool loop and retries (`generation.py`), run accounting (`accounting.py`, `RunAccounting`), token estimates and fit checks (`tokens.py`), reading the model's final answer (`model_output.py`), skill routing (`routing.py`: `SkillRouter`, `SkillCall`, `Clarification`, `RoutingContext`), `Agent.ask`'s skill choice (`ask.py`), optional OpenTelemetry spans and metrics (`telemetry.py`, `TracingConfig`), `RunLimits`, `RunOptions`, conversation history (`state.py`: `StateStore`, `InMemoryStateStore`, `ConversationKey`). |
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`, `anthropic.py`; `strict_schema.py` (OpenAI strict JSON-schema converter); `env.py` (`model_from_env`, choosing a provider from environment variables). |
-| `src/agentframe/hosting/` | `AgentApp` and its SDK request handler (`app.py`), the health/readiness endpoints and the host's checks around the A2A endpoint (`endpoints.py`), the SDK call/request context builders (`context_builders.py`), `HostConfig`, Agent Card, A2A executor, `ModelRouter`. Other subpackages and the shared leaves never import it (`tests/unit/test_layering.py`). |
+| `src/agentframe/hosting/` | `AgentApp` and its SDK request handler (`app.py`), the health/readiness endpoints and the host's size/authentication checks shared by `/a2a` and `/mcp` (`endpoints.py`), the SDK call/request context builders (`context_builders.py`), `HostConfig`, `A2AConfig`, `MCPConfig`, Agent Card, A2A executor, `ModelRouter`, the `/mcp` endpoint serving allowlisted skills as MCP tools (`mcp_server.py`, imported only with `mcp=`; #254). Other subpackages and the shared leaves never import it (`tests/unit/test_layering.py`). |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
 | `src/agentframe/orchestration/` | `RemoteSkill`, `SkillCatalog`, bounding of untrusted card text, `RemoteTool` (remote entries as model tools, with per-entry permissions and tool checks), `Plan` / `PlanStep` with static checks and reference substitution (`plan.py`), the `ctx.plan` planning call (`planning.py`) and the plan executor behind `ctx.run_plan` (`execution.py`, `PlanResult`, `StepResult`) (M10). |
 | `src/agentframe/mcp/` | MCP client (`mcp` extra): `MCPClient` and its connection held in a background task, `MCPTool` (`client.py`); server tools bound as model tools with permissions and tool checks (`tools.py`) (#253). |
@@ -429,7 +429,14 @@ activated extension; its schema remains open, not base-standard A2A dispatch.
 - A2A remains first-class. Optional `MCPConfig(exposed_skills=[...])` publishes
   only explicitly allowlisted registered skills through native MCP tool calls.
   It does not expose internal `@tool` functions or authorize callers.
-  The allowlist is empty by default. Tool-like deterministic/typed/quick/
+  The allowlist is empty by default. Implemented (#254): `AgentApp(mcp=
+  MCPConfig(exposed_skills=[...]))` serves fixed `/mcp` (SDK stateless JSON
+  Streamable HTTP, POST only) behind `/a2a`'s size/auth checks, rate limit and run slots;
+  `tools/list` filtered by caller permissions; unpublished name -> `Invalid
+  params`; failures -> `isError` safe message; non-`str` results
+  `structuredContent` `{"value": ...}` with `outputSchema`; `_meta`
+  `agentframe/invocation_id`/`agentframe/usage`; SDK OTel middleware removed (AgentFrame tracing records tool calls like A2A runs);
+  MCP OAuth discovery not implemented. Tool-like deterministic/typed/quick/
   single-shot skills may also use MCP; judgment/multi-turn/clarification or
   long-running skills usually stay A2A-only. This is guidance, not an enforced rule.
 - MCP named selection bypasses A2A routing, not validation, policy, limits, or

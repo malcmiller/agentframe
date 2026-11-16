@@ -2,7 +2,7 @@
 
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from urllib.parse import urlsplit
@@ -42,11 +42,12 @@ class HostConfig:
             ``ModelSettings.max_output_tokens``: a call whose output cap does
             not fit the remaining budget fails with ``TokenLimitExceededError``.
             ``None`` (the default) caps nothing.
-        max_concurrent_runs: How many messages may run at once. Another
-            ``SendMessage`` is refused immediately with HTTP 503 and
+        max_concurrent_runs: How many messages and MCP tool calls may run at
+            once. Another ``SendMessage`` or ``tools/call`` is refused
+            immediately with HTTP 503 and
             ``Retry-After: 1``; nothing is queued. A task waiting for input
             holds no slot. Defaults to 32.
-        max_request_bytes: The largest ``/a2a`` request body accepted, in
+        max_request_bytes: The largest ``/a2a`` or ``/mcp`` request body accepted, in
             bytes. A larger one is refused with HTTP 413 before
             authentication, without being read in full, and creates no task.
             Defaults to 1 MiB.
@@ -58,7 +59,8 @@ class HostConfig:
             finish, measured once from when shutdown starts. New messages are
             refused meanwhile; runs still going after it are cancelled.
             Defaults to 30.
-        rate_limit: How many ``SendMessage`` requests each verified caller
+        rate_limit: How many ``SendMessage`` and MCP ``tools/call`` requests,
+            together, each verified caller
             may make, for example ``RateLimit(requests=60, per_seconds=60)``.
             Another is refused with HTTP 429 and ``Retry-After`` after
             authentication and before deduplication and admission, and
@@ -166,6 +168,44 @@ class A2AConfig:
                 "A2AConfig task_retention_seconds must be at least "
                 "dedup_window_seconds, or a retried message could run again"
             )
+
+
+@dataclass(frozen=True)
+class MCPConfig:
+    """Settings for the MCP endpoint, which publishes skills as MCP tools.
+
+    Passing one to ``AgentApp(mcp=...)`` serves MCP (Streamable HTTP) at
+    ``/mcp`` on the same server as A2A, behind the same authentication and
+    host limits. It needs the ``mcp`` extra. Only the skills listed here are
+    published, each as the tool named by its skill ID; nothing is published
+    by default, and ``@tool`` functions never are.
+
+    Args:
+        exposed_skills: IDs of the agent's skills to publish. Each must be a
+            registered skill whose ID is a valid MCP tool name (1 to 128
+            letters, digits, ``_``, ``-`` or ``.``); ``AgentApp`` checks
+            this. Stored as a tuple. Defaults to none.
+
+    Raises:
+        DefinitionError: ``exposed_skills`` is a single string instead of a
+            list, holds something that is not a string, or lists a skill
+            twice.
+    """
+
+    exposed_skills: Sequence[str] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.exposed_skills, str):
+            raise DefinitionError(
+                "MCPConfig exposed_skills must be a list of skill IDs, not a "
+                "single string."
+            )
+        exposed = tuple(self.exposed_skills)
+        if not all(isinstance(skill_id, str) for skill_id in exposed):
+            raise DefinitionError("MCPConfig exposed_skills must be skill ID strings.")
+        if len(set(exposed)) != len(exposed):
+            raise DefinitionError("MCPConfig exposed_skills lists a skill twice.")
+        object.__setattr__(self, "exposed_skills", exposed)
 
 
 def warn_if_insecure(host: HostConfig) -> None:
