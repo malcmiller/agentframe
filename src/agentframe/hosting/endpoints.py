@@ -17,6 +17,7 @@ from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.hosting.dedup import FindTask, MessageDeduplicator
 from agentframe.hosting.host import HostConfig
 from agentframe.hosting.lifecycle import Lifecycle
+from agentframe.hosting.rate_limit import CallerRateLimiter, retry_after_header
 from agentframe.hosting.request_size import read_body_within, with_body
 from agentframe.security.authentication import principal_for, www_authenticate
 from agentframe.security.principal import Principal
@@ -46,6 +47,7 @@ def guard_a2a_endpoint(
     task_finder: Callable[[Request], FindTask],
     admission: RunAdmission,
     lifecycle: Lifecycle,
+    rate_limiter: CallerRateLimiter | None,
 ) -> Endpoint:
     """Wrap the SDK's A2A endpoint with the host's checks, in a fixed order.
 
@@ -54,9 +56,12 @@ def guard_a2a_endpoint(
     2. Authentication: every request needs a caller the host verifies. When
        ``user_token_exchange`` is given, a signed-in user's verified token
        is kept for the run's ``OnBehalfOf`` remotes, never anywhere else.
-    3. Deduplication: a ``SendMessage`` that repeats one the caller already
+    3. Rate limit: with ``rate_limiter``, a ``SendMessage`` beyond the
+       caller's allowance is refused with HTTP 429. Repeats count too, so a
+       retry loop cannot bypass the limit.
+    4. Deduplication: a ``SendMessage`` that repeats one the caller already
        sent goes to the SDK for its original task, taking no run slot.
-    4. Admission: any other ``SendMessage`` needs a free run slot and a host
+    5. Admission: any other ``SendMessage`` needs a free run slot and a host
        that is not shutting down.
 
     Every refusal happens before the SDK sees the request, so no task exists.
@@ -90,6 +95,14 @@ def guard_a2a_endpoint(
         if not await _is_send_message(request):
             return await sdk_endpoint(request)
         principal: Principal | None = request.state.principal
+        if rate_limiter is not None:
+            wait = rate_limiter.try_acquire(principal.id if principal else None)
+            if wait is not None:
+                return JSONResponse(
+                    {"error": "Too many requests; retry later."},
+                    429,
+                    headers={"Retry-After": retry_after_header(wait)},
+                )
         message = await _read_message(request)
         # Anonymous callers share one namespace, so a guessable messageId
         # would hand one of them another's task.

@@ -72,6 +72,7 @@ from agentframe.hosting.endpoints import (
 from agentframe.hosting.host import A2AConfig, HostConfig, warn_if_insecure
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
+from agentframe.hosting.rate_limit import CallerRateLimiter
 from agentframe.hosting.task_store import BoundedTaskStore, FinalStateStore
 from agentframe.runtime.limits import RunLimits, check_within_ceiling
 from agentframe.runtime.options import merge_settings
@@ -148,6 +149,9 @@ class AgentApp:
     back, whatever its state, and takes no run slot. Reusing a ``messageId``
     for a different message is refused with ``InvalidParams``. Anonymous
     callers are not deduplicated. This is not exactly-once execution.
+    With ``host.rate_limit``, a caller's ``SendMessage`` beyond its allowance
+    gets HTTP 429 with ``Retry-After`` before deduplication and admission,
+    and creates no task.
 
     ``/health`` (liveness) and ``/ready`` (readiness) need no credentials and
     say nothing about the agent. ``/ready`` answers 200 only after startup
@@ -430,6 +434,7 @@ def _routes(
                 _task_finder(handler, context_builder),
                 admission,
                 lifecycle,
+                CallerRateLimiter(host.rate_limit) if host.rate_limit else None,
             ),
             methods=["POST"],
         ),

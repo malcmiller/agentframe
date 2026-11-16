@@ -154,7 +154,8 @@ authenticator; no remote host starts without a choice.
   callers must not see each other's tasks.
 - At most `HostConfig.max_concurrent_runs` messages run at once (M7 #72).
   Every `/a2a` request is checked in a fixed order before the SDK sees it:
-  body size (M7 #73), authentication, [deduplication](#a2aconfig) (M7 #75),
+  body size (M7 #73), authentication, the optional per-caller
+  [rate limit](#ratelimit) (#255), [deduplication](#a2aconfig) (M7 #75),
   then admission. A repeated message takes no slot, so it gets its original
   task even while the host is full. A `SendMessage` beyond the limit, blocking or
   `returnImmediately`, gets HTTP 503 with `Retry-After: 1` and the body
@@ -209,6 +210,7 @@ Every other outcome follows this table:
 | --- | --- |
 | Request body over `max_request_bytes` (M7 #73), checked before authentication | HTTP 413 with `{"error": "Request too large."}`, no task |
 | Missing or invalid credentials | HTTP 401 with `WWW-Authenticate`, no task |
+| `SendMessage` beyond the caller's `HostConfig.rate_limit` allowance (#255) | HTTP 429 with `Retry-After` (whole seconds until the next allowance), no task |
 | `SendMessage` while `max_concurrent_runs` runs are running (M7 #72) | HTTP 503 with `Retry-After: 1`, no task |
 | `SendMessage` once shutdown has started (M7 #74) | HTTP 503 with `Retry-After: 1`, no task |
 | `SendMessage` repeating a verified caller's `messageId` within the dedup window (M7 #75) | The original task, whatever its state; nothing runs and no slot is taken |
@@ -818,8 +820,8 @@ and is stored read-only. `limits_ceiling` is implemented (M7 #71): an optional
 `max_concurrent_runs` is implemented (M7 #72), and `max_request_bytes` and
 `max_response_bytes` (M7 #73); a value below 1 for any of them raises
 `DefinitionError`. `shutdown_grace_seconds` is implemented (M7 #74); a value
-that is not positive raises `DefinitionError`. Existing URL/ceiling
-composition is illustrative where not specified.
+that is not positive raises `DefinitionError`. `rate_limit` is implemented
+(#255). Existing URL/ceiling composition is illustrative where not specified.
 
 ```text
 HostConfig(
@@ -827,6 +829,7 @@ HostConfig(
     limits_ceiling: RunLimits | None = None,
     max_concurrent_runs: int = 32, max_request_bytes: int = 1048576,
     max_response_bytes: int = 4194304, shutdown_grace_seconds: float = 30,
+    rate_limit: RateLimit | None = None,
 )
 ```
 
@@ -840,6 +843,7 @@ HostConfig(
 | `max_request_bytes` | `int` | `1048576` (1 MiB), configurable; at least 1 (implemented) | Largest `/a2a` request body, in bytes as received. Checked first, before authentication: a declared `Content-Length` above it is refused without reading the body, and a chunked body is refused as soon as it passes the limit, so it is never held in full or parsed. Refusal: HTTP 413 with `{"error": "Request too large."}`, no task. A body exactly at the limit is accepted. Independent of token limits. |
 | `max_response_bytes` | `int` | `4194304` (4 MiB), configurable; at least 1 (implemented) | Largest result or clarification question a task returns: a text result's or question's UTF-8 bytes, or the compact JSON of a data part's `{"value": ...}`; the JSON-RPC envelope is not counted. A larger one fails the task with `LimitExceededError` and the safe message "The result exceeds the host's response size limit"; none of it is sent. Never truncated. Task history is bounded by `max_request_bytes`. |
 | `shutdown_grace_seconds` | `float` | `30`, configurable; positive (implemented) | How long shutdown waits for running work, measured once from when it starts: stop accepting new messages, drain running runs up to the grace period, then cancel the rest (tasks `CANCELED`, scoped services cleaned up). See [`AgentApp`](#agentapp) and [`agentframe run`](#agentframe-run). |
+| `rate_limit` | [`RateLimit`](#ratelimit) `\| None` | `None`: no limit (implemented, #255) | How many `SendMessage` requests each verified caller may make. Another gets HTTP 429 with `Retry-After` and `{"error": "Too many requests; retry later."}` after authentication and before deduplication and admission; no task is created. Anonymous callers share one allowance. Counted per host instance; see [`RateLimit`](#ratelimit) for gateway limits across instances. |
 
 ```python
 from agentframe import Authenticator, HostConfig, RunLimits
@@ -894,6 +898,63 @@ address the server binds to.
 [`AgentConfig`](configuration.md#agentconfig),
 [host ceilings](../guides/limits.md#defaults-versus-ceilings).
 
+## `RateLimit`
+
+**Purpose / decision:** limit how often each verified caller may send
+messages, so one caller cannot take every run slot. Implemented in #255,
+passed as [`HostConfig(rate_limit=...)`](#hostconfig); off by default.
+
+```text
+RateLimit(requests: int, per_seconds: float = 60)
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `requests` | `int` | Required; at least 1 or `DefinitionError` | How many `SendMessage` requests a caller may make in `per_seconds`, and also the largest burst. |
+| `per_seconds` | `float` | `60`; positive or `DefinitionError` | The period `requests` is spread over. |
+
+```python
+from agentframe import Authenticator, HostConfig, RateLimit
+
+
+def host_config(auth: Authenticator) -> HostConfig:
+    # Each caller may send 60 messages a minute, up to 60 at once.
+    return HostConfig(
+        public_url="https://writer.example.com",
+        auth=auth,
+        rate_limit=RateLimit(requests=60, per_seconds=60),
+    )
+```
+
+**Behavior / failures:**
+
+- Each caller has a token bucket that holds up to `requests` tokens and
+  refills evenly over `per_seconds`. Each `SendMessage`, including an answer
+  to an input-required task and a repeated `messageId`, takes one token.
+- With no token left, the request gets HTTP 429 with
+  `{"error": "Too many requests; retry later."}` and `Retry-After` set to the
+  whole seconds (at least 1) until the next token. Nothing runs, no task is
+  created and no deduplication claim is made. The official SDK client raises
+  `A2AClientError` whose cause is an `httpx.HTTPStatusError` with status 429.
+- The check runs after authentication, so unauthenticated requests (401) and
+  oversized bodies (413) use no allowance, and before deduplication and
+  admission, so a retry loop cannot bypass it.
+- `GetTask`, `ListTasks`, `CancelTask`, the Agent Card and the probes are
+  never counted.
+- The bucket is keyed by the verified caller's ID. **Anonymous callers share
+  one allowance**, because the host cannot tell them apart.
+- **Per instance.** Buckets live in the process's memory: behind a load
+  balancer with N instances, a caller may get up to N times the allowance,
+  and a restart resets it. A caller idle for a whole period is forgotten.
+- **Gateway alternative.** For one limit across instances, per-IP limits for
+  anonymous callers, or quotas, rate-limit at the gateway in front of the
+  agents instead, for example Azure API Management's `rate-limit-by-key` or
+  `quota-by-key` policies keyed by the caller's token or key. The two can be
+  combined.
+
+**Related:** [`HostConfig`](#hostconfig),
+[execution limits](../guides/limits.md#separate-the-scopes).
+
 ## `A2AConfig`
 
 **Purpose / decision:** configure the first-class A2A adapter, using official
@@ -921,7 +982,7 @@ A2AConfig(
 | Parameter/concern | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `dedup_window_seconds` | `float` | `600` (10 minutes), configurable; must be positive or `DefinitionError` (implemented) | How long a verified caller's `messageId` is remembered. The same caller resending it within the window gets the original task back. |
-| `dedup_store` | [`MessageDedupStore`](#messagededupstore) or `None` | `None`: in-process memory (implemented) | Where `messageId` claims are kept. Supply a shared store for multi-instance hosts. |
+| `dedup_store` | [`MessageDedupStore`](#messagededupstore) or `None` | `None`: in-process memory (implemented) | Where `messageId` claims are kept. Supply a shared store, such as [`RedisMessageDedupStore`](#redismessagededupstore) (#255), for multi-instance hosts. |
 | `task_store` | `a2a-sdk` `TaskStore` (`a2a.server.tasks.TaskStore`) or `None` | `None`: bounded in-process memory (implemented, #208) | Where A2A tasks are kept, for example the SDK's database store. It owns its own retention: the two settings below do not apply to it. |
 | `task_retention_seconds` | `float` | `3600` (1 hour); must be positive and, with the default store, at least `dedup_window_seconds`, or `DefinitionError` (implemented, #208) | How long the default store keeps a finished task after it finished. See [task retention](#task-retention). |
 | `max_retained_tasks` | `int` | `10_000`; must be at least 1 or `DefinitionError` (implemented, #208) | How many finished tasks the default store keeps at most; past it, the oldest finished task is deleted first. |
@@ -948,8 +1009,9 @@ network failure resends its message with the same `messageId`; the retry gets
 the original task instead of running the skill again.
 
 - The key is the verified caller's ID plus the `messageId`. Each `/a2a` request
-  is checked in order: body size, authentication, deduplication, then
-  admission. A repeat therefore takes no run slot and gets its task even while
+  is checked in order: body size, authentication, the optional
+  [rate limit](#ratelimit), deduplication, then admission. A repeat therefore
+  takes no run slot and gets its task even while
   `max_concurrent_runs` is reached or shutdown has started.
 - A repeat within the window gets the original task as it is now, whatever its
   state: working, completed, failed, cancelled, rejected or waiting for input.
@@ -1071,13 +1133,15 @@ class MessageDedupStore(Protocol):
 Returns `None` when it stored `task_id`, or the task ID already stored under
 `key`. **It must be atomic:** of two concurrent calls with one key, exactly one
 may store its task ID. The default keeps entries in a dict with expiry times,
-pruned on use, and loses them on restart.
+pruned on use, and loses them on restart. For several instances use
+[`RedisMessageDedupStore`](#redismessagededupstore), or implement the protocol
+over another shared backend:
 
 ```python
 from agentframe import A2AConfig, MessageDedupStore
 
 
-class SharedDedupStore:  # Application-defined, for example over Redis SET NX EX.
+class SharedDedupStore:  # Application-defined, for example over SQL.
     async def put_if_absent(
         self, key: str, task_id: str, ttl_seconds: float
     ) -> str | None: ...
@@ -1089,6 +1153,56 @@ a2a = A2AConfig(dedup_store=store)
 
 **Related:** [`A2AConfig`](#a2aconfig),
 [retries and duplicate requests](../guides/limits.md#retries-and-duplicate-requests).
+
+## `RedisMessageDedupStore`
+
+**Purpose / decision:** a tested shared [`MessageDedupStore`](#messagededupstore)
+for hosts running several instances (#255). It keeps each claim in Redis, so
+a retry that a load balancer sends to another instance still finds the
+original task. Install the `redis` extra (`pip install "agentframe-py[redis]"`,
+`redis>=8.1.0,<9`); `import agentframe` does not need it.
+
+```text
+RedisMessageDedupStore(client: redis.asyncio.Redis, key_prefix: str = "agentframe:dedup:")
+```
+
+| Parameter | Type | Required/default status | Meaning |
+| --- | --- | --- | --- |
+| `client` | `redis.asyncio.Redis` | Required | A connected client. The application owns it: the store never closes it. Responses may be bytes or decoded strings. |
+| `key_prefix` | `str` | `"agentframe:dedup:"` | Prepended to every key, so several agents can share one Redis database. Give each agent its own prefix when callers' `messageId`s could overlap across agents. |
+
+```python
+from a2a.server.tasks import TaskStore
+from redis.asyncio import Redis
+
+from agentframe import A2AConfig, RedisMessageDedupStore
+
+
+def shared_a2a(redis: Redis, tasks: TaskStore) -> A2AConfig:
+    # Every instance uses the same Redis and the same task store.
+    return A2AConfig(
+        dedup_store=RedisMessageDedupStore(redis, key_prefix="writer:dedup:"),
+        task_store=tasks,
+    )
+```
+
+**Behavior / failures:**
+
+- `put_if_absent` is one `SET key task_id NX GET PX ttl` command, so Redis
+  itself decides which concurrent claim wins, across every instance. `SET`
+  with both `NX` and `GET` needs Redis 7.0 or later (or a compatible server).
+- Each claim expires after `dedup_window_seconds`, rounded up to whole
+  milliseconds.
+- **Share the task store too.** A repeat reaching another instance must find
+  its original task there; with per-instance task stores it runs again. Use
+  a shared `A2AConfig(task_store=...)`, such as the SDK's database store.
+- Redis errors propagate: the request fails rather than silently running
+  without deduplication.
+- Still not exactly-once: two copies arriving at different instances at the
+  same moment can both run, in the same task ID, because repeats are held off
+  one at a time only within a process.
+
+**Related:** [`A2AConfig`](#a2aconfig), [`MessageDedupStore`](#messagededupstore).
 
 ## `MCPConfig`
 

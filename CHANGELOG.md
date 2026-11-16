@@ -168,6 +168,18 @@ behavior starts with an **Upgrading** section; see the
   per-tool `permissions=` and execution policy tool checks, and are bounded
   by `call_timeout_seconds` and `max_result_bytes`. Nothing is offered
   implicitly; a broken connection raises `MCPServerError` (#253).
+- **Hosting:** shared deduplication and per-caller rate limiting (#255).
+  `RedisMessageDedupStore(client, key_prefix="agentframe:dedup:")` is a
+  `MessageDedupStore` over an application-owned `redis.asyncio.Redis` client,
+  claiming each `messageId` atomically with one `SET NX GET PX` (Redis 7.0+),
+  so instances sharing Redis and a task store return a retry's original task;
+  install the new `redis` extra (`redis>=8.1.0,<9`). The in-memory store stays
+  the default. `HostConfig(rate_limit=RateLimit(requests=..., per_seconds=60))`
+  gives each verified caller a token bucket; a `SendMessage` beyond it gets
+  HTTP 429 with `Retry-After` after authentication and before deduplication
+  and admission, with no task. Anonymous callers share one allowance; the count
+  is per instance, so gateway rate limiting (for example Azure API Management)
+  is documented for limits across instances. Off by default.
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

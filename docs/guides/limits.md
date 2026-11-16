@@ -45,6 +45,13 @@ shutdown grace; all configurable. An oversized request body gets HTTP 413
 before authentication and creates no task; a result or clarification question
 over the response limit fails its task with `LimitExceededError` and is never
 sent in part.
+An optional per-caller rate limit,
+[`HostConfig(rate_limit=RateLimit(requests=60, per_seconds=60))`](../api/hosting.md#ratelimit)
+(#255, off by default), refuses a caller's `SendMessage` beyond its allowance
+with HTTP 429 and `Retry-After`, after authentication and before
+deduplication and admission, with no task. It is counted per host instance
+and anonymous callers share one allowance; for one limit across instances or
+per-IP limits, rate-limit at a gateway such as Azure API Management instead.
 Shutdown stops accepting, drains, then cancels remaining runs, all within one
 grace period measured from the shutdown signal (implemented in M7 #74).
 `/health` is liveness; `/ready` means startup checks passed and not shutting
@@ -490,7 +497,9 @@ with [`AgentApp(a2a=A2AConfig(dedup_window_seconds=..., dedup_store=...))`](../a
   guessable `messageId` would expose another anonymous caller's task.
 - Storage defaults to memory, so claims are **lost on restart**; a
   [`MessageDedupStore`](../api/hosting.md#messagededupstore) with an atomic
-  `put_if_absent` can be shared by several instances.
+  `put_if_absent` can be shared by several instances, for example the built-in
+  [`RedisMessageDedupStore`](../api/hosting.md#redismessagededupstore)
+  (`redis` extra, #255) together with a shared task store.
 - This is **not exactly-once**: process loss, expiry, instances that cannot
   see each other's tasks and distributed side effects still need application
   handling, such as idempotent backends. A repeat also runs again when its
