@@ -43,5 +43,5 @@ runs:
         cp -R examples "${RUNNER_TEMP}/examples"
         cd "${RUNNER_TEMP}"
         uv run --isolated --no-project --python 3.13 \
-          --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server]" \
+          --with "$(ls "${GITHUB_WORKSPACE}"/dist/*.whl)[server,entra,otel]" \
           python -m examples.smoke

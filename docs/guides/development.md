@@ -263,6 +263,8 @@ must send its requests to the published `127.0.0.1` ports instead.
   platform's secret store; environment variables are readable by anyone who
   can inspect the container.
 
+See [deploying to production](deployment.md) for Azure Container Apps, with
+Kubernetes notes, and the [production sample](../../examples/production.py).
 Kubernetes/Foundry templates are later.
 
 ## Acceptance and unresolved details

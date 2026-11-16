@@ -231,6 +231,7 @@ Ollama or Foundry with `model_from_env()`, as in
 | --- | --- |
 | [`examples/echo.py`](https://github.com/malcmiller/agentframe/blob/main/examples/echo.py) | A model-free agent with an injected service and a development API key. |
 | [`examples/assistant.py`](https://github.com/malcmiller/agentframe/blob/main/examples/assistant.py) | Text generation, a typed structured output and a model-free skill on one agent. |
+| [`examples/production.py`](https://github.com/malcmiller/agentframe/blob/main/examples/production.py) | The assistant with production host settings from environment variables: Entra ID authentication, limits, rate limiting, graceful shutdown and tracing, without `dev_settings()`; see the [deployment guide](https://github.com/malcmiller/agentframe/blob/main/docs/guides/deployment.md). |
 | [`examples/orders.py`](https://github.com/malcmiller/agentframe/blob/main/examples/orders.py) | Tool calling with permissions and a tool policy. |
 | [`examples/routed_assistant.py`](https://github.com/malcmiller/agentframe/blob/main/examples/routed_assistant.py) | Free text routed to a skill by the built-in `ModelRouter`. |
 | [`examples/multi_agent`](https://github.com/malcmiller/agentframe/tree/main/examples/multi_agent) | A planner calling research and writer agents, by hand and by model-made plan; run with `agentframe dev`. |
@@ -245,6 +246,7 @@ Ollama or Foundry with `model_from_env()`, as in
 - [API reference](https://github.com/malcmiller/agentframe/blob/main/docs/api/README.md)
 - [Agent examples: model-free, model-backed and mixed](https://github.com/malcmiller/agentframe/blob/main/docs/guides/agent-examples.md)
 - [Local development and containers](https://github.com/malcmiller/agentframe/blob/main/docs/guides/development.md)
+- [Deploying to production: Azure Container Apps and Kubernetes](https://github.com/malcmiller/agentframe/blob/main/docs/guides/deployment.md)
 - [Authorization and caller identity](https://github.com/malcmiller/agentframe/blob/main/docs/guides/authorization.md)
 - [Orchestration](https://github.com/malcmiller/agentframe/blob/main/docs/guides/orchestration.md)
 - [Evaluating agents](https://github.com/malcmiller/agentframe/blob/main/docs/guides/evaluation.md)

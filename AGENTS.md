@@ -115,7 +115,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
 | `tests/benchmarks/` | Opt-in overhead and throughput benchmarks (`AGENTFRAME_BENCHMARK=1`, marker `benchmark`); baseline in `docs/guides/performance.md`. |
 | `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`); `agent_processes.py` starts agents (`agentframe run`) and the plain A2A peer (`peer_process.py`) as separate processes for release tests. |
-| `examples/` | Runnable examples, each with `create_app()` (`evaluation.py` has `create_evaluation()` instead; `multi_agent/planner_evaluation.py` has `create_planner_evaluation(model, runtime)`); `smoke.py` checks them all against the installed wheel in CI. `multi_agent/` holds the research, writer and planner agents (hand-written `plan`, model-planned `propose` / `planned`, M10); `dynamic_agents/` holds a planner that plans over skills tagged `content`, naming no agent (#245). |
+| `examples/` | Runnable examples, each with `create_app()` (`evaluation.py` has `create_evaluation()` instead; `multi_agent/planner_evaluation.py` has `create_planner_evaluation(model, runtime)`); `smoke.py` checks them all against the installed wheel in CI. `multi_agent/` holds the research, writer and planner agents (hand-written `plan`, model-planned `propose` / `planned`, M10); `dynamic_agents/` holds a planner that plans over skills tagged `content`, naming no agent (#245); `production.py` serves the assistant with production settings read from the environment, without `dev_settings()` (#250). |
 | `docs/roadmap.md` | Product boundaries, decisions and milestones. |
 | `docs/guides/` | How to use AgentFrame and how its behavior works. |
 | `docs/design/` | Rationale and proposed designs. |
@@ -789,7 +789,7 @@ because PyPI shows it; milestones, status and decisions live in
 Keep `docs/roadmap.md`, the
 guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
 `authorization.md`, `development.md`, `evaluation.md`, `orchestration.md`,
-`performance.md`, `provider-tests.md`, `stability.md`, `tracing.md`) and the design docs
+`deployment.md`, `performance.md`, `provider-tests.md`, `stability.md`, `tracing.md`) and the design docs
 (`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
 `prompt-safeguarding.md`, `discovery.md`, `streaming.md`, `evaluation.md`,
 `orchestration.md`) consistent, including discovery/streaming API pages and
