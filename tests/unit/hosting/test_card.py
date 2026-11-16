@@ -18,11 +18,13 @@ from agentframe import (
     Agent,
     AgentApp,
     AllowAnonymous,
+    AnyOf,
     APIKey,
     APIKeyAuth,
     Authenticator,
     DeclaresCardSecurity,
     DefinitionError,
+    EntraIDAuth,
     HostConfig,
     Inject,
     RunContext,
@@ -236,6 +238,21 @@ async def test_api_key_host_declares_the_api_key_header() -> None:
         "apiKey": {"apiKeySecurityScheme": {"location": "header", "name": "X-API-Key"}}
     }
     assert card["securityRequirements"] == [{"schemes": {"apiKey": {}}}]
+
+
+async def test_any_of_host_declares_each_member_as_an_alternative() -> None:
+    tenant = "00000000-0000-0000-0000-000000000001"
+    audience = "00000000-0000-0000-0000-000000000002"
+    users = EntraIDAuth(tenant_id=tenant, audience=audience)
+
+    card = await served_card(AnyOf(users, api_key_auth()))
+
+    # Map key order is not preserved across Python versions; requirement order is.
+    assert set(card["securitySchemes"]) == {"entraId", "apiKey"}
+    assert card["securityRequirements"] == [
+        {"schemes": {"entraId": {}}},
+        {"schemes": {"apiKey": {}}},
+    ]
 
 
 @tool(description="Look up a term in the house glossary.")

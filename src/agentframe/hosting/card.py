@@ -21,7 +21,11 @@ from a2a.utils.constants import PROTOCOL_VERSION_1_0, TransportProtocol
 from agentframe.authoring.definitions import AgentDefinition, SkillDefinition
 from agentframe.errors import DefinitionError
 from agentframe.hosting.host import HostConfig
-from agentframe.security.authentication import Authenticator, DeclaresCardSecurity
+from agentframe.security.authentication import (
+    AnyOf,
+    Authenticator,
+    DeclaresCardSecurity,
+)
 from agentframe.skill_call import CONTEXT_FIELDS, CONTEXT_PARAM
 from agentframe.skill_call import (
     SKILL_CALL_EXTENSION_URI as SKILL_CALL_EXTENSION_URI,
@@ -123,11 +127,17 @@ def _skill_call_extension(skills: list[SkillDefinition]) -> AgentExtension:
 def _security(
     auth: Authenticator,
 ) -> tuple[dict[str, SecurityScheme], list[SecurityRequirement]]:
-    """Return the card's security schemes and the requirement to satisfy them all.
+    """Return the card's security schemes and requirements.
+
+    One requirement lists every scheme, except that ``AnyOf`` gives one
+    requirement per member, which callers may meet any one of.
 
     Raises:
         DefinitionError: ``auth`` does not implement ``DeclaresCardSecurity``.
     """
+    if isinstance(auth, AnyOf):
+        alternatives = auth.card_security_requirements()
+        return auth.card_security(), [_requirement(names) for names in alternatives]
     if not isinstance(auth, DeclaresCardSecurity):
         raise DefinitionError(
             f"Authenticator {type(auth).__name__} must implement "
@@ -137,5 +147,9 @@ def _security(
     schemes = auth.card_security()
     if not schemes:
         return {}, []
-    requirement = SecurityRequirement(schemes={name: StringList() for name in schemes})
-    return schemes, [requirement]
+    return schemes, [_requirement(list(schemes))]
+
+
+def _requirement(scheme_names: list[str]) -> SecurityRequirement:
+    """Return a requirement that a caller meets every named scheme."""
+    return SecurityRequirement(schemes={name: StringList() for name in scheme_names})

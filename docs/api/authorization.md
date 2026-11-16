@@ -785,7 +785,7 @@ class DeclaresCardSecurity(Protocol):
 
 | Name | Type | Meaning and constraints |
 | --- | --- | --- |
-| Return | `dict[str, a2a.types.SecurityScheme]` | Card security schemes keyed by name, using the official SDK type. Callers must satisfy all of them. `{}` declares open access. |
+| Return | `dict[str, a2a.types.SecurityScheme]` | Card security schemes keyed by name, using the official SDK type. Callers must satisfy all of them, except for [`AnyOf`](#anyof), whose callers satisfy one member's. `{}` declares open access. |
 
 `APIKeyAuth` returns an `apiKey` scheme for its header (`X-API-Key` unless
 `header=` says otherwise),
@@ -1051,6 +1051,83 @@ loopback. Anonymous requests cannot satisfy protected grants by default;
 enabling this never disables validation, limits, accounting or checks.
 
 **Related:** [`Authenticator`](#authenticator), [anonymous access](../guides/authorization.md#exposure-anonymous-access-and-delegation).
+
+## `AnyOf`
+
+**Purpose / decision:** accept callers that any one of several authenticators
+verifies, for the common "users sign in with Entra, automation sends API keys"
+deployment, without losing [`OnBehalfOf`](#onbehalfof) for the users.
+
+**Signature status:** implemented (#268).
+
+```text
+AnyOf(*members: Authenticator)
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `*members` | `Authenticator` | Required, two or more | Tried in the order given. Each must implement [`DeclaresCardSecurity`](#declarescardsecurity) with at least one scheme whose credential travels in a request header. |
+
+```python
+import os
+
+from agentframe import AnyOf, APIKey, APIKeyAuth, EntraIDAuth, HostConfig
+
+auth = AnyOf(
+    EntraIDAuth(
+        tenant_id=os.environ["TENANT_ID"],
+        audience=os.environ["API_CLIENT_ID"],
+        client_id=os.environ["API_CLIENT_ID"],  # only for OnBehalfOf remotes
+        client_credential=os.environ["API_CLIENT_SECRET"],
+    ),
+    APIKeyAuth(
+        keys={os.environ["NIGHTLY_KEY"]: APIKey(caller_id="nightly", roles=["Job"])}
+    ),
+)
+host = HostConfig(
+    public_url="https://planner.example.com",
+    auth=auth,
+    role_permissions={"Documents.Read": ["documents:read"], "Job": ["plans:run"]},
+)
+```
+
+**Choosing a member:** each request goes to the first member whose credential
+header it carries: `Authorization` for OpenID Connect, OAuth 2.0 and HTTP
+schemes (such as `EntraIDAuth`), or the named header for an `apiKey` scheme
+(such as `APIKeyAuth`). That member's answer is final: a rejected credential
+is never retried with another member, so a bad token cannot fall through to a
+different check. A request carrying no member's header raises
+`AuthenticationError("Authentication required.")`, which the host maps to
+HTTP 401 with every member's `WWW-Authenticate` challenge.
+
+**Agent Card:** `card_security()` returns every member's schemes, and the card
+lists one security requirement per member, which A2A clients read as
+alternatives (meet any one). The host drops every member's API-key header from
+the request headers the SDK logs, like `X-API-Key`.
+
+**On-behalf-of:** [`OnBehalfOf`](#onbehalfof) remotes use the one member that
+can exchange user tokens, such as an `EntraIDAuth` with `client_id=` and
+`client_credential=`. Runs for its signed-in users exchange their tokens as
+usual; runs for other members' callers (API keys, app-only tokens) fail the
+`OnBehalfOf` call with `PermissionDeniedError`, as they would with `EntraIDAuth`
+alone. Only that member's verified user tokens are exchanged: `AnyOf` drops
+the `user_assertion` of callers that other members verify. `Service` remotes
+work for every caller.
+
+**Behavior / failures:** construction raises `DefinitionError` when fewer than
+two members are given, a member is itself an `AnyOf` (list them all in one), a
+member does not implement `card_security()`, declares no schemes
+(`AllowAnonymous` cannot be combined) or a scheme whose credential is not in a
+request header (such as a cookie or mutual TLS), two members read the same
+header (the later one could never be tried), or two members declare a scheme
+with the same name. `AgentApp` raises `DefinitionError` when `OnBehalfOf`
+remotes are configured and no member, or more than one member, can exchange
+user tokens. All members share one `role_permissions` mapping, so keep their
+role names distinct: an API key's role must not grant what only an Entra role
+should.
+
+**Related:** [`Authenticator`](#authenticator), [`EntraIDAuth`](#entraidauth),
+[`APIKeyAuth`](#apikeyauth), [`OnBehalfOf`](#onbehalfof).
 
 ## `Service`
 

@@ -138,6 +138,12 @@ behavior starts with an **Upgrading** section; see the
   like `X-API-Key`. `APIKeyAuth(hashed=True)` takes SHA-256 hex digests as
   the `keys` mapping's keys, so configuration need not hold plaintext keys
   (#269).
+- `AnyOf(EntraIDAuth(...), APIKeyAuth(...))` accepts callers that any one of
+  several authenticators verifies, chosen by which credential header the
+  request carries (the first matching member's answer is final). The Agent
+  Card lists one security requirement per member as alternatives, and
+  `OnBehalfOf` remotes keep working for Entra users through the member that
+  exchanges user tokens (#268).
 
 ### Changed
 
