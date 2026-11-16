@@ -167,3 +167,12 @@ def test_injected_parameters_are_not_arguments() -> None:
 
     assert database.argument_names == ()
     assert database.injected == {"db": Database}
+
+
+async def test_registrations_chain_on_one_line() -> None:
+    db = Database()
+    services = Services().add(Database, db).add_scoped(Session, Session)
+    runtime = Runtime(services=services)
+
+    assert await runtime.invoke(Store(), skill="database", arguments={}) == id(db)
+    assert services.is_registered(Session)

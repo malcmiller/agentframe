@@ -93,8 +93,7 @@ An empty permission list is not a declaration of public remote access.
 ```python
 from agentframe import AgentApp, EntraIDAuth, HostConfig, Runtime, Services
 
-services = Services()
-services.add(Publisher, publisher_service)
+services = Services().add(Publisher, publisher_service)
 
 runtime = Runtime(
     authorization=authorization_policy,

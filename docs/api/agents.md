@@ -440,7 +440,8 @@ open.
 
 **Purpose / decision:** register an app-wide singleton.
 
-**Decided call:** `services.add(DocumentStore, my_store)`; returns `None`.
+**Decided call:** `services.add(DocumentStore, my_store)`; returns the same
+`Services`, so registrations chain: `Services().add(DocumentStore, my_store)`.
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -451,8 +452,8 @@ open.
 from agentframe import Services
 
 
-def register_store[T](services: Services, store_type: type[T], my_store: T) -> None:
-    services.add(store_type, my_store)
+def register_store[T](services: Services, store_type: type[T], my_store: T) -> Services:
+    return services.add(store_type, my_store)
 ```
 
 This generic registration helper receives an application type/instance; it does
@@ -468,7 +469,8 @@ A duplicate registration raises `DefinitionError`; there is no replacement.
 **Purpose / decision:** register a factory for a fresh service per run, closed
 automatically afterward by AgentFrame.
 
-**Decided call:** `services.add_scoped(DbSession, make_session)`; returns `None`.
+**Decided call:** `services.add_scoped(DbSession, make_session)`; returns the
+same `Services`, so it chains with `add` and other `add_scoped` calls.
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
@@ -490,8 +492,7 @@ async def open_session() -> AsyncIterator[DbSession]:
     await session.close()
 
 
-services = Services()
-services.add_scoped(DbSession, open_session)
+services = Services().add_scoped(DbSession, open_session)
 ```
 
 `DbSession` is an application-supplied placeholder. Unlike

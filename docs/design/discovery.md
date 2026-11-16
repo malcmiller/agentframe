@@ -285,9 +285,7 @@ class DiscoveryHelper(Agent):
 
 
 def discovery_services(directory: AgentDirectory) -> Services:
-    services = Services()
-    services.add(AgentDirectory, directory)
-    return services
+    return Services().add(AgentDirectory, directory)
 ```
 
 This demonstrates discovery only, not a useful card serializer or delegation.
