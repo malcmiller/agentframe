@@ -111,6 +111,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/evaluation/` | Evaluation harness (M9): `cases.py` (`Case`, `load_cases`), `targets.py` (`Target`, `TargetResult`, `LocalSkill`, `A2ATarget`), `scoring.py` (`Score`, scorer calls, built-ins `equals`, `contains`, `valid`), `judge.py` (`Judge`, the rubric scorer's model-backed run and its budget holds), `results.py` (`CaseResult`, `CaseStatus`, `ScoreResult`, `UsageTotals`, `Latency`), `report.py` (`EvalReport`, its aggregates and `require`; re-exports the result types), `report_format.py` (the report's text summary and versioned JSON), `budget.py` (`TokenBudget`, evaluation-wide token holds), `harness.py` (`Evaluation`). Imported as `agentframe.evaluation`, not re-exported from `agentframe`, so its `__init__.py` re-exports its own public names. |
 | `tests/unit/<group>/` | Unit tests mirroring the source groups; root-module tests in `tests/unit/`. |
 | `tests/integration/` | Interoperability, real providers, success criterion, README example. |
+| `tests/benchmarks/` | Opt-in overhead and throughput benchmarks (`AGENTFRAME_BENCHMARK=1`, marker `benchmark`); baseline in `docs/guides/performance.md`. |
 | `tests/support/` | Shared helpers, on pytest's `pythonpath` (`from local_server import ...`); `agent_processes.py` starts agents (`agentframe run`) and the plain A2A peer (`peer_process.py`) as separate processes for release tests. |
 | `examples/` | Runnable examples, each with `create_app()` (`evaluation.py` has `create_evaluation()` instead; `multi_agent/planner_evaluation.py` has `create_planner_evaluation(model, runtime)`); `smoke.py` checks them all against the installed wheel in CI. `multi_agent/` holds the research, writer and planner agents (hand-written `plan`, model-planned `propose` / `planned`, M10). |
 | `docs/roadmap.md` | Product boundaries, decisions and milestones. |
@@ -745,7 +746,7 @@ because PyPI shows it; milestones, status and decisions live in
 Keep `docs/roadmap.md`, the
 guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
 `authorization.md`, `development.md`, `evaluation.md`, `orchestration.md`,
-`provider-tests.md`, `stability.md`) and the design docs
+`performance.md`, `provider-tests.md`, `stability.md`) and the design docs
 (`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
 `prompt-safeguarding.md`, `discovery.md`, `streaming.md`, `evaluation.md`,
 `orchestration.md`) consistent, including discovery/streaming API pages and

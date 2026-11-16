@@ -68,6 +68,15 @@ behavior starts with an **Upgrading** section; see the
   `agent`, `invocation_id`, `root_invocation_id` and `parent_invocation_id`
   as fields. Defaults are unchanged: `text`, and `warning` except `info`
   under `agentframe dev` (#271).
+- **Performance baseline:** opt-in benchmarks in `tests/benchmarks/`
+  (`AGENTFRAME_BENCHMARK=1`, marker `benchmark`) measure, with
+  `ScriptedModel`, the overhead of a local run (about 0.05 ms), a hosted A2A
+  call (about 5 ms on localhost), an A2A hop through `Remote.call` (about
+  265 ms, almost all the first 0.25-second task poll) and throughput at the
+  admission limit. The numbers and their caveats are in
+  [the performance baseline](docs/guides/performance.md); a new non-gating
+  `benchmarks` CI job reruns them and fails only past generous ceilings
+  (#256).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

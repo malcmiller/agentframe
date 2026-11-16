@@ -63,6 +63,11 @@ subprocesses, with `uv run coverage run -m pytest`, then
 Tests against a real Ollama server or Foundry deployment are opt-in and never
 run in normal CI; see [real-provider tests](docs/guides/provider-tests.md).
 
+Overhead and throughput benchmarks are opt-in too
+(`AGENTFRAME_BENCHMARK=1 uv run pytest tests/benchmarks -m benchmark -s`);
+CI runs them in a non-gating `benchmarks` job. See the
+[performance baseline](docs/guides/performance.md).
+
 ## Pull requests
 
 - Open a pull request into `main`; nobody pushes to `main` directly.
