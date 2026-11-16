@@ -29,6 +29,25 @@ factory return values and agent definitions are reported before anything is
 served. Importing or defining an agent never starts a server. See the
 [reference](../api/hosting.md#agentframe-run).
 
+### Logs in production
+
+By default `agentframe run` logs only AgentFrame's warnings and errors, next
+to Uvicorn's own lines. To see every run's start and end with its
+`invocation_id` and `root_invocation_id`, and to feed a log pipeline, choose a
+level and JSON output (#271):
+
+```shell
+agentframe run myapp.hosting:create_app --log-level info --log-format json
+```
+
+Each record is then one JSON object per line on stderr, Uvicorn's included,
+with the run's `agent`, `invocation_id`, `root_invocation_id` and
+`parent_invocation_id` as fields, so one request can be followed across
+agents by its root ID. `--log-level debug` adds AgentFrame's debug records.
+The options only configure the standard `logging` module; your factory may
+configure `logging` itself instead. See
+[JSON log records](../api/hosting.md#json-log-records).
+
 ## Multiple agents: M8+
 
 Implemented (#95). `agentframe.yaml` names each agent, its app factory (the
