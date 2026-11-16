@@ -178,9 +178,9 @@ the caller's authority. Model output and instructions are never authority.
 2026-11-12) as a structural `Protocol` with one async method, passed as
 `Runtime(tool_authorization=...)`. It is separate from
 [`AuthorizationPolicy`](#authorizationpolicy), so existing skill policies are
-unchanged; one class may implement both. Hosted apps use the runtime's policy:
-`AgentApp(runtime=Runtime(..., tool_authorization=...))`; there is no separate
-host setting.
+unchanged; one class may implement both. Hosted apps pass it as
+`AgentApp(tool_authorization=...)` (#266), or on their own runtime with
+`AgentApp(runtime=Runtime(..., tool_authorization=...))`, not both.
 
 ```python
 class ToolAuthorizationPolicy(Protocol):
