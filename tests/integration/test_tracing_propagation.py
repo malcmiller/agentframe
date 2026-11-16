@@ -81,7 +81,7 @@ class Planner(Agent):
 
     @skill(id="execute", description="Run a reviewed plan.", tags=["plans"])
     async def execute(self, plan: Plan, ctx: RunContext) -> str:
-        result = await ctx.run_plan(plan, await ctx.remote_skills())
+        result = await ctx.run_plan(plan, await ctx.remote_skills(all_registered=True))
         return str(result.value)
 
 
