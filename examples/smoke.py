@@ -4,7 +4,8 @@ Each example app is served in-process on a free localhost port and called with
 the official A2A client, the way any A2A caller would. ``ScriptedModel`` stands
 in for Ollama and Foundry, so nothing leaves localhost. The evaluation example
 runs in process. From the directory that
-contains ``examples/``, with AgentFrame installed with its ``server`` extra::
+contains ``examples/``, with AgentFrame installed with its ``server``, ``entra``
+and ``otel`` extras::
 
     python -m examples.smoke
 """
@@ -29,7 +30,7 @@ from a2a.helpers import get_artifact_text, get_data_parts, new_data_part, new_te
 from a2a.types import Message, Part, Role, SendMessageRequest, Task, TaskState
 
 import agentframe
-from agentframe import AgentApp, ModelCapabilities, ToolCall
+from agentframe import AgentApp, APIKey, APIKeyAuth, ModelCapabilities, ToolCall
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.testing import ScriptedModel
 from examples import (
@@ -38,6 +39,7 @@ from examples import (
     evaluation,
     orders,
     plan_approval,
+    production,
     routed_assistant,
 )
 from examples.dynamic_agents import planner as dynamic_planner
@@ -205,6 +207,24 @@ async def check_assistant() -> None:
         expect(assistant.Summary.model_validate(data_result(summarized)), summary)
         counted = await call_skill(a2a, "count_words", {"text": "one two three"})
         expect(data_result(counted), 3)
+
+
+async def check_production() -> None:
+    """The assistant with production host settings, without dev_settings()."""
+    model = ScriptedModel(["Paris."])
+    # Entra tokens cannot be issued here, so an API key stands in for them.
+    auth = APIKeyAuth(keys={"smoke-production-key": APIKey("smoke")})
+
+    def create_app(base_url: str) -> AgentApp:
+        os.environ["ASSISTANT_PUBLIC_URL"] = base_url
+        return production.create_app(model, auth)
+
+    async with (
+        serve(create_app) as base_url,
+        connect(base_url, "smoke-production-key") as a2a,
+    ):
+        answer = await call_skill(a2a, "answer", {"question": "Capital of France?"})
+        expect(text_result(answer), "Paris.")
 
 
 async def check_orders() -> None:
@@ -413,6 +433,7 @@ async def main() -> None:
     checks = (
         check_echo,
         check_assistant,
+        check_production,
         check_orders,
         check_routed_assistant,
         check_multi_agent,

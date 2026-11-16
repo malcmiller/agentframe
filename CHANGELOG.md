@@ -44,6 +44,19 @@ behavior starts with an **Upgrading** section; see the
 
 ### Added
 
+- **Docs and examples:** a [production deployment guide](docs/guides/deployment.md)
+  for Azure Container Apps, with Kubernetes notes: packaging, TLS
+  termination and `public_url`, `EntraIDAuth` with managed identity and
+  on-behalf-of, secrets, `/health` and `/ready` probes,
+  `shutdown_grace_seconds` against the platform's termination grace period,
+  scaling with `max_concurrent_runs`, shared task and dedup stores, and
+  OpenTelemetry export. It is guidance only; AgentFrame provisions nothing.
+  [`examples/production.py`](examples/production.py) serves the assistant
+  with production settings read only from environment variables (Entra ID
+  authentication, a limits ceiling, per-caller rate limiting, a 20-second
+  shutdown grace period and tracing), never `dev_settings()`, and refuses to
+  start when one is missing. The release smoke test now installs the
+  `entra` and `otel` extras to run it (#250).
 - **Development:** `agentframe new agent NAME` and `agentframe new fleet NAME
   [--planner] [--agents research,writer]` create a working project from
   templates shipped in the wheel: one agent, or specialists with skills

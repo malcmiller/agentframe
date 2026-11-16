@@ -164,7 +164,7 @@ jobs:
           exit 1
       - name: Install its dependencies from PyPI
         working-directory: ${{ runner.temp }}
-        run: venv/bin/pip install "agentframe-py[server]==${VERSION}"
+        run: venv/bin/pip install "agentframe-py[server,entra,otel]==${VERSION}"
       # A copy outside the checkout, so src/ can never shadow the install.
       - name: Smoke-test the examples against the TestPyPI install
         run: |
@@ -219,7 +219,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           for attempt in 1 2 3 4 5 6; do
-            if venv/bin/pip install "agentframe-py[server]==${VERSION}"; then
+            if venv/bin/pip install "agentframe-py[server,entra,otel]==${VERSION}"; then
               exit 0
             fi
             echo "Not installable yet (attempt ${attempt}); retrying in 30 seconds"
