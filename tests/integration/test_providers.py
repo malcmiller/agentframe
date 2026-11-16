@@ -92,7 +92,7 @@ class Assistant(Agent):
 
     instructions = "Answer in as few words as possible."
     model_settings = ModelSettings(max_output_tokens=64)
-    # Foundry does not report a deployment's context window, so cap the input.
+    # Keep each real call's input small.
     limits = RunLimits(max_input_tokens=1000)
 
     @skill("answer", tags=["questions"])
@@ -174,6 +174,7 @@ async def foundry_model(name: str | None = None) -> AsyncIterator[Model]:
         FoundryModel(
             endpoint=required_env("AGENTFRAME_FOUNDRY_ENDPOINT"),
             deployment=name or required_env("AGENTFRAME_FOUNDRY_DEPLOYMENT"),
+            context_window=128000,
             credential=credential,
         ) as model,
     ):

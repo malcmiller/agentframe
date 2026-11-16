@@ -5,24 +5,22 @@ development API key, read from ``ECHO_API_KEY``, signs in as ``developer``::
 
     ECHO_API_KEY=dev-only-key agentframe run examples.echo:create_app
 
-Callers send the key in the ``X-API-Key`` header.
+Callers send the key in the ``X-API-Key`` header. The app sets no
+``authorization=`` policy: ``authorization=`` is for resource checks;
+authenticated callers can already run skills without ``requires_permissions``.
 """
 
 import os
-from collections.abc import Mapping
 
 from agentframe import (
     Agent,
     AgentApp,
     APIKey,
     APIKeyAuth,
-    AuthorizationPolicy,
     HostConfig,
     Inject,
-    Principal,
     RunContext,
     Services,
-    SkillDefinition,
     agent,
     skill,
 )
@@ -52,18 +50,6 @@ class Echo(Agent):
         return greeter.greet(name)
 
 
-class DevelopmentPolicy(AuthorizationPolicy):
-    """Development placeholder: allow any authenticated caller."""
-
-    async def check(
-        self,
-        principal: Principal | None,
-        skill: SkillDefinition,
-        arguments: Mapping[str, object],
-    ) -> bool:
-        return principal is not None
-
-
 def create_app() -> AgentApp:
     """Serve the echo agent over A2A, for callers with the ``ECHO_API_KEY`` key.
 
@@ -79,5 +65,4 @@ def create_app() -> AgentApp:
             auth=APIKeyAuth(keys=keys),
         ),
         services=Services().add(Greeter, Greeter()),
-        authorization=DevelopmentPolicy(),
     )

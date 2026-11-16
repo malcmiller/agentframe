@@ -8,11 +8,13 @@ configuration only::
     AGENTFRAME_MODEL_PROVIDER=ollama AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \\
         agentframe run examples.assistant:create_app
 
-    # A Foundry GPT deployment, signed in with DefaultAzureCredential
-    # (az login locally, managed identity in Azure)
+    # A Foundry GPT deployment, signed in with DefaultAzureCredential (az login
+    # locally, managed identity in Azure). Foundry does not report a
+    # deployment's context window, so configure it with the model.
     AGENTFRAME_MODEL_PROVIDER=foundry \\
         AGENTFRAME_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com/openai/v1/ \\
         AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> \\
+        AGENTFRAME_MODEL_CONTEXT_WINDOW=128000 \\
         agentframe run examples.assistant:create_app
 
 Each provider is imported only when selected, so an install with just the
@@ -34,7 +36,6 @@ from agentframe import (
     Model,
     ModelSettings,
     RunContext,
-    RunLimits,
     agent,
     model_from_env,
     skill,
@@ -54,8 +55,6 @@ class Assistant(Agent):
 
     instructions = "Answer in one short sentence."
     model_settings = ModelSettings(max_output_tokens=512)
-    # Foundry does not report a deployment's context window, so cap the input.
-    limits = RunLimits(max_input_tokens=4000)
 
     @skill(tags=["questions"])
     async def answer(self, question: str, ctx: RunContext) -> str:

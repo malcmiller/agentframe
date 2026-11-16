@@ -4,7 +4,8 @@ Free-text A2A messages go to ``ModelRouter``, which asks the model which skill
 the caller wants and what its arguments are, or asks the caller a question
 when something is missing. Callers that name a skill with the skill-call
 extension skip the router and its model calls. The model comes from the same
-environment variables as ``examples/assistant.py``::
+environment variables as ``examples/assistant.py`` (with Foundry, set
+``AGENTFRAME_MODEL_CONTEXT_WINDOW`` too)::
 
     AGENTFRAME_MODEL_PROVIDER=ollama AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \\
         agentframe run examples.routed_assistant:create_app
@@ -26,7 +27,6 @@ from agentframe import (
     ModelRouter,
     ModelSettings,
     RunContext,
-    RunLimits,
     agent,
     model_from_env,
     skill,
@@ -47,8 +47,6 @@ class RoutedAssistant(Agent):
     instructions = "Answer in one short sentence."
     # Applies to the routing calls too; reasoning models count their reasoning.
     model_settings = ModelSettings(max_output_tokens=512)
-    # Foundry does not report a deployment's context window, so cap the input.
-    limits = RunLimits(max_input_tokens=4000)
 
     @skill("answer", tags=["questions"])
     async def answer(self, question: str, ctx: RunContext) -> str:

@@ -6,8 +6,9 @@ call is also checked by ``OwnOrdersOnly``, so callers can only touch their own
 orders, whatever the model (or a prompt injection) asks for. Tools are never
 advertised on the Agent Card: callers see only the ``order_help`` skill.
 
-The model comes from the same environment variables as ``examples.assistant``,
-and one development API key, read from ``ORDERS_API_KEY``, signs in as the
+The model comes from the same environment variables as ``examples.assistant``
+(with Foundry, set ``AGENTFRAME_MODEL_CONTEXT_WINDOW`` too), and one
+development API key, read from ``ORDERS_API_KEY``, signs in as the
 customer ``alice``::
 
     ORDERS_API_KEY=<any-dev-key> AGENTFRAME_MODEL_PROVIDER=ollama \\
@@ -115,8 +116,7 @@ class OrderDesk(Agent):
 
     instructions = "Help with orders using the tools. Answer in one short sentence."
     model_settings = ModelSettings(max_output_tokens=512)
-    # Foundry does not report a deployment's context window, so cap the input.
-    limits = RunLimits(max_input_tokens=4000, max_tool_calls=4)
+    limits = RunLimits(max_tool_calls=4)
 
     @skill("order_help", tags=["orders"])
     async def order_help(self, request: str, ctx: RunContext) -> str:

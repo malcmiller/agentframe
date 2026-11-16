@@ -91,6 +91,22 @@ async def test_readme_hosting_example(
     assert get_artifact_text(response.task.artifacts[0]) == "Hello, Ada!"
 
 
+async def test_echo_example_refuses_callers_without_its_key(
+    serve: ServeLocally, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Authentication, not an authorization policy, keeps other callers out.
+    monkeypatch.setenv("ECHO_API_KEY", "dev-only-key")
+
+    def make_app(public_url: str) -> AgentApp:
+        monkeypatch.setenv("ECHO_PUBLIC_URL", public_url)
+        return create_app()
+
+    async with serve(make_app) as base_url, httpx.AsyncClient() as http:
+        response = await http.post(f"{base_url}/a2a", json={})
+
+    assert response.status_code == 401
+
+
 ROOT = Path(__file__).parents[2]
 
 
