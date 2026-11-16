@@ -94,6 +94,9 @@ class EvalSettings:
     Args:
         target: ``module:function`` returning an ``Evaluation``.
         json_path: Where to write the JSON report, if anywhere.
+        html_path: Where to write the HTML report, if anywhere.
+        baseline_path: An earlier JSON report the HTML report compares
+            against; needs ``html_path``.
         capture_content: Allow an evaluation built with
             ``capture_content=True``; without it such an evaluation is refused
             before it runs.
@@ -106,6 +109,8 @@ class EvalSettings:
 
     target: str
     json_path: str | None = None
+    html_path: str | None = None
+    baseline_path: str | None = None
     capture_content: bool = False
     min_pass_rate: float | None = None
     max_errors: int = 0
@@ -219,6 +224,15 @@ def _add_eval_arguments(evaluation: argparse.ArgumentParser) -> None:
         "--json", metavar="PATH", dest="json_path", help="write the JSON report here"
     )
     evaluation.add_argument(
+        "--html", metavar="PATH", dest="html_path", help="write the HTML report here"
+    )
+    evaluation.add_argument(
+        "--baseline",
+        metavar="PATH",
+        dest="baseline_path",
+        help="an earlier JSON report for the HTML report to compare against",
+    )
+    evaluation.add_argument(
         "--min-pass-rate",
         type=_rate,
         metavar="RATE",
@@ -252,7 +266,7 @@ def _add_eval_arguments(evaluation: argparse.ArgumentParser) -> None:
         action="store_true",
         help=(
             "allow an evaluation built with capture_content=True; its summary "
-            "and JSON report then hold case content"
+            "and JSON and HTML reports then hold case content"
         ),
     )
 
@@ -261,6 +275,8 @@ def _eval_settings(arguments: argparse.Namespace) -> EvalSettings:
     return EvalSettings(
         target=arguments.target,
         json_path=arguments.json_path,
+        html_path=arguments.html_path,
+        baseline_path=arguments.baseline_path,
         capture_content=arguments.capture_content,
         min_pass_rate=arguments.min_pass_rate,
         max_errors=arguments.max_errors,
@@ -365,24 +381,30 @@ def evaluate(settings: EvalSettings) -> int:
     """Run the evaluation ``settings`` names and check its thresholds.
 
     Prints the summary (``str(report)``), which holds no case content unless
-    the evaluation captured it, and writes the JSON report before checking
-    thresholds, so CI keeps it when the check fails. Problems are printed as
-    one ``agentframe: error: ...`` line.
+    the evaluation captured it, and writes the JSON and HTML reports before
+    checking thresholds, so CI keeps them when the check fails. A baseline is
+    read before the evaluation runs, so a bad one costs nothing. Problems are
+    printed as one ``agentframe: error: ...`` line.
 
     Args:
-        settings: The evaluation, report path and thresholds.
+        settings: The evaluation, report paths and thresholds.
 
     Returns:
         0 when every threshold is met; 1 when one is missed, after printing
         each miss above the summary; 2 when the target cannot be loaded, is not
         an ``Evaluation``, captures content without ``capture_content``, its
-        factory raises, or the report cannot be written.
+        factory raises, a baseline is given without an HTML path or cannot be
+        read as a JSON report, or a report cannot be written.
     """
     try:
+        if settings.baseline_path is not None:
+            _check_baseline(settings.baseline_path, html_path=settings.html_path)
         evaluation = load_evaluation(settings)
         report = asyncio.run(evaluation.run())
         if settings.json_path is not None:
             _write_report(report, settings.json_path)
+        if settings.html_path is not None:
+            _write_html_report(report, settings.html_path, settings.baseline_path)
     except (CommandError, AgentFrameError) as error:
         print(f"agentframe: error: {error}", file=sys.stderr)
         return 2
@@ -457,6 +479,35 @@ def _write_report(report: "EvalReport", path: str) -> None:
         raise CommandError(
             f"Cannot write the JSON report to '{path}': {error.strerror}."
         ) from error
+
+
+def _check_baseline(path: str, *, html_path: str | None) -> None:
+    from agentframe.evaluation.report_html import read_baseline
+
+    if html_path is None:
+        raise CommandError("--baseline compares in the HTML report; pass --html too.")
+    try:
+        read_baseline(path)
+    except OSError as error:
+        raise CommandError(
+            f"Cannot read the baseline report '{path}': {error.strerror}."
+        ) from error
+    except ValueError as error:
+        raise CommandError(str(error)) from error
+
+
+def _write_html_report(
+    report: "EvalReport", path: str, baseline_path: str | None
+) -> None:
+    try:
+        report.write_html(path, baseline=baseline_path)
+    except OSError as error:
+        raise CommandError(
+            f"Cannot write the HTML report to '{path}': {error.strerror}."
+        ) from error
+    except ValueError as error:
+        # The baseline was checked before the run but changed since.
+        raise CommandError(str(error)) from error
 
 
 def _import_from_working_directory() -> None:

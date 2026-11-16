@@ -1,7 +1,8 @@
 """Evaluation results: a ``CaseResult`` per attempt, in an ``EvalReport``.
 
-The result types are defined in ``evaluation.results`` and the summary and
-JSON rendering in ``evaluation.report_format``; the result types are also
+The result types are defined in ``evaluation.results``, the summary and JSON
+rendering in ``evaluation.report_format`` and the HTML page in
+``evaluation.report_html``; the result types are also
 importable from here.
 """
 
@@ -21,6 +22,7 @@ from agentframe.evaluation.report_format import (
     total_tokens,
     unknown_cases,
 )
+from agentframe.evaluation.report_html import read_baseline, report_html
 from agentframe.evaluation.results import (
     CaseResult,
     CaseStatus,
@@ -219,6 +221,35 @@ class EvalReport:
         """
         document = json.dumps(report_json(self), indent=2, ensure_ascii=False)
         Path(path).write_text(document + "\n", encoding="utf-8")
+
+    def write_html(
+        self, path: str | Path, *, baseline: str | Path | None = None
+    ) -> None:
+        """Write the report as one self-contained HTML page, for CI artifacts.
+
+        The page is built from the same document as ``write_json``, so it
+        holds content only when that would: aggregates, a sortable and
+        filterable case table, and each attempt's scores, judge vote counts,
+        error and invocation ID. It has inline CSS and script, no external
+        URLs, and escapes every value, since outputs and reasons are
+        untrusted. With ``baseline``, it also lists newly failing and newly
+        passing cases and the pass-rate and latency changes.
+
+        Example::
+
+            report.write_html("eval-report.html", baseline="main-report.json")
+
+        Args:
+            path: Where to write the file; an existing file is replaced.
+            baseline: An earlier ``write_json`` report to compare against.
+
+        Raises:
+            ValueError: ``baseline`` is not an
+                ``agentframe.evaluation.report/1`` JSON report.
+        """
+        previous = read_baseline(baseline) if baseline is not None else None
+        page = report_html(report_json(self), previous)
+        Path(path).write_text(page, encoding="utf-8")
 
     def require(
         self,

@@ -50,8 +50,9 @@ score each result and compare the totals against a threshold, locally and in CI.
 - A2A protocol conformance. That is the
   [A2A TCK](https://github.com/a2aproject/a2a-tck)'s job; evaluation scores
   answers, not wire compliance.
-- Comparing two reports (baselines, regressions over time). Later, once the
-  report format has real use.
+- Comparing reports over time (trends, history, a regression store). The HTML
+  report's optional baseline (#276) compares one run with one earlier JSON
+  report only.
 - Exporting to or running Foundry cloud evaluation. A
   [later adapter](#later-foundry-evaluation-export).
 
