@@ -1,7 +1,8 @@
 # Real-provider tests
 
-Tests against a real Ollama server or Foundry deployment are opt-in and never
-run in normal CI. They are marked `ollama` / `foundry` (and `entra` for a real
+Tests against a real Ollama server, Foundry deployment or Anthropic model are
+opt-in and never run in normal CI. They are marked `ollama` / `foundry` /
+`anthropic` (and `entra` for a real
 Entra token) and skipped unless enabled, so the default `uv run pytest` never
 calls a provider. [AGENTS.md](../../AGENTS.md#real-provider-tests-opt-in-local-only)
 lists what each test covers.
@@ -18,15 +19,21 @@ Endpoints and model names come only from environment variables:
 | `AGENTFRAME_TEST_FOUNDRY=1` | Foundry | Enables the `foundry` tests. |
 | `AGENTFRAME_FOUNDRY_ENDPOINT` | Foundry | OpenAI v1 base URL, `https://<resource>.openai.azure.com/openai/v1/`. |
 | `AGENTFRAME_FOUNDRY_DEPLOYMENT` | Foundry | Deployment name. |
+| `AGENTFRAME_TEST_ANTHROPIC=1` | Anthropic | Enables the `anthropic` tests. |
+| `AGENTFRAME_ANTHROPIC_MODEL` | Anthropic | Model ID, for example `claude-haiku-4-5`. |
+| `ANTHROPIC_API_KEY` | Anthropic | API key, passed explicitly to `AnthropicModel(api_key=...)`. |
 
 Foundry signs in with the Azure CLI credential (run `az login`; no API key).
-Foundry calls cost money, so prompts and caps are tiny; run them sparingly.
+Foundry and Anthropic calls cost money, so prompts and caps are tiny; run them
+sparingly. The Anthropic tests are the same shared tests as Ollama and Foundry.
 An enabled provider with a missing required variable fails rather than skips.
 
 ```bash
 AGENTFRAME_TEST_OLLAMA=1 AGENTFRAME_OLLAMA_MODEL=llama3.2:3b uv run pytest -m ollama
 AGENTFRAME_TEST_FOUNDRY=1 AGENTFRAME_FOUNDRY_ENDPOINT=<base-url> \
   AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> uv run pytest -m foundry
+AGENTFRAME_TEST_ANTHROPIC=1 AGENTFRAME_ANTHROPIC_MODEL=claude-haiku-4-5 \
+  ANTHROPIC_API_KEY=<key> uv run pytest -m anthropic
 ```
 
 The M10 planner tests in `test_providers.py` run the `examples/multi_agent`

@@ -85,9 +85,10 @@ before sending. Managed generation (`ctx.generate`, #35) turns `REFUSED` into
 output (`output=`) is implemented by the managed layer (M4 #53); adapters send
 [`ModelRequest.output`](#modelrequest) to their provider. The tool-call types
 and the managed tool loop (`tools=`, #61) are implemented (M5 #59, #61).
-[`OllamaModel`](#tool-calling-ollama) (M5 #65) and
-[`FoundryModel`](#tool-calling) (M5 #64) map tools to their providers' function
-calling. Streaming remains later, with
+[`OllamaModel`](#tool-calling-ollama) (M5 #65),
+[`FoundryModel`](#tool-calling) (M5 #64) and
+[`AnthropicModel`](#tool-calling-anthropic) (#262) map tools to their
+providers' function calling. Streaming remains later, with
 optional [AG-UI](streaming.md) mapping from managed execution, not raw
 provider events.
 
@@ -527,6 +528,148 @@ application stops. No API key variable is read: pass an API key with
 **Related:** [`OllamaModel`](#ollamamodel), [`FoundryModel`](#foundrymodel),
 [`examples/assistant.py`](../../examples/assistant.py),
 [choosing the host by configuration](../guides/agent-examples.md#choose-the-host-by-configuration).
+
+## `AnthropicModel`
+
+**Purpose / decision:** call an explicitly named Claude model through the
+Anthropic **Messages API** using the official
+[`anthropic`](https://github.com/anthropics/anthropic-sdk-python) Python
+package, with the same `Model` protocol as `FoundryModel` and `OllamaModel`.
+
+**Signature status:** implemented (#262). Requires the optional extra
+`agentframe-py[anthropic]`, which installs `anthropic` (`>=2.8.0,<3`).
+`import agentframe` works without it; using `AnthropicModel` without it raises
+`ImportError` naming the extra.
+
+```text
+AnthropicModel(
+    *, model: str, api_key: str | None = None,
+    client: anthropic.AsyncAnthropic | None = None,
+    context_window: int | None = None,
+)
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `model` | `str` | Required | Model ID, for example `"claude-sonnet-4-6"`; no fallback to another model. |
+| `api_key` | `str \| None` | Required unless `client` is given | An Anthropic API key. The model creates and owns a client that uses it. Never read from the environment, logged or put in error messages. |
+| `client` | `anthropic.AsyncAnthropic \| None` | `None` | An application-created client used instead of `api_key` (giving both, or neither, raises `DefinitionError`). Used through `with_options(max_retries=0)`; it keeps its own timeouts and address, and stays caller-owned: the model never closes it. |
+| `context_window` | `int \| None` | `None` | Tokens the model accepts. `None` uses the Models API's `max_input_tokens`; when that is missing too, it is unknown (`None`), never guessed. Must be greater than zero. |
+
+```python
+import os
+
+from agentframe import AnthropicModel
+
+
+async def main() -> None:
+    async with AnthropicModel(
+        model="claude-sonnet-4-6", api_key=os.environ["ANTHROPIC_API_KEY"]
+    ) as model:
+        ...  # Inject the model into an agent and serve or run it.
+```
+
+The application reads and passes the key; the adapter itself never reads
+`ANTHROPIC_API_KEY` or other environment variables for it.
+
+**Behavior / failures:** implements [`Model.generate`](#modelgenerate) with one
+non-streaming `messages.create` call.
+
+- Construction does no I/O. The adapter owns and [`close`](#modelclose)s a
+  client it created; an injected client stays open.
+- A created client always calls `https://api.anthropic.com`, so
+  `ANTHROPIC_BASE_URL` cannot redirect the key. To use another address, pass
+  your own `client`.
+- SDK retries are always off (`max_retries=0`), so AgentFrame is the only
+  retry layer.
+- Connecting times out after 10 seconds, the same as `OllamaModel` and Agent
+  Card fetches (the client's own default allows 10 minutes for a whole
+  request). Reads, writes and pooled connections are not bounded by the HTTP
+  client: the run's deadline (`RunLimits.timeout_seconds`) limits a call.
+- Leading `system` messages, joined by blank lines, become the `system`
+  prompt. A `system` message after another message fails before sending with
+  `UnsupportedCapabilityError`. User messages and tool results are sent as
+  `user` messages and consecutive messages of the same role are merged, since
+  the API expects roles to alternate.
+- `ModelSettings.max_output_tokens` is sent as `max_tokens`.
+- Response mapping: stop reasons `end_turn` and `stop_sequence` finish
+  `COMPLETED` with the concatenated text blocks; `tool_use` finishes
+  `TOOL_CALLS`; `max_tokens` and `model_context_window_exceeded` finish
+  `LENGTH`; `refusal` finishes `REFUSED` with empty text. Any other stop
+  reason (such as `pause_turn`, used only for server tools, which AgentFrame
+  never sends) raises `IncompleteOutputError`.
+- Usage: input tokens include tokens written to and read from the prompt
+  cache (`cache_creation_input_tokens`, `cache_read_input_tokens`), output
+  tokens are reported as is, and the total is their sum; usage is never
+  estimated.
+- [`capabilities`](#modelcapabilities-1) reads the model's metadata from the
+  Models API once per instance on first use and caches it, so `AgentApp`
+  startup contacts the API. It reports the context window (see
+  `context_window`), `structured_output` only when the metadata says the model
+  supports structured outputs (missing information means unsupported), and
+  `tools=True`, since every Claude model calls tools through the Messages API.
+- HTTP 408, 429, 5xx (including 529, overloaded), connection failures and
+  timeouts are transient `ProviderError`s, with a numeric `Retry-After` as
+  `retry_after`; 401/403, 404 (an unknown model) and other 4xx are not.
+  Messages never include the service's error text or the key.
+- Opt-in real tests (`tests/integration/test_providers.py`, marker
+  `anthropic`): set `AGENTFRAME_TEST_ANTHROPIC=1`, `AGENTFRAME_ANTHROPIC_MODEL`
+  and `ANTHROPIC_API_KEY`. Default test runs and CI never call Anthropic. See
+  the [real-provider tests guide](../guides/provider-tests.md).
+
+### Structured output (Anthropic)
+
+`ctx.generate(..., output=Summary)` sends the Messages API's JSON-schema
+output format; without `output=`, no `output_config` is sent:
+
+```text
+output_config={"format": {"type": "json_schema",
+                          "schema": anthropic.transform_schema(<json_schema>)}}
+```
+
+- The schema is converted by the official client's `transform_schema`: every
+  object gets `"additionalProperties": false`, `required` is kept as is, and
+  keywords the API does not support (such as `default` or `minLength`) move
+  into the field's `description`. Optional fields stay optional, so Pydantic
+  defaults apply without any null handling.
+- A schema it cannot convert, such as a value of any type (`Any`), fails
+  before sending with `UnsupportedCapabilityError` naming the output.
+- Validation stays in the generation layer, against the full Pydantic schema;
+  the adapter returns the JSON text unchanged. Refusal and truncated replies
+  finish `REFUSED` and `LENGTH` as for text.
+- A 4xx rejection of a structured request raises a non-transient
+  `ProviderError` saying the model may not support structured output, or
+  these schemas; the schema and the service's text are never echoed.
+
+### Tool calling (Anthropic)
+
+`ctx.generate(..., tools=[...])` sends each offered tool with its parameter
+schema unchanged; without tools, no `tools` are sent:
+
+```text
+tools=[{"name": <name>, "description": <description>,
+        "input_schema": <parameters>}, ...]
+```
+
+- Tools are not sent in strict mode; the runtime validates every call's
+  arguments against the full schema.
+- **Response mapping:** each `tool_use` block becomes
+  `ToolCall(id=id, name=name, arguments=json.dumps(input))` in content order,
+  and the response finishes `TOOL_CALLS`. Calls in a response stopped at the
+  token cap or context window are dropped, since their arguments may be cut
+  short.
+- **Replay:** every content block of a tool-calling response, including
+  thinking blocks and their signatures, is kept in
+  `ModelResponse.provider_items` and sent back verbatim, in order, in the next
+  request; tool results follow as `tool_result` blocks in one `user` message.
+  These blocks stay in memory for the run only and never appear in logs,
+  errors, `RunResult` or A2A metadata. An assistant message without them (for
+  example from another source) is sent as text plus `tool_use` blocks.
+- A 4xx rejection of a request with tools raises a non-transient
+  `ProviderError` saying the model may not support tools or these schemas.
+
+**Related:** [`ModelCapabilities`](#modelcapabilities),
+[real-provider tests](../guides/provider-tests.md).
 
 ## `ScriptedModel`
 

@@ -103,7 +103,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/` (root) | Shared leaves importing only each other: `errors.py`, `usage.py` (`Usage`, `FinishReason`), `urls.py` (URL and loopback checks), `log_format.py` (stdlib `JSONFormatter` for `agentframe run --log-format json`), `skill_call.py` (skill-call extension wire names and sender helpers). Also `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run` / `dev` / `compose` / `eval`), `project.py` (`agentframe.yaml`), `dev.py` (`dev_settings()`), `dev_server.py` (`agentframe dev` supervisor), `compose.py` (`agentframe compose` generator). |
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
 | `src/agentframe/runtime/` | `Runtime` (`runtime.py`), generation and its tool loop and retries (`generation.py`), run accounting (`accounting.py`, `RunAccounting`), token estimates and fit checks (`tokens.py`), reading the model's final answer (`model_output.py`), `RunLimits`, `RunOptions`. |
-| `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`; `strict_schema.py` (OpenAI strict JSON-schema converter); `env.py` (`model_from_env`, choosing a provider from environment variables). |
+| `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`, `anthropic.py`; `strict_schema.py` (OpenAI strict JSON-schema converter); `env.py` (`model_from_env`, choosing a provider from environment variables). |
 | `src/agentframe/hosting/` | `AgentApp` and its SDK request handler (`app.py`), the health/readiness endpoints and the host's checks around the A2A endpoint (`endpoints.py`), the SDK call/request context builders (`context_builders.py`), `HostConfig`, Agent Card, A2A executor, routing. Other subpackages and the shared leaves never import it (`tests/unit/test_layering.py`). |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
 | `src/agentframe/orchestration/` | `RemoteSkill`, `SkillCatalog`, bounding of untrusted card text, `RemoteTool` (remote entries as model tools, with per-entry permissions and tool checks), `Plan` / `PlanStep` with static checks and reference substitution (`plan.py`), the `ctx.plan` planning call (`planning.py`) and the plan executor behind `ctx.run_plan` (`execution.py`, `PlanResult`, `StepResult`) (M10). |
@@ -151,7 +151,8 @@ any other failure fails), a Foundry one-tool round trip that replays encrypted
 reasoning items and one unambiguous free-text request routed by
 `examples/routed_assistant.py` over A2A (checking only the selected skill and
 that its argument is present, since routing is nondeterministic). They are marked
-`ollama` / `foundry` and skipped unless enabled, so
+`ollama` / `foundry` / `anthropic` (the shared tests also run against an
+Anthropic model, #262) and skipped unless enabled, so
 default `uv run pytest` and CI never call a provider. The manually triggered
 `.github/workflows/foundry.yml` runs the `foundry` tests from GitHub behind the
 reviewer-approved `foundry` environment, signing in with OpenID Connect (no
@@ -166,14 +167,19 @@ Endpoints and model names come only from environment variables:
 | `AGENTFRAME_TEST_FOUNDRY=1` | Foundry | Enables the `foundry` tests. |
 | `AGENTFRAME_FOUNDRY_ENDPOINT` | Foundry | OpenAI v1 base URL, `https://<resource>.openai.azure.com/openai/v1/`. |
 | `AGENTFRAME_FOUNDRY_DEPLOYMENT` | Foundry | Deployment name. |
+| `AGENTFRAME_TEST_ANTHROPIC=1` | Anthropic | Enables the `anthropic` tests. |
+| `AGENTFRAME_ANTHROPIC_MODEL` | Anthropic | Model ID, for example `claude-haiku-4-5`. |
+| `ANTHROPIC_API_KEY` | Anthropic | API key, passed explicitly to `AnthropicModel(api_key=...)`. |
 
 Foundry signs in with the Azure CLI credential (run `az login`; no API key).
-Foundry calls cost money, so prompts and caps are tiny; run them sparingly.
+Foundry and Anthropic calls cost money, so prompts and caps are tiny; run them sparingly.
 
 ```bash
 AGENTFRAME_TEST_OLLAMA=1 AGENTFRAME_OLLAMA_MODEL=llama3.2:3b uv run pytest -m ollama
 AGENTFRAME_TEST_FOUNDRY=1 AGENTFRAME_FOUNDRY_ENDPOINT=<base-url> \
   AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> uv run pytest -m foundry
+AGENTFRAME_TEST_ANTHROPIC=1 AGENTFRAME_ANTHROPIC_MODEL=claude-haiku-4-5 \
+  ANTHROPIC_API_KEY=<key> uv run pytest -m anthropic
 ```
 
 An enabled provider with a missing required variable fails rather than skips.

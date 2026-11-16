@@ -105,6 +105,7 @@ if TYPE_CHECKING:
     from agentframe.discovery.foundry_connections import (
         FoundryA2AToolRegistry as FoundryA2AToolRegistry,
     )
+    from agentframe.models.anthropic import AnthropicModel as AnthropicModel
     from agentframe.models.foundry import FoundryModel as FoundryModel
     from agentframe.models.ollama import OllamaModel as OllamaModel
     from agentframe.security.entra import EntraIDAuth as EntraIDAuth
@@ -211,6 +212,10 @@ def __getattr__(name: str) -> object:
     # Provider adapters, the Foundry registries and EntraIDAuth are imported on
     # first use so that ``import agentframe`` works without their optional
     # extras installed.
+    if name == "AnthropicModel":
+        from agentframe.models.anthropic import AnthropicModel as AnthropicModel
+
+        return AnthropicModel
     if name == "FoundryAgentRegistry":
         from agentframe.discovery.foundry import FoundryAgentRegistry
 

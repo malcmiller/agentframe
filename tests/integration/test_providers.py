@@ -1,4 +1,4 @@
-"""Real-provider tests: one agent, run against a real Ollama server and Foundry.
+"""Real-provider tests: one agent, run against real Ollama, Foundry and Anthropic.
 
 These tests call real model providers, so default ``uv run pytest`` runs and CI
 skip them. Enable each provider explicitly; AGENTS.md ("Real-provider tests")
@@ -7,8 +7,9 @@ lists every environment variable. For example::
     AGENTFRAME_TEST_OLLAMA=1 AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \\
         uv run pytest -m ollama
 
-Foundry signs in with the Azure CLI credential, so run ``az login`` first. The
-agent code is identical for both providers; only the model passed to it
+Foundry signs in with the Azure CLI credential, so run ``az login`` first.
+Anthropic reads its key from ``ANTHROPIC_API_KEY``. The
+agent code is identical for every provider; only the model passed to it
 differs. Prompts and output caps are tiny to keep paid calls cheap.
 """
 
@@ -39,6 +40,7 @@ from agentframe import (
     AgentReference,
     AgentRegistry,
     AllowAnonymous,
+    AnthropicModel,
     APIKeyCredential,
     FoundryModel,
     HostConfig,
@@ -178,6 +180,16 @@ async def foundry_model(name: str | None = None) -> AsyncIterator[Model]:
         yield model
 
 
+@asynccontextmanager
+async def anthropic_model(name: str | None = None) -> AsyncIterator[Model]:
+    """Open the configured Anthropic model, or the model ``name``."""
+    async with AnthropicModel(
+        model=name or required_env("AGENTFRAME_ANTHROPIC_MODEL"),
+        api_key=required_env("ANTHROPIC_API_KEY"),
+    ) as model:
+        yield model
+
+
 type OpenModel = Callable[..., AbstractAsyncContextManager[Model]]
 
 
@@ -198,6 +210,11 @@ def opt_in(marker: pytest.MarkDecorator, variable: str) -> list[pytest.MarkDecor
             foundry_model,
             id="foundry",
             marks=opt_in(pytest.mark.foundry, "AGENTFRAME_TEST_FOUNDRY"),
+        ),
+        pytest.param(
+            anthropic_model,
+            id="anthropic",
+            marks=opt_in(pytest.mark.anthropic, "AGENTFRAME_TEST_ANTHROPIC"),
         ),
     ]
 )

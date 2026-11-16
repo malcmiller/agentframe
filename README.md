@@ -10,8 +10,8 @@
 AgentFrame is a Python library for building agents with classes, decorators and
 type annotations. Every agent gets an Agent Card and an A2A 1.0 endpoint, so it
 can work with other A2A agents, including ones built with other frameworks. Run
-a model locally with Ollama or in Microsoft Foundry by changing configuration,
-not code. Build one agent or many.
+a model locally with Ollama, in Microsoft Foundry or through the Anthropic API by
+changing configuration, not code. Build one agent or many.
 
 AgentFrame is an independent framework, not a wrapper around LangChain,
 Microsoft Agent Framework or similar packages.
@@ -22,7 +22,8 @@ Microsoft Agent Framework or similar packages.
   validated by Python types.
 - **A2A 1.0 hosting:** an Agent Card and JSON-RPC endpoint per agent, served
   with `agentframe run`.
-- **Models:** local Llama through Ollama or Microsoft Foundry GPT deployments.
+- **Models:** local Llama through Ollama, Microsoft Foundry GPT deployments or
+  Claude through the Anthropic API.
 - **Structured output** as validated Pydantic instances.
 - **Tool calling** in a bounded, authorized loop.
 - **Model routing:** opt-in routing of free-text requests to skills.
@@ -48,6 +49,7 @@ The extras add what a deployment needs:
 | `server` | Uvicorn, for the `agentframe run` and `agentframe dev` commands. |
 | `ollama` | `OllamaModel`, for local Llama through Ollama. |
 | `foundry` | `FoundryModel`, `FoundryAgentRegistry` and `FoundryA2AToolRegistry`, for Microsoft Foundry. |
+| `anthropic` | `AnthropicModel`, for Claude through the Anthropic API. |
 | `entra` | `EntraIDAuth` and `OnBehalfOf`, for Microsoft Entra ID. |
 
 Pre-1.0: public APIs may change in minor releases; changes are listed in the

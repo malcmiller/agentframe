@@ -122,7 +122,7 @@ def test_importing_agentframe_loads_no_provider_sdk() -> None:
     check = (
         "import sys, agentframe; "
         "roots = {name.split('.')[0] for name in sys.modules}; "
-        "loaded = {'openai', 'ollama', 'azure'} & roots; "
+        "loaded = {'openai', 'ollama', 'azure', 'anthropic'} & roots; "
         "assert not loaded, loaded"
     )
     subprocess.run([sys.executable, "-c", check], check=True)

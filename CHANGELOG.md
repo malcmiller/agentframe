@@ -77,6 +77,13 @@ behavior starts with an **Upgrading** section; see the
   [the performance baseline](docs/guides/performance.md); a new non-gating
   `benchmarks` CI job reruns them and fails only past generous ceilings
   (#256).
+- **Models:** `AnthropicModel` calls Claude models through the Anthropic
+  Messages API with the official `anthropic` client, installed by the new
+  `anthropic` extra (`pip install "agentframe-py[anthropic]"`). It supports
+  text, structured output, tool calling and usage like `FoundryModel` and
+  `OllamaModel`, reads the context window and structured-output support from
+  the Models API, and is covered by opt-in real-provider tests (marker
+  `anthropic`) (#262).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,
