@@ -20,6 +20,14 @@ behavior starts with an **Upgrading** section; see the
 
 ### Added
 
+- **Discovery:** `FoundryA2AToolRegistry(project_endpoint=..., credential=...)`
+  lists a Microsoft Foundry project's A2A connections (type `RemoteA2A`) as
+  agent references, following every page: each is named after its connection,
+  with its target plus the connection's `AgentCardPath` metadata (else
+  `/.well-known/agent-card.json`, or a Foundry agent's `/agentCard/v1.0`) as
+  its card URL. Read-only; connection credentials are never requested, and the
+  registry's own token is sent only to cards inside its project. Needs the
+  `foundry` extra (#244).
 - **Documentation:** a
   [stability, deprecation and upgrade policy](docs/guides/stability.md): what
   the public API is, what may change before 1.0 (minor releases may break,

@@ -42,7 +42,7 @@ _PAGE_SIZE = 100
 # calls one after another. The read timeout is the longest wait between bytes,
 # not the whole reply.
 REQUEST_TIMEOUT_SECONDS = 10.0
-_TIMEOUTS: dict[str, Any] = {
+REQUEST_TIMEOUTS: dict[str, Any] = {
     "connection_timeout": REQUEST_TIMEOUT_SECONDS,
     "read_timeout": REQUEST_TIMEOUT_SECONDS,
 }
@@ -90,7 +90,9 @@ class FoundryAgentRegistry(AgentRegistry):
         credential: AsyncTokenCredential,
         transport: AsyncHttpTransport[Any, Any] | None = None,
     ) -> None:
-        self._project_endpoint = _checked_endpoint(project_endpoint)
+        self._project_endpoint = checked_project_endpoint(
+            project_endpoint, "FoundryAgentRegistry"
+        )
         self._credential = credential
         self._transport = transport
         self._source = f"Foundry project {self._project_endpoint}"
@@ -113,13 +115,13 @@ class FoundryAgentRegistry(AgentRegistry):
         """
         try:
             async with self._client() as client:
-                details = await client.agents.get(agent_id, **_TIMEOUTS)
+                details = await client.agents.get(agent_id, **REQUEST_TIMEOUTS)
         except ResourceNotFoundError:
             raise DefinitionError(
                 f"{self._source} does not list an agent named '{agent_id}'."
             ) from None
         except AzureError as error:
-            raise self._read_error(error) from None
+            raise read_error(self._source, error) from None
         if not _a2a_enabled(details):
             raise DefinitionError(
                 f"{self._source} agent '{agent_id}' does not have incoming A2A enabled."
@@ -146,19 +148,19 @@ class FoundryAgentRegistry(AgentRegistry):
                 names = [
                     summary.name
                     async for summary in client.agents.list(
-                        limit=_PAGE_SIZE, **_TIMEOUTS
+                        limit=_PAGE_SIZE, **REQUEST_TIMEOUTS
                     )
                     if _wanted(summary.name, query)
                 ]
                 for name in names:
                     try:
-                        details = await client.agents.get(name, **_TIMEOUTS)
+                        details = await client.agents.get(name, **REQUEST_TIMEOUTS)
                     except ResourceNotFoundError:
                         continue  # deleted since the listing
                     if _a2a_enabled(details):
                         references.append(self._reference(details.name))
         except AzureError as error:
-            raise self._read_error(error) from None
+            raise read_error(self._source, error) from None
         return references
 
     async def card_headers(self, reference: AgentReference) -> Mapping[str, str]:
@@ -179,27 +181,10 @@ class FoundryAgentRegistry(AgentRegistry):
                 f"Agent '{reference.name}' is not a card in {self._source}, so "
                 "its credential is not sent there."
             )
-        try:
-            token = await self._credential.get_token(FOUNDRY_SCOPE)
-        except AzureError as error:
-            raise DefinitionError(
-                f"{self._source} credential could not get a token: "
-                f"{type(error).__name__}."
-            ) from None
-        return {"Authorization": f"Bearer {token.token}"}
+        return await bearer_headers(self._credential, self._source)
 
     def _client(self) -> AIProjectClient:
-        # A client per call keeps no connections open between calls, so the
-        # registry has nothing to close.
-        if self._transport is None:
-            return AIProjectClient(
-                endpoint=self._project_endpoint, credential=self._credential
-            )
-        return AIProjectClient(
-            endpoint=self._project_endpoint,
-            credential=self._credential,
-            transport=self._transport,
-        )
+        return project_client(self._project_endpoint, self._credential, self._transport)
 
     def _reference(self, name: str) -> AgentReference:
         card_url = f"{self._project_endpoint}/agents/{quote(name, safe='')}/{CARD_PATH}"
@@ -208,15 +193,17 @@ class FoundryAgentRegistry(AgentRegistry):
         except DefinitionError as error:
             raise DefinitionError(f"{self._source}: {error}") from None
 
-    def _read_error(self, error: AzureError) -> DefinitionError:
-        # Only the status and class are kept: service messages can quote
-        # request details.
-        status = getattr(error, "status_code", None)
-        reason = f"HTTP {status}" if status is not None else type(error).__name__
-        return DefinitionError(f"{self._source} cannot be read: {reason}.")
+
+# The helpers below are shared with ``FoundryA2AToolRegistry``.
 
 
-def _checked_endpoint(project_endpoint: str) -> str:
+def checked_project_endpoint(project_endpoint: str, owner: str) -> str:
+    """Return ``project_endpoint`` without a trailing ``/`` once it is safe.
+
+    Raises:
+        DefinitionError: It is not an absolute https URL without credentials,
+            query or fragment; the message names ``owner``.
+    """
     endpoint: object = project_endpoint
     if (
         not isinstance(endpoint, str)
@@ -224,10 +211,51 @@ def _checked_endpoint(project_endpoint: str) -> str:
         or urlsplit(endpoint).scheme != "https"
     ):
         raise DefinitionError(
-            "FoundryAgentRegistry project_endpoint must be an absolute https URL "
+            f"{owner} project_endpoint must be an absolute https URL "
             "without credentials, query or fragment."
         )
     return endpoint.rstrip("/")
+
+
+def project_client(
+    endpoint: str,
+    credential: AsyncTokenCredential,
+    transport: AsyncHttpTransport[Any, Any] | None,
+) -> AIProjectClient:
+    """Return a new project client; use it as ``async with`` to close it."""
+    # A client per call keeps no connections open between calls, so the
+    # registries have nothing to close.
+    if transport is None:
+        return AIProjectClient(endpoint=endpoint, credential=credential)
+    return AIProjectClient(
+        endpoint=endpoint, credential=credential, transport=transport
+    )
+
+
+async def bearer_headers(
+    credential: AsyncTokenCredential, source: str
+) -> Mapping[str, str]:
+    """Return an ``Authorization`` header for ``https://ai.azure.com/.default``.
+
+    Raises:
+        DefinitionError: The credential cannot provide a token.
+    """
+    try:
+        token = await credential.get_token(FOUNDRY_SCOPE)
+    except AzureError as error:
+        raise DefinitionError(
+            f"{source} credential could not get a token: {type(error).__name__}."
+        ) from None
+    return {"Authorization": f"Bearer {token.token}"}
+
+
+def read_error(source: str, error: AzureError) -> DefinitionError:
+    """Return the safe ``DefinitionError`` for a failed read of ``source``."""
+    # Only the status and class are kept: service messages can quote
+    # request details.
+    status = getattr(error, "status_code", None)
+    reason = f"HTTP {status}" if status is not None else type(error).__name__
+    return DefinitionError(f"{source} cannot be read: {reason}.")
 
 
 def _a2a_enabled(details: AgentDetails) -> bool:
