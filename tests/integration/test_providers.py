@@ -1,4 +1,5 @@
-"""Real-provider tests: one agent, run against real Ollama, Foundry and Anthropic.
+"""Real-provider tests: one agent, run against real Ollama, Foundry, Anthropic and
+plain OpenAI.
 
 These tests call real model providers, so default ``uv run pytest`` runs and CI
 skip them. Enable each provider explicitly; AGENTS.md ("Real-provider tests")
@@ -8,8 +9,9 @@ lists every environment variable. For example::
         uv run pytest -m ollama
 
 Foundry signs in with the Azure CLI credential, so run ``az login`` first.
-Anthropic reads its key from ``ANTHROPIC_API_KEY``. The
-agent code is identical for every provider; only the model passed to it
+Anthropic reads its key from ``ANTHROPIC_API_KEY``. Plain OpenAI uses
+``FoundryModel`` with an ``openai.AsyncOpenAI`` client and ``OPENAI_API_KEY``.
+The agent code is identical for every provider; only the model passed to it
 differs. Prompts and output caps are tiny to keep paid calls cheap.
 """
 
@@ -194,6 +196,18 @@ async def anthropic_model(name: str | None = None) -> AsyncIterator[Model]:
 type OpenModel = Callable[..., AbstractAsyncContextManager[Model]]
 
 
+@asynccontextmanager
+async def openai_model(name: str | None = None) -> AsyncIterator[Model]:
+    """Open the configured plain OpenAI model, or the model ``name``."""
+    async with (
+        openai.AsyncOpenAI(api_key=required_env("OPENAI_API_KEY")) as client,
+        FoundryModel(
+            deployment=name or required_env("AGENTFRAME_OPENAI_MODEL"), client=client
+        ) as model,
+    ):
+        yield model
+
+
 def opt_in(marker: pytest.MarkDecorator, variable: str) -> list[pytest.MarkDecorator]:
     """Mark a provider's tests and skip them unless ``variable`` is ``1``."""
     enabled = os.environ.get(variable) == "1"
@@ -216,6 +230,11 @@ def opt_in(marker: pytest.MarkDecorator, variable: str) -> list[pytest.MarkDecor
             anthropic_model,
             id="anthropic",
             marks=opt_in(pytest.mark.anthropic, "AGENTFRAME_TEST_ANTHROPIC"),
+        ),
+        pytest.param(
+            openai_model,
+            id="openai",
+            marks=opt_in(pytest.mark.openai, "AGENTFRAME_TEST_OPENAI"),
         ),
     ]
 )

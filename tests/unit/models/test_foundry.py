@@ -514,6 +514,40 @@ async def test_injected_client_is_used_without_retries_and_stays_open() -> None:
     await client.close()
 
 
+async def test_a_plain_openai_client_calls_the_openai_responses_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", API_KEY)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    server = FakeFoundry()
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(server))
+    client = openai.AsyncOpenAI(http_client=http_client)
+
+    async with FoundryModel(deployment="gpt-5.4-mini", client=client) as model:
+        response = await model.generate(ask())
+
+    request = server.requests[0]
+    assert str(request.url) == "https://api.openai.com/v1/responses"
+    assert request.headers["authorization"] == f"Bearer {API_KEY}"
+    assert server.bodies()[0]["model"] == "gpt-5.4-mini"
+    assert server.bodies()[0]["store"] is False
+    assert response.text == "Hello!"
+    assert response.finish_reason is FinishReason.COMPLETED
+    await client.close()
+
+
+async def test_an_unknown_openai_model_reported_as_bad_request_is_not_found() -> None:
+    body = {"error": {"message": "secret details", "code": "model_not_found"}}
+    server = FakeFoundry(lambda request: httpx2.Response(400, json=body))
+    client = caller_client(server)
+
+    async with FoundryModel(deployment="no-such-model", client=client) as model:
+        with pytest.raises(ProviderError, match="'no-such-model' was not found"):
+            await model.generate(ask())
+
+    await client.close()
+
+
 async def test_close_closes_the_client_it_created(
     use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
 ) -> None:

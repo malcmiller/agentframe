@@ -35,6 +35,8 @@ behavior starts with an **Upgrading** section; see the
 - The routing module moved from `agentframe.hosting.routing` to
   `agentframe.runtime.routing`. Imports from `agentframe` (`SkillRouter`,
   `SkillCall`, `Clarification`, `RoutingContext`) are unchanged (#280).
+- `FoundryModel` error messages no longer say "Foundry" (see **Changed**);
+  code that matches their text should match the new wording (#259).
 
 ### Added
 
@@ -129,6 +131,12 @@ behavior starts with an **Upgrading** section; see the
   `ModelError.hosted_tool_calls` (calls a failed response ran, also counted).
   Web search sends data outside Azure's compliance boundary and is billed
   separately (#261).
+- **Models:** plain OpenAI through `FoundryModel(client=openai.AsyncOpenAI(),
+  deployment="<model>")`. Plain OpenAI serves the same Responses API, so no new
+  class or alias is needed; `docs/api/models.md#plain-openai` documents it, and
+  opt-in `openai` real-provider tests (`AGENTFRAME_TEST_OPENAI=1`) run the
+  shared provider tests against it (#259).
+
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,
@@ -186,6 +194,11 @@ behavior starts with an **Upgrading** section; see the
   `@skill(tags=["questions"])` on `async def answer` registers the skill
   `answer`. Pass `id=` to keep a published ID when renaming a method; an
   empty `id` is still rejected (#273).
+- `FoundryModel` error messages name "the model service" instead of Foundry,
+  since the same adapter also calls plain OpenAI (for example "The model
+  service rejected the credentials (HTTP 401)"). An unknown deployment or
+  model reads "Model or deployment '<name>' was not found", now also when the
+  service answers HTTP 400 with code `model_not_found`, as OpenAI may (#259).
 - Runtime dependencies and the `server`, `ollama`, `foundry` and `entra`
   extras are now compatible ranges instead of exact pins, from the lowest
   tested version up to the next breaking release (next major, or next minor

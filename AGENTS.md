@@ -150,9 +150,10 @@ checks refuse, or more than half the evaluation's plans erroring that way;
 any other failure fails), a Foundry one-tool round trip that replays encrypted
 reasoning items and one unambiguous free-text request routed by
 `examples/routed_assistant.py` over A2A (checking only the selected skill and
-that its argument is present, since routing is nondeterministic). They are marked
-`ollama` / `foundry` / `anthropic` (the shared tests also run against an
-Anthropic model, #262) and skipped unless enabled, so
+that its argument is present, since routing is nondeterministic). The same
+agent tests run against an Anthropic model (#262) and plain OpenAI through
+`FoundryModel(client=openai.AsyncOpenAI())` (#259). They are marked
+`ollama` / `foundry` / `anthropic` / `openai` and skipped unless enabled, so
 default `uv run pytest` and CI never call a provider. The manually triggered
 `.github/workflows/foundry.yml` runs the `foundry` tests from GitHub behind the
 reviewer-approved `foundry` environment, signing in with OpenID Connect (no
@@ -170,9 +171,13 @@ Endpoints and model names come only from environment variables:
 | `AGENTFRAME_TEST_ANTHROPIC=1` | Anthropic | Enables the `anthropic` tests. |
 | `AGENTFRAME_ANTHROPIC_MODEL` | Anthropic | Model ID, for example `claude-haiku-4-5`. |
 | `ANTHROPIC_API_KEY` | Anthropic | API key, passed explicitly to `AnthropicModel(api_key=...)`. |
+| `AGENTFRAME_TEST_OPENAI=1` | OpenAI | Enables the `openai` tests. |
+| `AGENTFRAME_OPENAI_MODEL` | OpenAI | Model name, for example `gpt-5.4-mini`. |
+| `OPENAI_API_KEY` | OpenAI | API key, read by the `openai` client. |
 
 Foundry signs in with the Azure CLI credential (run `az login`; no API key).
-Foundry and Anthropic calls cost money, so prompts and caps are tiny; run them sparingly.
+Foundry, Anthropic and OpenAI calls cost money, so prompts and caps are tiny;
+run them sparingly.
 
 ```bash
 AGENTFRAME_TEST_OLLAMA=1 AGENTFRAME_OLLAMA_MODEL=llama3.2:3b uv run pytest -m ollama
@@ -180,6 +185,8 @@ AGENTFRAME_TEST_FOUNDRY=1 AGENTFRAME_FOUNDRY_ENDPOINT=<base-url> \
   AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> uv run pytest -m foundry
 AGENTFRAME_TEST_ANTHROPIC=1 AGENTFRAME_ANTHROPIC_MODEL=claude-haiku-4-5 \
   ANTHROPIC_API_KEY=<key> uv run pytest -m anthropic
+AGENTFRAME_TEST_OPENAI=1 AGENTFRAME_OPENAI_MODEL=<model> OPENAI_API_KEY=<key> \
+  uv run pytest -m openai
 ```
 
 An enabled provider with a missing required variable fails rather than skips.
