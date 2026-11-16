@@ -200,9 +200,11 @@ flowchart LR
 
 ## Remote skill catalog
 
-Implemented (#166, `max_tokens_per_call=` #167, `permissions=` #168) as `await
+Implemented (#166, `max_tokens_per_call=` #167, `permissions=` #168,
+`all_registered=` and `allow_any_caller=` #263) as `await
 ctx.remote_skills(*remotes, agents=None, skill=None, tags=(), ask=False,
-max_tokens_per_call=None, permissions=None)`, with the `default_remote` identity
+max_tokens_per_call=None, permissions=None, all_registered=False,
+allow_any_caller=False)`, with the `default_remote` identity
 below (implemented, #175). It returns a `SkillCatalog`
 ([#166](https://github.com/malcmiller/agentframe/issues/166)): an immutable list
 of `RemoteSkill` entries plus the run's bindings.
@@ -255,6 +257,33 @@ Passing declared `Remote` parameters (`ctx.remote_skills(research, writer)`)
 restricts the catalog to exactly those agents. They were validated at startup,
 so a failure there raises as in M8+ instead of being skipped: the author named
 them explicitly.
+
+### Fail-closed defaults
+
+Implemented (#263). Two defaults keep a catalog from quietly becoming an open
+proxy:
+
+- **Explicit catalogs.** With no `remotes`, `agents=`, `skill=` or `tags=`,
+  `remote_skills` raises `DefinitionError` unless `all_registered=True`.
+  Otherwise registering one more agent would silently widen what every such
+  skill's model may call. `all_registered=True` with `remotes` is also a
+  `DefinitionError`, since the two contradict each other.
+- **The open-proxy guard.** In a run hosted by an `AgentApp`, a skill without
+  `requires_permissions` may not let a model choose calls made with the
+  agent's own credentials (`Service`, including `default_remote`). Any caller
+  who reaches the skill could otherwise use those credentials. Remote tools
+  check before the first model call; `run_plan` checks every step after
+  validating the plan and before policy checks or sends. The refusal is a
+  `PermissionDeniedError` naming only the skill. `requires_permissions`,
+  `OnBehalfOf` identities or `allow_any_caller=True` pass. Open agents (no
+  credentials), hand-written `Remote` calls and local runs are not guarded:
+  no model chooses those calls, or no remote caller exists. The guard checks
+  the skill's own permissions, not per-entry `permissions=`, because entry
+  permissions protect individual entries rather than who may drive the model.
+
+The first catalog built for each skill in a hosted runtime logs at INFO how its
+agents are called (`Service`, `OnBehalfOf`, `none` or `mixed`), so operators
+see the identity mode without any credential in the log.
 
 ### Catalog size
 
@@ -561,7 +590,10 @@ bounded by `max_model_calls` like any other.
   pause/resume.
 - **The execute skill can become an open proxy.** It runs caller-supplied plans
   with the orchestrator's outbound identity, so with `Service` identity any
-  caller who reaches it can call any catalog entry as the orchestrator. Give
+  caller who reaches it can call any catalog entry as the orchestrator. Hosted
+  runs refuse this unless the skill has `requires_permissions`, uses
+  `OnBehalfOf` or opts out with `allow_any_caller=True`
+  ([fail-closed defaults](#fail-closed-defaults)). Give
   the execute skill `requires_permissions`, run it over a narrowed catalog
   (`agents=`, `skill=`, `tags=` or declared remotes), and prefer `OnBehalfOf`
   so each agent sees the real user.

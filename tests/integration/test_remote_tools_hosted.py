@@ -106,7 +106,9 @@ class Orchestrator(Agent):
 
     @skill(id="answer", description="Answer a goal.", tags=["orchestration"])
     async def answer(self, goal: str, ctx: RunContext) -> str:
-        skills = await ctx.remote_skills(**self.catalog_options)
+        skills = await ctx.remote_skills(
+            **{"all_registered": True, **self.catalog_options}
+        )
         return await ctx.generate(goal, tools=[*skills])
 
     def tool_results(self) -> list[str]:

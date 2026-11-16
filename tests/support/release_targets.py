@@ -298,18 +298,24 @@ def create_planner_app() -> AgentApp:
 
 @agent(name="Coordinator", version="0.1.0")
 class Coordinator(Agent):
-    """Offers every registered agent's skills to its model, as tools or a plan."""
+    """Offers every registered agent's skills to its model, as tools or a plan.
+
+    Development callers carry no permissions, so this loopback-only test target
+    opts out of the open-proxy guard with ``allow_any_caller=True``.
+    """
 
     @skill(id="answer", tags=["orchestration"])
     async def answer(self, goal: str, ctx: RunContext) -> str:
         """Answer a goal by letting the model call registered agents' skills."""
-        skills = await ctx.remote_skills(max_tokens_per_call=1_000)
+        skills = await ctx.remote_skills(
+            all_registered=True, allow_any_caller=True, max_tokens_per_call=1_000
+        )
         return await ctx.generate(goal, tools=[*skills])
 
     @skill(id="run_goal", tags=["orchestration"])
     async def run_goal(self, goal: str, ctx: RunContext) -> dict[str, Any]:
         """Plan a goal over registered agents' skills, run it, report each step."""
-        skills = await ctx.remote_skills()
+        skills = await ctx.remote_skills(all_registered=True, allow_any_caller=True)
         plan = await ctx.plan(goal, skills)
         result = await ctx.run_plan(
             plan, skills, max_tokens_per_step=1_000, on_failure="continue"

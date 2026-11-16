@@ -22,7 +22,13 @@ from agentframe.errors import (
     RemoteAgentError,
 )
 from agentframe.models.base import ToolSpec
-from agentframe.orchestration.catalog import RemoteSkill, bound_remote, safe_tool_name
+from agentframe.orchestration.catalog import (
+    RemoteSkill,
+    SkillCatalog,
+    bound_remote,
+    check_caller_guard,
+    safe_tool_name,
+)
 from agentframe.runtime.correlation import RunCorrelation
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.tools import error_result, is_permitted
@@ -203,12 +209,17 @@ def remote_tools(
         DefinitionError: An entry is not from a catalog this run built, is
             given twice, or its tool name is too long or the same as another
             entry's.
+        PermissionDeniedError: The open-proxy guard refused an entry (see
+            ``check_caller_guard``). Raised before the model is called.
     """
     tools: dict[str, RemoteTool] = {}
     for entry in entries:
         if run is None:
             raise _not_from_this_run(entry)
-        binding, max_tokens = _bound(entry, run)
+        catalog, binding = _bound(entry, run)
+        if skill is None:
+            raise RuntimeError("Remote tools are offered only inside a skill")
+        check_caller_guard(catalog, [entry], skill, run)
         name = tool_name(entry)
         if name in tools:
             if tools[name].entry is entry:
@@ -224,7 +235,7 @@ def remote_tools(
             name,
             entry,
             binding,
-            max_tokens,
+            catalog.max_tokens_per_call,
             run.correlation,
             principal,
             policy,
@@ -253,12 +264,12 @@ def tool_name(entry: RemoteSkill) -> str:
     return name
 
 
-def _bound(entry: RemoteSkill, run: RunRemotes) -> tuple[Remote[Any], int | None]:
-    """Return the entry's binding and token ceiling from this run's catalogs."""
+def _bound(entry: RemoteSkill, run: RunRemotes) -> tuple[SkillCatalog, Remote[Any]]:
+    """Return the entry's catalog and binding from this run's catalogs."""
     for catalog in run.catalogs:
         binding = bound_remote(catalog, entry)
         if binding is not None:
-            return binding, catalog.max_tokens_per_call
+            return catalog, binding
     raise _not_from_this_run(entry)
 
 

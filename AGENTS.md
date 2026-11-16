@@ -608,7 +608,11 @@ protocol fields or hard billing guarantees.
 No orchestration helpers in the first multi-agent release: plain await,
 asyncio.TaskGroup and directory.find. M10 (0.3.0) adds opt-in remote skills as model
 tools and checked plans (`docs/guides/orchestration.md`); plain await stays
-the default. Later optional `Remote[ResearchAgent]`
+the default. Since #263 catalogs fail closed: `remote_skills()` with no
+remotes/`agents=`/`skill=`/`tags=` needs `all_registered=True`, and a hosted
+skill without `requires_permissions` letting a model choose `Service`
+(own-credential) calls raises `PermissionDeniedError` unless
+`allow_any_caller=True` or `OnBehalfOf`. Later optional `Remote[ResearchAgent]`
 typed proxy always uses structured selection, never prompt routing. Prove two or more
 independently deployed AgentFrame agents, an orchestrator discovering/calling a
 specialist with propagated context, and non-AgentFrame A2A client/server interop.

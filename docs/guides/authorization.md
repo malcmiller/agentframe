@@ -391,6 +391,7 @@ from agentframe import RunContext
 
 async def answer(goal: str, ctx: RunContext) -> str:
     skills = await ctx.remote_skills(
+        agents=["billing-agent", "research-agent"],
         permissions={"billing-agent.refund": {"refunds:write"}},
     )
     return await ctx.generate(goal, tools=[*skills])
@@ -415,7 +416,11 @@ orchestrator's authority. Without permissions, any caller who reaches the
 orchestrator can make its model call any catalog entry with that authority,
 including callers using `APIKeyAuth` or `AllowAnonymous` ingress. AgentFrame
 does not refuse service identity (it is the only mode for those ingress
-types), so for consequential entries:
+types), but a hosted skill without `requires_permissions` whose model may
+choose `Service` calls is refused with `PermissionDeniedError` before anything
+is sent, unless its catalog passes `allow_any_caller=True`
+([the open-proxy guard](../api/orchestration.md#the-open-proxy-guard), #263).
+For consequential entries:
 
 1. give them `permissions=` matching what the caller must hold;
 2. add tool checks for argument-level rules (amounts, destinations, tenants);

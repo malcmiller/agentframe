@@ -18,7 +18,7 @@ from collections.abc import (
 )
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from a2a.types import AgentCard, AgentSkill
 
@@ -28,10 +28,20 @@ from google.protobuf.json_format import MessageToDict  # type: ignore[import-unt
 from agentframe.discovery.binding import check_no_redirects
 from agentframe.discovery.cards import InvalidCardError
 from agentframe.discovery.directory import DiscoveredAgent
-from agentframe.discovery.identity import check_identity
+from agentframe.discovery.identity import (
+    OnBehalfOf,
+    RemoteIdentity,
+    Service,
+    check_identity,
+)
 from agentframe.discovery.registry import AgentReference
 from agentframe.discovery.remote import Remote
-from agentframe.errors import AgentFrameError, DefinitionError, RemoteAgentError
+from agentframe.errors import (
+    AgentFrameError,
+    DefinitionError,
+    PermissionDeniedError,
+    RemoteAgentError,
+)
 from agentframe.orchestration.card_text import (
     MAX_SCHEMA_BYTES,
     bounded_schema,
@@ -50,6 +60,10 @@ from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.tools import is_permitted
 from agentframe.security.principal import Principal
 from agentframe.skill_call import SKILL_CALL_EXTENSION_URI
+
+if TYPE_CHECKING:
+    # Imported only for type checking, to avoid an import cycle.
+    from agentframe.authoring.definitions import SkillDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +133,12 @@ class SkillCatalog:
         tool_calls_left: Returns the tool calls the run has left, which
             caps a plan's steps; ``None`` for no cap. Read on every check,
             since the run may make tool calls after building the catalog.
+        identities: How the run calls each agent, by agent name: its
+            ``Service`` or ``OnBehalfOf`` identity, or ``None`` for no
+            credentials. Agents missing here count as ``None``.
+        allow_any_caller: Whether an unprotected hosted skill may let a
+            model choose calls made with ``Service`` credentials; see
+            ``RunContext.remote_skills``.
     """
 
     def __init__(
@@ -127,12 +147,17 @@ class SkillCatalog:
         bindings: Mapping[str, Remote[Any]],
         max_tokens_per_call: int | None = None,
         tool_calls_left: Callable[[], int] | None = None,
+        *,
+        identities: Mapping[str, RemoteIdentity | None] | None = None,
+        allow_any_caller: bool = False,
     ) -> None:
         self._entries = tuple(entries)
         self._by_name = {entry.name: entry for entry in self._entries}
         self._bindings = MappingProxyType(dict(bindings))
         self._max_tokens_per_call = max_tokens_per_call
         self._tool_calls_left = tool_calls_left
+        self._identities = MappingProxyType(dict(identities or {}))
+        self._allow_any_caller = allow_any_caller
 
     @property
     def entries(self) -> tuple[RemoteSkill, ...]:
@@ -216,7 +241,63 @@ class SkillCatalog:
             self._bindings,
             self._max_tokens_per_call,
             self._tool_calls_left,
+            identities=self._identities,
+            allow_any_caller=self._allow_any_caller,
         )
+
+    def identity_mode(self) -> str:
+        """Return how the catalog's agents are called, for the identity log.
+
+        Package-internal. Returns ``"Service"``, ``"OnBehalfOf"`` or
+        ``"none"`` when every agent is called the same way (``"none"`` also
+        for an empty catalog), otherwise ``"mixed"``.
+        """
+        kinds = {_identity_kind(identity) for identity in self._identities.values()}
+        if len(kinds) > 1:
+            return "mixed"
+        return kinds.pop() if kinds else "none"
+
+
+def check_caller_guard(
+    catalog: SkillCatalog,
+    entries: Iterable[RemoteSkill],
+    skill: "SkillDefinition",
+    run: RunRemotes,
+) -> None:
+    """Refuse model-chosen calls that would make the agent an open proxy.
+
+    Package-internal: remote tools and plans call it before anything is sent.
+    In a hosted run, a skill without ``requires_permissions`` may not let a
+    model choose calls made with the agent's own ``Service`` credentials,
+    since any caller could then use them, unless its catalog was built with
+    ``allow_any_caller=True``. ``OnBehalfOf`` calls and agents called
+    without credentials pass, as do local runs.
+
+    Raises:
+        PermissionDeniedError: An entry's agent is called with ``Service``
+            credentials and the skill is unprotected. The message names
+            only the skill.
+    """
+    if not run.hosted or skill.requires_permissions or catalog._allow_any_caller:
+        return
+    if any(
+        isinstance(catalog._identities.get(entry.agent), Service) for entry in entries
+    ):
+        raise PermissionDeniedError(
+            f"Skill '{skill.id}' requires no permissions, so it cannot let a "
+            "model choose remote calls made with this agent's own credentials; "
+            "add requires_permissions to the skill, call the agents "
+            "OnBehalfOf the user, or pass allow_any_caller=True to "
+            "remote_skills"
+        )
+
+
+def _identity_kind(identity: RemoteIdentity | None) -> str:
+    if isinstance(identity, Service):
+        return "Service"
+    if isinstance(identity, OnBehalfOf):
+        return "OnBehalfOf"
+    return "none"
 
 
 def bound_remote(catalog: SkillCatalog, entry: RemoteSkill) -> Remote[Any] | None:
@@ -250,13 +331,18 @@ async def build_catalog(
     ask: bool,
     max_tokens_per_call: int | None,
     permissions: Mapping[str, Collection[str]] | None,
+    all_registered: bool,
+    allow_any_caller: bool,
 ) -> SkillCatalog:
     """Build a run's catalog and remember it on ``run``; see
     ``RunContext.remote_skills``."""
     _check_max_tokens(max_tokens_per_call)
+    _check_flag("all_registered", all_registered)
+    _check_flag("allow_any_caller", allow_any_caller)
     required = _checked_permissions(permissions)
     names = _checked_collection("agents", agents)
     wanted_tags = _checked_collection("tags", tags) or frozenset()
+    _check_explicit(remotes, names, skill, wanted_tags, all_registered)
     declared = _declared(remotes, names) if remotes else {}
     if remotes:
         candidates = {name: remote.discovered for name, remote in declared.items()}
@@ -264,6 +350,7 @@ async def build_catalog(
         candidates = await _registered(run, names)
     entries: list[RemoteSkill] = []
     bindings: dict[str, Remote[Any]] = {}
+    identities: dict[str, RemoteIdentity | None] = {}
     for name, found in candidates.items():
         try:
             agent_entries = _entries(name, found.card, skill, wanted_tags, ask)
@@ -278,7 +365,12 @@ async def build_catalog(
         if not agent_entries:
             continue
         entries += agent_entries
-        bindings[name] = declared[name] if remotes else run.bind_found(found)
+        if remotes:  # Declared remotes use only their remotes= entry.
+            bindings[name] = declared[name]
+            identities[name] = run.identity(name)
+        else:
+            bindings[name] = run.bind_found(found)
+            identities[name] = run.identity(name, found.card)
     _check_unique_names(entries)
     # Counted before any caller's permissions hide entries, so whether a
     # catalog is too large never depends on who calls.
@@ -289,9 +381,49 @@ async def build_catalog(
         _check_permission_names(required, cards, ask)
     _warn_unmatched(run, required, entries)
     entries = [_with_permissions(entry, required) for entry in entries]
-    catalog = SkillCatalog(entries, bindings, max_tokens_per_call, run.tool_calls_left)
+    catalog = SkillCatalog(
+        entries,
+        bindings,
+        max_tokens_per_call,
+        run.tool_calls_left,
+        identities=identities,
+        allow_any_caller=allow_any_caller,
+    )
     run.catalogs.append(catalog)
     return catalog
+
+
+def _check_flag(name: str, value: bool) -> None:
+    if not isinstance(value, bool):
+        raise DefinitionError(f"remote_skills {name}= must be True or False")
+
+
+def _check_explicit(
+    remotes: Sequence[Remote[Any]],
+    names: frozenset[str] | None,
+    skill: str | None,
+    tags: frozenset[str],
+    all_registered: bool,
+) -> None:
+    """Refuse a catalog that would silently hold the whole registry.
+
+    Raises:
+        DefinitionError: Nothing narrows a registry catalog and
+            ``all_registered`` is not set, or ``all_registered`` is combined
+            with ``Remote`` parameters.
+    """
+    if all_registered and remotes:
+        raise DefinitionError(
+            "remote_skills takes either the skill's Remote parameters or "
+            "all_registered=True, not both"
+        )
+    narrowed = bool(remotes) or names is not None or skill is not None or bool(tags)
+    if not narrowed and not all_registered:
+        raise DefinitionError(
+            "remote_skills() would offer every registered agent; pass the "
+            "skill's Remote parameters, agents=, tags= or skill=, or "
+            "all_registered=True to use the whole registry deliberately"
+        )
 
 
 def _checked_permissions(

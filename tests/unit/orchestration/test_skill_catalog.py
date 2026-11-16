@@ -152,7 +152,7 @@ class Orchestrator(Agent):
 
     @skill(id="catalog", description="List remote skills.", tags=["orchestration"])
     async def catalog(self, ctx: RunContext) -> list[str]:
-        self.built = await ctx.remote_skills(**self.options)
+        self.built = await ctx.remote_skills(**{"all_registered": True, **self.options})
         return [entry.name for entry in self.built]
 
 
@@ -373,6 +373,44 @@ async def test_agents_skill_and_tags_narrow_the_catalog(
     registry: AgentDirectory, options: dict[str, Any], expected: list[str]
 ) -> None:
     assert await catalog_names(registry, **options) == expected
+
+
+# Explicit catalogs (#263): nothing offers every registered agent by accident
+
+
+@pytest.mark.parametrize("options", [{}, {"ask": True}, {"max_tokens_per_call": 1_000}])
+async def test_a_catalog_that_names_no_agents_is_a_definition_error(
+    registry: AgentDirectory, options: dict[str, Any]
+) -> None:
+    with pytest.raises(DefinitionError, match="all_registered=True"):
+        await catalog_names(registry, all_registered=False, **options)
+
+
+@pytest.mark.parametrize(
+    "options", [{"agents": ["billing"]}, {"skill": "invoice"}, {"tags": ["finance"]}]
+)
+async def test_agents_skill_or_tags_alone_make_a_catalog_explicit(
+    registry: AgentDirectory, options: dict[str, Any]
+) -> None:
+    names = await catalog_names(registry, all_registered=False, **options)
+
+    assert names == ["billing.invoice"]
+
+
+async def test_all_registered_offers_every_registered_agent(
+    registry: AgentDirectory,
+) -> None:
+    assert await catalog_names(registry, all_registered=True) == [
+        "research.find",
+        "research.brief",
+        "plain",
+        "billing.invoice",
+    ]
+
+
+async def test_all_registered_with_declared_remotes_is_a_definition_error() -> None:
+    with pytest.raises(DefinitionError, match="all_registered"):
+        await research_runtime().invoke(Protected(all_registered=True), skill="catalog")
 
 
 async def test_an_unknown_agent_name_is_a_definition_error(

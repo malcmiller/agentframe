@@ -130,7 +130,7 @@ class Orchestrator(Agent):
 
     @skill(id="report", description="Plan a report.", tags=["orchestration"])
     async def report(self, goal: str, ctx: RunContext) -> Plan:
-        catalog = await ctx.remote_skills(permissions=REFUNDS)
+        catalog = await ctx.remote_skills(all_registered=True, permissions=REFUNDS)
         plan = await ctx.plan(goal, catalog, **self.options)
         if self.then_generate:
             await ctx.generate("Summarize the plan.")
@@ -439,7 +439,7 @@ async def test_max_steps_must_be_a_positive_whole_number(max_steps: Any) -> None
 class Misuser(Agent):
     @skill(id="report", description="Plan a report.", tags=["orchestration"])
     async def report(self, goal: str, ctx: RunContext) -> Plan:
-        catalog = await ctx.remote_skills()
+        catalog = await ctx.remote_skills(all_registered=True)
         return await ctx.plan(goal, list(catalog))  # type: ignore[arg-type]
 
 

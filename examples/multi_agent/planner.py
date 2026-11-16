@@ -180,7 +180,8 @@ class Planner(Agent):
         skills = await specialists(ctx)
         return await ctx.plan(goal, skills, max_steps=MAX_STEPS)
 
-    # Open-proxy warning: the model calls other agents as this agent.
+    # The model chooses calls made as this agent, so AgentFrame refuses this
+    # skill without requires_permissions (the open-proxy guard).
     @skill(id="planned", tags=["planning"], requires_permissions=["plans:run"])
     async def planned(self, goal: str, ctx: RunContext) -> PlanOutcome:
         """Plan a goal over the research and writer agents, then run the plan."""

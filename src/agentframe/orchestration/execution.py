@@ -33,7 +33,12 @@ from agentframe.errors import (
     RemoteAgentError,
     TokenLimitExceededError,
 )
-from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, bound_remote
+from agentframe.orchestration.catalog import (
+    RemoteSkill,
+    SkillCatalog,
+    bound_remote,
+    check_caller_guard,
+)
 from agentframe.orchestration.plan import (
     Plan,
     PlanStep,
@@ -170,6 +175,12 @@ async def run_plan(
     # check() lowers max_steps to the tool calls left (step_limit).
     groups = catalog.visible_to(principal).check(plan, max_steps=max_steps)
     steps = [step for group in groups for step in group]
+    if generation.skill is None:
+        raise RuntimeError(_NO_RUNNING_SKILL_MESSAGE)
+    entries = [catalog.get(step.use) for step in steps]
+    check_caller_guard(
+        catalog, [entry for entry in entries if entry], generation.skill, run
+    )
     await _check_plan(plan, generation, principal, deadline)
     tokens = max_tokens_per_step or _equal_share(generation, len(steps))
     execution = _Execution(

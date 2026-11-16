@@ -116,7 +116,7 @@ class Runtime:
             security. ``OnBehalfOf`` needs a signed-in Entra user, so it
             works only in runs hosted by an ``AgentApp`` with ``EntraIDAuth``.
         default_remote: How to authenticate to skill-catalog agents
-            (``ctx.remote_skills()``) that have no ``remotes=`` entry. It is
+            (``ctx.remote_skills(...)``) that have no ``remotes=`` entry. It is
             sent only to agents whose card requires credentials it meets;
             others whose card requires credentials are skipped. It is never
             used for ``Remote`` parameters. Every such registered agent
@@ -148,6 +148,8 @@ class Runtime:
         self._directory = directory
         self._remotes = checked_remotes(remotes)
         self._default_remote = checked_default_remote(default_remote)
+        # Each (agent, skill) logs its catalog identity mode once.
+        self._logged_identities: set[tuple[str, str]] = set()
 
     @property
     def policy(self) -> ExecutionPolicy | None:
@@ -536,6 +538,7 @@ class Runtime:
             user_token=run.user_token,
             stack=stack,
             own_interface_url=run.own_interface_url,
+            logged_identities=self._logged_identities,
         )
 
     async def _check_policy(

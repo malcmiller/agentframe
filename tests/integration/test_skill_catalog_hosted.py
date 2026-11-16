@@ -51,7 +51,7 @@ class Orchestrator(Agent):
     async def catalog(self, ctx: RunContext) -> list[dict[str, object]]:
         return [
             {"name": entry.name, "schema": entry.arguments_schema}
-            for entry in await ctx.remote_skills()
+            for entry in await ctx.remote_skills(all_registered=True)
         ]
 
 

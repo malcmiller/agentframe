@@ -1,6 +1,7 @@
 """One run's bindings to remote agents, shared by ``Remote`` parameters and
 the skill catalog."""
 
+import logging
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
     # Imported only for type checking: the catalog module imports this one.
     from agentframe.orchestration.catalog import SkillCatalog
 
+logger = logging.getLogger(__name__)
+
 
 class RunRemotes:
     """Creates one run's ``Remote`` bindings, with the run's limits and identity.
@@ -56,6 +59,9 @@ class RunRemotes:
         stack: Closes the on-behalf-of credential when the run ends.
         own_interface_url: The A2A interface URL the hosting app advertises,
             or ``None`` for a local run.
+        logged_identities: The ``(agent, skill)`` pairs whose catalog
+            identity mode was already logged, shared by the runtime's runs so
+            each is logged once.
 
     Attributes:
         catalogs: The skill catalogs this run built, so ``ctx.generate`` can
@@ -77,6 +83,7 @@ class RunRemotes:
         user_token: UserToken | None,
         stack: AsyncExitStack,
         own_interface_url: str | None,
+        logged_identities: set[tuple[str, str]],
     ) -> None:
         assert limits.max_remote_hops is not None  # DEFAULT_LIMITS sets them.
         assert limits.max_total_tokens is not None
@@ -96,7 +103,32 @@ class RunRemotes:
         self._user_token = user_token
         self._stack = stack
         self._on_behalf_of: UserTokenCredential | None = None
+        self._logged_identities = logged_identities
         self.catalogs: list[SkillCatalog] = []
+
+    @property
+    def hosted(self) -> bool:
+        """Whether the run is hosted by an ``AgentApp``, not a local run."""
+        return self.own_interface_url is not None
+
+    def log_identity_mode(self, skill_id: str, mode: str) -> None:
+        """Log, once per hosted skill, how its catalog agents are called.
+
+        Args:
+            skill_id: The skill that built a catalog.
+            mode: ``"Service"``, ``"OnBehalfOf"``, ``"mixed"`` or ``"none"``.
+                Never a credential.
+        """
+        key = (self.correlation.agent, skill_id)
+        if not self.hosted or key in self._logged_identities:
+            return
+        self._logged_identities.add(key)
+        logger.info(
+            "Skill '%s' calls its skill catalog agents with identity: %s",
+            skill_id,
+            mode,
+            extra=self.correlation.log_extra(),
+        )
 
     def tool_calls_left(self) -> int:
         """Return the tool calls the run may still make."""
