@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from agentframe.evaluation.report import EvalReport
 
 # The JSON report's schema identifier; the number goes up on breaking changes.
-_SCHEMA = "agentframe.evaluation.report/1"
+SCHEMA = "agentframe.evaluation.report/1"
 
 
 def known_tokens(report: "EvalReport") -> int:
@@ -52,7 +52,7 @@ def report_json(report: "EvalReport") -> dict[str, Any]:
         None if report.max_total_tokens is None else unknown_cases(report) == 0
     )
     return {
-        "schema": _SCHEMA,
+        "schema": SCHEMA,
         "agentframe_version": agentframe.__version__,
         "target": dict(report.target),
         "scorers": list(report.scorers),

@@ -778,7 +778,8 @@ a readable console summary.
 `str(report)` in #155; `max_total_tokens`, `not_run_count`, `flaky_cases` and
 `over_budget` in #157; `target`, `scorers`, `capture_content`,
 [`write_json`](#evalreportwrite_json) and [`require`](#evalreportrequire) in
-#156; `total_judge_usage` in #160.
+#156; `total_judge_usage` in #160; [`write_html`](#evalreportwrite_html) in
+#276.
 
 Every aggregate counts attempts: with `repeats=3` each case adds three results.
 `not_run` attempts are counted only by `not_run_count` and left out of every
@@ -919,6 +920,58 @@ as their `repr`. File system errors propagate.
 **Related:** [pytest and CI](../design/evaluation.md#pytest-and-ci),
 [evaluation guide](../guides/evaluation.md).
 
+## `EvalReport.write_html`
+
+**Purpose / decision:** one self-contained HTML page of the report for people
+to read, optionally compared with an earlier JSON report. It is rendered from
+the same document [`write_json`](#evalreportwrite_json) writes, with the
+standard library only.
+
+**Signature status:** implemented in #276.
+
+```text
+EvalReport.write_html(path: str | Path, *, baseline: str | Path | None = None) -> None
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `path` | `str \| Path` | Required | File to write as UTF-8 HTML; an existing file is replaced. |
+| `baseline` | `str \| Path \| None` | Optional; default `None` | An earlier report written by `write_json` (schema `agentframe.evaluation.report/1`) to compare with. |
+
+```python
+from agentframe.evaluation import EvalReport
+
+
+def keep(report: EvalReport) -> None:
+    report.write_json("eval-report.json")
+    report.write_html("eval-report.html", baseline="main-eval-report.json")
+```
+
+The page shows the target, scorers, budget and AgentFrame version; the
+aggregates (counts, pass rate, tokens, judge tokens, latency, flaky cases);
+scorer and tag pass rates; errors by class; a case table that sorts by any
+column and filters by text or status; and per attempt its scores (value and
+judge vote counts), error type, invocation ID, usage, duration and call
+counts. Attempts that did not pass open expanded.
+
+With `baseline`, a "Compared with baseline" section lists cases that newly
+fail and newly pass and the pass-rate (in percentage points) and latency
+(p50, p95, max) changes. A case passes when every attempt of it that ran
+passed; cases present in only one report are not compared.
+
+**Behavior / failures:** the page loads nothing from the network: CSS and a
+small sort-and-filter script are inline, and a Content-Security-Policy allows
+only those two (by hash) and blocks every fetch, so it works offline and as a
+downloaded CI artifact. Every value is HTML-escaped, so case outputs, judge
+reasons and error text are shown as text, never run. Content follows
+`capture_content` exactly as in the JSON: without it the page has no case
+inputs, expected values, outputs, score reasons or error messages; with it,
+treat the file as sensitive. A baseline that is not JSON or not an AgentFrame
+evaluation report raises `ValueError`; file system errors propagate.
+
+**Related:** [evaluation guide](../guides/evaluation.md#html-report),
+[`agentframe eval`](#agentframe-eval).
+
 ## `EvalReport.require`
 
 **Purpose / decision:** fail a pytest test or script when the report misses a
@@ -1017,15 +1070,17 @@ plus [`require`](#evalreportrequire) covers the same need.
 command with no new dependency.
 
 ```text
-agentframe eval TARGET [--json PATH] [--min-pass-rate RATE] [--max-errors N]
-                [--max-total-tokens N] [--allow-not-run] [--allow-over-budget]
-                [--capture-content]
+agentframe eval TARGET [--json PATH] [--html PATH [--baseline PATH]]
+                [--min-pass-rate RATE] [--max-errors N] [--max-total-tokens N]
+                [--allow-not-run] [--allow-over-budget] [--capture-content]
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
 | `TARGET` | `module:function` string | Required | Function called with no arguments that returns an [`Evaluation`](#evaluation), loaded like [`agentframe run`](hosting.md#agentframe-run)'s factory. The working directory is importable. |
 | `--json` | path | Optional; default none | Write [`write_json`](#evalreportwrite_json) here before thresholds are checked, so the file exists when one is missed. An existing file is replaced. |
+| `--html` | path | Optional; default none | Write [`write_html`](#evalreportwrite_html) here, after `--json` and before thresholds are checked. An existing file is replaced. Added in #276. |
+| `--baseline` | path | Optional; default none; needs `--html` | An earlier `--json` report to compare with in the HTML report. Read and checked before the evaluation runs. Added in #276. |
 | `--min-pass-rate` | float | Optional; default none | Passed to `require(min_pass_rate=)`; from 0.0 to 1.0. |
 | `--max-errors` | integer | Optional; default `0` | Passed to `require(max_errors=)`; 0 or more. |
 | `--max-total-tokens` | integer | Optional; default none | Passed to `require(max_total_tokens=)`; 1 or more. Unknown usage misses it. |
@@ -1066,12 +1121,14 @@ cannot be found, a missing attribute, a target that is not callable, a factory
 returning anything but an `Evaluation`, an invalid evaluation
 (`DefinitionError` from `Evaluation`), a factory that raises any other
 exception (only its class name is printed, since its message may hold case
-content), an evaluation that captures content without `--capture-content`, and
-a `--json` path that cannot be written. Invalid threshold values are argparse
+content), an evaluation that captures content without `--capture-content`, a
+`--json` or `--html` path that cannot be written, `--baseline` without
+`--html`, and a baseline that cannot be read or is not an AgentFrame
+evaluation report. Invalid threshold values are argparse
 usage errors, also exit code 2. Errors raised while importing the target
 module keep their traceback. Other commands never import
 `agentframe.evaluation`. Output holds no case
-content (the summary and JSON never do) unless the evaluation captured it and
+content (the summary, JSON and HTML never do) unless the evaluation captured it and
 `--capture-content` allowed that. Failing, errored and not-run attempts never
 stop the run; they are counted against the thresholds.
 

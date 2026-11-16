@@ -203,6 +203,27 @@ starts:
 The `schema` is bumped on breaking changes. Unknown token counts are `null`,
 not 0.
 
+### HTML report
+
+[`write_html`](../api/evaluation.md#evalreportwrite_html) writes one
+self-contained HTML page from the same data, for people rather than scripts:
+the aggregates, a case table you can sort by any column and filter by text or
+status, and each attempt's scores, judge vote counts, error type and
+invocation ID. It needs no extra dependency and loads nothing from the
+network: CSS and a small script are inline, and its Content-Security-Policy
+blocks any other script and every fetch. Every value is HTML-escaped, since
+outputs and judge reasons are untrusted. As with the JSON, case inputs,
+outputs, score reasons and error messages appear only when the evaluation
+captured content.
+
+Pass an earlier JSON report as `baseline` to see what changed: cases that
+newly fail or newly pass (a case passes when every attempt of it that ran
+passed), and the pass-rate and latency changes:
+
+```python
+report.write_html("eval-report.html", baseline="main-eval-report.json")
+```
+
 ## Gate CI on thresholds
 
 ### In pytest
@@ -251,24 +272,35 @@ is missed (each miss is listed above the summary) and 2 on a configuration
 error, such as a target that cannot be imported or does not return an
 `Evaluation`. `--min-pass-rate`, `--max-errors` (default 0),
 `--max-total-tokens`, `--allow-not-run` and `--allow-over-budget` go straight
-to `require`, so the defaults are as strict as above. `--json` is written
-before thresholds are checked. An evaluation created with
+to `require`, so the defaults are as strict as above. `--json` and `--html`
+are written before thresholds are checked; `--baseline old.json` adds a
+comparison to the HTML report, and a missing or invalid baseline is refused
+before the evaluation runs. An evaluation created with
 `capture_content=True` is refused unless you pass `--capture-content`; the
 command never turns capture on itself.
 
 ### Keep the report
 
-Upload the JSON file as a CI artifact, even when the check fails; for example,
-in GitHub Actions:
+Upload the JSON and HTML files as CI artifacts, even when the check fails; the
+HTML file opens in a browser straight from the downloaded artifact. For
+example, in GitHub Actions:
 
 ```yaml
-- run: uv run pytest  # or: uv run agentframe eval ... --json eval-report.json
+- run: >-
+    uv run agentframe eval evals.answers:create_evaluation
+    --json eval-report.json --html eval-report.html --min-pass-rate 0.9
 - uses: actions/upload-artifact@v7
   if: always()
   with:
     name: eval-report
-    path: eval-report.json
+    path: |
+      eval-report.json
+      eval-report.html
 ```
+
+To compare with the default branch, download its last `eval-report.json`
+(for example with `actions/download-artifact` or `gh run download`) and add
+`--baseline main-eval-report.json`.
 
 ## Real models
 

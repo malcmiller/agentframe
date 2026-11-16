@@ -38,6 +38,13 @@ behavior starts with an **Upgrading** section; see the
   become that argument and a message without text is `REJECTED`. Validation,
   permissions and policies still apply, and a `router` decides instead when
   given (#270).
+- **Evaluation:** an HTML report. `EvalReport.write_html(path, *, baseline=None)`
+  and `agentframe eval --html PATH` write one self-contained page (inline CSS
+  and a small sort/filter script, no network fetches, hash-locked
+  Content-Security-Policy, every value HTML-escaped) from the same data as the
+  JSON report, following `capture_content`. `baseline=` / `--baseline OLD.json`
+  compares with an earlier JSON report: newly failing and newly passing cases
+  plus pass-rate and latency changes (#276).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

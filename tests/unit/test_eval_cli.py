@@ -141,6 +141,57 @@ def test_content_is_printed_only_with_capture_content(tmp_path: Path) -> None:
     assert "classified" in report_path.read_text(encoding="utf-8")
 
 
+def test_the_html_report_compares_against_a_baseline(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    html_path = tmp_path / "eval-report.html"
+    agentframe_eval(
+        "eval_targets:create_passing_evaluation", "--json", str(baseline_path)
+    )
+
+    result = agentframe_eval(
+        "eval_targets:create_failing_evaluation",
+        "--html",
+        str(html_path),
+        "--baseline",
+        str(baseline_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    page = html_path.read_text(encoding="utf-8")
+    newly_failing = page.split("Newly failing")[1].split("Newly passing")[0]
+    assert "other" in newly_failing
+    assert "-33.3 points" in page
+    assert "classified" not in page
+
+
+@pytest.mark.parametrize(
+    ("baseline", "html", "message"),
+    [
+        ("missing.json", True, "Cannot read the baseline report"),
+        ("eval_targets.py", True, "is not a JSON file"),
+        ("eval_targets.py", False, "pass --html too"),
+    ],
+)
+def test_a_bad_baseline_exits_with_2_before_the_evaluation_runs(
+    tmp_path: Path, baseline: str, html: bool, message: str
+) -> None:
+    html_path = tmp_path / "eval-report.html"
+    html_arguments = ["--html", str(html_path)] if html else []
+
+    result = agentframe_eval(
+        "eval_targets:create_passing_evaluation",
+        "--baseline",
+        baseline,
+        *html_arguments,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.startswith("agentframe: error: ")
+    assert message in result.stderr
+    assert not html_path.exists()
+
+
 def test_other_commands_do_not_load_the_evaluation_package() -> None:
     code = "import sys, agentframe.cli; print('agentframe.evaluation' in sys.modules)"
     result = subprocess.run(
