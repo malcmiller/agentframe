@@ -38,7 +38,8 @@ class Services:
     def add[T](self, service_type: type[T], instance: T) -> Self:
         """Register an application-owned service shared by all runs.
 
-        AgentFrame never closes this instance; the application owns its lifecycle.
+        The application owns its lifecycle; list it in ``AgentApp(resources=...)``
+        to have the app close it at shutdown.
 
         Args:
             service_type: Type that skills request with ``Inject[service_type]``.

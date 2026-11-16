@@ -41,8 +41,6 @@ must support structured output.
 import os
 from typing import Literal
 
-import httpx
-
 from agentframe import (
     Agent,
     AgentApp,
@@ -105,7 +103,8 @@ def create_app(
         model: The planning model. Defaults to ``model_from_env()``; it lives
             as long as the server process.
         directory: Where to find ``research-agent``. Defaults to the agents
-            listed in ``AGENTFRAME_AGENTS``, over HTTP on localhost only.
+            listed in ``AGENTFRAME_AGENTS``, over HTTP on localhost only. The
+            app opens it at startup and closes it after shutdown.
     """
     host = HostConfig(
         public_url=os.environ.get("APPROVALS_PUBLIC_URL", "http://127.0.0.1:8003"),
@@ -140,10 +139,4 @@ def create_directory() -> AgentDirectory:
     return AgentDirectory(
         sources=[EnvironmentAgentRegistry("AGENTFRAME_AGENTS")],
         allow_http_hosts=["127.0.0.1"],
-        # Credentials are never followed through a redirect. The client is
-        # never closed, so it keeps no idle connections that would be left open.
-        http_client=httpx.AsyncClient(
-            follow_redirects=False,
-            limits=httpx.Limits(max_keepalive_connections=0),
-        ),
     )

@@ -29,7 +29,7 @@ with its milestone. Implemented members:
 | Member | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `Agent(*, model=None, tools=())` | keyword-only constructor (M3 #35, `tools` M5 #60) | `model=None`, `tools=()` | Stores the injected model as `self.model` and the registered tools as `self.tools`. Subclasses with their own `__init__` keep working without calling it; they simply have no model and no tools. |
-| `model` | `Model \| None` | `None` | The model `ctx.generate` calls. Application-owned: AgentFrame never closes it. |
+| `model` | `Model \| None` | `None` | The model `ctx.generate` calls. Application-owned: AgentFrame closes it only when listed in [`AgentApp(resources=...)`](hosting.md#app-owned-resources). |
 | `tools` | `Mapping[str, ToolDefinition]` (M5 #60) | empty | The registered [`@tool`](decorators.md#tool) definitions by tool name, read-only. |
 | `limits` | `ClassVar[RunLimits]` | `RunLimits()` (all unset) | Agent-wide execution limits. Fields it sets override the library defaults; a skill or [per-run options](configuration.md#runoptions) override only the fields they set ([precedence](configuration.md#precedence)). |
 | `instructions` | `ClassVar[str \| None]` (M3 #35) | `None` | Trusted shared instructions, sent as the first `system` message of every `ctx.generate` call. `None` or empty sends none. |

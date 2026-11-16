@@ -2,9 +2,9 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Any
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from typing import Any, Protocol
 
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -96,6 +96,18 @@ _CANCEL_SECONDS = 5
 logger = logging.getLogger(__name__)
 
 
+class _SupportsAclose(Protocol):
+    """An object that releases what it holds with ``await aclose()``."""
+
+    async def aclose(self) -> None:
+        """Release what the object holds."""
+        ...
+
+
+type _AppResource = AbstractAsyncContextManager[Any] | _SupportsAclose
+"""Something ``AgentApp(resources=...)`` opens and closes with the server."""
+
+
 class AgentApp:
     """An ASGI application that hosts one agent over A2A 1.0.
 
@@ -114,8 +126,12 @@ class AgentApp:
     it with any ASGI server. Server startup then checks the model's input
     token limits with ``Runtime.validate_model`` and fails if one is unknown,
     checks a ``ModelRouter``'s model the same way, and checks every
-    ``Remote`` parameter's agent with ``Runtime.validate_remotes``. The app
-    never closes models or the directory; the application owns them.
+    ``Remote`` parameter's agent with ``Runtime.validate_remotes``. Before
+    those checks, the app opens each of ``resources`` and then ``directory``
+    (unless it is already open); after shutdown has drained, it closes them
+    in reverse order. Startup that fails closes whatever was already opened.
+    The app closes nothing else: a model or credential not listed in
+    ``resources`` stays the application's to close.
     Construction logs a warning, without failing, when ``host`` is legal but
     insecure: a plain ``http://`` ``public_url`` on a non-loopback host with
     credential-bearing authentication, or ``AllowAnonymous`` on a
@@ -175,8 +191,9 @@ class AgentApp:
         directory: Where ``Remote[Literal["name"]]`` parameters find their
             agents, when ``runtime`` is not given. Server startup looks up
             every name and fails if one is unknown, its card is invalid, or
-            it requires credentials that ``remotes`` cannot provide. The
-            application opens and closes it.
+            it requires credentials that ``remotes`` cannot provide. Unless
+            it is already open (with ``async with`` or an ``http_client=``),
+            the app opens it at server startup and closes it after shutdown.
         remotes: How to authenticate to each remote agent, by name, when
             ``runtime`` is not given; see ``Runtime``. ``OnBehalfOf`` remotes
             need ``host.auth`` to be ``EntraIDAuth`` with ``client_id=`` and
@@ -187,6 +204,13 @@ class AgentApp:
             a ``remotes=`` entry, when ``runtime`` is not given; see
             ``Runtime``. An ``OnBehalfOf`` default needs the same
             ``EntraIDAuth`` as ``OnBehalfOf`` remotes.
+        resources: Application-owned objects that live as long as the
+            server, such as models and Azure credentials, each an async
+            context manager or an object with ``async aclose()``. They are
+            opened in order at server startup (an async context manager is
+            entered; an ``aclose()`` object needs no opening) and closed in
+            reverse order after shutdown. Only what is listed is closed.
+            Defaults to none.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
@@ -202,8 +226,10 @@ class AgentApp:
             (API-key and anonymous callers support only ``Service``), the authenticator
             cannot describe its security on the Agent Card, a
             ``ModelRouter`` cannot describe a skill's arguments as a JSON
-            schema, or ``default_skill`` is not one of the agent's skills or
-            takes anything but exactly one ``str`` business argument.
+            schema, ``default_skill`` is not one of the agent's skills or
+            takes anything but exactly one ``str`` business argument, or
+            ``resources`` is not a list of async context managers and
+            ``aclose()`` objects, or lists one object twice.
     """
 
     def __init__(
@@ -222,7 +248,9 @@ class AgentApp:
         directory: AgentDirectory | None = None,
         remotes: Mapping[str, Service | OnBehalfOf] | None = None,
         default_remote: Service | OnBehalfOf | None = None,
+        resources: Sequence[_AppResource] = (),
     ) -> None:
+        resources = _checked_resources(resources)
         runtime = _runtime_for(
             runtime,
             services=services,
@@ -260,7 +288,16 @@ class AgentApp:
                 card, handler, host, user_token_exchange, a2a, admission, lifecycle
             ),
             lifespan=_lifespan(
-                agent, runtime, router, host, admission, lifecycle, task_store, handler
+                agent,
+                runtime,
+                router,
+                host,
+                admission,
+                lifecycle,
+                task_store,
+                handler,
+                resources,
+                directory,
             ),
         )
 
@@ -408,26 +445,73 @@ def _lifespan(
     lifecycle: Lifecycle,
     task_store: FinalStateStore,
     handler: "_RequestHandler",
+    resources: Sequence[_AppResource],
+    directory: AgentDirectory | None,
 ) -> Callable[[Starlette], AbstractAsyncContextManager[None]]:
-    """Return the app's lifespan: startup checks, then graceful shutdown."""
+    """Return the app's lifespan: open resources, startup checks, then shutdown."""
 
     @asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
-        # Fails startup, before any request is served, when a skill or
-        # the built-in router has no input token limit, or a remote agent
-        # cannot be called. Custom routers check their own models.
-        await runtime.validate_model(agent, limits_ceiling=host.limits_ceiling)
-        await runtime.validate_remotes(agent)
-        if isinstance(router, ModelRouter):
-            await router.validate_model(routing_limits(agent, host.limits_ceiling))
-        lifecycle.mark_started()
-        yield
-        await lifecycle.wait_for_runs(admission, task_store)
-        await handler.cancel_running_tasks()
-        # Models are application-owned, so they are never closed here.
-        await handler.aclose()
+        # Closes, in reverse order, whatever was opened, also when startup
+        # fails. The directory is opened last, since its sources may use a
+        # listed credential, and is closed first.
+        async with AsyncExitStack() as opened:
+            for resource in resources:
+                await _open(resource, opened)
+            if directory is not None and not directory.is_open:
+                await opened.enter_async_context(directory)
+            # Fails startup, before any request is served, when a skill or
+            # the built-in router has no input token limit, or a remote agent
+            # cannot be called. Custom routers check their own models.
+            await runtime.validate_model(agent, limits_ceiling=host.limits_ceiling)
+            await runtime.validate_remotes(agent)
+            if isinstance(router, ModelRouter):
+                await router.validate_model(routing_limits(agent, host.limits_ceiling))
+            lifecycle.mark_started()
+            yield
+            await lifecycle.wait_for_runs(admission, task_store)
+            await handler.cancel_running_tasks()
+            await handler.aclose()
 
     return lifespan
+
+
+async def _open(resource: _AppResource, opened: AsyncExitStack) -> None:
+    """Open ``resource`` and arrange for ``opened`` to close it."""
+    if isinstance(resource, AbstractAsyncContextManager):
+        await opened.enter_async_context(resource)
+    else:
+        opened.push_async_callback(resource.aclose)
+
+
+def _checked_resources(resources: Sequence[_AppResource]) -> tuple[_AppResource, ...]:
+    """Return ``resources`` as a tuple after checking each can be closed.
+
+    Raises:
+        DefinitionError: ``resources`` is not a list or tuple, an item is
+            neither an async context manager nor has ``aclose()``, or an
+            object is listed twice.
+    """
+    if not isinstance(resources, list | tuple):
+        raise DefinitionError(
+            "resources must be a list of async context managers or objects "
+            "with an async aclose() method."
+        )
+    for resource in resources:
+        if not isinstance(resource, AbstractAsyncContextManager) and not callable(
+            getattr(resource, "aclose", None)
+        ):
+            raise DefinitionError(
+                f"Resource {type(resource).__name__} is neither an async "
+                "context manager nor has an async aclose() method, so the app "
+                "could not close it."
+            )
+    if len({id(resource) for resource in resources}) != len(resources):
+        raise DefinitionError(
+            "resources lists the same object twice; list each once, so it is "
+            "closed once."
+        )
+    return tuple(resources)
 
 
 def _task_store(a2a: A2AConfig) -> TaskStore:

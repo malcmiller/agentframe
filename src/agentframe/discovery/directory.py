@@ -134,6 +134,15 @@ class AgentDirectory:
             self._owns_client = True
         return self
 
+    @property
+    def is_open(self) -> bool:
+        """Whether the directory has an HTTP client to fetch cards with.
+
+        Package-internal: ``AgentApp`` opens a directory that is not open yet.
+        A directory given an ``http_client=`` is always open.
+        """
+        return self._client is not None
+
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,

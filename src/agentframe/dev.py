@@ -29,8 +29,6 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-import httpx
-
 from agentframe.discovery.directory import AgentDirectory
 from agentframe.discovery.identity import APIKeyCredential, Service
 from agentframe.discovery.registry import (
@@ -86,9 +84,9 @@ def dev_settings() -> DevSettings:
                 remotes=dev.remotes,
             )
 
-    The directory has its own HTTP client, open for the life of the process,
-    because an app factory has no ``async with`` to open it in. The client
-    keeps no idle connections, so none is left open when it is discarded.
+    The directory is not open yet: ``AgentApp(directory=...)`` opens it at
+    server startup and closes it after shutdown. Elsewhere, open it with
+    ``async with``.
 
     Returns:
         The agent's address, authentication, directory and remotes.
@@ -175,12 +173,4 @@ def _directory() -> AgentDirectory | None:
     return AgentDirectory(
         sources=sources,
         allow_http_hosts=[host.strip() for host in allowed if host.strip()],
-        # The client is open for the life of the process and never closed,
-        # so it keeps no idle connections, which would be left open and
-        # warned about when it is garbage collected. Like the directory's own
-        # client, it never follows a redirect, so credentials are not sent on.
-        http_client=httpx.AsyncClient(
-            follow_redirects=False,
-            limits=httpx.Limits(max_keepalive_connections=0),
-        ),
     )
