@@ -22,7 +22,7 @@ _SKILL_ATTRIBUTE = "_skill_metadata"
 
 # noinspection PyShadowingBuiltins
 def skill[F: Callable[..., Any]](
-    id: str,
+    id: str | None = None,
     *,
     name: str | None = None,
     description: str | None = None,
@@ -34,9 +34,11 @@ def skill[F: Callable[..., Any]](
     """Mark an async ``Agent`` method as an advertised skill.
 
     The method is inspected later by ``@agent``, once its class exists.
+    Always call it with parentheses, for example ``@skill(tags=["questions"])``.
 
     Args:
-        id: Stable skill identifier that callers select.
+        id: Stable skill identifier that callers select. Defaults to the
+            method name.
         name: Display name. Defaults to the title-cased method name.
         description: What the skill does. Defaults to the method docstring.
         tags: Descriptive discovery tags. At least one non-blank tag is
@@ -51,26 +53,30 @@ def skill[F: Callable[..., Any]](
         A decorator that records the metadata and returns the same function.
 
     Raises:
-        DefinitionError: If ``id`` is empty, or ``tags`` or
-            ``requires_permissions`` is a single string.
+        DefinitionError: If ``@skill`` is used without parentheses, ``id`` is
+            empty, or ``tags`` or ``requires_permissions`` is a single string.
     """
-    if not id:
+    if callable(id):
+        raise DefinitionError(
+            "Call @skill with parentheses, for example @skill(tags=[...])"
+        )
+    if id == "":
         raise DefinitionError("Skill id must not be empty")
     if isinstance(tags, str) or isinstance(requires_permissions, str):
         raise DefinitionError(
-            f"Skill '{id}': tags and requires_permissions must be lists of strings"
+            "@skill tags and requires_permissions must be lists of strings"
         )
-    metadata = SkillMetadata(
-        id=id,
-        name=name,
-        description=description,
-        tags=tuple(tags),
-        requires_permissions=frozenset(requires_permissions),
-        limits=limits,
-        model_settings=model_settings,
-    )
 
     def decorator(func: F) -> F:
+        metadata = SkillMetadata(
+            id=id or func.__name__,
+            name=name,
+            description=description,
+            tags=tuple(tags),
+            requires_permissions=frozenset(requires_permissions),
+            limits=limits,
+            model_settings=model_settings,
+        )
         setattr(func, _SKILL_ATTRIBUTE, metadata)
         return func
 

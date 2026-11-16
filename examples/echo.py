@@ -41,12 +41,12 @@ class Greeter:
 class Echo(Agent):
     """Returns supplied text or a greeting."""
 
-    @skill(id="echo", tags=["text"])
+    @skill(tags=["text"])
     async def echo(self, text: str, ctx: RunContext) -> str:
         """Return the text unchanged."""
         return text
 
-    @skill(id="greet", tags=["greeting"])
+    @skill(tags=["greeting"])
     async def greet(self, name: str, greeter: Inject[Greeter], ctx: RunContext) -> str:
         """Greet someone by name."""
         return greeter.greet(name)

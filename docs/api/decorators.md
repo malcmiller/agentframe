@@ -58,11 +58,14 @@ descriptive A2A metadata and optional mandatory all-of permission requirements.
 
 **Signature status:** decided and implemented in M1 (2026-11-11). Since M2
 (2026-11-12) `tags` must contain at least one non-blank tag; the `()` default
-remains only so an omitted value raises a clear `DefinitionError`.
+remains only so an omitted value raises a clear `DefinitionError`. Since 0.5.0
+`id` defaults to the method name (#273), so `@skill(tags=["questions"])` on
+`async def answer` registers the skill `answer`. Always call `@skill` with
+parentheses; a bare `@skill` raises `DefinitionError`.
 
 ```text
 @skill(
-    id: str, *, name: str | None = None, description: str | None = None,
+    id: str | None = None, *, name: str | None = None, description: str | None = None,
     tags: Iterable[str] = (), requires_permissions: Iterable[str] = (),
     limits: RunLimits | None = None, model_settings: ModelSettings | None = None,
 )
@@ -70,7 +73,7 @@ remains only so an omitted value raises a clear `DefinitionError`.
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `id` | `str` | Required, non-empty stable ID | Unique among registered skills, including inheritance; not necessarily the Python method name. |
+| `id` | `str` | Optional; defaults to the method name | Stable ID callers select. Unique among registered skills, including inheritance. Pass it to keep a published ID when renaming the method, or to use a name that is not a Python identifier. An empty string raises `DefinitionError`. |
 | `name` | `str` | Optional; defaults to the title-cased method name | Human-readable advertised skill name (`find_sources` -> `"Find Sources"`). |
 | `description` | `str` | Optional; defaults to the method docstring | Describes the ability. No explicit value and no docstring raises `DefinitionError`. |
 | `tags` | Iterable of `str` (lists in examples) | Required: at least one non-blank tag (decided 2026-11-12, replacing M1's empty default) | Descriptive discovery tags, not execution instructions or permissions. A2A 1.0 marks `AgentSkill.tags` REQUIRED and required arrays must contain at least one element (spec §5.7), so omitted, empty or blank tags raise `DefinitionError` naming the agent and skill when `@agent` validates the class. A single string is rejected. |

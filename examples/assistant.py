@@ -54,12 +54,12 @@ class Assistant(Agent):
     # Foundry does not report a deployment's context window, so cap the input.
     limits = RunLimits(max_input_tokens=4000)
 
-    @skill("answer", tags=["questions"])
+    @skill(tags=["questions"])
     async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer a question briefly."""
         return await ctx.generate(question)
 
-    @skill("summarize", tags=["text"])
+    @skill(tags=["text"])
     async def summarize(self, text: str, ctx: RunContext) -> Summary:
         """Summarize some text as a sentence and its key points."""
         return await ctx.generate(
@@ -69,7 +69,7 @@ class Assistant(Agent):
             output=Summary,
         )
 
-    @skill("count_words", tags=["text"])
+    @skill(tags=["text"])
     async def count_words(self, text: str, ctx: RunContext) -> int:
         """Count the words in some text, without calling the model."""
         return len(text.split())
