@@ -406,10 +406,9 @@ class Runtime:
         signed-in caller's ``user_token`` for ``OnBehalfOf`` remotes, the
         request's ``correlation`` with the agents before it (``None`` makes
         the run a root run), the A2A interface URL it advertises, which
-        leaves the agent out of its own skill catalog, and the task's
-        ``contextId`` as ``conversation_id`` when the caller is verified.
-        leaves the agent out of its own skill catalog, and ``on_text`` for a
-        streaming request.
+        leaves the agent out of its own skill catalog, the task's
+        ``contextId`` as ``conversation_id`` when the caller is verified, and
+        ``on_text`` for a streaming request.
         """
         started = time.perf_counter()
         accounting = accounting or RunAccounting()
