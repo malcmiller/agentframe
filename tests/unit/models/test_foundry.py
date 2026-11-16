@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
@@ -20,7 +21,11 @@ from agentframe import (
     Agent,
     DefinitionError,
     FinishReason,
+    FoundryCodeInterpreter,
+    FoundryFileSearch,
     FoundryModel,
+    FoundryWebSearch,
+    HostedTool,
     IncompleteOutputError,
     Inject,
     Message,
@@ -1076,6 +1081,199 @@ async def test_a_deployment_that_rejects_tools_is_a_non_transient_error(
 
     assert caught.value.transient is False
     assert "secret details" not in str(caught.value)
+
+
+def web_search_call() -> dict[str, Any]:
+    return {
+        "type": "web_search_call",
+        "id": "ws_1",
+        "status": "completed",
+        "action": {"type": "search", "query": "order A1 carrier"},
+    }
+
+
+def file_search_call() -> dict[str, Any]:
+    return {
+        "type": "file_search_call",
+        "id": "fs_1",
+        "queries": ["returns policy"],
+        "status": "completed",
+    }
+
+
+def ask_with_hosted(*hosted: HostedTool, max_calls: int = 3) -> ModelRequest:
+    return ModelRequest(
+        messages=(Message(role="user", content="Where is order A1?"),),
+        settings=ModelSettings(max_output_tokens=100),
+        hosted_tools=hosted,
+        max_hosted_tool_calls=max_calls,
+    )
+
+
+async def test_hosted_tools_are_sent_as_built_in_tools_capped_by_max_tool_calls(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+    hosted = (
+        FoundryCodeInterpreter(file_ids=("file-1",)),
+        FoundryWebSearch(allowed_domains=("learn.microsoft.com",)),
+        FoundryFileSearch(vector_store_ids=("vs_1",), max_num_results=5),
+    )
+
+    async with foundry() as model:
+        await model.generate(ask_with_hosted(*hosted, max_calls=4))
+
+    [body] = server.bodies()
+    assert body["tools"] == [
+        {
+            "type": "code_interpreter",
+            "container": {"type": "auto", "file_ids": ["file-1"]},
+        },
+        {
+            "type": "web_search",
+            "filters": {"allowed_domains": ["learn.microsoft.com"]},
+        },
+        {"type": "file_search", "vector_store_ids": ["vs_1"], "max_num_results": 5},
+    ]
+    assert body["max_tool_calls"] == 4
+    assert body["include"] == ["reasoning.encrypted_content"]
+
+
+async def test_hosted_tools_send_only_the_settings_given(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+    hosted = (
+        FoundryCodeInterpreter(),
+        FoundryWebSearch(),
+        FoundryFileSearch(vector_store_ids=("vs_1",)),
+    )
+
+    async with foundry() as model:
+        await model.generate(ask_with_hosted(*hosted))
+
+    assert server.bodies()[0]["tools"] == [
+        {"type": "code_interpreter", "container": {"type": "auto"}},
+        {"type": "web_search"},
+        {"type": "file_search", "vector_store_ids": ["vs_1"]},
+    ]
+
+
+async def test_hosted_calls_are_counted_whatever_the_finish_reason(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry(
+        Replies(
+            reply(web_search_call(), file_search_call(), text_output("Shipped.")),
+            reply(
+                web_search_call(),
+                status="incomplete",
+                incomplete_details={"reason": "max_output_tokens"},
+            ),
+        )
+    )
+    use_server(server)
+
+    async with foundry() as model:
+        completed = await model.generate(ask_with_hosted(FoundryWebSearch()))
+        cut_short = await model.generate(ask_with_hosted(FoundryWebSearch()))
+
+    assert completed.text == "Shipped."
+    assert completed.hosted_tool_calls == 2
+    assert cut_short.finish_reason is FinishReason.LENGTH
+    assert cut_short.hosted_tool_calls == 1
+
+
+async def test_hosted_calls_are_counted_on_failed_and_stopped_responses(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry(
+        Replies(
+            reply(
+                web_search_call(),
+                file_search_call(),
+                status="failed",
+                error={"code": "server_error", "message": "boom"},
+            ),
+            reply(
+                web_search_call(),
+                status="incomplete",
+                incomplete_details={"reason": "unexpected"},
+            ),
+        )
+    )
+    use_server(server)
+
+    async with foundry() as model:
+        with pytest.raises(ProviderError) as failed:
+            await model.generate(ask_with_hosted(FoundryWebSearch()))
+        with pytest.raises(IncompleteOutputError) as stopped:
+            await model.generate(ask_with_hosted(FoundryWebSearch()))
+
+    assert failed.value.hosted_tool_calls == 2
+    assert stopped.value.hosted_tool_calls == 1
+
+
+@agent(version="1.0.0")
+class SearchingAssistant(Agent):
+    """Answers questions about orders, searching the web when it needs to."""
+
+    @skill("ask", tags=["orders"])
+    async def ask(self, question: str, ctx: RunContext) -> str:
+        """Answer with the lookup tool and web search."""
+        return await ctx.generate(question, tools=[lookup_order, FoundryWebSearch()])
+
+
+async def test_hosted_calls_are_replayed_with_function_calls_and_counted(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    first = reply(
+        web_search_call(), function_call("call_1", '{"order_id": "A1", "limit": 1}')
+    )
+    second = reply(web_search_call(), text_output("Shipped by DHL."))
+    server = FakeFoundry(Replies(first, second))
+    use_server(server)
+    services = Services()
+    services.add(OrderStore, OrderStore())
+
+    async with foundry(context_window=128000) as model:
+        assistant = SearchingAssistant(model=model, tools=[lookup_order])
+        result = await Runtime(services=services).run(
+            assistant, skill="ask", arguments={"question": "Where is order A1?"}
+        )
+
+    assert result.value == "Shipped by DHL."
+    assert result.tool_calls == 3  # Two web searches and one lookup.
+    first_body, second_body = server.bodies()
+    assert first_body["max_tool_calls"] == 20
+    assert second_body["max_tool_calls"] == 18
+    assert [item.get("type", "message") for item in second_body["input"]] == [
+        "message",
+        "web_search_call",
+        "function_call",
+        "function_call_output",
+    ]
+    assert second_body["input"][1] == web_search_call()
+
+
+@dataclass(frozen=True)
+class OtherSearch(HostedTool):
+    """A hosted tool from another provider."""
+
+
+async def test_another_providers_hosted_tool_fails_before_sending(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    server = FakeFoundry()
+    use_server(server)
+
+    async with foundry() as model:
+        with pytest.raises(UnsupportedCapabilityError, match="OtherSearch"):
+            await model.generate(ask_with_hosted(OtherSearch()))
+
+    assert server.requests == []
 
 
 @tool(description="Always fails.")

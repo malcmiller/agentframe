@@ -166,14 +166,20 @@ class AnthropicModel:
 
         Raises:
             UnsupportedCapabilityError: A ``system`` message follows another
-                kind of message, or the output schema cannot be converted.
-                Raised before sending.
+                kind of message, the output schema cannot be converted, or
+                the request offers hosted tools, which Anthropic models do
+                not support here. Raised before sending.
             IncompleteOutputError: The response stopped early for another reason.
             ProviderError: The call failed. Connection failures, timeouts,
                 rate limits, overload and server errors are transient;
                 rejected credentials, an unknown model and invalid requests,
                 including a rejected output or tool schema, are not.
         """
+        if request.hosted_tools:
+            raise UnsupportedCapabilityError(
+                "AnthropicModel does not support hosted tool "
+                f"{type(request.hosted_tools[0]).__name__}"
+            )
         system, conversation = _split_system(request.messages)
         output_config: OutputConfigParam | anthropic.Omit = (
             {"format": _output_format(request.output)}

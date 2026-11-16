@@ -118,11 +118,17 @@ class OllamaModel:
 
         Raises:
             UnsupportedCapabilityError: The request uses tools, but the model
-                does not support them. Raised before sending.
+                does not support them, or offers hosted tools, which Ollama
+                does not run. Raised before sending.
             ProviderError: The call failed. Connection failures, timeouts,
                 rate limits and server errors are transient; an unknown model
                 or a rejected request is not.
         """
+        if request.hosted_tools:
+            raise UnsupportedCapabilityError(
+                "Ollama does not support hosted tool "
+                f"{type(request.hosted_tools[0]).__name__}"
+            )
         metadata = await self._get_metadata()
         if request.uses_tools() and not metadata.tools:
             raise UnsupportedCapabilityError(

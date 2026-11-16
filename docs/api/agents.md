@@ -141,10 +141,11 @@ await ctx.generate(text, instructions=...) -> str       # implemented (M3 #35)
 await ctx.generate(text, output=Summary) -> Summary     # implemented (M4 #53)
 await ctx.generate(text, tools=[lookup_order]) -> str   # implemented (M5 #60, #61)
 await ctx.generate(text, tools=[*skills]) -> str        # implemented (M10 #167)
+await ctx.generate(text, tools=[FoundryWebSearch()])    # implemented (#261)
 ```
 
 **Implemented signature (M3 #35, M4 #53, `tools` M5 #60/#61, remote skills
-M10 #167):** two `typing.overload`s, so type checkers infer `str` without
+M10 #167, hosted tools #261):** two `typing.overload`s, so type checkers infer `str` without
 `output` and the requested class with it.
 
 ```text
@@ -153,7 +154,7 @@ async def generate(
     text: str,
     *,
     instructions: str | None = None,
-    tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
+    tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
 ) -> str
 async def generate[T: BaseModel](
     self,
@@ -161,7 +162,7 @@ async def generate[T: BaseModel](
     *,
     instructions: str | None = None,
     output: type[T],
-    tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
+    tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
 ) -> T
 ```
 
@@ -175,7 +176,7 @@ message. This separation does not guarantee resistance to prompt injection.
 | `text` | `str` | Required in current text proposal | Untrusted user content, never promoted to privileged instructions. |
 | `instructions` | `str \| None` | Optional; default `None` sends no call instructions | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
 | `output` | `type[T]`, `T` a Pydantic `BaseModel` subclass (implemented, M4 #53) | Optional; `None` returns text | Sends the class's JSON schema as [`OutputSchema`](models.md#outputschema) and returns the reply validated with `model_validate_json` in Pydantic's default (lax) mode; a model's own `ConfigDict(strict=True)` is respected. `RootModel`, `list[...]` and other types raise `DefinitionError` before sending: wrap lists in a model field. Provider schema subsets are documented per adapter ([Foundry](models.md#structured-output), [Ollama](models.md#structured-output-ollama)). With `tools`, the final answer after the tool calls is validated (M5 #61). |
-| `tools` | `Iterable[Callable[..., Any] \| RemoteSkill]`: `@tool` functions registered on the agent (selection implemented, M5 #60), and [`RemoteSkill`](orchestration.md#remoteskill) entries from this run's catalogs (M10 #167) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent, or selected twice, raises `DefinitionError` naming the tool before anything is sent. The model's tool calls run within the run's limits until it answers; see [tool calling](#implemented-tool-calling-m5-61), the [Foundry mapping](models.md#tool-calling) and [remote skills as tools](orchestration.md#remote-skills-as-model-tools). Decoration or a model suggestion alone does not grant execution. |
+| `tools` | `Iterable[Callable[..., Any] \| RemoteSkill \| HostedTool]`: `@tool` functions registered on the agent (selection implemented, M5 #60), [`RemoteSkill`](orchestration.md#remoteskill) entries from this run's catalogs (M10 #167), and provider [hosted tools](#hosted-tools-261) such as [`FoundryWebSearch`](models.md#foundrywebsearch) (#261) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent, or selected twice, raises `DefinitionError` naming the tool before anything is sent. The model's tool calls run within the run's limits until it answers; see [tool calling](#implemented-tool-calling-m5-61), the [Foundry mapping](models.md#tool-calling) and [remote skills as tools](orchestration.md#remote-skills-as-model-tools). Hosted tools need no registration; selecting one is the opt-in, and each type may be selected once (`DefinitionError` otherwise). Decoration or a model suggestion alone does not grant execution. |
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -342,6 +343,51 @@ transient provider failures are
 `RunLimits.max_model_retries` times. Every call uses
 the run's effective `model_settings`, merged field by field (see
 [precedence](configuration.md#precedence)).
+
+#### Hosted tools (#261)
+
+A [`HostedTool`](models.md#hostedtool) in `tools=` is a tool the model
+provider runs during the model call, such as Foundry's
+[code interpreter](models.md#foundrycodeinterpreter),
+[web search](models.md#foundrywebsearch) or
+[file search](models.md#foundryfilesearch). They are provider-specific and
+off unless a call selects them; they can be mixed with `@tool` functions and
+remote skills.
+
+```python
+from agentframe import Agent, FoundryWebSearch, RunContext, agent, skill
+
+
+@agent(name="Researcher", description="Answers with web sources.", version="0.1.0")
+class Researcher(Agent):
+    @skill(id="ask", description="Answer a question.", tags=["research"])
+    async def ask(self, question: str, ctx: RunContext) -> str:
+        search = FoundryWebSearch(allowed_domains=("learn.microsoft.com",))
+        return await ctx.generate(question, tools=[search])
+
+
+# Researcher(model=FoundryModel(...)); other models refuse the request.
+```
+
+| Situation | Result |
+| --- | --- |
+| The model does not list the hosted tool's type in [`capabilities().hosted_tools`](models.md#modelcapabilities) (for example `OllamaModel`, or another provider's tool on `FoundryModel`) | `UnsupportedCapabilityError` naming the tool; nothing is sent or reserved |
+| The same hosted tool type selected twice | `DefinitionError`; nothing is sent |
+| A request offers hosted tools | The provider is capped at the run's remaining tool calls (`ModelRequest.max_hosted_tool_calls`) |
+| The run has no tool calls left when a request would offer hosted tools | `ToolCallLimitExceededError`; nothing is sent |
+| The provider ran hosted tool calls | Each counts toward `max_tool_calls` and `RunResult.tool_calls`, however the response ended, including a failed or cut-short response (carried on `ModelError.hosted_tool_calls`). If they take the run past the limit (for example when concurrent `ctx.generate` calls in the run used tool calls meanwhile, or the provider ignored the cap), `ToolCallLimitExceededError` after the response |
+
+Hosted tools run on the provider's side, so the
+[tool authorization policy](authorization.md#toolauthorizationpolicy) and
+[`ExecutionPolicy`](authorization.md#executionpolicy) tool checks never see
+their calls; model-request checks see `ModelRequest.hosted_tools` and can
+block a request that offers them. Their tokens are in the call's reported
+usage but cannot be reserved before sending, and their own fees (Bing,
+code interpreter sessions) are not in `Usage`. AgentFrame never retries a
+hosted call as a tool, but a transient model retry re-sends the request, so
+the provider may run its hosted calls again. The failed attempt's hosted calls
+are counted first and the retry is capped at the tool calls left; when none
+are left, `ToolCallLimitExceededError` is raised instead of retrying.
 
 **Behavior / failures:** apply outbound checks to every model request, including
 continuations; reserve/reconcile token budgets and count dispatched attempts

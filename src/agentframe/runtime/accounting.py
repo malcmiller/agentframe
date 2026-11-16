@@ -32,7 +32,8 @@ class RunAccounting:
         usage: Tokens used by finished calls, as reported or estimated.
         model_calls: Calls started so far, including failed and running ones.
         tool_calls: Tool calls the models asked for so far, including ones
-            that did not run because of an unknown tool or invalid arguments.
+            that did not run because of an unknown tool or invalid arguments,
+            and hosted tool calls providers ran.
         committed_tokens: Tokens finished calls count against
             ``max_total_tokens``: their actual totals, or their reservations
             when the totals are unknown.
@@ -100,13 +101,35 @@ class RunAccounting:
         Raises:
             ToolCallLimitExceededError: The run has made ``max_tool_calls``.
         """
-        max_calls = limits.max_tool_calls
-        assert max_calls is not None  # Set by defaults.
-        if self.tool_calls >= max_calls:
+        if self.remaining_tool_calls(limits) == 0:
             raise ToolCallLimitExceededError(
-                f"The run reached its limit of {max_calls} tool calls"
+                f"The run reached its limit of {limits.max_tool_calls} tool calls"
             )
         self.tool_calls += 1
+
+    def remaining_tool_calls(self, limits: RunLimits) -> int:
+        """Return how many tool calls the run may still make."""
+        max_calls = limits.max_tool_calls
+        assert max_calls is not None  # Set by defaults.
+        return max(max_calls - self.tool_calls, 0)
+
+    def count_hosted_tool_calls(self, count: int, limits: RunLimits) -> None:
+        """Count ``count`` hosted tool calls a provider already ran.
+
+        They are counted even past the limit, since they already ran.
+
+        Raises:
+            ToolCallLimitExceededError: The run has now made more than
+                ``max_tool_calls``.
+        """
+        self.tool_calls += count
+        max_calls = limits.max_tool_calls
+        assert max_calls is not None  # Set by defaults.
+        if self.tool_calls > max_calls:
+            raise ToolCallLimitExceededError(
+                f"The model's hosted tool calls took the run past its limit "
+                f"of {max_calls} tool calls"
+            )
 
     def settle(self, tokens: int, usage: Usage) -> None:
         """Replace a call's reservation of ``tokens`` with its actual ``usage``."""

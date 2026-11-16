@@ -19,6 +19,7 @@ try:
     from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
     from openai.types.responses import (
         EasyInputMessageParam,
+        FileSearchToolParam,
         FunctionToolParam,
         Response,
         ResponseFunctionToolCall,
@@ -28,8 +29,14 @@ try:
         ResponseInputParam,
         ResponseTextConfigParam,
         ResponseUsage,
+        ToolParam,
+        WebSearchToolParam,
     )
     from openai.types.responses.response_input_param import FunctionCallOutput
+    from openai.types.responses.tool_param import (
+        CodeInterpreter,
+        CodeInterpreterContainerCodeInterpreterToolAuto,
+    )
 except ImportError as error:
     raise ImportError(
         "FoundryModel needs the optional 'openai' and 'azure-identity' packages; "
@@ -43,6 +50,7 @@ from agentframe.errors import (
     UnsupportedCapabilityError,
 )
 from agentframe.models.base import (
+    HostedTool,
     Message,
     ModelCapabilities,
     ModelRequest,
@@ -51,6 +59,11 @@ from agentframe.models.base import (
     Role,
     ToolCall,
     ToolSpec,
+)
+from agentframe.models.foundry_tools import (
+    FoundryCodeInterpreter,
+    FoundryFileSearch,
+    FoundryWebSearch,
 )
 from agentframe.models.strict_schema import drop_defaulted_nulls, strict_schema
 from agentframe.usage import FinishReason, Usage
@@ -70,6 +83,16 @@ REASONING_INCLUDE: list[ResponseIncludable] = ["reasoning.encrypted_content"]
 
 TRANSIENT_FAILURE_CODES = frozenset({"server_error", "rate_limit_exceeded"})
 """Codes of ``failed`` responses that retrying may fix."""
+
+HOSTED_TOOLS: frozenset[type[HostedTool]] = frozenset(
+    {FoundryCodeInterpreter, FoundryFileSearch, FoundryWebSearch}
+)
+"""The hosted tools ``FoundryModel`` supports."""
+
+HOSTED_CALL_TYPES = frozenset(
+    {"code_interpreter_call", "file_search_call", "web_search_call"}
+)
+"""Output item types of hosted tool calls Foundry ran during a response."""
 
 
 class FoundryModel:
@@ -100,6 +123,13 @@ class FoundryModel:
     reasoning items, is replayed verbatim in the next request. With
     ``store=False``, reasoning is requested in encrypted form for that replay;
     it is kept in memory for the run only and never logged or returned.
+
+    Hosted tools (``FoundryCodeInterpreter``, ``FoundryWebSearch`` and
+    ``FoundryFileSearch``) are sent as the Responses API's built-in tools,
+    with ``max_tool_calls`` set to the request's ``max_hosted_tool_calls``.
+    Foundry runs them during the call; their calls are counted in
+    ``ModelResponse.hosted_tool_calls`` and replayed with the other output
+    items when the response also calls function tools.
 
     Credentials are never logged or included in error messages.
 
@@ -171,8 +201,8 @@ class FoundryModel:
 
         Raises:
             UnsupportedCapabilityError: The output schema or a tool's
-                parameter schema uses a construct strict mode cannot express.
-                Raised before sending.
+                parameter schema uses a construct strict mode cannot express,
+                or a hosted tool is not a Foundry one. Raised before sending.
             IncompleteOutputError: The response stopped early for another reason.
             ProviderError: The call or the response failed. Connection failures,
                 timeouts, rate limits and server errors are transient; rejected
@@ -181,10 +211,13 @@ class FoundryModel:
         """
         instructions, conversation = _split_instructions(request.messages)
         text = openai.omit if request.output is None else _text_format(request.output)
-        tools = [_function_tool(spec) for spec in request.tools]
+        tools = [_function_tool(spec) for spec in request.tools] + [
+            _hosted_tool(hosted) for hosted in request.hosted_tools
+        ]
         # Stateless tool calls lose reasoning between turns unless it comes
         # back encrypted and is replayed.
         include = REASONING_INCLUDE if tools and not self.store else openai.omit
+        max_tool_calls = request.max_hosted_tool_calls
         async with _provider_errors(self.deployment, _rejection_hint(request)):
             response = await self._client.responses.create(
                 model=self.deployment,
@@ -195,6 +228,9 @@ class FoundryModel:
                 text=text,
                 tools=tools or openai.omit,
                 include=include,
+                max_tool_calls=openai.omit
+                if max_tool_calls is None
+                else max_tool_calls,
             )
         model_response = _model_response(response, request.tools)
         if request.output is None:
@@ -210,6 +246,7 @@ class FoundryModel:
             context_window=self._context_window,
             structured_output=self.structured_output,
             tools=self.tools,
+            hosted_tools=HOSTED_TOOLS,
         )
 
     async def close(self) -> None:
@@ -338,6 +375,34 @@ def _input_items(message: Message) -> list[ResponseInputItemParam]:
     return items
 
 
+def _hosted_tool(hosted: HostedTool) -> ToolParam:
+    """Return ``hosted`` as a Responses API built-in tool.
+
+    Raises:
+        UnsupportedCapabilityError: ``hosted`` is not a Foundry hosted tool.
+    """
+    if isinstance(hosted, FoundryCodeInterpreter):
+        container: CodeInterpreterContainerCodeInterpreterToolAuto = {"type": "auto"}
+        if hosted.file_ids:
+            container["file_ids"] = list(hosted.file_ids)
+        return CodeInterpreter(type="code_interpreter", container=container)
+    if isinstance(hosted, FoundryWebSearch):
+        web_search = WebSearchToolParam(type="web_search")
+        if hosted.allowed_domains:
+            web_search["filters"] = {"allowed_domains": list(hosted.allowed_domains)}
+        return web_search
+    if isinstance(hosted, FoundryFileSearch):
+        file_search = FileSearchToolParam(
+            type="file_search", vector_store_ids=list(hosted.vector_store_ids)
+        )
+        if hosted.max_num_results is not None:
+            file_search["max_num_results"] = hosted.max_num_results
+        return file_search
+    raise UnsupportedCapabilityError(
+        f"FoundryModel does not support the hosted tool {type(hosted).__name__}"
+    )
+
+
 def _function_tool(spec: ToolSpec) -> FunctionToolParam:
     """Return ``spec`` as a strict function tool.
 
@@ -413,21 +478,34 @@ def _drop_nulls_from_json(text: str, schema: dict[str, Any]) -> str:
 def _model_response(response: Response, tools: tuple[ToolSpec, ...]) -> ModelResponse:
     """Map a Responses API result to a ``ModelResponse``, failing on error states."""
     usage = _usage(response.usage)
+    # Hosted calls already ran, so they count however the response ended.
+    hosted_calls = sum(item.type in HOSTED_CALL_TYPES for item in response.output)
     if response.status not in ("completed", "incomplete"):
-        raise _unfinished_response_error(response, usage)
+        raise _unfinished_response_error(response, usage, hosted_calls)
     if _has_refusal(response):
-        return ModelResponse(text="", usage=usage, finish_reason=FinishReason.REFUSED)
+        return ModelResponse(
+            text="",
+            usage=usage,
+            finish_reason=FinishReason.REFUSED,
+            hosted_tool_calls=hosted_calls,
+        )
     if response.status == "incomplete":
         # Tool calls in a response cut short are not run: their arguments
         # may be incomplete.
-        finish_reason = _incomplete_finish_reason(response, usage)
+        finish_reason = _incomplete_finish_reason(response, usage, hosted_calls)
         return ModelResponse(
-            text=response.output_text, usage=usage, finish_reason=finish_reason
+            text=response.output_text,
+            usage=usage,
+            finish_reason=finish_reason,
+            hosted_tool_calls=hosted_calls,
         )
     tool_calls = _tool_calls(response, tools)
     if not tool_calls:
         return ModelResponse(
-            text=response.output_text, usage=usage, finish_reason=FinishReason.COMPLETED
+            text=response.output_text,
+            usage=usage,
+            finish_reason=FinishReason.COMPLETED,
+            hosted_tool_calls=hosted_calls,
         )
     return ModelResponse(
         text=response.output_text,
@@ -435,6 +513,7 @@ def _model_response(response: Response, tools: tuple[ToolSpec, ...]) -> ModelRes
         finish_reason=FinishReason.TOOL_CALLS,
         tool_calls=tool_calls,
         provider_items=tuple(item.to_dict(mode="json") for item in response.output),
+        hosted_tool_calls=hosted_calls,
     )
 
 
@@ -463,23 +542,30 @@ def _tool_call(
     return ToolCall(id=item.call_id, name=item.name, arguments=arguments)
 
 
-def _unfinished_response_error(response: Response, usage: Usage) -> ProviderError:
+def _unfinished_response_error(
+    response: Response, usage: Usage, hosted_calls: int
+) -> ProviderError:
     if response.status == "failed":
         code = response.error.code if response.error else None
         return ProviderError(
             f"Foundry reported a failed response (code {code or 'unknown'})",
             transient=code in TRANSIENT_FAILURE_CODES,
             usage=usage,
+            hosted_tool_calls=hosted_calls,
         )
     if response.status == "cancelled":
         return ProviderError(
-            "Foundry cancelled the response", transient=False, usage=usage
+            "Foundry cancelled the response",
+            transient=False,
+            usage=usage,
+            hosted_tool_calls=hosted_calls,
         )
     # queued and in_progress only happen for background responses, never sent.
     return ProviderError(
         f"Foundry returned an unfinished response (status {response.status})",
         transient=False,
         usage=usage,
+        hosted_tool_calls=hosted_calls,
     )
 
 
@@ -492,7 +578,9 @@ def _has_refusal(response: Response) -> bool:
     )
 
 
-def _incomplete_finish_reason(response: Response, usage: Usage) -> FinishReason:
+def _incomplete_finish_reason(
+    response: Response, usage: Usage, hosted_calls: int
+) -> FinishReason:
     reason = response.incomplete_details.reason if response.incomplete_details else None
     if reason == "max_output_tokens":
         return FinishReason.LENGTH
@@ -501,6 +589,7 @@ def _incomplete_finish_reason(response: Response, usage: Usage) -> FinishReason:
     raise IncompleteOutputError(
         f"Foundry stopped the response early (reason {reason or 'unknown'})",
         usage=usage,
+        hosted_tool_calls=hosted_calls,
     )
 
 
@@ -522,6 +611,8 @@ def _rejection_hint(request: ModelRequest) -> str | None:
     features = []
     if request.tools:
         features.append("tools")
+    if request.hosted_tools:
+        features.append("hosted tools")
     if request.output is not None:
         features.append("structured output")
     return " or ".join(features) or None

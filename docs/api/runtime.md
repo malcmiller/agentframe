@@ -302,7 +302,7 @@ frozen generic dataclass `RunResult[T]`.
 | `invocation_id` | `str` (UUID 4) | Every run | Library-generated, independent of trace IDs; never authentication. |
 | `usage` | [`Usage`](#usage) | Present | Normalized token usage for the whole run. |
 | `model_calls` | `int` | Present | Dispatched inference attempts including retries; `0` for model-free runs. |
-| `tool_calls` | `int` | Present (M5 #61) | Every tool call the model asked for, including ones that did not run because of an unknown tool name or invalid arguments. `0` for model-free and tool-free runs. |
+| `tool_calls` | `int` | Present (M5 #61) | Every tool call the model asked for, including ones that did not run because of an unknown tool name or invalid arguments, plus [hosted tool calls](agents.md#hosted-tools-261) the provider ran (#261). `0` for model-free and tool-free runs. |
 | `duration` | `datetime.timedelta` | Present | Run duration, not a provider-only time. |
 | `finish_reason` | [`FinishReason`](#finishreason) | Present | Completion information, not raw provider data or private reasoning. A successful run's is always `COMPLETED`, including model-free runs. |
 
@@ -583,14 +583,15 @@ policy's own error; the original exception is chained for server-side diagnostic
 
 **Purpose / decision:** base for model capability, refusal, incomplete-output and provider errors.
 **Signature status:** implemented (M3 #33) `AgentFrameError` subtype with the
-constructor `(message, *, usage=None, invocation_id=None)`, shared by its
-subtypes except `ProviderError`. Adapters raise them without an invocation ID;
+constructor `(message, *, usage=None, invocation_id=None, hosted_tool_calls=0)`,
+shared by its subtypes except `ProviderError`. Adapters raise them without an invocation ID;
 the runtime attaches the run's ID.
 
 | Fields | Type | Required/default status | Meaning |
 | --- | --- | --- | --- |
 | Inherited error contract | Invocation ID and safe message | Required | No provider exception passthrough. |
 | `usage` | `Usage \| None` | `None` | Tokens the failed call consumed, when the adapter knows them (M3 #36). The run's accounting settles to it instead of dropping it. |
+| `hosted_tool_calls` | `int` | `0` | [Hosted tool calls](agents.md#hosted-tools-261) the provider ran before the call failed (#261). The run counts them toward `max_tool_calls`; `ProviderError` and `IncompleteOutputError` accept it too. |
 
 ```python
 from agentframe import ModelError
@@ -793,7 +794,9 @@ def too_many_tools(error: ToolCallLimitExceededError) -> str:
 
 **Behavior / failures:** raised before the extra tool call runs. Every call a
 model asks for counts, including ones naming an unknown tool or with invalid
-arguments.
+arguments. With [hosted tools](agents.md#hosted-tools-261) (#261), also raised
+before sending a request that offers them when no tool calls remain, and after
+a response whose hosted calls took the run past the limit.
 **Related:** [`RunLimits`](configuration.md#runlimits),
 [tool calling](agents.md#implemented-tool-calling-m5-61).
 
