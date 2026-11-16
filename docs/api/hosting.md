@@ -242,7 +242,10 @@ Every other outcome follows this table:
   `Run started` at `INFO`, and `Run completed` when it completes. These
   records, the failure warning and the skill-exception record carry `agent`
   (the agent's name), `invocation_id`, `root_invocation_id` and
-  `parent_invocation_id` in `logging` `extra`. AgentFrame sets no log format;
+  `parent_invocation_id` in `logging` `extra`. AgentFrame's library code sets
+  no log format; [`agentframe run`](#agentframe-run) shows them with
+  `--log-level info`, and `--log-format json` writes them as
+  [JSON fields](#json-log-records) (#271). With your own logging setup,
   a formatter such as `%(agent)s %(root_invocation_id)s %(message)s` shows
   them. The root is the caller's valid
   [`agentframe.root_invocation_id`](#structured-skill-call-wire-format), else
@@ -447,6 +450,7 @@ in the optional `server` extra: `pip install 'agentframe-py[server]'`.
 
 ```text
 agentframe run TARGET [--host HOST] [--port PORT] [--reload] [--dev]
+                      [--log-level {warning,info,debug}] [--log-format {text,json}]
 ```
 
 | Parameter | Type | Required/default status | Meaning and constraints |
@@ -456,6 +460,8 @@ agentframe run TARGET [--host HOST] [--port PORT] [--reload] [--dev]
 | `--port` | integer | Default `8000` | Port the server binds to. |
 | `--reload` | flag | Off | Restart when source files in the working directory change. Development only. |
 | `--dev` | flag | Off | Serve an `@agent` class constructed without arguments, with `AllowAnonymous`, at `http://HOST:PORT`. Only localhost hosts (`localhost`, loopback addresses) are accepted; logs a warning that any local process can call it. |
+| `--log-level` | `warning`, `info` or `debug` | Default `warning`; `info` under [`agentframe dev`](#agentframe-dev) | Level of AgentFrame's own `agentframe` loggers (#271). `info` adds each run's `Run started` / `Run completed` records with its [correlation IDs](#result-and-failure-mapping). Uvicorn's own loggers keep their `INFO` level. |
+| `--log-format` | `text` or `json` | Default `text` | `text` writes `LEVEL:     message` lines next to Uvicorn's own. `json` writes one JSON object per line on stderr for every record, Uvicorn's startup and access records included (#271); see [JSON log records](#json-log-records). |
 
 ```python
 # myapp/hosting.py
@@ -505,6 +511,40 @@ leftover runs. The process exits within about one grace period plus a small
 margin. With `--reload`, Uvicorn's wait is bounded the same way but the app's
 shutdown starts only after it.
 Multi-agent `agentframe.yaml` is read by [`agentframe dev`](#agentframe-dev) (M8+).
+
+### JSON log records
+
+With `--log-format json` (#271) every record is one line holding a JSON
+object, formatted with the standard library only:
+
+```json
+{"time": "2026-11-16T04:10:36.094+00:00", "level": "INFO", "logger": "agentframe.hosting.a2a_executor", "message": "Run completed (invocation_id=7735...)", "agent": "Echo", "invocation_id": "7735...", "root_invocation_id": "7735...", "parent_invocation_id": null}
+```
+
+| Field | Present | Meaning |
+| --- | --- | --- |
+| `time` | Always | When the record was made, UTC, ISO 8601 with milliseconds. |
+| `level` | Always | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. |
+| `logger` | Always | The logger's name, for example `agentframe.hosting.a2a_executor` or `uvicorn.access`. |
+| `message` | Always | The formatted message. |
+| `agent`, `invocation_id`, `root_invocation_id`, `parent_invocation_id` | Records about a run | The run's [correlation](#result-and-failure-mapping); `parent_invocation_id` is `null` for a root run. |
+| `exception` | Records with a traceback | The formatted traceback, as one string. |
+| `stack` | Records logged with `stack_info` | The formatted stack, as one string. |
+
+No other `extra` fields are written, and AgentFrame's own records follow the
+[server log rules](#result-and-failure-mapping) in either format.
+
+**Configuring `logging` yourself:** the options are a convenience, not the only
+way. The command configures the root logger before it calls your factory, so
+the factory may replace that configuration with `logging.config.dictConfig`
+or `logging.basicConfig(force=True)`, for example to add a handler or another
+formatter; the run records' `extra` fields are available to any formatter as
+`%(invocation_id)s` and so on. Without `--reload`, Uvicorn applies its own
+configuration to its `uvicorn` loggers in `text` mode after the factory runs
+(under `--reload` it does so before); use `--log-format json` (which leaves
+Uvicorn's records to the root logger) or Uvicorn directly if you need full
+control. An explicit `--log-level` is applied before the factory too, so a
+factory call to `logging.getLogger("agentframe").setLevel(...)` wins.
 
 **Related:** [single-agent development](../guides/development.md#one-agent-m2),
 [`HostConfig`](#hostconfig), [authentication](authorization.md).

@@ -9,8 +9,10 @@ shutdown takes about one grace period, not two. Imported only by
 
 import math
 from types import FrameType
+from typing import Any
 
 import uvicorn
+from uvicorn.config import LOGGING_CONFIG
 
 from agentframe.hosting.app import AgentApp
 
@@ -26,9 +28,21 @@ class DrainingServer(uvicorn.Server):
         app: The app to serve.
         host: The address to bind to.
         port: The port to bind to.
+        log_config: Uvicorn's logging configuration; ``None`` leaves logging
+            to the root handler.
+        log_level: The level of Uvicorn's own loggers, or ``None`` for its
+            configuration's.
     """
 
-    def __init__(self, app: AgentApp, *, host: str, port: int) -> None:
+    def __init__(
+        self,
+        app: AgentApp,
+        *,
+        host: str,
+        port: int,
+        log_config: dict[str, Any] | None = LOGGING_CONFIG,
+        log_level: str | None = None,
+    ) -> None:
         grace_seconds = app.shutdown_grace_seconds
         config = uvicorn.Config(
             app,
@@ -36,6 +50,8 @@ class DrainingServer(uvicorn.Server):
             port=port,
             # Uvicorn takes whole seconds.
             timeout_graceful_shutdown=math.ceil(grace_seconds),
+            log_config=log_config,
+            log_level=log_level,
         )
         super().__init__(config)
         self._agent_app = app

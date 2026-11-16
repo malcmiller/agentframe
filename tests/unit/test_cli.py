@@ -1,8 +1,11 @@
 """``agentframe run``: serve an app factory, or an agent class with ``--dev``."""
 
 import importlib
+import json
 import logging
+import os
 import sys
+from collections.abc import Iterator
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -10,8 +13,16 @@ import httpx
 import pytest
 
 from agentframe import AgentApp, DefinitionError
-from agentframe.cli import CommandError, RunSettings, build_app, main
+from agentframe.cli import (
+    CommandError,
+    LogFormat,
+    RunSettings,
+    _configure_logging,
+    build_app,
+    main,
+)
 from agentframe.hosting.draining_server import DrainingServer
+from agentframe.log_format import JSONFormatter
 from local_server import ServeLocally
 
 
@@ -20,7 +31,18 @@ def settings(target: str, *, host: str = "127.0.0.1", dev: bool = False) -> RunS
 
 
 @pytest.fixture
-def uvicorn_runs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+def agentframe_logger() -> Iterator[logging.Logger]:
+    """The ``agentframe`` logger, with its level restored after the test."""
+    logger = logging.getLogger("agentframe")
+    level = logger.level
+    yield logger
+    logger.setLevel(level)
+
+
+@pytest.fixture
+def uvicorn_runs(
+    monkeypatch: pytest.MonkeyPatch, agentframe_logger: logging.Logger
+) -> list[dict[str, Any]]:
     """Record what ``agentframe run`` asks uvicorn to serve instead of serving it."""
     runs: list[dict[str, Any]] = []
 
@@ -32,6 +54,8 @@ def uvicorn_runs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
                 "host": config.host,
                 "port": config.port,
                 "timeout_graceful_shutdown": config.timeout_graceful_shutdown,
+                "log_config": config.log_config,
+                "log_level": config.log_level,
             }
         )
         server.started = True
@@ -102,6 +126,97 @@ def test_reload_worker_rebuilds_the_same_app(
     module_name, _, function_name = run["app"].partition(":")
     rebuild = getattr(importlib.import_module(module_name), function_name)
     assert isinstance(rebuild(), AgentApp)
+
+
+@pytest.mark.parametrize("level", ["warning", "info", "debug"])
+def test_log_level_sets_agentframes_own_level(
+    uvicorn_runs: list[dict[str, Any]], agentframe_logger: logging.Logger, level: str
+) -> None:
+    main(["run", "cli_targets:create_app", "--log-level", level])
+
+    assert agentframe_logger.level == logging.getLevelNamesMapping()[level.upper()]
+
+
+def test_without_log_level_runs_are_shown_only_under_agentframe_dev(
+    uvicorn_runs: list[dict[str, Any]],
+    agentframe_logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentframe_logger.setLevel(logging.NOTSET)
+    monkeypatch.delenv("AGENTFRAME_DEV", raising=False)
+    main(["run", "cli_targets:create_app"])
+    assert agentframe_logger.level == logging.NOTSET
+
+    monkeypatch.setenv("AGENTFRAME_DEV", "1")
+    main(["run", "cli_targets:create_app"])
+    assert agentframe_logger.level == logging.INFO
+
+    main(["run", "cli_targets:create_app", "--log-level", "warning"])
+    assert agentframe_logger.level == logging.WARNING
+
+
+def test_text_logs_keep_uvicorns_own_configuration(
+    uvicorn_runs: list[dict[str, Any]],
+) -> None:
+    main(["run", "cli_targets:create_app"])
+
+    [run] = uvicorn_runs
+    assert run["log_config"] is not None
+    assert run["log_level"] is None
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_json_logs_send_uvicorns_records_to_the_json_handler(
+    uvicorn_runs: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch, reload: bool
+) -> None:
+    monkeypatch.setenv("AGENTFRAME_RUN_SETTINGS", "")
+    main(
+        [
+            "run",
+            "cli_targets:create_app",
+            "--log-format",
+            "json",
+            *["--reload"] * reload,
+        ]
+    )
+
+    [run] = uvicorn_runs
+    assert run["log_config"] is None
+    assert run["log_level"] == "info"
+
+
+def test_reload_worker_gets_the_log_options(
+    uvicorn_runs: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTFRAME_RUN_SETTINGS", "")
+    log_options = ["--log-level", "debug", "--log-format", "json"]
+    main(["run", "cli_targets:create_app", "--reload", *log_options])
+
+    worker_settings = json.loads(os.environ["AGENTFRAME_RUN_SETTINGS"])
+    assert worker_settings["log_level"] == "debug"
+    assert worker_settings["log_format"] == "json"
+
+
+@pytest.mark.parametrize(
+    ("log_format", "formatter"), [("json", JSONFormatter), ("text", logging.Formatter)]
+)
+def test_log_format_selects_the_root_handlers_formatter(
+    monkeypatch: pytest.MonkeyPatch, log_format: LogFormat, formatter: type
+) -> None:
+    root = logging.getLogger()
+    # basicConfig adds a handler only to a root logger without one.
+    monkeypatch.setattr(root, "handlers", [])
+    _configure_logging(log_format=log_format)
+
+    [handler] = root.handlers
+    assert type(handler.formatter) is formatter
+
+
+def test_an_unknown_log_format_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        main(["run", "cli_targets:create_app", "--log-format", "xml"])
+
+    assert "invalid choice: 'xml'" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

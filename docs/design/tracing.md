@@ -136,7 +136,9 @@ A correlation reference does not grant trace-backend access.
 
 Without any tracing backend, every hosted run's log records carry `agent`,
 `invocation_id`, `root_invocation_id` and `parent_invocation_id` through
-`logging` `extra`; AgentFrame sets no log format. `Remote` sends
+`logging` `extra`; the library sets no log format, and `agentframe run
+--log-format json` writes them as [JSON fields](../api/hosting.md#json-log-records)
+(#271). `Remote` sends
 `agentframe.root_invocation_id` (the request's first run) and
 `agentframe.parent_invocation_id` (the calling run) as
 [caller context](../api/hosting.md#structured-skill-call-wire-format), only to

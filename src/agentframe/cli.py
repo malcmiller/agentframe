@@ -3,6 +3,7 @@
 Usage::
 
     agentframe run myapp.hosting:create_app --host 127.0.0.1 --port 8000
+    agentframe run myapp.hosting:create_app --log-level info --log-format json
     agentframe run myapp.agents:Echo --dev
     agentframe dev
     agentframe compose
@@ -38,7 +39,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
 from agentframe.authoring.agent import Agent
 from agentframe.compose import write_compose
@@ -47,6 +48,7 @@ from agentframe.dev_server import DEFAULT_STARTUP_TIMEOUT_SECONDS, DevError, run
 from agentframe.errors import AgentFrameError
 from agentframe.hosting.app import AgentApp
 from agentframe.hosting.host import HostConfig
+from agentframe.log_format import JSONFormatter
 from agentframe.project import PROJECT_FILE
 from agentframe.security.authentication import AllowAnonymous
 from agentframe.urls import is_loopback_host
@@ -61,6 +63,12 @@ logger = logging.getLogger("agentframe")
 # Uvicorn's --reload runs the server in a fresh worker process that rebuilds
 # the app through an import string, so the parent passes its settings here.
 _RELOAD_SETTINGS_VARIABLE = "AGENTFRAME_RUN_SETTINGS"
+
+type LogLevel = Literal["warning", "info", "debug"]
+type LogFormat = Literal["text", "json"]
+
+# Matches Uvicorn's own log lines, so AgentFrame's warnings read the same way.
+_TEXT_LOG_FORMAT = "%(levelname)s:     %(message)s"
 
 
 class CommandError(Exception):
@@ -77,12 +85,19 @@ class RunSettings:
         host: The address the server binds to.
         port: The port the server binds to.
         dev: Serve an agent class anonymously on localhost for development.
+        log_level: The level of AgentFrame's own ``agentframe`` loggers.
+            ``None`` keeps the default: ``info`` under ``agentframe dev``,
+            otherwise Python's ``warning``.
+        log_format: ``text`` lines, or ``json`` with one object per record,
+            Uvicorn's records included.
     """
 
     target: str
     host: str
     port: int
     dev: bool
+    log_level: LogLevel | None = None
+    log_format: LogFormat = "text"
 
 
 @dataclass(frozen=True)
@@ -132,7 +147,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         thresholds, 1 when it misses one and 2 on a configuration error.
     """
     arguments = _parser().parse_args(argv)
-    _configure_logging()
+    if arguments.command == "run":
+        _configure_logging(arguments.log_level, arguments.log_format)
+    else:
+        _configure_logging()
     if arguments.command == "eval":
         return evaluate(_eval_settings(arguments))
     try:
@@ -146,6 +164,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 host=arguments.host,
                 port=arguments.port,
                 dev=arguments.dev,
+                log_level=arguments.log_level,
+                log_format=arguments.log_format,
             )
             serve(settings, reload=arguments.reload)
     except (CommandError, DevError, AgentFrameError) as error:
@@ -175,6 +195,21 @@ def _parser() -> argparse.ArgumentParser:
         "--dev",
         action="store_true",
         help="serve an agent class anonymously on localhost, for development only",
+    )
+    run.add_argument(
+        "--log-level",
+        choices=["warning", "info", "debug"],
+        help=(
+            "level of AgentFrame's own logs; info shows each run's start and "
+            "end with its invocation IDs (default: warning, info under "
+            "agentframe dev)"
+        ),
+    )
+    run.add_argument(
+        "--log-format",
+        choices=["text", "json"],
+        default="text",
+        help="text lines, or one JSON object per record (default: text)",
     )
     dev = commands.add_parser(
         "dev",
@@ -361,7 +396,17 @@ def serve(settings: RunSettings, *, reload: bool = False) -> None:
         host=settings.host,
         port=settings.port,
         timeout_graceful_shutdown=math.ceil(grace_seconds),
+        **_uvicorn_logging(settings.log_format),
     )
+
+
+def _uvicorn_logging(log_format: LogFormat) -> dict[str, Any]:
+    """Return Uvicorn's logging options for ``log_format``."""
+    if log_format == "text":
+        return {}  # Uvicorn's own coloured text lines.
+    # Without its own configuration Uvicorn's records reach the root JSON
+    # handler; INFO keeps its startup and access lines, as in text mode.
+    return {"log_config": None, "log_level": "info"}
 
 
 def _serve_draining(app: AgentApp, settings: RunSettings) -> None:
@@ -369,7 +414,12 @@ def _serve_draining(app: AgentApp, settings: RunSettings) -> None:
     # Imported here because it needs Uvicorn, an optional dependency.
     from agentframe.hosting.draining_server import DrainingServer
 
-    server = DrainingServer(app, host=settings.host, port=settings.port)
+    server = DrainingServer(
+        app,
+        host=settings.host,
+        port=settings.port,
+        **_uvicorn_logging(settings.log_format),
+    )
     # Uvicorn re-raises the signal it handled once it has shut down.
     with contextlib.suppress(KeyboardInterrupt):
         server.run()
@@ -539,17 +589,26 @@ def build_app(settings: RunSettings) -> AgentApp:
 
 def _app_for_reload() -> AgentApp:
     """Rebuild the app in Uvicorn's reload worker from the parent's settings."""
-    _configure_logging()
     settings = RunSettings(**json.loads(os.environ[_RELOAD_SETTINGS_VARIABLE]))
+    _configure_logging(settings.log_level, settings.log_format)
     return build_app(settings)
 
 
-def _configure_logging() -> None:
-    # Match Uvicorn's own log lines so AgentFrame's warnings read the same way.
-    logging.basicConfig(format="%(levelname)s:     %(message)s")
-    # Under agentframe dev, show each run's start and end with its
-    # invocation IDs, so the combined log can be followed across agents.
-    if os.environ.get(DEV_VARIABLE) == "1":
+def _configure_logging(
+    level: LogLevel | None = None, log_format: LogFormat = "text"
+) -> None:
+    # Leaves an existing root handler alone, as basicConfig always does.
+    handler = logging.StreamHandler()
+    if log_format == "json":
+        handler.setFormatter(JSONFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(_TEXT_LOG_FORMAT))
+    logging.basicConfig(handlers=[handler])
+    if level is not None:
+        logger.setLevel(level.upper())
+    elif os.environ.get(DEV_VARIABLE) == "1":
+        # Under agentframe dev, show each run's start and end with its
+        # invocation IDs, so the combined log can be followed across agents.
         logger.setLevel(logging.INFO)
 
 

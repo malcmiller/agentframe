@@ -61,6 +61,13 @@ behavior starts with an **Upgrading** section; see the
   never its value. Without `credential=`, Foundry signs in with a
   `DefaultAzureCredential` that the model closes with itself. The examples
   use it instead of their copied `create_model()` helper (#265).
+- **Hosting:** `agentframe run --log-level {warning,info,debug}` and
+  `--log-format {text,json}` for production logs. `info` shows each run's
+  `Run started` / `Run completed` records; `json` writes one JSON object per
+  line (standard library only), Uvicorn's records included, with the run's
+  `agent`, `invocation_id`, `root_invocation_id` and `parent_invocation_id`
+  as fields. Defaults are unchanged: `text`, and `warning` except `info`
+  under `agentframe dev` (#271).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,
