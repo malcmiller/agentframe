@@ -160,8 +160,9 @@ the reason (`card unavailable`, `security not satisfied`, ...), and the rest
 of the catalog is still used.
 
 Narrow it with `agents=`, `skill=` and `tags=` (or pass declared `Remote`
-parameters): at most 20 entries are allowed after narrowing, and more fails
-rather than truncating. AgentFrame agents give one entry per skill
+parameters); a catalog with none of these raises `DefinitionError` unless you
+pass `all_registered=True` to use the whole registry deliberately. At most 20
+entries are allowed after narrowing, and more fails rather than truncating. AgentFrame agents give one entry per skill
 (`"research-agent.find_sources"`); other A2A agents give one free-text `ask`
 entry (`"partner-agent"`). Card text is another party's content: bounded,
 offered to the model only as data or tool definitions, never as trusted
@@ -209,10 +210,12 @@ injection in that goal or in another agent's results. Treat every plan, and
 every model-chosen call, as untrusted:
 
 1. **Narrow the catalog.** Name the agents (`agents=`) or tags a skill really
-   needs; never offer every registered agent by default.
+   needs; offering every registered agent takes `all_registered=True`.
 2. **Protect the orchestrating skill** with `requires_permissions` (the
    example's `plans:run`), granted only to callers trusted to make the
-   orchestrator act.
+   orchestrator act. Hosted skills without it are refused when a model would
+   choose calls made with the orchestrator's own credentials, unless the
+   catalog passes `allow_any_caller=True`.
 3. **Protect consequential entries** with `remote_skills(permissions=...)`.
    Callers without them never see the entry, and every call to it is checked
    again. An agent's `ask` entry inherits its skills' permissions.
@@ -230,8 +233,14 @@ every model-chosen call, as untrusted:
 agents as itself. A skill that runs caller-supplied plans, or lets its model
 plan from caller-written goals, lets anyone who can call it make the
 orchestrator call any catalog entry with the orchestrator's credentials (a
-confused deputy). Apply the checklist above, all of it, before exposing such
-a skill.
+confused deputy). Hosted runs therefore refuse it by default: a skill without
+`requires_permissions` whose model may choose `Service` calls (from
+`remotes=` or `default_remote`) fails with `PermissionDeniedError` before
+anything is sent, unless the
+skill calls the agents `OnBehalfOf` the user or its catalog passes
+`allow_any_caller=True`
+([the open-proxy guard](../api/orchestration.md#the-open-proxy-guard)). Apply
+the checklist above, all of it, before exposing such a skill.
 
 **`default_remote` warning.** A `default_remote` goes to every registered
 agent whose card asks for its scheme. With an Entra default, each such agent

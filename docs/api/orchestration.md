@@ -48,18 +48,22 @@ async def remote_skills(
     ask: bool = False,
     max_tokens_per_call: int | None = None,
     permissions: Mapping[str, Collection[str]] | None = None,
+    all_registered: bool = False,
+    allow_any_caller: bool = False,
 ) -> SkillCatalog: ...
 ```
 
 | Parameter/result | Type | Required/default status | Meaning and constraints |
 | --- | --- | --- | --- |
-| `*remotes` | `Remote[Any]` | Optional | The running skill's `Remote` parameters. When given, the catalog holds exactly these agents. When omitted, every registered agent is considered. |
+| `*remotes` | `Remote[Any]` | Optional | The running skill's `Remote` parameters. When given, the catalog holds exactly these agents. When omitted, every registered agent is considered, and the catalog must be [explicit](#explicit-catalogs). |
 | `agents` | `Collection[str] \| None` | Optional; default `None` | Agent names to keep. A name no source lists (or, with `remotes`, that none of them has) raises `DefinitionError`, unless a source failed to list. A single string raises `DefinitionError`. |
 | `skill` | `str \| None` | Optional; default `None` | Keep only card skills with this ID. |
 | `tags` | `Collection[str]` | Optional; default `()` | Keep only card skills carrying all of these tags, matched with `skill` on the same card skill, as [`AgentDirectory.find`](discovery.md#agentdirectoryfind). A single string raises `DefinitionError`. |
 | `ask` | `bool` | Optional; default `False` | Also add a free-text `ask` entry for agents with the skill-call extension. |
 | `max_tokens_per_call` | `int \| None` | Optional; default `None` | The most tokens each [model-chosen call](#remote-skills-as-model-tools) to an entry may use, held against the run's `max_total_tokens` and sent to peers that advertise it, as `Remote.call(max_total_tokens=...)`. `None` holds everything the run has left, which is safe because those calls run one at a time. Anything but a whole number above 0 raises `DefinitionError`. Implemented (#167). |
 | `permissions` | `Mapping[str, Collection[str]] \| None` | Optional; default `None` | Permissions a caller must hold to use an entry, by entry name: `{"billing-agent.refund": {"refunds:write"}}`. The caller needs all of them, as for `@tool(requires_permissions=...)`; they become the entry's `requires_permissions`, and an agent's `ask` entry also requires every permission given for that agent's skills. Keys are entry names; see [unmatched keys](#unmatched-permissions-keys). Anything but a mapping of strings to collections of strings (a single string included) raises `DefinitionError`. See [permissions and tool checks](#permissions-and-tool-checks). Implemented (#168). |
+| `all_registered` | `bool` | Optional; default `False` | Deliberately offer every registered agent. Without `remotes`, `agents`, `skill`, `tags` or this flag, the call raises `DefinitionError`; with `remotes` it raises `DefinitionError` too. See [explicit catalogs](#explicit-catalogs). Implemented (#263). |
+| `allow_any_caller` | `bool` | Optional; default `False` | Let a hosted skill without `requires_permissions` offer this catalog's agents called with the agent's own credentials (a `Service` in `remotes=` or as `default_remote`) to a model. See [the open-proxy guard](#the-open-proxy-guard). Implemented (#263). |
 | Result | [`SkillCatalog`](#skillcatalog) | On success | The entries, in source and card order, plus this run's binding to each agent. May be empty. |
 
 ```python
@@ -125,6 +129,48 @@ orchestrator itself and is left out without a warning. A local `Runtime` has
 no advertised URL, so it leaves nothing out; a registry listing the
 orchestrator under another URL is still bounded by `max_remote_hops`.
 
+### Explicit catalogs
+
+A catalog names which agents it offers. `ctx.remote_skills()` with no
+`remotes`, `agents`, `skill` or `tags` raises `DefinitionError`, because a
+registry change would otherwise silently widen what a model may call; `ask=`,
+`max_tokens_per_call=` and `permissions=` do not narrow. Pass
+`all_registered=True` to use the whole registry deliberately (it may still be
+narrowed by `agents`, `skill` or `tags`, but not combined with `remotes`).
+Implemented (#263).
+
+```python
+skills = await ctx.remote_skills(all_registered=True)
+```
+
+### The open-proxy guard
+
+In a run hosted by an `AgentApp`, a skill without `requires_permissions` may
+not let a model choose calls to agents called with the agent's **own**
+credentials: a `Service` entry in `remotes=`, or a `Service`
+[`default_remote`](#default_remote). Otherwise any caller who can reach the
+skill could use those credentials through the model. `ctx.generate(...,
+tools=[...])` checks the bound entries before the first model call;
+`ctx.run_plan(...)` checks every step after validating the plan, before any
+policy check or send. Either raises `PermissionDeniedError` (a rejected A2A
+task) naming only the skill:
+
+> Skill 'answer' requires no permissions, so it cannot let a model choose
+> remote calls made with this agent's own credentials; add
+> requires_permissions to the skill, call the agents OnBehalfOf the user, or
+> pass allow_any_caller=True to remote_skills
+
+Any of these passes: give the skill `requires_permissions`, call the agents
+[`OnBehalfOf`](discovery.md) the caller, or pass `allow_any_caller=True` when
+anyone may use the agent's credentials. Agents called without credentials
+(open cards) are not guarded; `Remote` parameters the author calls directly,
+and local `Runtime` runs, are not guarded either, since no model chooses the
+call or no remote caller exists. Implemented (#263).
+
+The first catalog built for each skill in a hosted runtime logs, at INFO, how
+its agents are called: `Skill 'answer' calls its skill catalog agents with
+identity: Service` (`OnBehalfOf`, `none` or `mixed`). No credential is logged.
+
 **Behavior / failures:** building a catalog reads the sources and cards only;
 it never calls a model or sends an A2A message.
 
@@ -133,8 +179,9 @@ it never calls a model or sends an A2A message.
   as a single string, a positional argument that is not a `Remote`, credentials
   with a redirect-following HTTP client, two entries with the same name (for
   example agent `a.b`'s `ask` entry and agent `a`'s skill `b`), more than
-  20 entries (counted before any caller's permissions hide entries), or an
-  invalid `max_tokens_per_call` or `permissions`.
+  20 entries (counted before any caller's permissions hide entries), an
+  invalid `max_tokens_per_call` or `permissions`, no narrowing without
+  `all_registered=True`, or `all_registered=True` with `remotes`.
 - `RemoteAgentError`: a declared `Remote`'s card cannot be fetched (raised
   while binding the parameter, as in M8+), has an unsafe or repeated skill ID,
   or its argument schema is missing or over 8 KiB.
@@ -204,7 +251,7 @@ An agent none of these satisfies is skipped with the usual
 `default_remote`, only open agents and agents with `remotes=` entries are
 included.
 
-**Scope.** The default applies only to catalog agents (`ctx.remote_skills()`
+**Scope.** The default applies only to catalog agents (`ctx.remote_skills(...)`
 without `Remote` arguments). Declared [`Remote`](discovery.md#remoteliteralname)
 parameters, including ones passed to `remote_skills`, keep the M8+ rules: only
 their `remotes=` entry counts, checked at startup.
@@ -649,9 +696,14 @@ from agentframe import Agent, Plan, RunContext, agent, skill
 
 @agent(name="Orchestrator", description="Runs reviewed plans.", version="0.1.0")
 class Orchestrator(Agent):
-    @skill(id="execute", description="Run a reviewed plan.", tags=["orchestration"])
+    @skill(
+        id="execute",
+        description="Run a reviewed plan.",
+        tags=["orchestration"],
+        requires_permissions=["plans:run"],
+    )
     async def execute(self, plan: Plan, ctx: RunContext) -> str:
-        skills = await ctx.remote_skills()
+        skills = await ctx.remote_skills(agents=["research-agent", "writer-agent"])
         result = await ctx.run_plan(plan, skills, on_failure="continue")
         if not result.complete:
             failed = [
@@ -765,7 +817,9 @@ class Orchestrator(Agent):
 ```
 
 Run it with `Runtime(directory=...)` or `AgentApp(directory=...)`, and a model
-that supports tool calling.
+that supports tool calling. Hosted, with agents called through a `Service`
+identity, the skill also needs `requires_permissions`, `OnBehalfOf` or
+`allow_any_caller=True` ([the open-proxy guard](#the-open-proxy-guard)).
 
 **The tools.** Each entry becomes one model tool:
 
@@ -841,7 +895,12 @@ from agentframe import (
 
 @agent(name="Orchestrator", description="Delegates to specialists.", version="0.1.0")
 class Orchestrator(Agent):
-    @skill(id="answer", description="Answer a goal.", tags=["orchestration"])
+    @skill(
+        id="answer",
+        description="Answer a goal.",
+        tags=["orchestration"],
+        requires_permissions=["goals:answer"],
+    )
     async def answer(self, goal: str, ctx: RunContext) -> str:
         skills = await ctx.remote_skills(
             agents=["research-agent", "billing-agent"],
@@ -1042,12 +1101,14 @@ grants `plans:run`.
 
 **Open-proxy warning.** The execute skill runs caller-supplied plans with the
 orchestrator's outbound identity. With `Service` identity, any caller who can
-reach it can call any catalog entry as the orchestrator. So:
+reach it can call any catalog entry as the orchestrator. Hosted runs refuse
+this by default ([the open-proxy guard](#the-open-proxy-guard), #263), and an
+unnarrowed catalog needs `all_registered=True`. So:
 
 1. give the execute skill `requires_permissions` (here `plans:run`) granted
    only to callers trusted to run plans;
 2. run it over a narrowed catalog: declared remotes, or `agents=`, `skill=`
-   and `tags=`, never every registered agent by default;
+   and `tags=`, rather than `all_registered=True`;
 3. prefer `OnBehalfOf` with Entra callers, so every agent authorizes the real
    user and the orchestrator can never exceed that user's authority;
 4. add per-entry `permissions=`, plan checks and tool checks for

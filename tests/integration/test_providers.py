@@ -491,7 +491,7 @@ class OrderDispatcher(Agent):
     @skill("status", tags=["orders"])
     async def status(self, question: str, ctx: RunContext) -> str:
         """Answer a question about an order."""
-        skills = await ctx.remote_skills()
+        skills = await ctx.remote_skills(all_registered=True)
         return await ctx.generate(question, tools=[*skills])
 
 
@@ -581,7 +581,7 @@ class Planner(Agent):
     @skill("plan_goal", tags=["planning"])
     async def plan_goal(self, goal: str, ctx: RunContext) -> dict[str, list[str]]:
         """Plan a goal; return each step's entry with the entries it waits for."""
-        skills = await ctx.remote_skills()
+        skills = await ctx.remote_skills(all_registered=True)
         plan = await ctx.plan(goal, skills, max_steps=4)
         uses = {step.id: step.use for step in plan.steps}
         return {

@@ -17,6 +17,17 @@ behavior starts with an **Upgrading** section; see the
   `max_retained_tasks` (default 10,000); `GetTask` and `CancelTask` then
   treat them as unknown. Callers that read finished tasks later should raise
   those settings or pass a persistent `A2AConfig(task_store=...)` (#208).
+- `ctx.remote_skills()` with no `Remote` parameters, `agents=`, `skill=` or
+  `tags=` now raises `DefinitionError`; narrow the catalog, or pass
+  `all_registered=True` to offer every registered agent deliberately (#263).
+- In a run hosted by an `AgentApp`, a skill without `requires_permissions`
+  whose model may choose remote calls made with the agent's own credentials
+  (a `Service` in `remotes=` or as `default_remote`) through
+  `ctx.generate(tools=...)` or `ctx.run_plan` is now refused with
+  `PermissionDeniedError` before anything is sent. Add `requires_permissions`
+  to the skill, call the agents `OnBehalfOf` the user, or pass
+  `allow_any_caller=True` to `remote_skills` when any caller may use the
+  agent's credentials (#263).
 
 ### Added
 
@@ -96,6 +107,14 @@ behavior starts with an **Upgrading** section; see the
 
 ### Changed
 
+- Orchestration fails closed (#263). Skill catalogs must be explicit:
+  `ctx.remote_skills()` alone raises `DefinitionError`, and the new
+  `all_registered=True` uses the whole registry deliberately. In hosted runs a
+  skill without `requires_permissions` cannot let a model choose calls made
+  with the agent's own `Service` credentials (the open-proxy guard), unless
+  its catalog passes the new `allow_any_caller=True`; `OnBehalfOf` and open
+  agents pass. The first catalog built for each hosted skill logs its agents'
+  identity mode (`Service`, `OnBehalfOf`, `none` or `mixed`) at INFO.
 - `Services.add` and `Services.add_scoped` return the `Services` instead of
   `None`, so registrations fit on one line:
   `Runtime(services=Services().add(OrderStore, store))` (#274).

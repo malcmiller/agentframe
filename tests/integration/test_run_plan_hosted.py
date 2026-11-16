@@ -142,7 +142,9 @@ class Orchestrator(Agent):
 
     @skill(id="execute", description="Run a reviewed plan.", tags=["orchestration"])
     async def execute(self, plan: Plan, ctx: RunContext) -> str:
-        skills = await ctx.remote_skills(permissions=self.permissions)
+        skills = await ctx.remote_skills(
+            all_registered=True, permissions=self.permissions
+        )
         try:
             self.result = await ctx.run_plan(plan, skills, **self.run_options)
         except Exception as error:

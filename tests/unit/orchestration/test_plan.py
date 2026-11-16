@@ -348,7 +348,7 @@ class Planner(Agent):
 
     @skill(id="check", description="Check a plan.", tags=["planning"])
     async def check(self, ctx: RunContext) -> list[list[str]]:
-        catalog = await ctx.remote_skills()
+        catalog = await ctx.remote_skills(all_registered=True)
         self.registry.offline = True
         return ids(catalog.check(self.plan))
 

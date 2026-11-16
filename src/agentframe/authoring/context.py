@@ -127,7 +127,10 @@ class RunContext:
                 tool authorization policy denied a call, or an execution
                 policy tool check denied a call. The model is never told.
                 Also raised, before anything is sent, when an execution
-                policy model-request check blocks a request.
+                policy model-request check blocks a request, and, in a hosted
+                run, when a skill without ``requires_permissions`` offers
+                remote entries called with the agent's own credentials
+                without ``allow_any_caller=True`` (the open-proxy guard).
             PolicyUnavailableError: The tool authorization policy or an
                 execution policy model-request or tool check raised an error
                 or did not answer before the run's deadline.
@@ -193,10 +196,18 @@ class RunContext:
         ask: bool = False,
         max_tokens_per_call: int | None = None,
         permissions: Mapping[str, Collection[str]] | None = None,
+        all_registered: bool = False,
+        allow_any_caller: bool = False,
     ) -> SkillCatalog:
         """Return a catalog of the remote skills this run may offer a model.
 
-        With no ``remotes``, every agent the directory's sources list is
+        A catalog is always chosen explicitly: pass the skill's ``Remote``
+        parameters, or narrow the registry with ``agents=``, ``tags=`` or
+        ``skill=``, or pass ``all_registered=True`` to use every registered
+        agent deliberately. ``remote_skills()`` alone raises, so a model's
+        toolset never becomes the whole registry by accident.
+
+        Without ``remotes``, every agent the directory's sources list is
         considered: the registry is the allowlist. An agent is included only
         when its card can be fetched and is valid (with the directory's
         usual checks and cache, at most eight fetches at a time) and its
@@ -216,6 +227,19 @@ class RunContext:
         untrusted: descriptions (also inside schemas) are cut to 500
         characters, at most ten tags are kept, control characters are
         removed and ``examples`` are dropped. Nothing calls a model.
+
+        Open-proxy guard: in a run hosted by an ``AgentApp``, a skill without
+        ``requires_permissions`` may not let a model choose calls (plan
+        steps or ``generate`` tools) to agents it calls with the agent's own
+        ``Service`` credentials (from ``remotes=`` or ``default_remote=``),
+        since any caller could then use those credentials. ``ctx.run_plan``
+        and ``ctx.generate`` raise ``PermissionDeniedError``, naming only
+        the skill, before anything is sent. Agents called ``OnBehalfOf`` the
+        user (the remote applies the user's own permissions) or without
+        credentials pass, as do local ``Runtime`` runs and the skill's own
+        ``Remote.call`` / ``Remote.ask`` calls. The first catalog each hosted
+        skill builds logs its identity mode (``Service``, ``OnBehalfOf``,
+        ``mixed`` or ``none``) once at INFO, never a credential.
 
         Args:
             *remotes: ``Remote`` parameters of the running skill.
@@ -247,13 +271,23 @@ class RunContext:
                 entries. Hidden entries still count toward the 20-entry
                 limit, so whether a catalog is too large never depends on
                 the caller.
+            all_registered: Use every registered agent, unnarrowed. Needed
+                for a registry-wide catalog; cannot be combined with
+                ``remotes``.
+            allow_any_caller: Let an unprotected hosted skill offer this
+                catalog's ``Service``-credential agents to a model anyway,
+                for a deliberately public orchestrator. Any caller can then
+                make those agents act with this agent's credentials: an
+                explicit risk the application accepts.
 
         Returns:
             The catalog, holding the run's binding to each of its agents.
 
         Raises:
             DefinitionError: The runtime has no directory, the directory is
-                not open, a name is listed by more than one source, no
+                not open, nothing narrows a registry catalog and
+                ``all_registered`` is not set, ``all_registered`` is set
+                with ``remotes``, a name is listed by more than one source, no
                 source lists a name in ``agents`` (unless a source failed),
                 ``agents`` or ``tags`` is a single string, a positional
                 argument is not a ``Remote``, two entries share a name, or
@@ -274,7 +308,7 @@ class RunContext:
                 "remote_skills needs an AgentDirectory; pass directory= to "
                 "Runtime or AgentApp"
             )
-        return await build_catalog(
+        catalog = await build_catalog(
             self._remotes,
             remotes,
             agents=agents,
@@ -283,7 +317,13 @@ class RunContext:
             ask=ask,
             max_tokens_per_call=max_tokens_per_call,
             permissions=permissions,
+            all_registered=all_registered,
+            allow_any_caller=allow_any_caller,
         )
+        running = self._generation.skill
+        if running is not None:
+            self._remotes.log_identity_mode(running.id, catalog.identity_mode())
+        return catalog
 
     async def plan(
         self,
@@ -432,7 +472,10 @@ class RunContext:
                 is not an object with.
             PermissionDeniedError: The caller lacks a permission a step's
                 entry requires, or a tool check denied a step. That step is
-                not sent.
+                not sent. Also raised before any step is sent when, in a
+                hosted run, a skill without ``requires_permissions`` runs
+                steps on agents called with the agent's own credentials
+                without ``allow_any_caller=True`` (the open-proxy guard).
             PolicyUnavailableError: A tool check raised or did not answer in
                 time. That step is not sent.
             TokenLimitExceededError: A step's tokens do not fit what the run

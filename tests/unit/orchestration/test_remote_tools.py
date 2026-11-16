@@ -132,7 +132,9 @@ class Orchestrator(Agent):
 
     @skill(id="answer", description="Answer a goal.", tags=["orchestration"])
     async def answer(self, goal: str, ctx: RunContext) -> str:
-        self.catalog = await ctx.remote_skills(**self.options)
+        self.catalog = await ctx.remote_skills(
+            **{"all_registered": True, **self.options}
+        )
         entries: list[Any] = list(self.catalog)
         if self.twice:
             entries += entries
