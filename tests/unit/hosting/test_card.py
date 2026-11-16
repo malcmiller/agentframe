@@ -247,7 +247,8 @@ async def test_any_of_host_declares_each_member_as_an_alternative() -> None:
 
     card = await served_card(AnyOf(users, api_key_auth()))
 
-    assert list(card["securitySchemes"]) == ["entraId", "apiKey"]
+    # Map key order is not preserved across Python versions; requirement order is.
+    assert set(card["securitySchemes"]) == {"entraId", "apiKey"}
     assert card["securityRequirements"] == [
         {"schemes": {"entraId": {}}},
         {"schemes": {"apiKey": {}}},
