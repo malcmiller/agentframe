@@ -32,7 +32,6 @@ from agentframe import (
     Principal,
     RunContext,
     RunLimits,
-    Runtime,
     Services,
     ToolDefinition,
     agent,
@@ -145,8 +144,9 @@ def create_app(model: Model | None = None, store: OrderStore | None = None) -> A
     agent = OrderDesk(
         model=model or model_from_env(), tools=[lookup_order, cancel_order]
     )
-    runtime = Runtime(
+    return AgentApp(
+        agent=agent,
+        host=host,
         services=Services().add(OrderStore, store),
         tool_authorization=OwnOrdersOnly(store),
     )
-    return AgentApp(agent=agent, host=host, runtime=runtime)

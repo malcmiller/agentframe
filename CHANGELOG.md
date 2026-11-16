@@ -95,6 +95,11 @@ behavior starts with an **Upgrading** section; see the
   `OllamaModel`, reads the context window and structured-output support from
   the Models API, and is covered by opt-in real-provider tests (marker
   `anthropic`) (#262).
+- **Hosting:** `AgentApp(tool_authorization=...)` checks every tool call a
+  model asks for, like `Runtime(tool_authorization=...)`, so adding the policy
+  no longer means switching to `runtime=` and moving `services=` and the other
+  settings onto it. Passing it together with `runtime=` raises
+  `DefinitionError`; `examples/orders.py` uses it (#266).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

@@ -40,6 +40,7 @@ from agentframe import (
     Runtime,
     Services,
     SkillDefinition,
+    ToolDefinition,
     VerifiedCaller,
     agent,
     skill,
@@ -752,7 +753,9 @@ def test_undecorated_agent_is_refused() -> None:
         AgentApp(agent=Plain(), host=api_key_host("https://greeter.example.com"))
 
 
-@pytest.mark.parametrize("conflict", ["services", "authorization"])
+@pytest.mark.parametrize(
+    "conflict", ["services", "authorization", "tool_authorization"]
+)
 def test_runtime_conflicts_with_app_level_settings(conflict: str) -> None:
     class AllowAll(AuthorizationPolicy):
         # noinspection PyShadowingNames
@@ -764,9 +767,19 @@ def test_runtime_conflicts_with_app_level_settings(conflict: str) -> None:
         ) -> bool:
             return True
 
+    class AllowAllTools:
+        async def check_tool(
+            self,
+            principal: Principal | None,
+            tool: ToolDefinition,
+            arguments: Mapping[str, object],
+        ) -> bool:
+            return True
+
     settings: dict[str, Any] = {
         "services": Services(),
         "authorization": AllowAll(),
+        "tool_authorization": AllowAllTools(),
     }
     with pytest.raises(DefinitionError, match="not both"):
         AgentApp(

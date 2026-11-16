@@ -77,7 +77,10 @@ from agentframe.hosting.task_store import BoundedTaskStore, FinalStateStore
 from agentframe.runtime.limits import RunLimits, check_within_ceiling
 from agentframe.runtime.options import merge_settings
 from agentframe.runtime.runtime import Runtime
-from agentframe.security.authorization import AuthorizationPolicy
+from agentframe.security.authorization import (
+    AuthorizationPolicy,
+    ToolAuthorizationPolicy,
+)
 from agentframe.security.execution_policy import ExecutionPolicy
 
 HEALTH_PATH = "/health"
@@ -143,13 +146,17 @@ class AgentApp:
         agent: Instance of an ``@agent``-decorated class.
         host: Where and how the agent is served, including authentication.
         runtime: The runtime that runs every request. Defaults to a new
-            ``Runtime`` built from ``services``, ``authorization`` and
-            ``policy``. Pass
-            one to authorize tool calls with ``Runtime(tool_authorization=...)``.
+            ``Runtime`` built from ``services``, ``authorization``,
+            ``tool_authorization``, ``policy``, ``directory``, ``remotes``
+            and ``default_remote``.
         services: Services for ``Inject[T]`` parameters, when ``runtime`` is
             not given.
         authorization: Resource authorization policy, when ``runtime`` is not
             given.
+        tool_authorization: Policy that checks every tool call a model asks
+            for, with its validated arguments, before it runs, when
+            ``runtime`` is not given; see ``Runtime``. Strongly advised for
+            tools with side effects.
         policy: Execution policy content checks, when ``runtime`` is not
             given. Its model-request checks also cover routing requests.
         router: Selects the skill for free-text messages or asks the caller a
@@ -184,7 +191,8 @@ class AgentApp:
             not registered, a skill takes a ``Remote`` parameter and there
             is no directory, an agent or skill limit is explicitly set above
             ``host.limits_ceiling``, ``runtime`` is combined with ``services``,
-            ``authorization``, ``policy``, ``directory``, ``remotes`` or
+            ``authorization``, ``tool_authorization``, ``policy``,
+            ``directory``, ``remotes`` or
             ``default_remote``, ``remotes`` is not a mapping of names to
             ``Service`` or ``OnBehalfOf`` (or ``default_remote`` is neither),
             an ``OnBehalfOf`` remote's or default's host does not
@@ -204,6 +212,7 @@ class AgentApp:
         runtime: Runtime | None = None,
         services: Services | None = None,
         authorization: AuthorizationPolicy | None = None,
+        tool_authorization: ToolAuthorizationPolicy | None = None,
         policy: ExecutionPolicy | None = None,
         router: SkillRouter | None = None,
         default_skill: str | None = None,
@@ -216,6 +225,7 @@ class AgentApp:
             runtime,
             services=services,
             authorization=authorization,
+            tool_authorization=tool_authorization,
             policy=policy,
             directory=directory,
             remotes=remotes,
@@ -282,6 +292,7 @@ def _runtime_for(
     *,
     services: Services | None,
     authorization: AuthorizationPolicy | None,
+    tool_authorization: ToolAuthorizationPolicy | None,
     policy: ExecutionPolicy | None,
     directory: AgentDirectory | None,
     remotes: Mapping[str, Service | OnBehalfOf] | None,
@@ -295,20 +306,23 @@ def _runtime_for(
     if runtime is not None and (
         services is not None
         or authorization is not None
+        or tool_authorization is not None
         or policy is not None
         or directory is not None
         or remotes is not None
         or default_remote is not None
     ):
         raise DefinitionError(
-            "Pass services, authorization, policy, directory, remotes and "
-            "default_remote either to AgentApp or to its Runtime, not both; "
+            "Pass services, authorization, tool_authorization, policy, "
+            "directory, remotes and default_remote either to AgentApp or to "
+            "its Runtime, not both; "
             "the runtime is the single source of them."
         )
     if runtime is None:
         runtime = Runtime(
             services=services,
             authorization=authorization,
+            tool_authorization=tool_authorization,
             policy=policy,
             directory=directory,
             remotes=remotes,
