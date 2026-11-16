@@ -53,6 +53,50 @@ def test_explicit_values_override_defaults() -> None:
     assert (edit.name, edit.description) == ("Edit Text", "Edits text.")
 
 
+def test_skill_id_defaults_to_the_method_name() -> None:
+    @agent(version="1.0.0")
+    class Helper(Agent):
+        """Answers questions."""
+
+        @skill(tags=["questions"])
+        async def answer_question(self, question: str, ctx: RunContext) -> str:
+            """Answer a question."""
+            return question
+
+    skills = Helper.definition().skills
+    assert list(skills) == ["answer_question"]
+    assert skills["answer_question"].method_name == "answer_question"
+
+
+def test_default_skill_ids_must_still_be_unique() -> None:
+    with pytest.raises(DefinitionError, match="skill id 'answer' is used by both"):
+        # noinspection PyUnusedLocal
+        @agent(version="1.0.0")
+        class Clash(Agent):
+            """Has two skills with one id."""
+
+            @skill(tags=["questions"])
+            async def answer(self, ctx: RunContext) -> None:
+                """Answer."""
+
+            @skill(id="answer", tags=["questions"])
+            async def reply(self, ctx: RunContext) -> None:
+                """Reply."""
+
+
+def test_empty_skill_id_is_rejected() -> None:
+    with pytest.raises(DefinitionError, match="Skill id must not be empty"):
+        skill(id="", tags=["text"])
+
+
+def test_skill_without_parentheses_is_rejected() -> None:
+    async def echo(text: str, ctx: RunContext) -> str:
+        return text
+
+    with pytest.raises(DefinitionError, match="with parentheses"):
+        skill(echo)  # type: ignore[arg-type]
+
+
 def test_skill_permissions_default_to_empty() -> None:
     @agent(version="1.0.0")
     class Plain(Agent):

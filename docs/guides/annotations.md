@@ -18,7 +18,8 @@ Do not add provider-specific decorators such as `@foundry` or `@llama`.
 | `@tool(...)` | An explicitly registered callable | Makes a typed callable eligible for first-release bounded model tool execution and generation continuations. Optional for an individual agent; not an A2A skill, MCP publication or authorization grant. |
 
 Require a non-empty agent description, an explicit agent version, and stable,
-unique skill IDs. Docstrings may supply descriptions when unambiguous. Reject
+unique skill IDs. Skill IDs default to the method name; docstrings may supply
+descriptions when unambiguous. Reject
 duplicate IDs, unsupported annotations, and malformed metadata instead of
 silently dropping declarations.
 
@@ -85,7 +86,6 @@ class Summarizer(Agent):
     instructions = "Summarize faithfully. Do not invent missing facts."
 
     @skill(
-        id="summarize",
         name="Summarize text",
         description="Produce a concise summary of supplied text.",
         tags=["text", "summary"],
@@ -117,8 +117,10 @@ Calling `ctx.generate()` without a configured model fails explicitly.
 
 The runtime registers decorated methods by stable skill ID, derives their local
 argument/output contracts, and validates invocation through a common pipeline.
-The proposed local `Runtime.invoke(agent, skill=..., arguments=...)` selects an
-ID explicitly; Python method names need not equal skill IDs. Direct calls such
+A skill's ID defaults to its method name (`summarize` above); pass
+`@skill(id=...)` to keep a published ID when renaming the method. The local
+`Runtime.invoke(agent, skill=..., arguments=...)` selects an
+ID explicitly. Direct calls such
 as `await instance.summarize(...)` are ordinary Python calls and bypass runtime
 validation, policy, context creation, and execution limits.
 

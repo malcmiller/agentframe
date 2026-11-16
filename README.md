@@ -79,12 +79,12 @@ class Greeter:
 class Echo(Agent):
     """Returns supplied text or a greeting."""
 
-    @skill(id="echo", tags=["text"])
+    @skill(tags=["text"])
     async def echo(self, text: str, ctx: RunContext) -> str:
         """Return the text unchanged."""
         return text
 
-    @skill(id="greet", tags=["greeting"])
+    @skill(tags=["greeting"])
     async def greet(self, name: str, greeter: Inject[Greeter], ctx: RunContext) -> str:
         """Greet someone by name."""
         return greeter.greet(name)
@@ -96,7 +96,8 @@ value = await runtime.invoke(Echo(), skill="echo", arguments={"text": "hi"})
 result = await runtime.run(Echo(), skill="greet", arguments={"name": "Ada"})
 ```
 
-Names default to the class and method names, descriptions to docstrings. The
+Agent names default to the class name, skill IDs and names to the method name,
+and descriptions to docstrings. The
 example's `create_app()` serves `Echo` to any A2A 1.0 client:
 
 ```shell
@@ -123,7 +124,7 @@ class Assistant(Agent):
     # Foundry does not report a deployment's context window, so cap the input.
     limits = RunLimits(max_input_tokens=4000)
 
-    @skill("answer", tags=["questions"])
+    @skill(tags=["questions"])
     async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer a question briefly."""
         return await ctx.generate(question)
@@ -162,7 +163,7 @@ type Research = Remote[Literal["research-agent"]]
 class Planner(Agent):
     """Plans a goal with help from a research agent."""
 
-    @skill(id="plan", tags=["planning"])
+    @skill(tags=["planning"])
     async def plan(
         self, goal: str, topics: list[str], research: Research, ctx: RunContext
     ) -> list[str]:

@@ -48,6 +48,10 @@ behavior starts with an **Upgrading** section; see the
 - `Services.add` and `Services.add_scoped` return the `Services` instead of
   `None`, so registrations fit on one line:
   `Runtime(services=Services().add(OrderStore, store))` (#274).
+- `@skill`'s `id` is now optional and defaults to the method name, so
+  `@skill(tags=["questions"])` on `async def answer` registers the skill
+  `answer`. Pass `id=` to keep a published ID when renaming a method; an
+  empty `id` is still rejected (#273).
 - Runtime dependencies and the `server`, `ollama`, `foundry` and `entra`
   extras are now compatible ranges instead of exact pins, from the lowest
   tested version up to the next breaking release (next major, or next minor
