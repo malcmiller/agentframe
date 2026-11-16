@@ -89,39 +89,46 @@ async def _routed(
     timeout counts from when routing started.
     """
     invocation_id = str(uuid.uuid4())
-    accounting = RunAccounting()
-    started_at = asyncio.get_running_loop().time()
-    ctx = new_routing_context(
-        agent,
-        invocation_id,
-        principal,
-        started_at,
-        accounting,
-        policy=runtime.policy,
-    )
-    conversation = [new_text_message(prompt, role=Role.ROLE_USER)]
     definition = type(agent).definition()
-    try:
-        decision = await route(
-            router, conversation, eligible_skills(definition, principal), ctx
+    with runtime.telemetry.run(
+        agent=definition.name, invocation_id=invocation_id
+    ) as span:
+        accounting = RunAccounting()
+        started_at = asyncio.get_running_loop().time()
+        ctx = new_routing_context(
+            agent,
+            invocation_id,
+            principal,
+            started_at,
+            accounting,
+            policy=runtime.policy,
+            telemetry=runtime.telemetry,
         )
-    except AgentFrameError as error:
-        error.invocation_id = invocation_id
-        raise
-    if isinstance(decision, Clarification):
-        raise ClarificationNeededError(
-            "The agent's router asked a question instead of choosing a skill",
-            question=decision.question,
-            invocation_id=invocation_id,
+        conversation = [new_text_message(prompt, role=Role.ROLE_USER)]
+        try:
+            decision = await route(
+                router, conversation, eligible_skills(definition, principal), ctx
+            )
+        except AgentFrameError as error:
+            error.invocation_id = invocation_id
+            raise
+        if isinstance(decision, Clarification):
+            raise ClarificationNeededError(
+                "The agent's router asked a question instead of choosing a skill",
+                question=decision.question,
+                invocation_id=invocation_id,
+            )
+        # Only a declared skill labels the metrics: a router may name any ID.
+        if decision.skill in definition.skills:
+            span.set_skill(decision.skill)
+        result = await runtime.run_invocation(
+            invocation_id,
+            agent,
+            decision.skill,
+            decision.arguments,
+            principal,
+            options or RunOptions(),
+            started_at,
+            accounting,
         )
-    result = await runtime.run_invocation(
-        invocation_id,
-        agent,
-        decision.skill,
-        decision.arguments,
-        principal,
-        options or RunOptions(),
-        started_at,
-        accounting,
-    )
     return result.value

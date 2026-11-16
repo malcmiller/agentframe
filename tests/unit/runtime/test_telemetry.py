@@ -4,6 +4,7 @@ Each test gives the runtime its own SDK providers with in-memory exporters,
 as an application would, so nothing touches OpenTelemetry's global state.
 """
 
+import json
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from agentframe import (
     InputValidationError,
     ModelCapabilities,
     ModelResponse,
+    ModelRouter,
     RunContext,
     Runtime,
     ToolCall,
@@ -176,6 +178,54 @@ async def test_a_run_records_run_skill_model_and_tool_spans(
         "gen_ai.tool.name": "lookup_order",
         "gen_ai.tool.call.id": "call_1",
     }
+
+
+@agent(name="Desk", version="1.0.0")
+class Desk(Agent):
+    """Has two text skills, so ``Agent.ask`` needs a router."""
+
+    @skill("ask", tags=["desk"])
+    async def answer(self, question: str, ctx: RunContext) -> str:
+        """Answer a question."""
+        return "answered"
+
+    @skill("note", tags=["desk"])
+    async def note(self, text: str, ctx: RunContext) -> str:
+        """Take a note."""
+        return "noted"
+
+
+async def test_a_routed_agent_ask_is_one_traced_run(
+    recorded: Recorded, tracing: TracingConfig
+) -> None:
+    replies: list[dict[str, Any]] = [
+        {"skill": "ask", "question": None},
+        {"arguments": {"question": "Where is A1?"}, "question": None},
+    ]
+    router_model = ScriptedModel(
+        [json.dumps(reply) for reply in replies],
+        capabilities=ModelCapabilities(context_window=8192, structured_output=True),
+    )
+
+    value = await Desk().ask(
+        "Where is A1?",
+        router=ModelRouter(router_model),
+        runtime=Runtime(tracing=tracing),
+    )
+
+    assert value == "answered"
+    spans = recorded.spans.get_finished_spans()
+    [run] = [span for span in spans if span.name == "invoke_agent Desk"]
+    assert run.attributes is not None
+    assert run.attributes["agentframe.skill"] == "ask"
+    children = [span for span in spans if span is not run]
+    assert all(span.parent == run.context for span in children)
+    assert sorted(span.name for span in children) == ["chat", "chat", "skill ask"]
+    [runs] = recorded.points("agentframe.runs")
+    assert runs.attributes["agentframe.skill"] == "ask"
+    assert runs.value == 1
+    [model_calls] = recorded.points("gen_ai.client.operation.duration")
+    assert model_calls.count == 2
 
 
 async def test_each_model_call_is_a_genai_client_span(
