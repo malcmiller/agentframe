@@ -30,7 +30,7 @@ authorized, bounded execution pipeline without requiring model inference.
 Runtime(
     *, authorization: AuthorizationPolicy = ...,
     tool_authorization: ToolAuthorizationPolicy = ...,
-    policy: ExecutionPolicy = ..., tracing: TracingConfig = ..., services: Services = ...,
+    policy: ExecutionPolicy = ..., tracing: TracingConfig | None = None, services: Services = ...,
     directory: AgentDirectory = ..., remotes: Mapping[str, Service] = ...,
     default_remote: Service | OnBehalfOf | None = None,
     state_store: StateStore | None = None,
@@ -42,7 +42,7 @@ Runtime(
 | `authorization` | `AuthorizationPolicy` implementation | Needed for protected operations; constructor omission allowed in unprotected local examples | Enforces mandatory skill permissions plus application resource rules. Missing required integration fails closed. |
 | `tool_authorization` | [`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy) implementation | Optional; default `None` checks only tools' `requires_permissions` | Checks every model-requested tool call with its validated arguments before it runs. Not required for side-effecting tools, but strongly advised for them. Hosted apps pass it as `AgentApp(tool_authorization=...)` or through `AgentApp(runtime=...)`. |
 | `policy` | [`ExecutionPolicy`](authorization.md#executionpolicy) | Optional; default `None` runs no content checks | Input, model-request, tool and output checks (M7 #77, #78). They run after authorization and cannot waive it; every configured check runs and fails closed. Hosted apps pass it as `AgentApp(policy=...)` or through `runtime=`. |
-| `tracing` | `TracingConfig` | Optional; tracing disabled unless configured | Application owns provider/exporters/sampling; accounting and invocation IDs do not depend on export. |
+| `tracing` | [`TracingConfig`](configuration.md#tracingconfig)` \| None` | Optional; default `None`, tracing off (0.5.0 #248) | OpenTelemetry spans and metrics; needs the `otel` extra, else `DefinitionError`. Application owns provider/exporters/sampling; accounting and invocation IDs do not depend on it. See the [tracing guide](../guides/tracing.md). |
 | `services` | `Services` | Explicit when skills need registered dependencies | Resolve `Inject[T]` parameters; missing registration is a startup `DefinitionError`. Same service container contract as `AgentApp`. |
 | `directory` | [`AgentDirectory`](discovery.md#agentdirectory) | Optional; required when a skill takes a [`Remote`](discovery.md#remoteliteralname) parameter (M8+ #87) | Where `Remote[Literal["name"]]` parameters find their agents; each run binds them at its start, within its deadline. The application opens and closes it. |
 | `remotes` | `Mapping[str, `[`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)`]` | Optional; default no credentials (M8+ #92, #93) | How to authenticate to each remote agent, by directory name. A remote without an entry is called without credentials, which only works when its card declares no security. Any other value raises `DefinitionError`. Local runs have no signed-in user, so an `OnBehalfOf` remote fails them with `PermissionDeniedError`. |

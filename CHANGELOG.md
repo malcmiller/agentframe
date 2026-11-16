@@ -207,6 +207,16 @@ behavior starts with an **Upgrading** section; see the
   and admission, with no task. Anonymous callers share one allowance; the count
   is per instance, so gateway rate limiting (for example Azure API Management)
   is documented for limits across instances. Off by default.
+- **Tracing and metrics:** optional OpenTelemetry through
+  `TracingConfig(tracer_provider=None, meter_provider=None)` on `Runtime` or
+  `AgentApp` and the new `otel` extra (`opentelemetry-api` only; the
+  application owns the SDK and exporters). Spans for the run, skill, model
+  call (GenAI semantic conventions), tool call, remote call and plan step;
+  a hosted run continues the incoming `traceparent` and outbound A2A
+  requests carry the remote-call span as parent. Metrics count runs, errors
+  by class, durations, token usage and admission rejections. Content,
+  exception messages, URLs and credentials are never recorded, and
+  accounting is unchanged with tracing off (#248).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

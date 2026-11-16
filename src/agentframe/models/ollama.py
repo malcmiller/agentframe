@@ -118,6 +118,14 @@ class OllamaModel:
         self._metadata_lock = asyncio.Lock()
         self._client = ollama.AsyncClient(host=endpoint, timeout=_TIMEOUT)
 
+    provider_name = "ollama"
+    """The ``gen_ai.provider.name`` tracing records for this model's calls."""
+
+    @property
+    def model_name(self) -> str:
+        """The model tag tracing records as ``gen_ai.request.model``."""
+        return self.model
+
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Send ``request`` to the server's chat API and return the full reply.
 

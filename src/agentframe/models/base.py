@@ -258,6 +258,10 @@ class Model(Protocol):
     Any class with these methods is a ``Model``; no base class is needed.
     Constructing a model must not do any I/O. A model closes only the clients
     it created; clients passed in by the caller stay caller-owned.
+
+    A model may also have ``provider_name`` and ``model_name`` string
+    attributes, which tracing records as ``gen_ai.provider.name`` and
+    ``gen_ai.request.model``; neither is required.
     """
 
     async def generate(self, request: ModelRequest) -> ModelResponse:

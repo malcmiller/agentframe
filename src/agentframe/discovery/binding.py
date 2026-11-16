@@ -13,6 +13,7 @@ from agentframe.discovery.transport import BoundedJsonRpcTransport
 from agentframe.errors import DefinitionError
 from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation
+from agentframe.runtime.telemetry import NO_TELEMETRY, Telemetry
 from agentframe.security.principal import Principal
 
 # Bounds alias unwrapping, so an alias that refers to itself cannot loop forever.
@@ -139,12 +140,13 @@ def new_binding(
     max_hops: int,
     accounting: RunAccounting,
     max_total_tokens: int,
+    telemetry: Telemetry = NO_TELEMETRY,
 ) -> Remote[Any]:
     """Create a run's binding to an agent whose card is already checked.
 
     The binding sends its requests with the directory's HTTP client. The
     caller must have checked ``credential`` against the card first, as
-    ``find_remote`` does.
+    ``find_remote`` does. ``telemetry`` records its calls as spans.
 
     Raises:
         DefinitionError: The directory is not open.
@@ -167,4 +169,5 @@ def new_binding(
         max_hops=max_hops,
         accounting=accounting,
         max_total_tokens=max_total_tokens,
+        telemetry=telemetry,
     )

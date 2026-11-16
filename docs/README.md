@@ -4,8 +4,8 @@ These documents record decided design contracts and still-open API details,
 not a stable agent SDK. The repository implements milestones M0 to M10;
 version 0.3.0 is
 [published on PyPI](https://pypi.org/project/agentframe-py/0.3.0/) as
-`agentframe-py`. Features not yet implemented (MCP, telemetry, AG-UI)
-remain design proposals. See the
+`agentframe-py`. Features not yet implemented (MCP, AG-UI) remain design
+proposals; optional OpenTelemetry tracing is implemented for 0.5.0. See the
 [setup and check commands](../CONTRIBUTING.md).
 
 ## Proposed API reference
@@ -51,6 +51,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [Evaluating agents](guides/evaluation.md) | M9 walkthrough of `examples/evaluation.py`: cases, targets, scorers, a rubric judge with votes and their cost, budgets, reports, gating CI with `report.require` or `agentframe eval`, real models, non-AgentFrame and Foundry A2A agents, privacy and the release acceptance tests. |
 | [Orchestration](guides/orchestration.md) | M10: choosing plain `await`, remote skills as tools or plans; the `examples/multi_agent` planner and writer; the `examples/dynamic_agents` planner that finds skills by tag; the catalog, plans, a safety checklist with open-proxy and `default_remote` warnings, logs and usage, measuring the planner with an evaluation, and the release acceptance tests. |
 | [Performance baseline](guides/performance.md) | Measured overhead per local run, hosted call and A2A hop, throughput at the admission limit, with machine and method caveats; running the opt-in benchmarks and the non-gating CI regression check. |
+| [Tracing and metrics](guides/tracing.md) | Turning on optional OpenTelemetry with `TracingConfig`, every span, attribute and metric, trace context across agents, and what is never recorded. |
 | [Real-provider tests](guides/provider-tests.md) | Opt-in tests against real Ollama and Foundry, the expected Ollama planner failures, and the one-time setup of the manual Foundry workflow with OpenID Connect. |
 | [Releasing](guides/releasing.md) | Maintainer one-time PyPI trusted-publisher and environment setup, and the steps to publish a release. |
 | [Stability and upgrading](guides/stability.md) | What the public API is, what may change before 1.0, how deprecations are signposted, changelog **Upgrading** notes and the criteria for 1.0. |
@@ -66,7 +67,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [MCP skills](design/mcp-skills.md) | Optional allowlisted skill publication, shared A2A/MCP hosting, schema mapping, and protocol boundaries. |
 | [Prompt safeguarding](design/prompt-safeguarding.md) | Shared responsibilities, content-policy hooks, data egress, and prompt-injection limitations. |
 | [Streaming and AG-UI](design/streaming.md) | Future scoped frontend-protocol adapter, primary-source event/transport research, trust/policy boundaries and open delivery contracts. |
-| [Tracing](design/tracing.md) | Optional OpenTelemetry configuration, span boundaries, safe metadata, and correlation. |
+| [Tracing](design/tracing.md) | Optional OpenTelemetry tracing and metrics (implemented for 0.5.0, #248): configuration, span boundaries, safe metadata, and correlation. |
 
 Read the roadmap first for product boundaries, or use agent examples for an
 authoring walkthrough. Changes to proposed interfaces should keep the reference,
@@ -107,8 +108,8 @@ routing (all complete); M7 hardening completes the first usable single-agent rel
 M8+ then delivers 1 to N independently deployable specialists and ordinary
 orchestrator skills cooperating over A2A, including with other frameworks'
 A2A agents. Discovery/native calls and identity/budget/trace propagation are
-core to this release, not optional follow-ups. MCP, telemetry integration and
-streaming/AG-UI remain optional follow-ups. Local N-agent development precedes
+core to this release, not optional follow-ups. MCP and streaming/AG-UI remain
+optional follow-ups; telemetry integration is implemented for 0.5.0. Local N-agent development precedes
 container packaging; Foundry/Kubernetes templates are later. No workflow/graph
 engine or hosting platform is included.
 The confirmed M8+ surface is `Remote[Literal["name"]].call` / `ask`, input-required as

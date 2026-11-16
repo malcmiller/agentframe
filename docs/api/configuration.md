@@ -248,51 +248,55 @@ later work, and host ceilings cap hosted runs ([precedence](#precedence)).
 
 ## `TracingConfig`
 
-**Purpose / decision:** optional OpenTelemetry integration configured on
-`Runtime`, independent of accounting/enforcement.
+**Purpose / decision:** turns on optional OpenTelemetry spans and metrics for
+a `Runtime` or `AgentApp` (0.5.0, #248). Needs the `otel` extra
+(`opentelemetry-api` only); the application owns the SDK. Accounting and
+enforcement are independent of it.
 
-**Proposed constructor shape:**
+**Implemented constructor:**
 
-```text
+```python
 TracingConfig(
-    *, enabled: bool = ..., tracer_provider: ... = ...,
-    capture_content: bool = False,
+    tracer_provider: TracerProvider | None = None,
+    meter_provider: MeterProvider | None = None,
 )
 ```
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `enabled` | `bool` | Tracing disabled unless configured; field default open | Explicitly opt into runtime tracing; no implicit exporter setup. |
-| `tracer_provider` | Application-owned OpenTelemetry provider; exact accepted interface open | Supplied in enabled example; omission behavior open | Application controls provider, processors, exporters, credentials, sampling, and lifecycle. Do not replace global configuration. |
-| `capture_content` | `bool` | `False` by default | Content capture, if implemented, needs explicit consent, bounded sizes, redaction/filtering, retention/access policies; never captures credentials/private reasoning. |
+| `tracer_provider` | `opentelemetry.trace.TracerProvider \| None` | Optional, `None` | The provider spans are created with; `None` uses OpenTelemetry's global provider. The application owns its processors, exporters, sampling and lifecycle. |
+| `meter_provider` | `opentelemetry.metrics.MeterProvider \| None` | Optional, `None` | The provider metrics are recorded with; `None` uses the global provider. |
+
+Pass it as `Runtime(tracing=...)` or `AgentApp(tracing=...)`; tracing is off
+when omitted.
 
 ```python
-from opentelemetry.trace import TracerProvider
+from opentelemetry.sdk.trace import TracerProvider
+
 from agentframe import Runtime, TracingConfig
 
 
 def traced_runtime(tracer_provider: TracerProvider) -> Runtime:
-    return Runtime(
-        tracing=TracingConfig(
-            enabled=True,
-            tracer_provider=tracer_provider,
-            capture_content=False,
-        )
-    )
+    return Runtime(tracing=TracingConfig(tracer_provider=tracer_provider))
 ```
 
-The provider is an application-created dependency from optional OpenTelemetry
-packages; this example neither creates an exporter nor chooses sampling.
+The provider comes from the application's own OpenTelemetry SDK setup; this
+example neither creates an exporter nor chooses sampling.
 
-**Behavior / failures:** requested tracing with missing optional integration
-fails configuration explicitly. Operational metadata is redacted; incoming
-trace/session/context IDs are not identity or authorization. Every invocation
-has a library-generated invocation ID even when tracing is disabled/sampled
-out; do not fabricate trace IDs. Export failures are reported through
-observability infrastructure, not disguised as agent results or used to
-disable enforcement. Exact span attributes, correlation transport mappings,
-and integration versions remain open.
+**Behavior / failures:** `Runtime(tracing=...)` without the `otel` extra
+raises `DefinitionError`, as does passing `tracing=` to both an `AgentApp`
+and its `runtime=`. AgentFrame never sets global providers. Spans cover the
+run, skill, model call (GenAI semantic conventions), tool call, remote call
+and plan step; metrics count runs, errors by class, tokens, durations and
+admission rejections. A hosted run continues a valid incoming `traceparent`
+and outbound A2A requests carry the remote-call span as parent. Only names,
+IDs, counts, durations and error class names are recorded: no content,
+exception messages, URLs, credentials or private reasoning, and there is no
+content-capture option. Every run still has its invocation ID with tracing
+off. Span names, attributes and metrics are listed in the
+[tracing guide](../guides/tracing.md).
 
 **Related:** [`Runtime`](runtime.md#runtime),
+[tracing guide](../guides/tracing.md),
 [span boundaries](../design/tracing.md#span-boundaries),
 [safe metadata](../design/tracing.md#safe-metadata).

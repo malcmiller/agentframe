@@ -163,11 +163,7 @@ writer = WritingAssistant(
 runtime = Runtime(
     authorization=authorization_policy,
     policy=execution_policy,
-    tracing=TracingConfig(
-        enabled=True,
-        tracer_provider=tracer_provider,
-        capture_content=False,
-    )
+    tracing=TracingConfig(tracer_provider=tracer_provider),
 )
 
 app = AgentApp(

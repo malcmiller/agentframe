@@ -31,6 +31,7 @@ AgentApp(
     directory: AgentDirectory = ..., remotes: Mapping[str, Service] = ...,
     default_remote: Service | OnBehalfOf | None = None,
     resources: Sequence[AbstractAsyncContextManager | SupportsAclose] = (),
+    tracing: TracingConfig | None = None,
     ag_ui: AGUIConfig = ...,
 )
 ```
@@ -52,6 +53,7 @@ AgentApp(
 | `remotes` | `Mapping[str, `[`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)`]` | Optional; only without `runtime=` (M8+ #92, #93) | How to authenticate to each remote agent, by name, as on [`Runtime`](runtime.md#runtime). Never forwards the incoming caller's credentials. `OnBehalfOf` needs `auth=EntraIDAuth(client_id=..., client_credential=...)`, alone or as the one such member of [`AnyOf`](authorization.md#anyof), else `DefinitionError` at construction. |
 | `default_remote` | [`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)` \| None` | Optional; only without `runtime=`; default `None` (M10 #175) | How to authenticate to [skill-catalog](orchestration.md#default_remote) agents without a `remotes=` entry, only where their card requires credentials it meets; never used for `Remote` parameters. It is sent to every such registered agent (token audience or shared key), so read the [security note](orchestration.md#default_remote). An `OnBehalfOf` default needs `auth=EntraIDAuth(client_id=..., client_credential=...)`, alone or as the one such member of [`AnyOf`](authorization.md#anyof), else `DefinitionError` at construction. |
 | `resources` | Sequence of async context managers or objects with `async aclose()` | Optional; default `()` (#264) | Application-owned objects that live as long as the server, such as models, Azure credentials or `httpx.AsyncClient`s. See [app-owned resources](#app-owned-resources). Not a list or tuple, an item that is neither, or an object listed twice raises `DefinitionError` at construction. |
+| `tracing` | [`TracingConfig`](configuration.md#tracingconfig)` \| None` | Optional; only without `runtime=`; default `None` (0.5.0 #248) | OpenTelemetry spans and metrics for hosted runs, including a server span continuing the caller's `traceparent` and admission-rejection counts; see the [tracing guide](../guides/tracing.md). With `runtime=`, pass it to that `Runtime` instead, else `DefinitionError`. |
 | `ag_ui` | `AGUIConfig` | Later explicit opt-in, off unless enabled | `AGUIConfig(enabled=True)` serves `/ag-ui` with the same auth/permissions/limits. |
 
 Supply an instance of [`Echo`](agents.md#agent) for this single-skill

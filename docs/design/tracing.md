@@ -1,31 +1,35 @@
 # Tracing and correlation
 
-These are proposed runtime APIs, not implemented telemetry. Tracing is optional
-infrastructure, not an agent decorator or subclass requirement. Use an optional
-OpenTelemetry integration; the application owns sampling, processors, exporters,
-and collector credentials.
-Tracing integration is a separate follow-up after M7; invocation metadata,
-accounting and enforcement remain independent of it in the first usable release.
+Tracing is optional infrastructure, not an agent decorator or subclass
+requirement. The OpenTelemetry integration is implemented in 0.5.0
+([#248](https://github.com/malcmiller/agentframe/issues/248)) behind the `otel`
+extra (`opentelemetry-api` only); the application owns the SDK, sampling,
+processors, exporters and collector credentials. Invocation metadata,
+accounting and enforcement remain independent of it. The
+[tracing guide](../guides/tracing.md) lists every span, attribute and metric.
 
-## Proposed configuration
+## Configuration (implemented)
 
 ```python
 from agentframe import Runtime, TracingConfig
 
 runtime = Runtime(
     tracing=TracingConfig(
-        enabled=True,
         tracer_provider=tracer_provider,
-        capture_content=False,
+        meter_provider=meter_provider,
     )
 )
 ```
 
-`tracer_provider` is an application-created OpenTelemetry provider. AgentFrame
-must not replace global provider configuration or silently start an exporter.
-Tracing is disabled unless configured; content capture is off by default.
-Exporter setup and lifecycle remain application-owned. A missing optional
-integration must produce an explicit configuration error if tracing is requested.
+`tracer_provider` and `meter_provider` are application-created OpenTelemetry
+providers; `None` (the default) uses OpenTelemetry's global providers.
+AgentFrame never replaces global provider configuration or starts an
+exporter. Tracing is disabled unless configured. A missing `otel` extra
+raises `DefinitionError` when tracing is requested. The proposed `enabled`
+and `capture_content` fields were dropped: passing a `TracingConfig` turns
+tracing on, and content is never captured (see [safe metadata](#safe-metadata)).
+`AgentApp(tracing=...)` builds its runtime with it; it cannot be combined
+with `runtime=`.
 
 Tracing must not be required for local invocation, token accounting, or budget
 enforcement. Every invocation receives a library-generated invocation ID even
@@ -50,7 +54,19 @@ Selection precedes invocation, rather than being a child of a skill that has
 not yet been selected. An activated structured A2A request or MCP tool call
 already names a skill and needs no routing-model span or inferred usage.
 Validation, authorization, accounting and invocation correlation still apply.
-Local invocations have no synthetic HTTP parent. Model-free skills
+Local invocations have no synthetic HTTP parent.
+
+Implemented spans (#248): a run is `invoke_agent {agent}` (`SERVER` for an
+A2A request), its selected skill `skill {id}`, each logical model call
+`chat {model}` (`CLIENT`, GenAI semantic conventions; retries are `retry`
+events on it, so a logical call is counted once), each tool call
+`execute_tool {name}`, each `Remote.ask` / `call` `invoke_agent {remote}`
+(`CLIENT`) and each plan step `plan_step {id}`. Routing model calls are
+children of the run span, before the skill span. Authentication and
+admission happen before a run exists and have no spans; refused requests
+are counted by the `agentframe.admission.rejections` metric. Metrics also
+count runs, errors by class, run and model-call durations and known token
+usage (`gen_ai.client.token.usage`). Model-free skills
 still have invocation spans but no model spans.
 
 One logical model operation may have multiple attempts: default two retries
@@ -89,6 +105,12 @@ once; extension-unaware peer usage remains unknown, not zero.
 Identifiers and deployment names can also be sensitive; support application
 attribute filtering and avoid unbounded/high-cardinality payloads. Metrics should
 not use invocation IDs as labels. Provider errors need redaction before recording.
+
+Implemented (#248): spans and metrics record names, IDs, kinds, counts,
+durations, finish reasons and error class names (`error.type`), never
+exception messages, content, URLs, headers or credentials. Unknown skill IDs
+from callers never name spans or label metrics; invocation IDs are span
+attributes, never metric attributes. There is no content-capture option.
 
 If `capture_content=True` is later supported, it requires explicit application
 consent, bounded payload sizes, field filtering/redaction, and retention/access
@@ -153,8 +175,14 @@ A request's single valid version-00 W3C `traceparent` header, and its
 `tracestate` when valid (at most 512 characters and 32 list members), is
 forwarded unchanged on every outbound remote request of the run, to any A2A
 peer. Invalid values are dropped; a later trace-context version is dropped
-because it cannot be validated. AgentFrame never invents trace IDs or creates
-spans; the optional OpenTelemetry adapter (#18) will create real spans later.
+because it cannot be validated. Without tracing, AgentFrame never invents
+trace IDs or creates spans.
+
+With `TracingConfig` (#248), a hosted run's span continues that validated
+context as its parent, and each outbound request instead carries a
+`traceparent` (and the span's `tracestate`) naming the remote call's span as
+parent, so one trace spans every agent that honors W3C trace context. Baggage
+is never read or forwarded. Trace context still never authenticates.
 None of these values authenticate, authorize or grant task access.
 
 Plans (M10 [#173](https://github.com/malcmiller/agentframe/issues/173)) log

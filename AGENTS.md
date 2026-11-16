@@ -18,7 +18,8 @@ opt-in model routing and M7 hardening alongside design documentation. Version
 multi-agent release (#83-#97), and version 0.3.0, which adds M9 evaluation
 (#164, #152-#163) and M10 model-planned orchestration (#177, #166-#176), are
 published on PyPI as `agentframe-py` (import `agentframe`). Pre-1.0 there is
-no stable API. Later features (MCP, telemetry, AG-UI) are not implemented. Keep design API examples beyond
+no stable API. Later features (MCP, AG-UI) are not implemented; optional OpenTelemetry
+tracing (`TracingConfig`, `otel` extra, #248) is. Keep design API examples beyond
 the implemented surface labeled as unimplemented; explicitly approved
 names/defaults are decisions, not still-unresolved recommendations. Do not
 scaffold implementation or add dependencies merely to make design snippets
@@ -102,7 +103,7 @@ Folders stay one level deep. Put new code in the group that owns the concept:
 | `src/agentframe/__init__.py` | Public API re-exports; every public name is importable from `agentframe`. |
 | `src/agentframe/` (root) | Shared leaves importing only each other: `errors.py`, `usage.py` (`Usage`, `FinishReason`), `urls.py` (URL and loopback checks), `log_format.py` (stdlib `JSONFormatter` for `agentframe run --log-format json`), `skill_call.py` (skill-call extension wire names and sender helpers). Also `testing.py` (`ScriptedModel`), `cli.py` (`agentframe run` / `dev` / `compose` / `eval` / `new`), `project.py` (`agentframe.yaml`), `dev.py` (`dev_settings()`), `dev_server.py` (`agentframe dev` supervisor), `compose.py` (`agentframe compose` generator), `new_project.py` (`agentframe new`, rendering the `string.Template` files in `project_templates/` shipped in the wheel). |
 | `src/agentframe/authoring/` | `Agent`, `@agent` / `@skill`, definitions, `RunContext`, `Inject` / `Services`. |
-| `src/agentframe/runtime/` | `Runtime` (`runtime.py`), generation and its tool loop and retries (`generation.py`), run accounting (`accounting.py`, `RunAccounting`), token estimates and fit checks (`tokens.py`), reading the model's final answer (`model_output.py`), skill routing (`routing.py`: `SkillRouter`, `SkillCall`, `Clarification`, `RoutingContext`), `Agent.ask`'s skill choice (`ask.py`), `RunLimits`, `RunOptions`, conversation history (`state.py`: `StateStore`, `InMemoryStateStore`, `ConversationKey`). |
+| `src/agentframe/runtime/` | `Runtime` (`runtime.py`), generation and its tool loop and retries (`generation.py`), run accounting (`accounting.py`, `RunAccounting`), token estimates and fit checks (`tokens.py`), reading the model's final answer (`model_output.py`), skill routing (`routing.py`: `SkillRouter`, `SkillCall`, `Clarification`, `RoutingContext`), `Agent.ask`'s skill choice (`ask.py`), optional OpenTelemetry spans and metrics (`telemetry.py`, `TracingConfig`), `RunLimits`, `RunOptions`, conversation history (`state.py`: `StateStore`, `InMemoryStateStore`, `ConversationKey`). |
 | `src/agentframe/models/` | `base.py` model protocol and settings; provider adapters `ollama.py`, `foundry.py`, `anthropic.py`; `strict_schema.py` (OpenAI strict JSON-schema converter); `env.py` (`model_from_env`, choosing a provider from environment variables). |
 | `src/agentframe/hosting/` | `AgentApp` and its SDK request handler (`app.py`), the health/readiness endpoints and the host's checks around the A2A endpoint (`endpoints.py`), the SDK call/request context builders (`context_builders.py`), `HostConfig`, Agent Card, A2A executor, `ModelRouter`. Other subpackages and the shared leaves never import it (`tests/unit/test_layering.py`). |
 | `src/agentframe/security/` | `Principal`, authentication, authorization. |
@@ -781,7 +782,7 @@ because PyPI shows it; milestones, status and decisions live in
 Keep `docs/roadmap.md`, the
 guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
 `authorization.md`, `development.md`, `evaluation.md`, `orchestration.md`,
-`performance.md`, `provider-tests.md`, `stability.md`) and the design docs
+`performance.md`, `provider-tests.md`, `stability.md`, `tracing.md`) and the design docs
 (`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
 `prompt-safeguarding.md`, `discovery.md`, `streaming.md`, `evaluation.md`,
 `orchestration.md`) consistent, including discovery/streaming API pages and

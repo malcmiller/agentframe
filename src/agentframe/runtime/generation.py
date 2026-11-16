@@ -47,6 +47,12 @@ from agentframe.runtime.model_output import (
     validate_output,
 )
 from agentframe.runtime.state import newest_within
+from agentframe.runtime.telemetry import (
+    NO_TELEMETRY,
+    Telemetry,
+    error_type,
+    model_attributes,
+)
 from agentframe.runtime.tokens import (
     check_fits_model,
     estimate_input_tokens,
@@ -119,6 +125,8 @@ class GenerationState:
             it arrives, or ``None`` when the run's caller does not stream.
             The runtime leaves it ``None`` when output checks must see the
             whole answer first.
+        telemetry: Records model and tool call spans and metrics; disabled
+            unless the runtime has tracing configured.
     """
 
     model: Model | None
@@ -134,6 +142,7 @@ class GenerationState:
     skill: "SkillDefinition | None" = None
     policy: ExecutionPolicy | None = None
     text_sink: TextSink | None = None
+    telemetry: Telemetry = NO_TELEMETRY
 
     async def generate_text(
         self,
@@ -374,9 +383,7 @@ class GenerationState:
                 max_hosted_tool_calls=self._hosted_tool_allowance(hosted_tools),
             )
             await self._check_request(request, ctx)
-            response = await self._call_with_retries(
-                model, request, ctx.deadline, on_text
-            )
+            response = await self._traced_call(model, request, ctx.deadline, on_text)
             self.accounting.count_hosted_tool_calls(
                 response.hosted_tool_calls, self.limits
             )
@@ -386,21 +393,32 @@ class GenerationState:
             messages += (assistant_message(response),)
             for call in response.tool_calls:
                 self.accounting.count_tool_call(self.limits)
-                # Looked up by name: the model's name never reaches a binding
-                # on its own.
-                bound = bound_tools.get(call.name)
-                if bound is not None:
-                    result = await bound.run(call.arguments)
-                else:
-                    result = await run_tool_call(
-                        call,
-                        tools,
-                        self.services,
-                        ctx,
-                        self.tool_authorization,
-                        self.policy,
-                        self.skill,
-                    )
+                # Only declared names and the ID: arguments and results are
+                # content, and an unknown name is the model's own text.
+                attributes = {
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.tool.call.id": call.id,
+                }
+                span_name = "execute_tool"
+                if call.name in tools or call.name in bound_tools:
+                    attributes["gen_ai.tool.name"] = call.name
+                    span_name = f"execute_tool {call.name}"
+                with self.telemetry.span(span_name, attributes=attributes):
+                    # Looked up by name: the model's name never reaches a
+                    # binding on its own.
+                    bound = bound_tools.get(call.name)
+                    if bound is not None:
+                        result = await bound.run(call.arguments)
+                    else:
+                        result = await run_tool_call(
+                            call,
+                            tools,
+                            self.services,
+                            ctx,
+                            self.tool_authorization,
+                            self.policy,
+                            self.skill,
+                        )
                 messages += (tool_message(call, result),)
 
     def _hosted_tool_allowance(
@@ -457,6 +475,56 @@ class GenerationState:
         )
         budget = min(bounds) - estimate_input_tokens(without_history)
         return newest_within(history, budget, estimate_message_tokens)
+
+    async def _traced_call(
+        self,
+        model: Model,
+        request: ModelRequest,
+        deadline: float,
+        on_text: TextSink | None,
+    ) -> ModelResponse:
+        """Call the model with retries inside a ``chat`` span, and record metrics.
+
+        One span and one duration cover the logical call, retries included;
+        each retry is an event on the span.
+        """
+        attributes = model_attributes(model)
+        model_name = attributes.get("gen_ai.request.model")
+        name = f"chat {model_name}" if model_name else "chat"
+        started = asyncio.get_running_loop().time()
+        try:
+            with self.telemetry.span(
+                name,
+                kind="client",
+                attributes={
+                    **attributes,
+                    "gen_ai.request.max_tokens": request.settings.max_output_tokens,
+                },
+            ) as span:
+                response = await self._call_with_retries(
+                    model, request, deadline, on_text
+                )
+                span.set("gen_ai.usage.input_tokens", response.usage.input_tokens)
+                span.set("gen_ai.usage.output_tokens", response.usage.output_tokens)
+                span.set(
+                    "gen_ai.response.finish_reasons",
+                    (str(response.finish_reason),),
+                )
+        except BaseException as error:
+            self.telemetry.record_model_call(
+                model,
+                seconds=asyncio.get_running_loop().time() - started,
+                usage=None,
+                error=error,
+            )
+            raise
+        self.telemetry.record_model_call(
+            model,
+            seconds=asyncio.get_running_loop().time() - started,
+            usage=response.usage,
+            error=None,
+        )
+        return response
 
     async def _check_request(self, request: ModelRequest, ctx: "RunContext") -> None:
         """Run the model-request checks once for a logical request.
@@ -532,6 +600,7 @@ class GenerationState:
                 delay = backoff_seconds(error, retry)
                 if asyncio.get_running_loop().time() + delay >= deadline:
                     raise
+                self.telemetry.add_event("retry", {"error.type": error_type(error)})
             await wait_before_retry(delay)
             request = replace(
                 request,

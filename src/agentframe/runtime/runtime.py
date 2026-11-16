@@ -50,6 +50,7 @@ from agentframe.runtime.state import (
     StateStore,
     run_conversation,
 )
+from agentframe.runtime.telemetry import NO_TELEMETRY, Telemetry, TracingConfig
 from agentframe.runtime.tokens import input_token_limit
 from agentframe.security.authorization import (
     AuthorizationPolicy,
@@ -134,11 +135,13 @@ class Runtime:
         state_store: Where conversation history is kept between runs
             (``ctx.history()`` and ``ctx.save_turn()``). ``None`` uses a new
             ``InMemoryStateStore()``, which is bounded and lost on restart.
+        tracing: Records OpenTelemetry spans and metrics for every run
+            (needs the ``otel`` extra). ``None`` (the default) records none.
 
     Raises:
         DefinitionError: ``remotes`` is not a mapping of names to ``Service``
-            or ``OnBehalfOf``, or ``default_remote`` is neither of them nor
-            ``None``.
+            or ``OnBehalfOf``, ``default_remote`` is neither of them nor
+            ``None``, or ``tracing`` is given without the ``otel`` extra.
     """
 
     def __init__(
@@ -152,6 +155,7 @@ class Runtime:
         remotes: Mapping[str, Service | OnBehalfOf] | None = None,
         default_remote: Service | OnBehalfOf | None = None,
         state_store: StateStore | None = None,
+        tracing: TracingConfig | None = None,
     ) -> None:
         self._services = services or Services()
         self._authorization = authorization
@@ -165,6 +169,15 @@ class Runtime:
         self._state_store = (
             state_store if state_store is not None else InMemoryStateStore()
         )
+        self._telemetry = Telemetry(tracing) if tracing is not None else NO_TELEMETRY
+
+    @property
+    def telemetry(self) -> Telemetry:
+        """Where runs record spans and metrics; disabled without ``tracing=``.
+
+        Package-internal: the A2A host records its runs and rejections here.
+        """
+        return self._telemetry
 
     @property
     def policy(self) -> ExecutionPolicy | None:
@@ -365,16 +378,22 @@ class Runtime:
             Exceptions raised by the skill, or by a tool it lets the model
             call, propagate unchanged.
         """
-        return await self.run_invocation(
-            str(uuid.uuid4()),
-            agent,
-            skill,
-            arguments or {},
-            principal,
-            options or RunOptions(),
-            conversation_id=conversation_id,
-            on_text=on_text,
-        )
+        invocation_id = str(uuid.uuid4())
+        with self._telemetry.run(
+            agent=type(agent).definition().name, invocation_id=invocation_id
+        ) as span:
+            if skill in type(agent).definition().skills:
+                span.set_skill(skill)
+            return await self.run_invocation(
+                invocation_id,
+                agent,
+                skill,
+                arguments or {},
+                principal,
+                options or RunOptions(),
+                conversation_id=conversation_id,
+                on_text=on_text,
+            )
 
     async def run_invocation(
         self,
@@ -432,7 +451,18 @@ class Runtime:
             on_text=on_text,
         )
         try:
-            value = await self._run(invocation)
+            # Unknown skill IDs come from callers, so only defined ones name
+            # the span.
+            known = skill in type(agent).definition().skills
+            with self._telemetry.span(
+                f"skill {skill}" if known else "skill",
+                attributes={
+                    "gen_ai.agent.name": correlation.agent,
+                    "agentframe.skill": skill if known else None,
+                    "agentframe.invocation_id": invocation_id,
+                },
+            ):
+                value = await self._run(invocation)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
             raise
@@ -552,6 +582,7 @@ class Runtime:
                 skill=skill,
                 policy=self._policy,
                 text_sink=self._text_sink(run.on_text),
+                telemetry=self._telemetry,
             )
             run_remotes = self._run_remotes(run, limits, deadline, stack)
             ctx = RunContext(
@@ -600,6 +631,7 @@ class Runtime:
             stack=stack,
             own_interface_url=run.own_interface_url,
             logged_identities=self._logged_identities,
+            telemetry=self._telemetry,
         )
 
     async def _check_policy(

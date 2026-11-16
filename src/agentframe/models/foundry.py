@@ -210,6 +210,14 @@ class FoundryModel:
         # Set only by default_credential_model(), which creates the credential.
         self._owned_credential: AsyncTokenCredential | None = None
 
+    provider_name = "azure.ai.openai"
+    """The ``gen_ai.provider.name`` tracing records for this model's calls."""
+
+    @property
+    def model_name(self) -> str:
+        """The deployment tracing records as ``gen_ai.request.model``."""
+        return self.deployment
+
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Send ``request`` to the Responses API and return the full reply.
 

@@ -26,6 +26,7 @@ from agentframe.errors import DefinitionError, PermissionDeniedError
 from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation
 from agentframe.runtime.limits import RunLimits
+from agentframe.runtime.telemetry import NO_TELEMETRY, Telemetry
 from agentframe.security.principal import Principal
 
 if TYPE_CHECKING:
@@ -62,6 +63,7 @@ class RunRemotes:
         logged_identities: The ``(agent, skill)`` pairs whose catalog
             identity mode was already logged, shared by the runtime's runs so
             each is logged once.
+        telemetry: Records every binding's calls as spans.
 
     Attributes:
         catalogs: The skill catalogs this run built, so ``ctx.generate`` can
@@ -84,6 +86,7 @@ class RunRemotes:
         stack: AsyncExitStack,
         own_interface_url: str | None,
         logged_identities: set[tuple[str, str]],
+        telemetry: Telemetry = NO_TELEMETRY,
     ) -> None:
         assert limits.max_remote_hops is not None  # DEFAULT_LIMITS sets them.
         assert limits.max_total_tokens is not None
@@ -104,6 +107,7 @@ class RunRemotes:
         self._stack = stack
         self._on_behalf_of: UserTokenCredential | None = None
         self._logged_identities = logged_identities
+        self._telemetry = telemetry
         self.catalogs: list[SkillCatalog] = []
 
     @property
@@ -201,6 +205,7 @@ class RunRemotes:
             max_hops=self._max_hops,
             accounting=self._accounting,
             max_total_tokens=self._max_total_tokens,
+            telemetry=self._telemetry,
         )
 
     def _credential(

@@ -35,6 +35,9 @@ Microsoft Agent Framework or similar packages.
   identity; `agentframe dev` and `agentframe compose`.
 - **Model-planned orchestration** with remote skills as tools or checked plans.
 - **Evaluation** of local skills and A2A agents, gating CI.
+- **Tracing and metrics:** optional OpenTelemetry spans and metrics with
+  GenAI semantic conventions and trace context across agents, never content
+  ([guide](https://github.com/malcmiller/agentframe/blob/main/docs/guides/tracing.md)).
 - **Security and limits:** API keys and Entra ID, permissions, execution
   policies, run and host limits.
 
@@ -56,6 +59,7 @@ The extras add what a deployment needs:
 | `anthropic` | `AnthropicModel`, for Claude through the Anthropic API. |
 | `entra` | `EntraIDAuth` and `OnBehalfOf`, for Microsoft Entra ID. |
 | `mcp` | `MCPClient`, offering an MCP server's tools to `ctx.generate`. |
+| `otel` | The OpenTelemetry API, for `TracingConfig`. |
 
 Pre-1.0: public APIs may change in minor releases; changes are listed in the
 [changelog](https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md).

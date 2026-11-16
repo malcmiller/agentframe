@@ -26,6 +26,7 @@ from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import merge_settings
+from agentframe.runtime.telemetry import NO_TELEMETRY, Telemetry
 from agentframe.security.execution_policy import ExecutionPolicy
 from agentframe.security.principal import Principal
 
@@ -188,6 +189,7 @@ def new_routing_context(
     accounting: RunAccounting,
     limits_ceiling: RunLimits | None = None,
     policy: ExecutionPolicy | None = None,
+    telemetry: Telemetry = NO_TELEMETRY,
 ) -> RoutingContext:
     """Return the context for routing one message of a run.
 
@@ -206,6 +208,7 @@ def new_routing_context(
         limits_ceiling: The host's ceiling, or ``None`` for no ceiling.
         policy: The runtime's execution policy, whose model-request checks
             run before every routing model call, or ``None``.
+        telemetry: Records the routing model calls as spans and metrics.
     """
     limits = routing_limits(agent, limits_ceiling)
     assert limits.timeout_seconds is not None  # DEFAULT_LIMITS sets every field.
@@ -218,6 +221,7 @@ def new_routing_context(
         services=Services().scope(AsyncExitStack()),
         accounting=accounting,
         policy=policy,
+        telemetry=telemetry,
     )
     return RoutingContext(
         invocation_id, principal, started_at + limits.timeout_seconds, generation

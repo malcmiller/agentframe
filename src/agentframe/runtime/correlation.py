@@ -3,9 +3,11 @@
 A run started by a person or program is a root run. Each run it starts on
 another agent, and each run those start, shares its invocation ID as their
 ``root_invocation_id``, so their logs can be followed together without a
-tracing backend. A W3C ``traceparent`` (and ``tracestate``) that arrived with
-the request goes unchanged to every agent the run calls; AgentFrame never
-creates trace IDs or spans itself.
+tracing backend. Without tracing, a W3C ``traceparent`` (and ``tracestate``)
+that arrived with the request goes unchanged to every agent the run calls,
+and AgentFrame creates no trace IDs or spans. With a ``TracingConfig``
+(``runtime.telemetry``), the run's span continues that trace context and
+each outbound request names its own client span as the peer's parent.
 
 These values only label logs and travel on to peers. They come from the
 caller, so they never authenticate anyone or grant anything, and malformed
