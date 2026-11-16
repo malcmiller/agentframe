@@ -114,6 +114,7 @@ from agentframe.runtime.routing import (
 )
 from agentframe.runtime.runtime import Runtime
 from agentframe.runtime.state import MAX_CONVERSATION_ID_LENGTH
+from agentframe.runtime.telemetry import Span
 from agentframe.security.principal import Principal
 from agentframe.skill_call import (
     SKILL_CALL_EXTENSION_URI,
@@ -446,15 +447,37 @@ class RuntimeExecutor(AgentExecutor):
                 which never happens: the library defaults set every field.
         """
         run = self._hosted_run(context, message, invocation_id, accounting)
+        with self._runtime.telemetry.run(
+            agent=run.correlation.agent,
+            invocation_id=invocation_id,
+            kind="server",
+            parent=run.correlation.trace,
+        ) as span:
+            await self._execute_traced(context, message, task, run, span)
+
+    async def _execute_traced(
+        self,
+        context: RequestContext,
+        message: Message,
+        task: TaskUpdater,
+        run: _HostedRun,
+        span: Span,
+    ) -> None:
+        """Run the skill inside the run's span, which records any failure.
+
+        Raises:
+            RuntimeError: As for ``_execute``.
+        """
+        invocation_id = run.invocation_id
+        accounting = run.accounting
         max_hops = routing_limits(self._agent, run.ceiling).max_remote_hops
         if max_hops is None:
             raise RuntimeError("The run's limits have no max_remote_hops")
         if run.hops > max_hops:
+            rejection = depth_exceeded(max_hops, invocation_id)
+            span.fail(rejection)
             await publish_failure(
-                task,
-                depth_exceeded(max_hops, invocation_id),
-                accounting,
-                TaskState.TASK_STATE_REJECTED,
+                task, rejection, accounting, TaskState.TASK_STATE_REJECTED
             )
             return
         logger.info(
@@ -465,16 +488,18 @@ class RuntimeExecutor(AgentExecutor):
         )
         # noinspection PyBroadException
         try:
-            answer = await self._answer(context, message, task, run)
+            answer = await self._answer(context, message, task, run, span)
         except AgentFrameError as error:
             error.invocation_id = invocation_id
+            span.fail(error)
             _log_failed_run(error, run.correlation)
             await publish_failure(task, error, accounting)
             return
-        except Exception:
+        except Exception as error:
             # Skill exceptions may carry submitted values or secrets, so the
             # caller gets a generic message and only the log keeps the details,
             # under the run's ID that the caller can quote.
+            span.fail(error)
             failure = AgentFrameError(SKILL_FAILED_MESSAGE, invocation_id=invocation_id)
             logger.exception(
                 "Skill failed (invocation_id=%s)",
@@ -536,6 +561,7 @@ class RuntimeExecutor(AgentExecutor):
         message: Message,
         task: TaskUpdater,
         run: _HostedRun,
+        span: Span,
     ) -> _Answer | None:
         """Run the chosen skill, or publish the router's question.
 
@@ -554,6 +580,9 @@ class RuntimeExecutor(AgentExecutor):
                 task, call.question, run.invocation_id, run.accounting
             )
             return None
+        # Only a declared skill labels the metrics: an unknown ID is caller text.
+        if call.skill in type(self._agent).definition().skills:
+            span.set_skill(call.skill)
         # The executor shares the runtime's pipeline under its own invocation ID.
         stream = (
             _ArtifactStream(task, self._max_response_bytes, run.invocation_id)
@@ -613,6 +642,7 @@ class RuntimeExecutor(AgentExecutor):
             run.ceiling,
             # Routing requests pass the same model-request checks as the skill's.
             self._runtime.policy,
+            self._runtime.telemetry,
         )
         return await route(
             self._router, conversation, eligible_skills(definition, run.principal), ctx

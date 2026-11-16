@@ -19,6 +19,7 @@ from agentframe.hosting.host import HostConfig
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.rate_limit import CallerRateLimiter, retry_after_header
 from agentframe.hosting.request_size import read_body_within, with_body
+from agentframe.runtime.telemetry import NO_TELEMETRY, Telemetry
 from agentframe.security.authentication import principal_for, www_authenticate
 from agentframe.security.principal import Principal
 
@@ -48,6 +49,7 @@ def guard_a2a_endpoint(
     admission: RunAdmission,
     lifecycle: Lifecycle,
     rate_limiter: CallerRateLimiter | None,
+    telemetry: Telemetry = NO_TELEMETRY,
 ) -> Endpoint:
     """Wrap the SDK's A2A endpoint with the host's checks, in a fixed order.
 
@@ -62,7 +64,7 @@ def guard_a2a_endpoint(
     4. Deduplication: a ``SendMessage`` that repeats one the caller already
        sent goes to the SDK for its original task, taking no run slot.
     5. Admission: any other ``SendMessage`` needs a free run slot and a host
-       that is not shutting down.
+       that is not shutting down. ``telemetry`` counts each refusal.
 
     Every refusal happens before the SDK sees the request, so no task exists.
     """
@@ -117,10 +119,12 @@ def guard_a2a_endpoint(
 
     async def admit_and_send(request: Request) -> Response:
         if lifecycle.shutting_down:
+            telemetry.record_rejection(agent=card.name, reason="shutting_down")
             return _unavailable("The agent is shutting down; retry later.")
         slot = admission.try_admit()
         if slot is None:
             # Overload fails fast: the caller retries rather than waiting here.
+            telemetry.record_rejection(agent=card.name, reason="busy")
             return _unavailable("The agent is busy; retry later.")
         request.state.run_slot = slot
         try:

@@ -339,7 +339,7 @@ class _Execution:
                 self._results[step.id] = skipped
             else:
                 async with self._slots:
-                    self._results[step.id] = await self._send_logged(step)
+                    self._results[step.id] = await self._send_traced(step)
             self._finished[step.id].set()
         except Exception as error:
             # The first failure cancels the rest, whose own errors follow it.
@@ -351,6 +351,20 @@ class _Execution:
         return any(
             self._results[name].status != "completed" for name in dependencies(step)
         )
+
+    async def _send_traced(self, step: PlanStep) -> StepResult:
+        """Send ``step`` in a span carrying only its checked ID and entry name."""
+        with self._generation.telemetry.span(
+            f"plan_step {step.id}",
+            attributes={
+                "agentframe.plan.step": step.id,
+                "agentframe.plan.use": step.use,
+            },
+        ) as span:
+            result = await self._send_logged(step)
+            span.set("agentframe.plan.step.status", result.status)
+            span.set("error.type", result.error_type)
+            return result
 
     async def _send_logged(self, step: PlanStep) -> StepResult:
         """Send ``step`` between its ``started`` and ``completed`` log records."""

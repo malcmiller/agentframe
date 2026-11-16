@@ -88,6 +88,7 @@ from agentframe.runtime.routing import (
 )
 from agentframe.runtime.runtime import RunResult, Runtime
 from agentframe.runtime.state import ConversationKey, InMemoryStateStore, StateStore
+from agentframe.runtime.telemetry import TracingConfig
 from agentframe.security.authentication import (
     AllowAnonymous,
     AnyOf,
@@ -225,6 +226,7 @@ __all__ = [
     "ToolCheck",
     "ToolDefinition",
     "ToolSpec",
+    "TracingConfig",
     "UnsupportedCapabilityError",
     "Usage",
     "VerifiedCaller",

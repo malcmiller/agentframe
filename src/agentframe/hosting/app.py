@@ -80,6 +80,7 @@ from agentframe.runtime.limits import RunLimits, check_within_ceiling
 from agentframe.runtime.options import merge_settings
 from agentframe.runtime.routing import SkillRouter, routing_limits
 from agentframe.runtime.runtime import Runtime
+from agentframe.runtime.telemetry import Telemetry, TracingConfig
 from agentframe.security.authentication import AnyOf
 from agentframe.security.authorization import (
     AuthorizationPolicy,
@@ -217,6 +218,10 @@ class AgentApp:
             entered; an ``aclose()`` object needs no opening) and closed in
             reverse order after shutdown. Only what is listed is closed.
             Defaults to none.
+        tracing: Records OpenTelemetry spans and metrics for hosted runs,
+            when ``runtime`` is not given; see ``Runtime``. Each run
+            continues the request's ``traceparent``, and requests refused
+            for being busy or shutting down are counted.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
@@ -224,8 +229,9 @@ class AgentApp:
             is no directory, an agent or skill limit is explicitly set above
             ``host.limits_ceiling``, ``runtime`` is combined with ``services``,
             ``authorization``, ``tool_authorization``, ``policy``,
-            ``directory``, ``remotes`` or
-            ``default_remote``, ``remotes`` is not a mapping of names to
+            ``directory``, ``remotes``, ``default_remote`` or ``tracing``,
+            ``tracing`` is given without the ``otel`` extra,
+            ``remotes`` is not a mapping of names to
             ``Service`` or ``OnBehalfOf`` (or ``default_remote`` is neither),
             an ``OnBehalfOf`` remote's or default's host does not
             authenticate with ``EntraIDAuth`` configured for on-behalf-of
@@ -255,6 +261,7 @@ class AgentApp:
         remotes: Mapping[str, Service | OnBehalfOf] | None = None,
         default_remote: Service | OnBehalfOf | None = None,
         resources: Sequence[_AppResource] = (),
+        tracing: TracingConfig | None = None,
     ) -> None:
         resources = _checked_resources(resources)
         runtime = _runtime_for(
@@ -266,6 +273,7 @@ class AgentApp:
             directory=directory,
             remotes=remotes,
             default_remote=default_remote,
+            tracing=tracing,
         )
         runtime.validate(agent)
         warn_if_insecure(host)
@@ -291,7 +299,14 @@ class AgentApp:
         self._lifecycle = lifecycle
         self._app = Starlette(
             routes=_routes(
-                card, handler, host, user_token_exchange, a2a, admission, lifecycle
+                card,
+                handler,
+                host,
+                user_token_exchange,
+                a2a,
+                admission,
+                lifecycle,
+                runtime.telemetry,
             ),
             lifespan=_lifespan(
                 agent,
@@ -342,6 +357,7 @@ def _runtime_for(
     directory: AgentDirectory | None,
     remotes: Mapping[str, Service | OnBehalfOf] | None,
     default_remote: Service | OnBehalfOf | None,
+    tracing: TracingConfig | None,
 ) -> Runtime:
     """Return ``runtime``, or a new ``Runtime`` built from the other arguments.
 
@@ -356,11 +372,12 @@ def _runtime_for(
         or directory is not None
         or remotes is not None
         or default_remote is not None
+        or tracing is not None
     ):
         raise DefinitionError(
             "Pass services, authorization, tool_authorization, policy, "
-            "directory, remotes and default_remote either to AgentApp or to "
-            "its Runtime, not both; "
+            "directory, remotes, tracing and default_remote either to "
+            "AgentApp or to its Runtime, not both; "
             "the runtime is the single source of them."
         )
     if runtime is None:
@@ -372,6 +389,7 @@ def _runtime_for(
             directory=directory,
             remotes=remotes,
             default_remote=default_remote,
+            tracing=tracing,
         )
     return runtime
 
@@ -412,6 +430,7 @@ def _routes(
     a2a: A2AConfig,
     admission: RunAdmission,
     lifecycle: Lifecycle,
+    telemetry: Telemetry,
 ) -> list[BaseRoute]:
     """Return the Agent Card, health, readiness and guarded A2A routes."""
     deduplicator = MessageDeduplicator(
@@ -437,6 +456,7 @@ def _routes(
                 admission,
                 lifecycle,
                 CallerRateLimiter(host.rate_limit) if host.rate_limit else None,
+                telemetry,
             ),
             methods=["POST"],
         ),

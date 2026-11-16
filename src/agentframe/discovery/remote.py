@@ -45,6 +45,7 @@ from agentframe.errors import (
 )
 from agentframe.runtime.accounting import RunAccounting
 from agentframe.runtime.correlation import RunCorrelation
+from agentframe.runtime.telemetry import NO_TELEMETRY, Telemetry
 from agentframe.security.principal import Principal
 from agentframe.skill_call import (
     SKILL_CALL_EXTENSION_URI,
@@ -102,6 +103,9 @@ class Remote[N: str]:
         accounting: The run's accounting, which every call's tokens are
             held against and charged to.
         max_total_tokens: The run's ``RunLimits.max_total_tokens``.
+        telemetry: Records each request as a span and names that span as
+            the peer's parent; without tracing the run's incoming trace
+            context goes on unchanged.
     """
 
     def __init__(
@@ -117,9 +121,11 @@ class Remote[N: str]:
         max_hops: int,
         accounting: RunAccounting,
         max_total_tokens: int,
+        telemetry: Telemetry = NO_TELEMETRY,
     ) -> None:
         self._found = found
         self._transport = transport
+        self._telemetry = telemetry
         self._deadline = deadline
         self._correlation = correlation
         self._invocation_id = correlation.invocation_id
@@ -320,7 +326,10 @@ class Remote[N: str]:
         self._check_card_offers(skill)
         message = self._skill_call_message(skill, arguments)
         reply, usage = await self._exchange(
-            message, max_total_tokens, extensions=[SKILL_CALL_EXTENSION_URI]
+            message,
+            max_total_tokens,
+            extensions=[SKILL_CALL_EXTENSION_URI],
+            skill=skill,
         )
         if isinstance(reply, Message):
             return RemoteReply(self._replies.result_value(reply.parts), None, usage)
@@ -357,6 +366,7 @@ class Remote[N: str]:
         max_total_tokens: int | None,
         *,
         extensions: Sequence[str] = (),
+        skill: str | None = None,
     ) -> tuple[Task | Message, Usage | None]:
         """Send the message, wait for its task to finish and charge its usage.
 
@@ -365,6 +375,8 @@ class Remote[N: str]:
             max_total_tokens: The request's token ceiling; ``None`` means all
                 the run has left.
             extensions: Extension URIs to activate for this request only.
+            skill: The skill a ``call`` names, recorded on its span; ``None``
+                for ``ask``.
 
         Returns:
             The agent's message reply, or its task in a state it stopped in,
@@ -379,14 +391,29 @@ class Remote[N: str]:
                 invocation_id=self._invocation_id,
             )
         charge = self._tokens.hold(max_total_tokens)
-        try:
-            reply = await self._start(message, charge, extensions)
-            if isinstance(reply, Task):
-                reply = await self._wait(reply)
-        except BaseException:
-            self._tokens.settle(charge, None)
-            raise
-        return reply, self._tokens.settle(charge, reply)
+        # The span is current while sending, so the request names it as the
+        # peer's parent.
+        with self._telemetry.span(
+            f"invoke_agent {self.name}",
+            kind="client",
+            attributes={
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.agent.name": self.name,
+                "agentframe.remote.skill": skill,
+            },
+        ) as span:
+            try:
+                reply = await self._start(message, charge, extensions)
+                if isinstance(reply, Task):
+                    reply = await self._wait(reply)
+            except BaseException:
+                self._tokens.settle(charge, None)
+                raise
+            usage = self._tokens.settle(charge, reply)
+            if usage is not None:
+                span.set("gen_ai.usage.input_tokens", usage.input_tokens)
+                span.set("gen_ai.usage.output_tokens", usage.output_tokens)
+        return reply, usage
 
     async def _start(
         self, message: Message, charge: Charge, extensions: Sequence[str] = ()
@@ -575,8 +602,7 @@ class Remote[N: str]:
                     invocation_id=self._invocation_id,
                 ) from None
         headers[VERSION_HEADER] = PROTOCOL_VERSION_1_0
-        if self._correlation.trace is not None:
-            headers.update(self._correlation.trace.headers())
+        headers.update(self._telemetry.outbound_headers(self._correlation.trace))
         return headers
 
     @contextmanager
