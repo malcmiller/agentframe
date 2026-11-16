@@ -624,6 +624,91 @@ def test_construction_starts_no_server(monkeypatch: pytest.MonkeyPatch) -> None:
     greeter_app("https://greeter.example.com")
 
 
+INSECURE_WARNINGS = ("plain http", "anonymous callers")
+
+
+def insecure_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and any(phrase in record.getMessage() for phrase in INSECURE_WARNINGS)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("public_url", "anonymous", "expected"),
+    [
+        ("http://greeter.example.com", False, "plain http"),
+        ("https://greeter.example.com", True, "anonymous callers"),
+        ("http://0.0.0.0:8000", True, "anonymous callers"),
+    ],
+)
+def test_insecure_hosting_logs_one_warning(
+    public_url: str,
+    anonymous: bool,
+    expected: str,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENTFRAME_DEV", raising=False)
+    host = (
+        HostConfig(public_url=public_url, auth=AllowAnonymous())
+        if anonymous
+        else api_key_host(public_url)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        AgentApp(agent=Greeter(), host=host, services=clock_services())
+
+    [warning] = insecure_warnings(caplog)
+    assert expected in warning
+
+
+@pytest.mark.parametrize(
+    ("public_url", "anonymous"),
+    [
+        ("https://greeter.example.com", False),
+        ("http://127.0.0.1:8000", False),
+        ("http://localhost:8000", True),
+        ("http://[::1]:8000", True),
+    ],
+)
+def test_secure_or_loopback_hosting_logs_no_warning(
+    public_url: str,
+    anonymous: bool,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENTFRAME_DEV", raising=False)
+    host = (
+        HostConfig(public_url=public_url, auth=AllowAnonymous())
+        if anonymous
+        else api_key_host(public_url)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        AgentApp(agent=Greeter(), host=host, services=clock_services())
+
+    assert insecure_warnings(caplog) == []
+
+
+def test_development_mode_skips_insecure_hosting_warnings(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTFRAME_DEV", "1")
+
+    with caplog.at_level(logging.WARNING):
+        greeter_app("http://greeter:8000")
+        AgentApp(
+            agent=Greeter(),
+            host=HostConfig(public_url="http://greeter:8000", auth=AllowAnonymous()),
+            services=clock_services(),
+        )
+
+    assert insecure_warnings(caplog) == []
+
+
 def test_missing_injected_service_is_refused_at_construction() -> None:
     with pytest.raises(DefinitionError, match="no service registered"):
         AgentApp(agent=Greeter(), host=api_key_host("https://greeter.example.com"))

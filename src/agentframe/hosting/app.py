@@ -68,7 +68,7 @@ from agentframe.hosting.endpoints import (
     health,
     readiness_endpoint,
 )
-from agentframe.hosting.host import A2AConfig, HostConfig
+from agentframe.hosting.host import A2AConfig, HostConfig, warn_if_insecure
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.routing import SkillRouter, routing_limits
@@ -109,6 +109,10 @@ class AgentApp:
     checks a ``ModelRouter``'s model the same way, and checks every
     ``Remote`` parameter's agent with ``Runtime.validate_remotes``. The app
     never closes models or the directory; the application owns them.
+    Construction logs a warning, without failing, when ``host`` is legal but
+    insecure: a plain ``http://`` ``public_url`` on a non-loopback host with
+    credential-bearing authentication, or ``AllowAnonymous`` on a
+    non-loopback ``public_url``; not under ``AGENTFRAME_DEV=1``.
     Hosted runs and routing use limits capped by ``host.limits_ceiling``.
     At most ``host.max_concurrent_runs`` messages run at once; another
     ``SendMessage`` gets HTTP 503 with ``Retry-After: 1`` and creates no task.
@@ -206,6 +210,7 @@ class AgentApp:
             default_remote=default_remote,
         )
         runtime.validate(agent)
+        warn_if_insecure(host)
         user_token_exchange = _user_token_exchange(runtime, host)
         _check_limits_within_ceiling(agent, host)
         definition = type(agent).definition()

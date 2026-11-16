@@ -21,6 +21,11 @@ changelog.
 - `A2AConfig(task_store=...)` accepts any `a2a-sdk` `TaskStore`, for example
   a database store, instead of the default in-memory one; shutdown still waits
   for final states to be saved (#208).
+- `AgentApp` construction logs a warning, without failing, when `HostConfig`
+  is legal but insecure: a plain `http://` `public_url` on a non-loopback
+  host with credential-bearing authentication, or `AllowAnonymous()` on a
+  non-loopback `public_url`. Loopback hosts and `AGENTFRAME_DEV=1` (set by
+  `agentframe dev` and `agentframe compose`) never warn (#267).
 
 ### Changed
 
