@@ -57,6 +57,9 @@ class ModelError(AgentFrameError):
         usage: Tokens the failed call consumed, when known. Model adapters set
             it so the run's accounting counts what the call actually used.
         invocation_id: Identifier of the run that failed, when known.
+        hosted_tool_calls: Hosted tool calls the provider ran before the call
+            failed. Model adapters set it so the run counts them toward
+            ``max_tool_calls``.
     """
 
     def __init__(
@@ -65,9 +68,11 @@ class ModelError(AgentFrameError):
         *,
         usage: Usage | None = None,
         invocation_id: str | None = None,
+        hosted_tool_calls: int = 0,
     ) -> None:
         super().__init__(message, invocation_id=invocation_id)
         self.usage = usage
+        self.hosted_tool_calls = hosted_tool_calls
 
 
 class UnsupportedCapabilityError(ModelError):
@@ -100,8 +105,14 @@ class IncompleteOutputError(ModelError):
         partial_text: str | None = None,
         usage: Usage | None = None,
         invocation_id: str | None = None,
+        hosted_tool_calls: int = 0,
     ) -> None:
-        super().__init__(message, usage=usage, invocation_id=invocation_id)
+        super().__init__(
+            message,
+            usage=usage,
+            invocation_id=invocation_id,
+            hosted_tool_calls=hosted_tool_calls,
+        )
         self.partial_text = partial_text
 
 
@@ -116,6 +127,8 @@ class ProviderError(ModelError):
             retrying, when it gave a hint.
         usage: Tokens the failed call consumed, when the provider reported any.
         invocation_id: Identifier of the run that failed, when known.
+        hosted_tool_calls: Hosted tool calls the provider ran before the call
+            failed.
     """
 
     def __init__(
@@ -126,8 +139,14 @@ class ProviderError(ModelError):
         retry_after: float | None = None,
         usage: Usage | None = None,
         invocation_id: str | None = None,
+        hosted_tool_calls: int = 0,
     ) -> None:
-        super().__init__(message, usage=usage, invocation_id=invocation_id)
+        super().__init__(
+            message,
+            usage=usage,
+            invocation_id=invocation_id,
+            hosted_tool_calls=hosted_tool_calls,
+        )
         self.transient = transient
         self.retry_after = retry_after
 

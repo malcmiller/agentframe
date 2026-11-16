@@ -19,7 +19,7 @@ and execution policy, whether called locally, through A2A, or through MCP.
 | `RunLimits.max_total_tokens` | One skill invocation | Default **100000** aggregate input/output tokens across requests and continuations, without double-counting subdivisions. |
 | `RunLimits.max_model_calls` | One skill invocation | Default **10** dispatched attempts including retries, not just successes. |
 | `RunLimits.max_model_retries` | Each model request | Default **2** retries of a transient provider failure; `0` disables retries. Each retry is a counted model call. |
-| `RunLimits.max_tool_calls` | One skill invocation | Default **20** tool calls; every model-requested call counts, including unknown-tool and invalid-argument calls that did not run. |
+| `RunLimits.max_tool_calls` | One skill invocation | Default **20** tool calls; every model-requested call counts, including unknown-tool and invalid-argument calls that did not run, and hosted tool calls the provider ran (#261). |
 | `RunLimits.timeout_seconds` | One skill invocation | Default **120** seconds including model/tool work and backoff; retries never reset it. |
 
 Model context capacity belongs to `ModelCapabilities`, not a caller-controlled
@@ -272,6 +272,17 @@ under the same run limits:
   way.
 - **No tool retries.** A tool call is never retried; a transient model retry
   re-sends the same request, which already holds earlier tool results.
+- **Hosted tools (#261).** Provider-run tools such as
+  [`FoundryWebSearch`](../api/models.md#foundrywebsearch) share
+  `max_tool_calls`. A request offering them caps the provider at the run's
+  remaining tool calls (the Responses API's `max_tool_calls`) and is not sent
+  when none remain; the calls the provider ran are counted after the response
+  and fail the run if they took it past the limit. Their tokens arrive in the
+  call's reported usage but cannot be reserved before sending, and their own
+  fees (Bing searches, code interpreter sessions) are outside `Usage` and
+  `max_total_tokens`. Calls a failed response ran count too, and a transient
+  model retry, which may make the provider run them again, is capped at the
+  tool calls left. See [hosted tools](../api/agents.md#hosted-tools-261).
 
 ## Cross-agent budgets and depth (M8+)
 

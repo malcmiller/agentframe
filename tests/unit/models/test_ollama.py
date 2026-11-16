@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from typing import Any
 
@@ -17,6 +18,7 @@ from agentframe import (
     Agent,
     DefinitionError,
     FinishReason,
+    FoundryWebSearch,
     Message,
     ModelError,
     ModelRequest,
@@ -486,6 +488,22 @@ async def test_models_without_listed_tool_support_fail_before_sending(
             await model.generate(TOOL_REQUEST)
 
     assert capabilities.tools is False
+    assert server.chat_bodies() == []
+
+
+async def test_hosted_tools_are_refused_before_sending(
+    use_server: Callable[[FakeOllama], None],
+) -> None:
+    server = FakeOllama()
+    use_server(server)
+    request = replace(ask("Search the web"), hosted_tools=(FoundryWebSearch(),))
+
+    async with OllamaModel(model="llama3.2:3b") as model:
+        capabilities = await model.capabilities()
+        with pytest.raises(UnsupportedCapabilityError, match="FoundryWebSearch"):
+            await model.generate(request)
+
+    assert capabilities.hosted_tools == frozenset()
     assert server.chat_bodies() == []
 
 

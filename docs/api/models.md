@@ -314,11 +314,57 @@ include=["reasoning.encrypted_content"]   # only with tools and store=False
   `RunResult` or A2A metadata. An assistant message without them (for example
   from another source) is sent as plain `function_call` items.
 - `parallel_tool_calls` is left at the provider default, and the Responses
-  API's own `max_tool_calls` is not sent: AgentFrame runs calls one at a time
-  and enforces [`RunLimits.max_tool_calls`](configuration.md#runlimits).
+  API's own `max_tool_calls` is not sent for function tools: AgentFrame runs
+  calls one at a time and enforces
+  [`RunLimits.max_tool_calls`](configuration.md#runlimits). It is sent only
+  with [hosted tools](#hosted-tools).
 - A 4xx rejection of a request with tools raises a non-transient
   `ProviderError` saying the deployment may not support tools or these
   schemas; schemas and the service's text are never echoed.
+
+### Hosted tools
+
+`ctx.generate(..., tools=[...])` also accepts Foundry's hosted tools (#261):
+[`FoundryCodeInterpreter`](#foundrycodeinterpreter),
+[`FoundryWebSearch`](#foundrywebsearch) and
+[`FoundryFileSearch`](#foundryfilesearch). Foundry runs them during the model
+call; AgentFrame only offers them and counts their calls. They are sent as the
+Responses API's built-in tools, after any function tools:
+
+```text
+tools=[..., {"type": "code_interpreter", "container": {"type": "auto", "file_ids": [...]}},
+       {"type": "web_search", "filters": {"allowed_domains": [...]}},
+       {"type": "file_search", "vector_store_ids": [...], "max_num_results": n}]
+max_tool_calls=<ModelRequest.max_hosted_tool_calls>
+include=["reasoning.encrypted_content"]   # with store=False, as for function tools
+```
+
+- `file_ids`, `filters` and `max_num_results` are sent only when set.
+  Other provider options (search context size, user location, ranking
+  options, explicit container IDs, memory limits) are not exposed.
+- **Cap:** `max_tool_calls` is the Responses API's limit on built-in tool
+  calls in one response; the runtime sets it to the run's remaining
+  `RunLimits.max_tool_calls`, and the provider ignores further attempts.
+- **Counting:** every `code_interpreter_call`, `web_search_call` and
+  `file_search_call` output item is counted in
+  `ModelResponse.hosted_tool_calls`, whatever the response's finish reason
+  (they already ran). A failed, cancelled or early-stopped response carries
+  them on the raised error's `hosted_tool_calls`. The runtime adds them to the
+  run's tool calls.
+- **Replay:** when the same response also calls function tools, hosted call
+  items are replayed verbatim with the other output items, like reasoning.
+  Their results (code output, search results) are not exposed.
+- **Other hosted tools:** a [`HostedTool`](#hostedtool) that is not one of these
+  three raises `UnsupportedCapabilityError` before sending.
+- A 4xx rejection, such as web search blocked by an administrator or an
+  unknown vector store, raises a non-transient `ProviderError` saying the
+  deployment may not support hosted tools; the service's text is never echoed.
+
+Verified against `openai` 3.49.0's Responses types, Azure's v1 OpenAPI
+specification and Microsoft Learn's
+[Responses API](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses)
+and [web search](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/web-search)
+pages (2026-11).
 
 **Related:** [`ModelSettings`](#modelsettings),
 [Foundry guide](../guides/agent-examples.md#switch-to-foundry),
@@ -463,6 +509,8 @@ Each [`ToolSpec`](#toolspec) is sent as
   runtime still validates every call's arguments against the full schema.
 - Small local models are sensitive to prompts and tool results; in the opt-in
   test a structured tool result made `llama3.2:3b` answer reliably.
+- **No hosted tools:** a request with any [`HostedTool`](#hostedtool) raises
+  `UnsupportedCapabilityError` naming it before anything is sent (#261).
 
 **Related:** [`ModelCapabilities`](#modelcapabilities),
 [local model guide](../guides/agent-examples.md#choose-local-llama-through-ollama).
@@ -890,7 +938,7 @@ caller-configured promises. Returned by [`Model.capabilities()`](#modelcapabilit
 **Signature (implemented, M3 #33, minimal for text generation):** frozen dataclass.
 
 ```text
-ModelCapabilities(context_window: int | None = None, structured_output: bool = False, tools: bool = False)
+ModelCapabilities(context_window: int | None = None, structured_output: bool = False, tools: bool = False, hosted_tools: frozenset[type[HostedTool]] = frozenset())
 ```
 
 | Field | Type | Default | Meaning and constraints |
@@ -898,6 +946,7 @@ ModelCapabilities(context_window: int | None = None, structured_output: bool = F
 | `context_window` | `int \| None` | `None` | Most input plus output tokens accepted. `None` is unknown, not unlimited. |
 | `structured_output` | `bool` | `False` | Whether schema-constrained output is supported. `ctx.generate(..., output=...)` checks it before reserving tokens or sending; `False` raises `UnsupportedCapabilityError` (M4 #53). |
 | `tools` | `bool` | `False` | Whether tool calling is supported (M5). |
+| `hosted_tools` | `frozenset[type[`[`HostedTool`](#hostedtool)`]]` | `frozenset()` | The hosted tool types the model can run (#261). `FoundryModel` reports its three; a request offering any other type raises `UnsupportedCapabilityError` before sending. |
 
 ```python
 from agentframe import ModelCapabilities
@@ -1057,10 +1106,10 @@ not the role's spelling.
 **Purpose / direction:** normalized outbound generation input shared by model
 adapters, keeping trusted instructions distinct from untrusted content.
 
-**Signature (implemented, M3 #33; `output` M4 #53; `tools` M5 #59):** frozen dataclass.
+**Signature (implemented, M3 #33; `output` M4 #53; `tools` M5 #59; hosted tools #261):** frozen dataclass.
 
 ```text
-ModelRequest(messages: tuple[Message, ...], settings: ModelSettings, output: OutputSchema | None = None, tools: tuple[ToolSpec, ...] = ())
+ModelRequest(messages: tuple[Message, ...], settings: ModelSettings, output: OutputSchema | None = None, tools: tuple[ToolSpec, ...] = (), hosted_tools: tuple[HostedTool, ...] = (), max_hosted_tool_calls: int | None = None)
 ```
 
 | Field | Type | Required/default status | Meaning and constraints |
@@ -1069,6 +1118,8 @@ ModelRequest(messages: tuple[Message, ...], settings: ModelSettings, output: Out
 | `settings` | [`ModelSettings`](#modelsettings) | Required, fully resolved | The effective settings for this call. Every field must be set: an unset (`None`) field raises `DefinitionError` (M3 #42), so adapters never guess defaults. The runtime always sends merged settings. |
 | `output` | [`OutputSchema`](#outputschema) ` \| None` | Default `None` (plain text) | The JSON shape the reply must have. When set, the adapter constrains generation to it and returns the JSON as `ModelResponse.text`; the managed layer validates it. |
 | `tools` | `tuple[`[`ToolSpec`](#toolspec)`, ...]` | Default `()` (no tools) | The tools the model may call. A non-empty `tools` on a model whose `capabilities().tools` is `False` raises `UnsupportedCapabilityError` before tokens are reserved or anything is sent. |
+| `hosted_tools` | `tuple[`[`HostedTool`](#hostedtool)`, ...]` | Default `()` | Provider-run tools the model may use (#261). Each type at most once, else `DefinitionError`. A type the model's `capabilities().hosted_tools` lacks raises `UnsupportedCapabilityError` before sending. |
+| `max_hosted_tool_calls` | `int \| None` | Default `None` (no cap sent) | Most hosted tool calls the provider may make for this request, at least 1 (`DefinitionError` otherwise). The runtime sets it to the run's remaining `max_tool_calls` whenever `hosted_tools` is set. |
 
 ```python
 from agentframe import Message, ModelRequest, ModelSettings
@@ -1139,10 +1190,10 @@ Provider strict-mode conversion is the adapter's job (see
 **Purpose / direction:** normalized model result with honest usage/completion
 information, not an A2A or MCP transport envelope.
 
-**Signature (implemented, M3 #33; tool fields M5 #59):** frozen dataclass.
+**Signature (implemented, M3 #33; tool fields M5 #59; `hosted_tool_calls` #261):** frozen dataclass.
 
 ```text
-ModelResponse(text: str, usage: Usage, finish_reason: FinishReason, tool_calls: tuple[ToolCall, ...] = (), provider_items: tuple[object, ...] = ())
+ModelResponse(text: str, usage: Usage, finish_reason: FinishReason, tool_calls: tuple[ToolCall, ...] = (), provider_items: tuple[object, ...] = (), hosted_tool_calls: int = 0)
 ```
 
 | Field | Type | Required/default status | Meaning and constraints |
@@ -1152,6 +1203,7 @@ ModelResponse(text: str, usage: Usage, finish_reason: FinishReason, tool_calls: 
 | `finish_reason` | [`FinishReason`](runtime.md#finishreason) | Required | `COMPLETED`, `LENGTH`, `REFUSED`, `CONTENT_FILTER` or `TOOL_CALLS` (the model stopped to ask for tool calls; model calls only, never a run's finish reason). |
 | `tool_calls` | `tuple[`[`ToolCall`](#toolcall)`, ...]` | Default `()` | The tools the model asks to call, in its order. `text` may be empty. |
 | `provider_items` | `tuple[object, ...]` | Default `()` | Opaque adapter data to replay with the assistant message (see [`Message`](#message)). Excluded from `repr` and equality; never logged, traced or returned. |
+| `hosted_tool_calls` | `int` | Default `0` | Hosted tool calls the provider ran during this call, whatever the finish reason (#261). The runtime counts them toward `max_tool_calls`. |
 
 ```python
 from agentframe import FinishReason, ModelResponse, Usage
@@ -1239,3 +1291,144 @@ until the managed loop (#61) validates the call; unknown tools and invalid
 arguments run nothing. Each call is then authorized (#62, [`ToolAuthorizationPolicy`](authorization.md#toolauthorizationpolicy)).
 
 **Related:** [`ModelResponse`](#modelresponse), [`Message`](#message).
+
+## `HostedTool`
+
+**Purpose / decision:** the base class of tools a model provider runs itself
+during a model call, such as Foundry's web search (#261). They are
+provider-specific, offered only when a `ctx.generate` call selects one, and
+never run by AgentFrame.
+
+**Signature (implemented, #261):** frozen dataclass with no fields, exported
+from `agentframe`. Subclasses are frozen dataclasses holding the tool's
+settings.
+
+```text
+@dataclass(frozen=True)
+class HostedTool
+```
+
+```python
+from agentframe import FoundryWebSearch, HostedTool
+
+
+assert isinstance(FoundryWebSearch(), HostedTool)
+```
+
+**Behavior / failures:** a model adapter supports the subclasses it lists in
+[`ModelCapabilities.hosted_tools`](#modelcapabilities); the runtime refuses
+any other before sending with `UnsupportedCapabilityError`. A new provider's
+hosted tools need an adapter that maps them; subclassing alone sends nothing.
+
+**Related:** [hosted tools in `ctx.generate`](agents.md#hosted-tools-261),
+[Foundry hosted tools](#hosted-tools).
+
+## `FoundryCodeInterpreter`
+
+**Purpose / decision:** let a [`FoundryModel`](#foundrymodel) write and run
+Python in a sandboxed container Foundry manages (#261).
+
+**Signature (implemented, #261):** frozen dataclass, exported from
+`agentframe`; needs no optional extra.
+
+```text
+FoundryCodeInterpreter(file_ids: tuple[str, ...] = ())
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `file_ids` | `tuple[str, ...]` | Default `()` | IDs of files already uploaded to Foundry to make available to the code. At most 50; a single string raises `DefinitionError`. |
+
+```python
+from agentframe import Agent, FoundryCodeInterpreter, RunContext, agent, skill
+
+
+@agent(name="Analyst", description="Answers with calculations.", version="0.1.0")
+class Analyst(Agent):
+    @skill(id="analyze", description="Answer a numeric question.", tags=["data"])
+    async def analyze(self, question: str, ctx: RunContext) -> str:
+        return await ctx.generate(question, tools=[FoundryCodeInterpreter()])
+```
+
+**Behavior / failures:** sent as
+`{"type": "code_interpreter", "container": {"type": "auto"}}` (with
+`file_ids` when set). Foundry creates a container or reuses one from the
+conversation and expires it after 20 idle minutes. Code interpreter sessions
+are billed separately from tokens, and those fees are not in `Usage`. Other
+models raise `UnsupportedCapabilityError` before sending.
+
+**Related:** [Foundry hosted tools](#hosted-tools),
+[code interpreter on Learn](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses#code-interpreter).
+
+## `FoundryWebSearch`
+
+**Purpose / decision:** let a [`FoundryModel`](#foundrymodel) search the web
+with Grounding with Bing Search (#261).
+
+**Signature (implemented, #261):** frozen dataclass, exported from
+`agentframe`; needs no optional extra.
+
+```text
+FoundryWebSearch(allowed_domains: tuple[str, ...] = ())
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `allowed_domains` | `tuple[str, ...]` | Default `()` searches every domain | Domains the search is limited to, such as `"learn.microsoft.com"`. At most 100; a single string raises `DefinitionError`. |
+
+```python
+from agentframe import FoundryWebSearch
+
+
+search = FoundryWebSearch(allowed_domains=("learn.microsoft.com",))
+# await ctx.generate(question, tools=[search])
+```
+
+**Behavior / failures:** sent as `{"type": "web_search"}` (with
+`filters.allowed_domains` when set), not the older `web_search_preview`.
+**Data leaves Azure:** search queries and results go to Bing, outside Azure's
+compliance and geographic boundaries and the Data Protection Addendum, and
+Bing use is billed separately (not in `Usage`). Enable it only where that
+egress is approved. An administrator can block it for a subscription
+(`OpenAI.BlockedTools.web_search`), which fails the call with a
+non-transient `ProviderError`. Other models raise
+`UnsupportedCapabilityError` before sending.
+
+**Related:** [Foundry hosted tools](#hosted-tools),
+[web search on Learn](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/web-search),
+[prompt safeguarding](../design/prompt-safeguarding.md).
+
+## `FoundryFileSearch`
+
+**Purpose / decision:** let a [`FoundryModel`](#foundrymodel) search files
+uploaded to Foundry vector stores (#261).
+
+**Signature (implemented, #261):** frozen dataclass, exported from
+`agentframe`; needs no optional extra.
+
+```text
+FoundryFileSearch(vector_store_ids: tuple[str, ...], max_num_results: int | None = None)
+```
+
+| Field | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `vector_store_ids` | `tuple[str, ...]` | Required | IDs of existing vector stores to search. At least one; a single string raises `DefinitionError`. |
+| `max_num_results` | `int \| None` | Default `None` (service default) | Most results to return, from 1 to 50, else `DefinitionError`. |
+
+```python
+from agentframe import FoundryFileSearch
+
+
+policies = FoundryFileSearch(vector_store_ids=("vs_policies",), max_num_results=5)
+# await ctx.generate(question, tools=[policies])
+```
+
+**Behavior / failures:** sent as
+`{"type": "file_search", "vector_store_ids": [...]}` (with `max_num_results`
+when set). AgentFrame does not create vector stores or upload files; the
+application does that with its own client. An unknown or inaccessible vector
+store fails the call with a non-transient `ProviderError`. Other models raise
+`UnsupportedCapabilityError` before sending.
+
+**Related:** [Foundry hosted tools](#hosted-tools),
+[file search guide](https://developers.openai.com/api/docs/guides/tools-file-search).

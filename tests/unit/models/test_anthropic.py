@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from typing import Any
 
@@ -17,6 +18,7 @@ from agentframe import (
     AnthropicModel,
     DefinitionError,
     FinishReason,
+    FoundryWebSearch,
     IncompleteOutputError,
     Message,
     ModelError,
@@ -229,6 +231,20 @@ async def test_a_system_message_inside_the_conversation_fails_before_sending(
 
     async with claude() as model:
         with pytest.raises(UnsupportedCapabilityError, match="system"):
+            await model.generate(request)
+
+    assert server.requests == []
+
+
+async def test_hosted_tools_are_refused_before_sending(
+    use_server: Callable[[FakeAnthropic], httpx2.AsyncClient],
+) -> None:
+    server = FakeAnthropic()
+    use_server(server)
+    request = replace(ask("Search the web"), hosted_tools=(FoundryWebSearch(),))
+
+    async with claude() as model:
+        with pytest.raises(UnsupportedCapabilityError, match="FoundryWebSearch"):
             await model.generate(request)
 
     assert server.requests == []

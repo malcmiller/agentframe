@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from agentframe.discovery.remote import Remote
 from agentframe.errors import DefinitionError
+from agentframe.models.base import HostedTool
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, build_catalog
 from agentframe.orchestration.execution import (
     DEFAULT_MAX_PARALLEL,
@@ -52,7 +53,7 @@ class RunContext:
         text: str,
         *,
         instructions: str | None = None,
-        tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
     ) -> str: ...
 
     @overload
@@ -62,7 +63,7 @@ class RunContext:
         *,
         instructions: str | None = None,
         output: type[T],
-        tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
     ) -> T: ...
 
     async def generate(
@@ -71,7 +72,7 @@ class RunContext:
         *,
         instructions: str | None = None,
         output: type[BaseModel] | None = None,
-        tools: Iterable[Callable[..., Any] | RemoteSkill] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
     ) -> str | BaseModel:
         """Generate text, or a validated ``output`` instance, with the agent's model.
 
@@ -98,7 +99,9 @@ class RunContext:
                 Tools whose ``requires_permissions`` the caller lacks are
                 not offered, and every call is authorized before it runs.
                 ``RemoteSkill`` entries from this run's ``remote_skills``
-                catalogs may be mixed in: see "Remote skills" below.
+                catalogs may be mixed in: see "Remote skills" below. So
+                may hosted tools such as ``FoundryWebSearch()``, at most one
+                of each type: see "Hosted tools" below.
 
         Returns:
             The model's complete answer, or an ``output`` instance when
@@ -107,11 +110,12 @@ class RunContext:
         Raises:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
                 a ``RootModel``, or a selected tool is not registered on the
-                agent or is selected twice. Raised before anything is sent.
+                agent or is selected twice, or a hosted tool type is selected
+                twice. Raised before anything is sent.
             UnsupportedCapabilityError: The agent has no model configured, or
                 the model lacks something the request needs, such as
-                structured output or tool calling. Raised before anything is
-                sent.
+                structured output, tool calling or a hosted tool. Raised
+                before anything is sent.
             OutputValidationError: The structured reply is not valid JSON or
                 does not match ``output``, or a tool returned a value that
                 does not match its return annotation.
@@ -135,8 +139,9 @@ class RunContext:
                 execution policy model-request or tool check raised an error
                 or did not answer before the run's deadline.
             LimitExceededError: A model call does not fit the run's limits,
-                the run has made ``max_tool_calls`` tool calls, or the run's
-                timeout expired during a model or tool call.
+                the run has made ``max_tool_calls`` tool calls (or hosted
+                tool calls took it past that limit), or the run's timeout
+                expired during a model or tool call.
 
         Exceptions raised by a tool propagate unchanged and fail the run;
         their text is never sent to the model.
@@ -167,10 +172,28 @@ class RunContext:
         from another run's catalog raises ``DefinitionError`` before
         anything is sent; an argument schema the model's provider cannot use
         raises ``UnsupportedCapabilityError`` before sending.
+
+        Hosted tools: provider-specific tools the model provider runs itself
+        during a model call, such as ``FoundryCodeInterpreter``,
+        ``FoundryWebSearch`` and ``FoundryFileSearch`` for ``FoundryModel``.
+        They need no registration on the agent: selecting one here is the
+        opt-in. A model that does not support one raises
+        ``UnsupportedCapabilityError`` before sending. Because they run on
+        the provider's side, the tool authorization policy and execution
+        policy tool checks never see their calls; model-request checks see
+        them in ``ModelRequest.hosted_tools``. Each request caps the
+        provider at the run's remaining ``max_tool_calls``, and the calls it
+        ran are counted after the response. Their search results and file
+        content are in the provider's reported token usage, but cannot be
+        reserved before the call, and provider fees for the tools are not
+        in ``Usage``.
         """
         selected = list(tools)  # May be a one-shot iterator.
-        functions = [item for item in selected if not isinstance(item, RemoteSkill)]
+        hosted = [item for item in selected if isinstance(item, HostedTool)]
         entries = [item for item in selected if isinstance(item, RemoteSkill)]
+        functions = [
+            item for item in selected if not isinstance(item, RemoteSkill | HostedTool)
+        ]
         remote = remote_tools(
             entries,
             self._remotes,
@@ -181,10 +204,10 @@ class RunContext:
         )
         if output is None:
             return await self._generation.generate_text(
-                self, text, instructions, functions, remote
+                self, text, instructions, functions, remote, hosted
             )
         return await self._generation.generate_output(
-            self, text, instructions, output, functions, remote
+            self, text, instructions, output, functions, remote, hosted
         )
 
     async def remote_skills(

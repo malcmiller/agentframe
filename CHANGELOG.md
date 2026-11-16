@@ -100,6 +100,20 @@ behavior starts with an **Upgrading** section; see the
   no longer means switching to `runtime=` and moving `services=` and the other
   settings onto it. Passing it together with `runtime=` raises
   `DefinitionError`; `examples/orders.py` uses it (#266).
+- **Foundry hosted tools:** `ctx.generate(..., tools=[...])` accepts
+  `FoundryCodeInterpreter`, `FoundryWebSearch(allowed_domains=...)` and
+  `FoundryFileSearch(vector_store_ids=...)`, which `FoundryModel` sends as the
+  Responses API's built-in tools. They are opt-in per call and
+  provider-scoped: other models (`OllamaModel`, or any model not listing the
+  type in the new `ModelCapabilities.hosted_tools`) raise
+  `UnsupportedCapabilityError` before sending. Hosted calls count toward
+  `RunLimits.max_tool_calls` and `RunResult.tool_calls`; each request caps the
+  provider at the run's remaining tool calls (`max_tool_calls`) and is refused
+  when none remain. New `HostedTool` base class, `ModelRequest.hosted_tools` /
+  `max_hosted_tool_calls`, `ModelResponse.hosted_tool_calls` and
+  `ModelError.hosted_tool_calls` (calls a failed response ran, also counted).
+  Web search sends data outside Azure's compliance boundary and is billed
+  separately (#261).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

@@ -9,7 +9,7 @@ accounting is in ``runtime.accounting``, token estimates and limit checks in
 import asyncio
 import random
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -22,9 +22,11 @@ from agentframe.errors import (
     ModelError,
     ProviderError,
     TimeoutLimitExceededError,
+    ToolCallLimitExceededError,
     UnsupportedCapabilityError,
 )
 from agentframe.models.base import (
+    HostedTool,
     Message,
     Model,
     ModelCapabilities,
@@ -117,6 +119,7 @@ class GenerationState:
         instructions: str | None,
         tools: Iterable[Callable[..., Any]] = (),
         remote_tools: "Mapping[str, RemoteTool]" = NO_REMOTE_TOOLS,
+        hosted_tools: Sequence[HostedTool] = (),
     ) -> str:
         """Send ``text`` to the model and return its complete answer.
 
@@ -133,18 +136,23 @@ class GenerationState:
             tools: Registered ``@tool`` functions to offer the model.
             remote_tools: Remote skill catalog entries to offer the model,
                 bound to this run, by tool name.
+            hosted_tools: Provider-run tools to offer the model. Each call
+                the provider ran counts toward ``max_tool_calls``.
 
         Raises:
             DefinitionError: A selected tool is not registered on the agent
                 or is selected twice, a remote tool has the same name as a
-                selected tool, or the model reports no context window and no
-                ``max_input_tokens`` is set.
+                selected tool, a hosted tool type is selected twice, or the
+                model reports no context window and no ``max_input_tokens``
+                is set.
             UnsupportedCapabilityError: The agent has no model, or the model
-                lacks something the request needs.
+                lacks something the request needs, such as a hosted tool.
             TokenLimitExceededError: A call does not fit the input limit,
                 the context window or the run's remaining tokens.
             ModelCallLimitExceededError: The run has made ``max_model_calls``.
-            ToolCallLimitExceededError: The run has made ``max_tool_calls``.
+            ToolCallLimitExceededError: The run has made ``max_tool_calls``,
+                before a tool call or a request offering hosted tools, or
+                the provider's hosted tool calls took it past the limit.
             ModelRefusalError: The model refused, or a content filter blocked it.
             IncompleteOutputError: The output was cut short or empty. When it
                 stopped at the output token limit, ``partial_text`` holds the
@@ -156,7 +164,7 @@ class GenerationState:
                 model or tool call.
         """
         response = await self._generate(
-            ctx, text, instructions, None, tools, remote_tools
+            ctx, text, instructions, None, tools, remote_tools, hosted_tools
         )
         if response.finish_reason is FinishReason.LENGTH and response.text:
             # Only text keeps what arrived before the limit, so a skill can
@@ -172,6 +180,7 @@ class GenerationState:
         output: type[T],
         tools: Iterable[Callable[..., Any]] = (),
         remote_tools: "Mapping[str, RemoteTool]" = NO_REMOTE_TOOLS,
+        hosted_tools: Sequence[HostedTool] = (),
     ) -> T:
         """Send ``text`` to the model and return its reply validated as ``output``.
 
@@ -190,6 +199,8 @@ class GenerationState:
             tools: Registered ``@tool`` functions to offer the model.
             remote_tools: Remote skill catalog entries to offer the model
                 (see ``generate_text``).
+            hosted_tools: Provider-run tools to offer the model (see
+                ``generate_text``).
 
         Raises:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
@@ -201,7 +212,7 @@ class GenerationState:
         """
         schema = output_schema(output)
         response = await self._generate(
-            ctx, text, instructions, schema, tools, remote_tools
+            ctx, text, instructions, schema, tools, remote_tools, hosted_tools
         )
         return validate_output(text_from(response), output)
 
@@ -213,6 +224,7 @@ class GenerationState:
         output: OutputSchema | None,
         tools: Iterable[Callable[..., Any]],
         remote_tools: "Mapping[str, RemoteTool]",
+        hosted_tools: Sequence[HostedTool],
     ) -> ModelResponse:
         """Run the model and the tools it calls within the run's deadline.
 
@@ -227,7 +239,13 @@ class GenerationState:
         try:
             async with asyncio.timeout_at(ctx.deadline) as timeout:
                 return await self._tool_loop(
-                    self.model, ctx, messages, output, selected_tools, remote_tools
+                    self.model,
+                    ctx,
+                    messages,
+                    output,
+                    selected_tools,
+                    remote_tools,
+                    tuple(hosted_tools),
                 )
         except TimeoutError:
             if not timeout.expired():
@@ -244,6 +262,7 @@ class GenerationState:
         output: OutputSchema | None,
         tools: Mapping[str, "ToolDefinition"],
         remote_tools: "Mapping[str, RemoteTool]",
+        hosted_tools: tuple[HostedTool, ...],
     ) -> ModelResponse:
         """Call the model, run the tools it asks for, and repeat until it answers.
 
@@ -258,6 +277,12 @@ class GenerationState:
         then passes the execution policy's tool checks, before it runs.
         Every request, including each continuation, passes the execution
         policy's model-request checks before it is sent.
+
+        Hosted tools run on the provider's side, so they bypass tool
+        authorization and tool checks. A request offering them caps the
+        provider at the run's remaining tool calls, and fails before sending
+        when none remain; the calls the provider ran are counted after each
+        response.
         """
         specs = tuple(
             tool_spec(tool)
@@ -270,10 +295,18 @@ class GenerationState:
         )
         while True:
             request = ModelRequest(
-                messages=messages, settings=self.settings, output=output, tools=specs
+                messages=messages,
+                settings=self.settings,
+                output=output,
+                tools=specs,
+                hosted_tools=hosted_tools,
+                max_hosted_tool_calls=self._hosted_tool_allowance(hosted_tools),
             )
             await self._check_request(request, ctx)
             response = await self._call_with_retries(model, request, ctx.deadline)
+            self.accounting.count_hosted_tool_calls(
+                response.hosted_tool_calls, self.limits
+            )
             # Checked before the finish reason: a tool-call response has no text.
             if not response.tool_calls:
                 return response
@@ -296,6 +329,25 @@ class GenerationState:
                         self.skill,
                     )
                 messages += (tool_message(call, result),)
+
+    def _hosted_tool_allowance(
+        self, hosted_tools: tuple[HostedTool, ...]
+    ) -> int | None:
+        """Return the hosted tool calls a request may make, or ``None`` without any.
+
+        Raises:
+            ToolCallLimitExceededError: Hosted tools are offered, but the run
+                has made ``max_tool_calls``.
+        """
+        if not hosted_tools:
+            return None
+        remaining = self.accounting.remaining_tool_calls(self.limits)
+        if remaining == 0:
+            raise ToolCallLimitExceededError(
+                f"The run reached its limit of {self.limits.max_tool_calls} "
+                "tool calls, so it cannot offer hosted tools"
+            )
+        return remaining
 
     async def _check_request(self, request: ModelRequest, ctx: "RunContext") -> None:
         """Run the model-request checks once for a logical request.
@@ -349,7 +401,9 @@ class GenerationState:
         Every retry is a new call through ``_call``, so it reserves tokens and
         counts toward ``max_model_calls``. Other errors, including refusals and
         incomplete output, are raised at once. When the wait before a retry
-        would reach the deadline, the provider error is raised instead.
+        would reach the deadline, the provider error is raised instead. A
+        retry offering hosted tools is capped at the tool calls left after the
+        failed attempt's.
         """
         max_retries = self.limits.max_model_retries
         assert max_retries is not None  # Set by defaults.
@@ -363,6 +417,10 @@ class GenerationState:
                 if asyncio.get_running_loop().time() + delay >= deadline:
                     raise
             await wait_before_retry(delay)
+            request = replace(
+                request,
+                max_hosted_tool_calls=self._hosted_tool_allowance(request.hosted_tools),
+            )
         return await self._call(model, request)
 
     async def _call(self, model: Model, request: ModelRequest) -> ModelResponse:
@@ -382,6 +440,9 @@ class GenerationState:
             raise
         except ModelError as error:
             self.accounting.settle(reservation, error.usage or UNKNOWN_USAGE)
+            self.accounting.count_hosted_tool_calls(
+                error.hosted_tool_calls, self.limits
+            )
             raise
         except BaseException:
             # Cancelled or failed mid-call: tokens may have been spent.
@@ -435,12 +496,18 @@ def check_supports(request: ModelRequest, capabilities: ModelCapabilities) -> No
 
     Raises:
         UnsupportedCapabilityError: The request asks for structured output or
-            offers tools, and the model does not report support for it.
+            offers tools or a hosted tool, and the model does not report
+            support for it.
     """
     if request.output is not None and not capabilities.structured_output:
         raise UnsupportedCapabilityError("The model does not support structured output")
     if request.tools and not capabilities.tools:
         raise UnsupportedCapabilityError("The model does not support tool calling")
+    for hosted in request.hosted_tools:
+        if type(hosted) not in capabilities.hosted_tools:
+            raise UnsupportedCapabilityError(
+                f"The model does not support the hosted tool {type(hosted).__name__}"
+            )
 
 
 def build_messages(

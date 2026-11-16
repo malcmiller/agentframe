@@ -57,6 +57,7 @@ from agentframe.hosting.routing import (
     SkillRouter,
 )
 from agentframe.models.base import (
+    HostedTool,
     Message,
     Model,
     ModelCapabilities,
@@ -69,6 +70,11 @@ from agentframe.models.base import (
     ToolSpec,
 )
 from agentframe.models.env import model_from_env
+from agentframe.models.foundry_tools import (
+    FoundryCodeInterpreter,
+    FoundryFileSearch,
+    FoundryWebSearch,
+)
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog
 from agentframe.orchestration.execution import PlanResult, StepResult
 from agentframe.orchestration.plan import Plan, PlanStep
@@ -140,7 +146,11 @@ __all__ = [
     "ExecutionPolicy",
     "FileAgentRegistry",
     "FinishReason",
+    "FoundryCodeInterpreter",
+    "FoundryFileSearch",
+    "FoundryWebSearch",
     "HostConfig",
+    "HostedTool",
     "IncompleteOutputError",
     "Inject",
     "InputCheck",

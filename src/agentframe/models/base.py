@@ -31,6 +31,19 @@ class ToolSpec:
 
 
 @dataclass(frozen=True)
+class HostedTool:
+    """Base class for tools a model provider runs itself, such as web search.
+
+    A hosted tool runs on the provider's side during one model call, so
+    AgentFrame never sees its calls before they run: tool authorization and
+    execution policy tool checks do not apply, and its results are never
+    returned as tool calls. Each subclass is specific to one provider; a
+    model reports the subclasses it supports in
+    ``ModelCapabilities.hosted_tools``, and any other fails before sending.
+    """
+
+
+@dataclass(frozen=True)
 class ToolCall:
     """One tool call requested by a model.
 
@@ -145,17 +158,34 @@ class ModelRequest:
         output: The JSON shape the reply must have, or ``None`` for plain text.
             When set, the adapter returns the JSON as ``ModelResponse.text``.
         tools: The tools the model may call. Empty means no tools.
+        hosted_tools: Provider-run tools the model may use, at most one of
+            each type. Empty means none.
+        max_hosted_tool_calls: Most hosted tool calls the provider may run
+            for this call, or ``None`` for no cap. Set by the runtime to what
+            is left of the run's ``max_tool_calls`` when ``hosted_tools`` is
+            not empty.
 
     Raises:
-        DefinitionError: If any field of ``settings`` is unset (``None``).
+        DefinitionError: If any field of ``settings`` is unset (``None``),
+            ``hosted_tools`` has two tools of the same type, or
+            ``max_hosted_tool_calls`` is set but not greater than zero.
     """
 
     messages: tuple[Message, ...]
     settings: ModelSettings
     output: OutputSchema | None = None
     tools: tuple[ToolSpec, ...] = ()
+    hosted_tools: tuple[HostedTool, ...] = ()
+    max_hosted_tool_calls: int | None = None
 
     def __post_init__(self) -> None:
+        hosted_types = [type(hosted) for hosted in self.hosted_tools]
+        if len(set(hosted_types)) < len(hosted_types):
+            raise DefinitionError("Each hosted tool type can be selected only once")
+        if self.max_hosted_tool_calls is not None and self.max_hosted_tool_calls < 1:
+            raise DefinitionError(
+                "ModelRequest.max_hosted_tool_calls must be greater than 0"
+            )
         unset = [
             setting.name
             for setting in fields(self.settings)
@@ -191,6 +221,8 @@ class ModelResponse:
         provider_items: Opaque data the adapter needs replayed in the next
             request (see ``Message.provider_items``). Never inspected, logged,
             compared or shown in ``repr``.
+        hosted_tool_calls: Hosted tool calls the provider ran during the
+            call. They already ran, so they are counted, never run again.
     """
 
     text: str
@@ -198,6 +230,7 @@ class ModelResponse:
     finish_reason: FinishReason
     tool_calls: tuple[ToolCall, ...] = ()
     provider_items: tuple[object, ...] = field(default=(), repr=False, compare=False)
+    hosted_tool_calls: int = 0
 
 
 @dataclass(frozen=True)
@@ -209,11 +242,13 @@ class ModelCapabilities:
             or ``None`` when unknown. Unknown is not unlimited.
         structured_output: Whether the model can return schema-constrained output.
         tools: Whether the model can call tools.
+        hosted_tools: The ``HostedTool`` subclasses the model can use.
     """
 
     context_window: int | None = None
     structured_output: bool = False
     tools: bool = False
+    hosted_tools: frozenset[type[HostedTool]] = frozenset()
 
 
 class Model(Protocol):
