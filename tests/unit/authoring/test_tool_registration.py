@@ -47,7 +47,7 @@ class OrderAssistant(Agent):
     """Answers questions about orders."""
 
     @skill("ask", tags=["orders"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer with the lookup tool."""
         return await ctx.generate(question, tools=[lookup_order])
 

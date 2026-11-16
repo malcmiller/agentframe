@@ -348,7 +348,7 @@ class Weather(Agent):
     """Answers weather questions."""
 
     @skill("ask", tags=["weather"])
-    async def ask(self, question: str, ctx: RunContext) -> str:
+    async def answer(self, question: str, ctx: RunContext) -> str:
         """Answer a weather question."""
         return await ctx.generate(question, tools=[to_fahrenheit])
 

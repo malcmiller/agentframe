@@ -144,6 +144,12 @@ def _skill_methods(agent_name: str, cls: type) -> dict[str, Callable[..., Any]]:
     for klass in reversed(cls.__mro__):
         for attribute_name, value in vars(klass).items():
             if hasattr(value, _SKILL_ATTRIBUTE):
+                if attribute_name in vars(Agent):
+                    raise DefinitionError(
+                        f"Agent '{agent_name}': skill method '{attribute_name}' "
+                        "hides Agent's own attribute of that name; rename the "
+                        f'method and keep the ID with @skill("{attribute_name}")'
+                    )
                 methods[attribute_name] = value
             elif attribute_name in methods:
                 raise DefinitionError(

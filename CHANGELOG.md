@@ -28,6 +28,13 @@ behavior starts with an **Upgrading** section; see the
   to the skill, call the agents `OnBehalfOf` the user, or pass
   `allow_any_caller=True` to `remote_skills` when any caller may use the
   agent's credentials (#263).
+- A skill method can no longer be named like one of `Agent`'s own attributes,
+  such as `ask`, `invoke`, `router` or `definition`; `@agent` raises
+  `DefinitionError`. Rename the method and keep its ID, for example
+  `@skill("ask") async def answer(...)` (#280).
+- The routing module moved from `agentframe.hosting.routing` to
+  `agentframe.runtime.routing`. Imports from `agentframe` (`SkillRouter`,
+  `SkillCall`, `Clarification`, `RoutingContext`) are unchanged (#280).
 
 ### Added
 
@@ -39,6 +46,14 @@ behavior starts with an **Upgrading** section; see the
   its card URL. Read-only; connection credentials are never requested, and the
   registry's own token is sent only to cards inside its project. Needs the
   `foundry` extra (#244).
+- **Authoring:** `await agent.invoke("skill", **arguments)` runs one skill
+  locally and returns its validated value, and `await agent.ask(prompt)`
+  answers a plain prompt: the agent's only skill taking a single `str` gets
+  the prompt with no model call; otherwise a router (`router=` or
+  `Agent(router=...)`) chooses, with its model calls counted toward the run's
+  limits and a question raised as `ClarificationNeededError`; otherwise
+  `DefinitionError` lists the skills. Both accept `runtime=`, `principal=` and
+  `options=` and run the full `Runtime` pipeline (#280).
 - **Documentation:** a
   [stability, deprecation and upgrade policy](docs/guides/stability.md): what
   the public API is, what may change before 1.0 (minor releases may break,
@@ -162,6 +177,8 @@ behavior starts with an **Upgrading** section; see the
   drops its `DevelopmentPolicy`: `authorization=` is for resource checks, and
   authenticated callers can already run skills without `requires_permissions`
   (#272).
+- `ClarificationNeededError.task_id` and `context_id` are `None` when
+  `Agent.ask`'s router asked the question, since no task runs (#280).
 - `Services.add` and `Services.add_scoped` return the `Services` instead of
   `None`, so registrations fit on one line:
   `Runtime(services=Services().add(OrderStore, store))` (#274).

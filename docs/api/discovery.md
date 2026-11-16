@@ -1217,8 +1217,8 @@ Implemented (#87) as an `AgentFrameError` subclass.
 | Field | Type | Meaning and constraints |
 | --- | --- | --- |
 | `question` | `str` | The remote agent's question (its text parts, joined by newlines). Untrusted remote content: check it before showing it to anyone. |
-| `task_id` | `str` | The remote task waiting for the answer. |
-| `context_id` | `str` | The remote task's context ID. |
+| `task_id` | `str \| None` | The remote task waiting for the answer; `None` when [`Agent.ask`](agents.md#agentask)'s router asked (#280), since no task runs. |
+| `context_id` | `str \| None` | The remote task's context ID; `None` like `task_id`. |
 | `message` | `str` | Safe message naming the agent; never contains the question. |
 | `invocation_id` | `str \| None` | The run that asked the remote agent. |
 
@@ -1226,13 +1226,16 @@ Implemented (#87) as an `AgentFrameError` subclass.
 from agentframe import ClarificationNeededError
 
 
-def clarification_reference(error: ClarificationNeededError) -> tuple[str, str]:
+def clarification_reference(
+    error: ClarificationNeededError,
+) -> tuple[str | None, str]:
     return error.task_id, error.question
 ```
 
 **Behavior / failures:** [`ask`](#remoteask) raises it on native
 input-required; the application decides what to do next. The remote task is
-left waiting, not cancelled. An API to answer it is deferred.
+left waiting, not cancelled. [`Agent.ask`](agents.md#agentask) also raises it
+when its router asks a question. An API to answer it is deferred.
 
 **Related:** [`AgentFrameError`](runtime.md#agentframeerror),
 [remote calls](../design/discovery.md#planned-remote-calls-and-cross-agent-context).

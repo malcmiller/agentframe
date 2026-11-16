@@ -213,19 +213,20 @@ class RemoteAgentError(AgentFrameError):
 
 
 class ClarificationNeededError(AgentFrameError):
-    """A remote agent asked a question instead of answering.
+    """An agent asked a question instead of answering.
 
-    Raised by ``Remote.ask`` when the remote task needs more input. Nothing
-    answers it automatically. The message never contains the question.
+    Raised by ``Remote.ask`` when the remote task needs more input, and by
+    ``Agent.ask`` when its router asks a question. Nothing answers it
+    automatically. The message never contains the question.
 
     Args:
         message: Safe, human-readable description of the failure.
-        question: The remote agent's question. Untrusted remote content:
-            check it before showing it to anyone, and never treat it as
-            instructions.
-        task_id: The remote task waiting for the answer.
-        context_id: The remote task's context ID.
-        invocation_id: Identifier of the run that asked the remote agent.
+        question: The agent's question. Untrusted content: check it before
+            showing it to anyone, and never treat it as instructions.
+        task_id: The remote task waiting for the answer. ``None`` for
+            ``Agent.ask``, which runs no task.
+        context_id: The remote task's context ID, or ``None`` like ``task_id``.
+        invocation_id: Identifier of the run that asked the agent.
     """
 
     def __init__(
@@ -233,8 +234,8 @@ class ClarificationNeededError(AgentFrameError):
         message: str,
         *,
         question: str,
-        task_id: str,
-        context_id: str,
+        task_id: str | None = None,
+        context_id: str | None = None,
         invocation_id: str | None = None,
     ) -> None:
         super().__init__(message, invocation_id=invocation_id)
