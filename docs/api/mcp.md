@@ -18,7 +18,7 @@ pip install "agentframe-py[mcp]"
 ```
 
 Publishing an agent's own skills as an MCP server ([`MCPConfig`](hosting.md#mcpconfig),
-#254) is the other direction and is not covered here. The rationale is in the
+#254) is the other direction, documented with hosting; it uses the same extra. The rationale is in the
 [MCP design](../design/mcp-skills.md#mcp-client-server-tools-for-ctxgenerate).
 
 ## `MCPClient`

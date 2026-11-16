@@ -15,11 +15,11 @@ agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
 **Constructor status:** implemented in M2 (#3, #6) as
 `AgentApp(*, agent, host, runtime=None, services=None, authorization=None,
 tool_authorization=None, policy=None, router=None, default_skill=None, a2a=None,
-directory=None, remotes=None, default_remote=None, resources=())`, with `policy=`
+directory=None, remotes=None, default_remote=None, resources=(), mcp=None)`, with `policy=`
 from M7 #77, `a2a=` from M7 #75, `directory=` from M8+ #87, `remotes=` from #92
 (`OnBehalfOf` entries #93), `default_remote=` from M10 #175, `default_skill=`
-from #270, `tool_authorization=` from #266 and `resources=` from #264; the other parameters
-below arrive with their stories (`mcp=` later, later `ag_ui=`). `services=` and
+from #270, `tool_authorization=` from #266, `resources=` from #264 and `mcp=`
+from #254; `ag_ui=` arrives later. `services=` and
 `ag_ui=` are decided; unspecified omission details remain illustrative.
 
 ```text
@@ -42,7 +42,7 @@ AgentApp(
 | `host` | `HostConfig` | Explicit in current examples; omission contract open | Advertised origin, authentication integration, independent resource ceilings. |
 | `runtime` | `Runtime` | Optional; default `Runtime(services=services, authorization=authorization, tool_authorization=tool_authorization, policy=policy, directory=directory, remotes=remotes, default_remote=default_remote)` | The single authoritative runtime and service container for every request. Passing it together with `services=`, `authorization=`, `tool_authorization=`, `policy=`, `directory=`, `remotes=` or `default_remote=` raises `DefinitionError`. |
 | `a2a` | [`A2AConfig`](#a2aconfig) | Optional; `None` means `A2AConfig()` (M7 #75) | A2A endpoint settings: [message deduplication](#a2aconfig) and the [task store and its retention](#task-retention) (#208). A2A is always served. |
-| `mcp` | `MCPConfig` | MCP disabled by default; exact object default open | Explicit optional allowlisted skill publication. |
+| `mcp` | [`MCPConfig`](#mcpconfig)` \| None` | Optional; default `None` serves no MCP (#254) | Serves `/mcp` on the same server, publishing only `exposed_skills` as MCP tools behind the same authentication, run slots and limits. Needs the `mcp` extra. |
 | `router` | [`SkillRouter`](#skillrouter) implementation | Optional; default `None` refuses free text, even when the agent has a model, unless `default_skill` is set | Selects the skill and arguments for free-text A2A messages or asks a question. Custom router in M2 (#6); built-in opt-in [`ModelRouter`](#modelrouter) in M6 (#68), checked at construction and startup (#69). This is the only way to enable model routing; an agent model never does. Activated structured selection bypasses it, not runtime controls. The app closes a router's model only when it is listed in `resources=`. When given, it decides instead of `default_skill`. |
 | `default_skill` | `str \| None` | Optional; default `None` (#270) | ID of the skill that receives free-text messages when there is no `router`, with no model call. Its only business parameter must be a `str`; see [default skill](#default-skill). |
 | `services` | `Services` | Optional; only without `runtime=` | Dependencies for `Inject[T]`. Construction validates every skill's injected services; app owns/closes singletons, AgentFrame creates/closes per-run scoped instances. |
@@ -1282,51 +1282,82 @@ def shared_a2a(redis: Redis, tasks: TaskStore) -> A2AConfig:
 
 **Purpose / decision:** optional native MCP publication of explicitly
 allowlisted registered skills, separate from internal model-callable `@tool`s.
+LLM apps and MCP clients call them as tools on the same server as A2A, behind
+the same authentication and host limits.
 
-**Proposed constructor shape:**
-
-```text
-MCPConfig(*, enabled: bool = ..., path: str = ..., exposed_skills: list[str] = ...)
-```
+**Signature status:** implemented (#254) as
+`MCPConfig(exposed_skills: Sequence[str] = ())`, passed as
+`AgentApp(mcp=...)`. Needs the `mcp` extra (`pip install "agentframe-py[mcp]"`,
+the official MCP Python SDK 2.x, shared with the [MCP client](mcp.md)).
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
 | --- | --- | --- | --- |
-| `enabled` | `bool` | MCP disabled by default on `AgentApp`; field default open | Explicitly opt into the optional adapter/dependency. |
-| `path` | `str` | `/mcp` in HTTP examples; default open | Native Streamable HTTP endpoint, not per-skill REST routes. Stdio, if added, is a separate transport. |
-| `exposed_skills` | `list[str]` in examples | Empty by default; opt-in per skill | Only registered stable IDs. No wildcard, auto-exposure, or authorization grant. Exact default construction syntax remains proposed. |
+| `exposed_skills` | `Sequence[str]` | Optional; default `()`, publishing nothing | IDs of the agent's skills to publish, each as the MCP tool of the same name. Stored as a tuple. A bare string, a non-string or a repeated ID raises `DefinitionError`. No wildcard, no inherited or newly added skill is published automatically, and listing a skill grants no caller anything. |
 
 ```python
-from agentframe import MCPConfig
+from agentframe import AgentApp, APIKey, APIKeyAuth, HostConfig, MCPConfig
 
 
-mcp = MCPConfig(
-    enabled=True, path="/mcp", exposed_skills=["summarize", "rewrite"],
-)
+def build_app(writer: "WritingAssistant", key: str) -> AgentApp:
+    return AgentApp(
+        agent=writer,
+        host=HostConfig(
+            public_url="https://writer.example.com",
+            # Development placeholder: load real keys from secure configuration.
+            auth=APIKeyAuth(keys={key: APIKey("mcp-client")}),
+        ),
+        mcp=MCPConfig(exposed_skills=["summarize", "rewrite"]),
+    )
 ```
 
-Use with an agent registering those IDs, such as the guide's
-[`WritingAssistant`](../guides/agent-examples.md#with-a-model).
+`WritingAssistant` is the guide's
+[agent with a model](../guides/agent-examples.md#with-a-model).
 
-**Behavior / failures:** initial mapping uses stable skill IDs as native MCP
-tool names and excludes context, `Inject[T]` services, credentials and execution internals from
-schemas. Reject unknown IDs, naming collisions, unsupported schemas, missing
-optional dependencies, and context/policy argument injection; never silently
-skip/rename. MCP named selection bypasses A2A routing, not validation,
-authorization, limits, checks, or tracing. Apply discovery policy and enforce it
-again at invocation; hidden names cannot remain callable through that policy.
+**Endpoint:** `AgentApp` serves MCP over Streamable HTTP at the fixed path
+`/mcp` (POST only). Without `mcp=`, there is no `/mcp`. The SDK runs
+statelessly and answers each request with JSON: there are no MCP sessions, no
+server-sent event streams and no server-to-client requests (sampling,
+elicitation). The Agent Card does not mention MCP.
 
-Use SDK-native initialization, version negotiation, tool results, and errors.
-Exact structured-result mapping (including the design's possible scalar
-`{"value": ...}` wrapper), authentication hooks, and async-task support remain
-open/version-dependent, not settled wire fields or features. Sharing an A2A
-host does not prove MCP authorization conformance. Custom REST remains deferred.
+**Behavior / failures:**
+
+| Step | Behavior |
+| --- | --- |
+| Construction | `AgentApp` raises `DefinitionError` when the `mcp` extra is missing, a listed ID is not one of the agent's skills, an ID is not a valid MCP tool name (1-128 letters, digits, `_`, `-` or `.`), or a skill's result has no JSON schema. Server startup starts the SDK's request handling. |
+| Every request | Same as `/a2a`: a body over `HostConfig.max_request_bytes` gets HTTP 413, then `HostConfig.auth` must verify the caller or the request gets HTTP 401 with the card's `WWW-Authenticate` challenges, before the SDK sees it. A JSON array (batch) body gets HTTP 400. |
+| `tools/list` | The published skills whose `requires_permissions` the caller holds, in `exposed_skills` order. Each tool has the skill's ID as `name`, its `name` as `title`, its `description`, and the [JSON schema of its business arguments](#structured-skill-call-wire-format) as `inputSchema`: `ctx`, `Inject[T]` and `Remote` parameters never appear. A skill returning anything but `str` also has an `outputSchema` for `{"value": <result>}`. |
+| `tools/call` admission | Counts against the caller's `HostConfig.rate_limit` allowance, shared with A2A `SendMessage`, or gets HTTP 429 with `Retry-After`. Takes one of `HostConfig.max_concurrent_runs` run slots, shared with A2A, or gets HTTP 503 with `Retry-After: 1`; so does a call during shutdown. Other methods take no slot. |
+| Unpublished tool | `tools/call` for a skill not in `exposed_skills` (or any other name) is a JSON-RPC `Invalid params` error, `Unknown tool.`; nothing runs. |
+| Published tool | Runs through the runtime like a structured A2A skill call: routing is bypassed, but permissions, the `AuthorizationPolicy`, `ExecutionPolicy` checks, argument validation, `HostConfig.limits_ceiling`, accounting and logging all apply. A caller lacking the skill's permissions, which `tools/list` hid, is denied when calling. A signed-in Entra user's token is kept for `OnBehalfOf` remotes, as for A2A. |
+| Result | A skill returning `str`: one text content block. Any other: `structuredContent` `{"value": ...}` (Pydantic JSON mode) plus the same compact JSON as a text block. A result over `HostConfig.max_response_bytes` is not sent. |
+| Failure | A tool result with `isError: true` and one text block: the error's safe message (invalid arguments, permission or policy denied, limits, model errors), `The skill failed.` for a skill exception (logged with its traceback), or `The agent is not configured correctly.` for a `DefinitionError`. |
+| `_meta` | Every tool result carries `agentframe/invocation_id` and an `agentframe/usage` snapshot (`input_tokens`, `output_tokens`, `total_tokens`, `estimated`, `model_calls`, `tool_calls`), as A2A task metadata does. |
+| Cancellation | In the stateless transport, an MCP `notifications/cancelled` or a client disconnect does not stop a running tool call: it finishes and keeps its run slot until then. Shutdown waits for running tool calls within `shutdown_grace_seconds`, then cancels them, cleaning up their per-run services. |
+
+Runs are logged as `Run started` / `Run completed` with the same `extra` as
+hosted A2A runs; a valid W3C `traceparent` (and `tracestate`) header is
+forwarded to remote agents. MCP callers send no deadline, token cap or depth,
+so each call is a root run. A2A message deduplication does not apply. The SDK's
+own OpenTelemetry middleware is removed. With tracing configured (`tracing=`),
+each tool call is recorded like an A2A run: a server `invoke_agent` span
+continuing the request's `traceparent`, with the same run metrics, and busy or
+shutting-down refusals are counted.
+
+**Authentication note:** clients send the host's credentials themselves, for
+example the `X-API-Key` header or an Entra bearer token. The endpoint does not
+implement the MCP authorization specification's OAuth discovery (protected
+resource metadata), so clients that need it to find a token cannot sign in on
+their own. `AllowAnonymous()` makes `/mcp` anonymous too.
+
 Tool-like deterministic/typed/quick/single-shot skills are good MCP candidates;
 judgment, multi-turn, clarification or long-running skills usually stay A2A-only.
-This is guidance, not an enforced restriction on model-backed MCP tools.
+This is guidance, not an enforced restriction on model-backed MCP tools. A
+skill's clarification questions cannot reach an MCP caller.
 
 **Related:** [`@tool`](decorators.md#tool),
 [schema mapping](../design/mcp-skills.md#schema-and-call-mapping),
-[shared security](../design/mcp-skills.md#shared-execution-and-security).
+[shared security](../design/mcp-skills.md#shared-execution-and-security),
+[MCP client](mcp.md).
 
 ## Default skill
 

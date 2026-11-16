@@ -54,6 +54,17 @@ behavior starts with an **Upgrading** section; see the
   `model_from_env()` and `resources=`, and is yours to edit; nothing is
   regenerated. Existing files are never overwritten without `--force`
   (#277).
+- **MCP server:** `AgentApp(mcp=MCPConfig(exposed_skills=[...]))` serves the
+  listed skills as MCP tools over Streamable HTTP at `/mcp`, on the same
+  server as A2A and behind the same `HostConfig` authentication, request
+  size limit, rate limit, run slots and limits ceiling. Nothing is published by default
+  and `@tool` functions never are. `tools/list` shows only published skills
+  whose permissions the caller holds, with schemas of their business
+  arguments only; `tools/call` runs through the runtime (permissions,
+  authorization and execution policy, validation, limits, logging) without
+  routing. Non-`str` results are `structuredContent` `{"value": ...}` with an
+  output schema; failures are tool errors with safe messages. Uses the `mcp`
+  extra (#254).
 - **Examples:** [`examples/dynamic_agents`](examples/dynamic_agents), a
   planner that names no agent. Its `run_goal` skill plans over every
   registered skill tagged `content` (`ctx.remote_skills(tags=["content"])`),

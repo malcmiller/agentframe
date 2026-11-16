@@ -728,7 +728,11 @@ reintroduce a UI, workflow platform, or custom REST skill API.
 See the [combined hosting proposal](design/mcp-skills.md).
 The client direction is implemented in 0.5.0 (#253): an application-configured
 [`MCPClient`](api/mcp.md) offers selected MCP server tools to `ctx.generate`
-under the same tool limits, permissions and policy tool checks.
+under the same tool limits, permissions and policy tool checks. The server
+direction is implemented in 0.5.0 too (#254):
+[`AgentApp(mcp=MCPConfig(exposed_skills=[...]))`](api/hosting.md#mcpconfig)
+serves allowlisted skills as MCP tools at `/mcp` behind the same
+authentication, run slots and limits, tested with the official SDK client.
 
 Text streaming over A2A is implemented in 0.5.0 (#257). AG-UI is another
 separate follow-up after M7, with its existing
