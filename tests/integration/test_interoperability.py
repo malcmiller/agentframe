@@ -226,7 +226,7 @@ async def test_card_declares_the_skill_call_extension_and_argument_schemas(
     assert list(schemas["greet"]["required"]) == ["name"]
     assert sorted(schemas.keys()) == sorted(s.id for s in card.skills)
     assert "apiKey" in card.security_schemes
-    assert not card.capabilities.streaming
+    assert card.capabilities.streaming
 
 
 # Structured skill calls
