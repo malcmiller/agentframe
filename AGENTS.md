@@ -491,8 +491,17 @@ target GA 1.0 explicitly. `FoundryAgentRegistry(project_endpoint=..., credential
 returns A2A-enabled agents only. Listed-agent to card mapping/filter implementation,
 authentication/RBAC and pagination remain open. Foundry User or higher enables
 incoming A2A; endpoint callers need Foundry Agent Consumer or another
-endpoint-access role. Verify registry-read permissions separately. Outbound
-Foundry A2A connections are a possible additional reference source, not decided.
+endpoint-access role. Verify registry-read permissions separately. Implemented
+(#244): `FoundryA2AToolRegistry(project_endpoint=, credential=, transport=None)`
+lists the project's `RemoteA2A` connections (all pages, `connections.list`):
+name = connection name, card URL = target + metadata `AgentCardPath`, else
+target + `/.well-known/agent-card.json`, or `/agentCard/v1.0` for a Foundry
+agent's `.../endpoint/protocols/a2a` target; other types ignored; no/unsafe
+target -> `DefinitionError` (target never echoed); connection credentials
+never requested; `card_headers` sends its token only under
+`{project_endpoint}/agents/`, else `{}`. Opt-in test
+`tests/integration/test_foundry_a2a_tools.py` (`AGENTFRAME_TEST_FOUNDRY_A2A_TOOLS=1`,
+`AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT`, `AGENTFRAME_FOUNDRY_A2A_CONNECTION`).
 Model deployments are not agent endpoints; no AgentFrame-to-Foundry deployment
 or tested registry integration is claimed.
 

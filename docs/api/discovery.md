@@ -7,7 +7,8 @@ are implemented (M8+ #83), and [`AgentDirectory`](#agentdirectory) with
 context manager and [`DiscoveredAgent`](#discoveredagent) (#84),
 [`find`](#agentdirectoryfind) (#85), and
 [`FoundryAgentRegistry`](#foundryagentregistry) with
-[`AgentRegistry.card_headers`](#agentregistrycard_headers) (#86); every other API
+[`AgentRegistry.card_headers`](#agentregistrycard_headers) (#86) and
+[`FoundryA2AToolRegistry`](#foundrya2atoolregistry) (#244); every other API
 here is unimplemented, and its
 confirmed names/defaults are decisions while unspecified signatures remain
 illustrative. Discovery/registry and remote A2A invocation are core
@@ -162,7 +163,8 @@ registry's `card_url`: never on redirects (which are refused), other agents'
 cards, later A2A calls or the client's defaults. The current caller's identity
 is never added, so the cached card is the same for every caller. A raised
 `DefinitionError` propagates from `get`/`refresh`. Keep the headers to your own
-source's origin; `FoundryAgentRegistry` refuses card URLs outside its project.
+source's origin; `FoundryAgentRegistry` refuses card URLs outside its project
+and `FoundryA2AToolRegistry` returns no headers for them.
 
 **Related:** [`AgentDirectory`](#agentdirectory),
 [`FoundryAgentRegistry`](#foundryagentregistry).
@@ -398,9 +400,10 @@ async def foundry_card_name(agent_name: str) -> str:
   scope. Foundry cards declare no security scheme even though the endpoint
   requires Entra ID, so startup cannot catch a missing entry: without one,
   calls are sent without credentials and Foundry rejects them.
-- Preview hosted-agent A2A passthrough and Foundry's
-  [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
-  are not read. A model deployment is not an agent endpoint; see
+- Preview hosted-agent A2A passthrough is not read, and neither are Foundry's
+  [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent):
+  list those with [`FoundryA2AToolRegistry`](#foundrya2atoolregistry). A model
+  deployment is not an agent endpoint; see
   [`FoundryModel`](models.md#foundrymodel) for inference.
 
 **Roles** (from Microsoft's [Foundry RBAC](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry)
@@ -435,6 +438,123 @@ AGENTFRAME_TEST_FOUNDRY_AGENTS=1 \
 
 **Related:** [chosen source and mapping boundaries](../design/discovery.md#sources-and-reference-format),
 [`AgentDirectory`](#agentdirectory).
+
+## `FoundryA2AToolRegistry`
+
+**Purpose / decision:** the remote agents a Microsoft Foundry project is
+connected to over A2A: its A2A connections (type `RemoteA2A`), which Foundry
+agents use as their
+[A2A tool](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent).
+They are read through the Foundry project connections API with the official
+`azure-ai-projects` package. Implemented (#244) and proven offline against a
+fake of the API; the opt-in real-project test is below. It mirrors
+[`FoundryAgentRegistry`](#foundryagentregistry), which lists the project's
+*own* agents with incoming A2A; use both to discover both sets. Read-only: it
+never creates or changes a connection. Needs the `foundry` extra; imported
+lazily, so `import agentframe` works without it.
+
+```text
+FoundryA2AToolRegistry(
+    *,
+    project_endpoint: str,
+    credential: AsyncTokenCredential,
+    transport: AsyncHttpTransport | None = None,
+)
+```
+
+| Parameter | Type | Required/default status | Meaning and constraints |
+| --- | --- | --- | --- |
+| `project_endpoint` | `str` | Required | `https://{account}.services.ai.azure.com/api/projects/{project}`. Absolute https without credentials, query or fragment; a trailing `/` is ignored. |
+| `credential` | `azure.core.credentials_async.AsyncTokenCredential` | Required | Entra credential for listing connections and fetching cards inside this project, for example `azure.identity.aio.DefaultAzureCredential()`. Stays yours: never closed by the registry. |
+| `transport` | `azure.core.pipeline.transport.AsyncHttpTransport \| None` | Optional; default `azure-core`'s aiohttp transport | For a test double or an outbound proxy. The registry's request timeouts are passed with every request, overriding the transport's own. |
+
+```python
+from azure.identity.aio import DefaultAzureCredential
+
+from agentframe import AgentDirectory, FoundryA2AToolRegistry
+
+
+async def connected_card_name(connection_name: str) -> str:
+    async with DefaultAzureCredential() as credential:
+        source = FoundryA2AToolRegistry(
+            project_endpoint=(
+                "https://contoso.services.ai.azure.com/api/projects/research"
+            ),
+            credential=credential,
+        )
+        async with AgentDirectory(sources=[source]) as agents:
+            return (await agents.get(connection_name)).card.name
+```
+
+**Behavior / failures:**
+
+- Construction does no I/O. Each `get`/`list` creates and closes its own async
+  `AIProjectClient`, and every request has the same 10-second connect and read
+  timeouts as `FoundryAgentRegistry`.
+- `list` asks for connections of type `RemoteA2A` and follows every page
+  (`nextLink`); connections of any other type are ignored, even if the service
+  returns them. It keeps the queried names. `get` reads one connection by name
+  and raises `DefinitionError` naming the project and connection when the
+  project has no such connection or it is not an A2A connection.
+- Each A2A connection maps to `AgentReference(name, card_url)` named after the
+  connection. The card URL is the connection's `target`, without a trailing
+  `/`, joined with the card path Foundry stores in the connection's metadata
+  under `AgentCardPath` (for example `/agentCard/v0.3`, as Microsoft's
+  `foundry-samples` connections set it). Without a card path, the card is at
+  the target plus the A2A well-known path `/.well-known/agent-card.json`,
+  except that a target that is a Foundry agent's A2A base path
+  (`.../api/projects/{project}/agents/{agent}/endpoint/protocols/a2a`, as
+  Foundry's guide says to set it) gets that agent's A2A 1.0 card,
+  `.../endpoint/protocols/a2a/agentCard/v1.0`, the same card
+  `FoundryAgentRegistry` uses. No other metadata is read. A card path that
+  points at an A2A 0.3 card fails in `AgentDirectory`, which needs a 1.0
+  interface.
+- A matching A2A connection without a target, or whose target is not an
+  absolute http(s) URL without credentials, query or fragment, raises
+  `DefinitionError`; the message names the connection but never echoes the
+  target. Plain `http` targets also need the directory's `allow_http_hosts`.
+- The credentials stored on a connection are never requested or used: the
+  registry calls the plain get and list operations, never
+  `getConnectionWithCredentials`. Discovery grants no authority, so configure
+  calls to these agents with `remotes=` (#92) as for any other source.
+- Any failed page, HTTP error or credential failure raises `DefinitionError`
+  with only the project, status or error class, never a partial list or `[]`.
+- [`card_headers`](#agentregistrycard_headers) returns
+  `Authorization: Bearer <token>` for `https://ai.azure.com/.default` from
+  `credential` only for card URLs inside this project (under
+  `{project_endpoint}/agents/`). Every other card, including a Foundry agent in
+  another project, is fetched with no headers, so the source's token never
+  leaves its project; such a card must be readable without credentials.
+
+**Roles** (from Microsoft's [Foundry RBAC](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry)
+and [A2A tool](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
+documentation, checked 2026-11-15):
+
+| Who | Needs | Role |
+| --- | --- | --- |
+| Whoever creates the A2A connection | Connection write on the project | **Foundry Project Manager** or higher. AgentFrame never does this. |
+| The registry's `credential`, to list connections | Project data actions (reading connections) | **Foundry User** on the project: the least-privileged built-in role with project data actions; the guide's developers "use pre-built connections" with it. Foundry Agent Consumer has only agent endpoint access. |
+| The registry's `credential`, to fetch cards inside this project | Data action `Microsoft.CognitiveServices/accounts/AIServices/endpoints/interact/action` | Included in **Foundry User**; **Foundry Agent Consumer** on its own. |
+
+The connection-read role is the expected one from the documented role
+definitions; verify it with the opt-in test below before relying on it.
+
+**Opt-in test** (`tests/integration/test_foundry_a2a_tools.py`, marked
+`foundry`, skipped unless enabled). Read-only: it lists the project's A2A
+connections, gets the named one and fetches its card through an
+`AgentDirectory`, sending no message. One-time setup, outside AgentFrame:
+add an A2A connection whose target serves an A2A 1.0 card (for example
+another Foundry agent in the same project, as the guide shows) and give your
+`az login` identity Foundry User on the project. Then:
+
+```bash
+AGENTFRAME_TEST_FOUNDRY_A2A_TOOLS=1 \
+  AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project> \
+  AGENTFRAME_FOUNDRY_A2A_CONNECTION=<connection-name> uv run pytest -m foundry
+```
+
+**Related:** [chosen source and mapping boundaries](../design/discovery.md#sources-and-reference-format),
+[`FoundryAgentRegistry`](#foundryagentregistry), [`AgentDirectory`](#agentdirectory).
 
 ## `AgentDirectory`
 

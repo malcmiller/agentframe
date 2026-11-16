@@ -101,6 +101,9 @@ if TYPE_CHECKING:
     from agentframe.discovery.foundry import (
         FoundryAgentRegistry as FoundryAgentRegistry,
     )
+    from agentframe.discovery.foundry_connections import (
+        FoundryA2AToolRegistry as FoundryA2AToolRegistry,
+    )
     from agentframe.models.foundry import FoundryModel as FoundryModel
     from agentframe.models.ollama import OllamaModel as OllamaModel
     from agentframe.security.entra import EntraIDAuth as EntraIDAuth
@@ -203,13 +206,17 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    # Provider adapters, FoundryAgentRegistry and EntraIDAuth are imported on
+    # Provider adapters, the Foundry registries and EntraIDAuth are imported on
     # first use so that ``import agentframe`` works without their optional
     # extras installed.
     if name == "FoundryAgentRegistry":
         from agentframe.discovery.foundry import FoundryAgentRegistry
 
         return FoundryAgentRegistry
+    if name == "FoundryA2AToolRegistry":
+        from agentframe.discovery.foundry_connections import FoundryA2AToolRegistry
+
+        return FoundryA2AToolRegistry
     if name == "FoundryModel":
         from agentframe.models.foundry import FoundryModel as FoundryModel
 

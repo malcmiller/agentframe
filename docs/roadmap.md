@@ -551,7 +551,8 @@ needs the `agents/read` data action, which Foundry Agent Consumer lacks;
 Foundry User is the least-privileged built-in role for the registry identity,
 to be verified with the opt-in test. Foundry's
 [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
-are a possible additional reference source, not a selected registry contract.
+are a second source: `FoundryA2AToolRegistry` (#244) lists a project's
+`RemoteA2A` connections, expected to need Foundry User to read.
 
 Platform references:
 

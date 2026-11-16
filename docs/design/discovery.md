@@ -128,9 +128,20 @@ Anonymous/API-key access to those A2A endpoints is not implied by model
 API-key support.
 
 Foundry [outbound A2A connections](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/agent-to-agent)
-may be an additional source of references; this is an option, not a decided
-adapter behavior. The registry remains read-only M8+ scope and does not enable
-A2A, publish agents or deploy AgentFrame agents to Foundry. A model deployment
+are a second Foundry source (#244): `FoundryA2AToolRegistry` lists the
+project's `RemoteA2A` connections with `connections.list` (all pages), names
+each reference after its connection and builds its card URL from the
+connection's `target` joined with the card path Foundry keeps in the
+connection metadata (`AgentCardPath`, as Microsoft's samples set it).
+Without one, the card is at the target plus `/.well-known/agent-card.json`,
+except that a target that is a Foundry agent's A2A base path (which the guide
+says to use without a card path, since Foundry resolves the card) maps to that
+agent's `/agentCard/v1.0` card. Connection credentials and other metadata are
+never read; the registry's
+token goes only to cards inside its own project, and listing is expected to
+need Foundry User. Both registries remain read-only M8+ scope and do not
+enable A2A, create connections, publish agents or deploy AgentFrame agents to
+Foundry. A model deployment
 is not an agent endpoint; this is distinct from `FoundryModel`'s OpenAI v1
 Responses path. The credential is an `azure-core` `AsyncTokenCredential`.
 

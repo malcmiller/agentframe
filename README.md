@@ -47,7 +47,7 @@ The extras add what a deployment needs:
 | --- | --- |
 | `server` | Uvicorn, for the `agentframe run` and `agentframe dev` commands. |
 | `ollama` | `OllamaModel`, for local Llama through Ollama. |
-| `foundry` | `FoundryModel` and `FoundryAgentRegistry`, for Microsoft Foundry. |
+| `foundry` | `FoundryModel`, `FoundryAgentRegistry` and `FoundryA2AToolRegistry`, for Microsoft Foundry. |
 | `entra` | `EntraIDAuth` and `OnBehalfOf`, for Microsoft Entra ID. |
 
 Pre-1.0: public APIs may change in minor releases; changes are listed in the

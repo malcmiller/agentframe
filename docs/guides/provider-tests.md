@@ -57,10 +57,27 @@ with OpenID Connect, so the repository stores no secret; Foundry calls cost
 money, so run it sparingly. There is no Ollama job, since the model download
 is large.
 
-The `FoundryAgentRegistry` test needs its own variables (see
-[`FoundryAgentRegistry`](../api/discovery.md#foundryagentregistry) and
+The `FoundryAgentRegistry` and `FoundryA2AToolRegistry` tests need their own
+variables (see [`FoundryAgentRegistry`](../api/discovery.md#foundryagentregistry),
+[`FoundryA2AToolRegistry`](../api/discovery.md#foundrya2atoolregistry) and
 [AGENTS.md](../../AGENTS.md#real-provider-tests-opt-in-local-only)), so the
-workflow skips it.
+workflow skips them. Both run locally after `az login`:
+
+```bash
+AGENTFRAME_TEST_FOUNDRY_AGENTS=1 \
+    AGENTFRAME_FOUNDRY_PROJECT_ENDPOINT=<project-endpoint> \
+    AGENTFRAME_FOUNDRY_A2A_AGENT=<agent-name> \
+    AGENTFRAME_TEST_FOUNDRY_A2A_TOOLS=1 \
+    AGENTFRAME_FOUNDRY_A2A_CONNECTION=<connection-name> \
+    uv run pytest -m foundry tests/integration/test_foundry_agents.py \
+    tests/integration/test_foundry_a2a_tools.py
+```
+
+The `FoundryA2AToolRegistry` test only reads: it lists the project's A2A
+connections and fetches the named connection's card, sending no message. It
+has not yet run against a real project, so the **Foundry User** role it is
+expected to need for reading connections is unconfirmed; record the result
+here after the first run.
 
 ### One-time setup
 
