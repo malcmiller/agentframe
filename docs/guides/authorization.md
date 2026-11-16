@@ -457,7 +457,7 @@ Successful source reconciliation removes entries from new eligibility but does
 not automatically cancel tasks or promise immediate revocation before TTL/source
 refresh. Source failures are not proof of removal.
 
-Future [AG-UI streaming](../design/streaming.md) uses the same explicit ingress access,
+[AG-UI streaming](../design/streaming.md) (#258) uses the same explicit ingress access,
 caller/tenant isolation and action boundaries. Frontend thread/run IDs,
 messages/state/tools or returned tool results never establish a principal or
 authority. Protocol tool visibility does not grant frontend execution or

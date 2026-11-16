@@ -29,7 +29,9 @@ Microsoft Agent Framework or similar packages.
 - **Conversation history:** multi-turn `ctx.generate` with a pluggable
   `StateStore`, kept per verified caller and A2A `contextId`.
 - **Streaming:** opt-in text streaming from Ollama and Foundry over A2A
-  `SendStreamingMessage`, with output checks and limits still applied.
+  `SendStreamingMessage`, with output checks and limits still applied, and an
+  optional AG-UI endpoint at `/ag-ui` streaming run events, text, tool status
+  and safe errors to frontends.
 - **Model routing:** opt-in routing of free-text requests to skills.
 - **Multi-agent composition:** `Remote` calls carrying deadlines, budgets and
   identity; `agentframe dev` and `agentframe compose`.
@@ -60,6 +62,7 @@ The extras add what a deployment needs:
 | `entra` | `EntraIDAuth` and `OnBehalfOf`, for Microsoft Entra ID. |
 | `mcp` | `MCPClient`, offering an MCP server's tools to `ctx.generate`, and `AgentApp(mcp=MCPConfig(...))`, serving allowlisted skills as MCP tools. |
 | `otel` | The OpenTelemetry API, for `TracingConfig`. |
+| `ag-ui` | The AG-UI endpoint for frontends, `AgentApp(ag_ui=AGUIConfig(enabled=True))`. |
 
 Pre-1.0: public APIs may change in minor releases; changes are listed in the
 [changelog](https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md).

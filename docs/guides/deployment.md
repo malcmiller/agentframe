@@ -84,6 +84,10 @@ CMD ["agentframe", "run", "myagent.app:create_app", "--host", "0.0.0.0", \
   log pipelines collect it as is. See
   [JSON log records](../api/hosting.md#json-log-records).
 - Never copy secrets, `.env` files or development keys into the image.
+- Serving a frontend through the [AG-UI endpoint](../api/streaming.md#ag-ui-endpoint)
+  (`AgentApp(ag_ui=AGUIConfig(enabled=True))` at `/ag-ui`) needs the `ag-ui`
+  extra too. Its runs stream server-sent events, so disable response
+  buffering in any proxy in front of it; a client disconnect cancels the run.
 
 ## TLS termination and `public_url`
 

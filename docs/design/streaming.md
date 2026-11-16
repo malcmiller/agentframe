@@ -1,15 +1,15 @@
 # Streaming and AG-UI
 
 **Confirmed direction:** results are complete and validated by default.
-**Implemented in 0.5.0 (#257):** opt-in text streaming, from the Ollama and
-Foundry adapters through the runtime to A2A `SendStreamingMessage`; see
-[A2A text streaming (implemented)](#a2a-text-streaming-implemented). Streaming
-should also support **AG-UI** (#258, not yet implemented) through a
-scoped optional agent-to-frontend protocol adapter. A2A/native Agent Cards remain
-first-class; MCP remains a separate tool interface. No UI framework, other agent
-framework, automatic orchestration, or blanket AG-UI conformance is authorized.
-The [surface reference](../api/streaming.md) records decided configuration and
-still-open event/wire details.
+**Implemented in 0.5.0:** opt-in text streaming, from the Ollama and Foundry
+adapters through the runtime to A2A `SendStreamingMessage` (#257; see
+[A2A text streaming (implemented)](#a2a-text-streaming-implemented)), and a
+scoped optional **AG-UI** endpoint for frontends (#258; see
+[AG-UI endpoint (implemented)](#ag-ui-endpoint-implemented)). A2A/native Agent
+Cards remain first-class; MCP remains a separate tool interface. No UI
+framework, other agent framework, automatic orchestration, or blanket AG-UI
+conformance is authorized. The [surface reference](../api/streaming.md)
+documents both.
 
 ## A2A text streaming (implemented)
 
@@ -46,7 +46,51 @@ Implemented in 0.5.0 (#257) with no new dependency. Decisions:
   `capabilities.streaming`, which also enables the SDK's `SubscribeToTask`.
 - **Disconnect.** A2A clients that disconnect do not cancel the task (A2A
   semantics; `CancelTask` does). The AG-UI rule "disconnect cancels" below
-  applies to the frontend adapter only.
+  applies to the frontend endpoint only.
+
+## AG-UI endpoint (implemented)
+
+Implemented in 0.5.0 (#258) with the official `ag-ui-protocol` SDK
+(`>=1.0.0,<2`, AG-UI protocol 1.0) behind the optional `ag-ui` extra; it
+depends only on Pydantic. Decisions:
+
+- **Same host, same checks.** `AgentApp(ag_ui=AGUIConfig(enabled=True))`
+  serves `POST /ag-ui` (HTTP + SSE binding). Size, authentication, the
+  caller's rate limit, input validation, shutdown and the shared run slots
+  refuse with HTTP errors before any event; each run then goes through the
+  same `Runtime` as `/a2a`, so permissions, the execution policy and every
+  limit apply unchanged. Not on the Agent Card.
+- **Free text only.** The frontend's `user` and `assistant` text messages are
+  the untrusted conversation the `SkillRouter` (or `default_skill`) sees;
+  enabling AG-UI without either is a `DefinitionError`. Other message roles,
+  frontend tools, state, context, forwarded properties and resume entries are
+  not used, never promoted to trusted instructions.
+- **Identity.** `threadId`/`runId` are echoed on lifecycle events only; the
+  run has its own server-generated `invocation_id` (in event `metadata`), and
+  a verified caller's `threadId` keys its server-side history per caller.
+- **Event profile.** `RUN_STARTED` (with `protocolVersion`); text pieces as
+  `TEXT_MESSAGE_*`; each offered tool call as `TOOL_CALL_START` (registered
+  name, a new call ID) and `TOOL_CALL_END`, never arguments or results; a
+  `str` result the latest streamed message does not end with, or a router's question, as one
+  whole message; other results as `RUN_FINISHED.result` in JSON mode;
+  `RUN_ERROR` with the safe message and the error class name as `code`.
+  The runtime reports tool status through a package-internal hook, so no
+  public event union was needed.
+- **Whole-output checks, limits, no retry after release:** as for A2A above.
+  Events are written straight to the connection, so a slow consumer applies
+  backpressure within the deadline instead of growing a buffer.
+- **Disconnect cancels; no reconnect or resume.** The endpoint watches the
+  connection while the run is quiet and cancels the run as soon as the client
+  goes; no terminal event is sent to a closed stream. Shutdown cancels runs
+  still open after the grace with a `cancelled` `RUN_FINISHED`, closing open
+  messages and tool calls first, as the lifecycle specification requires.
+- **Not yet:** frontend tools, shared state, interrupts/resume, reasoning
+  events, usage on terminal events, run deduplication and other transports.
+  Each needs its own scope decision.
+
+Every event in the tests is parsed with the SDK's own `Event` union, so a
+schema-invalid stream fails; there is no official Python AG-UI client to run
+against yet.
 
 ## Protocol scope and sources
 
@@ -65,20 +109,18 @@ versions must not be assumed identical.
 The [official Python SDK overview](https://docs.ag-ui.com/sdk/python/core/overview.md)
 identifies `ag-ui-protocol` and the `ag_ui.core` types. The
 [official SDK manifest](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/python/pyproject.toml)
-currently declares Pydantic as its runtime dependency, not a major agent
-framework. Reusing these native types/encoding is an appropriate optional
-protocol dependency to evaluate; do not install it now, copy its schemas,
-wrap another agent framework, or require model-free/A2A-only users to install a
-frontend integration. Re-check the dependency graph when selecting a version.
+declares Pydantic as its runtime dependency, not a major agent framework.
+AgentFrame reuses its native types and encoder (1.0.0 selected in #258) as an
+optional protocol dependency; model-free/A2A-only users never install it.
 
-## Initial future adapter scope
+## Initial adapter scope
 
-**Decided configuration:** `AgentApp(..., ag_ui=AGUIConfig(enabled=True))`
+**Decided and implemented (#258):** `AgentApp(..., ag_ui=AGUIConfig(enabled=True))`
 serves `/ag-ui` on the same server under the same auth, permissions and limits.
 The initial profile streams run start/finish, text deltas, tool names/status
-(not raw arguments by default), and safe errors. Typed final-result serialization needs a
-documented mapping; partial JSON is not a validated structured result.
-This is a future target, not a claim that any adapter already exists.
+(not raw arguments), and safe errors. A typed (non-text) result is
+`RUN_FINISHED.result` in JSON mode, sent only after validation; partial JSON is
+never a validated structured result.
 
 Do not automatically enable frontend tool execution, shared-state persistence/
 synchronization, human approval interrupts, replay/resume, multimodality,
@@ -87,10 +129,11 @@ scope decisions and conformance work. Application-owned human approval
 workflows remain outside first-release built-in pause/resume; A2A tasks and
 AG-UI run events do not supply that workflow or its storage.
 
-### Candidate runtime-to-event mapping
+### Runtime-to-event mapping
 
-The names here are native AG-UI events, not proposed AgentFrame methods.
-Exact runtime event types/mappings remain open; the configuration above is decided.
+The names here are native AG-UI events, not AgentFrame methods. The
+implemented mapping is in [AG-UI endpoint (implemented)](#ag-ui-endpoint-implemented);
+this table keeps the release and trust constraints it follows.
 
 | Managed runtime fact | Candidate AG-UI representation | Release/trust constraints |
 | --- | --- | --- |
@@ -127,17 +170,17 @@ other transport support is not implied by the introduction's broader examples.
 Cancellation is distinct from disconnect. The
 [lifecycle specification](https://docs.ag-ui.com/spec/1.0/events/lifecycle.md)
 distinguishes producer-reported cancellation from a truncated consumer stream.
-**Decided:** client disconnect cancels the run; no reconnect/resume in the first
-streaming version. Cancellation propagates to managed work, without promising
-rollback or zero remote charges; a disconnected client may not receive a terminal
-event. Exact cancellation control, terminal-event mapping, bounded buffering,
-slow-consumer/backpressure behavior and write timeouts remain open.
-The host already has a 30-second shutdown grace by default; exact stream
-drain/terminal behavior within that bound remains to specify.
-Do not invent a cancellation endpoint or guarantee rollback/free cancellation.
-Clean termination must follow the selected version's ordering rules.
+**Decided and implemented (#258):** client disconnect cancels the run; no
+reconnect/resume. Cancellation propagates to managed work, without promising
+rollback or zero remote charges; a disconnected client receives no terminal
+event. There is no cancellation endpoint. Events are written straight to the
+connection (backpressure, no unbounded buffer); the run's deadline bounds a
+slow consumer, and no separate write timeout is set. At shutdown, runs still
+open after the grace (30 seconds by default) are cancelled and closed in
+order with a `cancelled` `RUN_FINISHED`, whether the app or the server
+(Uvicorn under `agentframe run`) cancels them.
 
-Future AG-UI streaming does not automatically enable model streaming on every
+AG-UI streaming does not automatically enable model streaming on every
 deployment or make MCP async behavior conformant; A2A streaming is advertised
 because it is implemented and tested (#257).
 Each adapter must separately implement and verify what it advertises.
@@ -204,25 +247,28 @@ zero or imply a hard remote billing guarantee.
 ## Open contracts and delivery gate
 
 `AGUIConfig(enabled=True)`, `AgentApp(ag_ui=...)`, `/ag-ui`, the initial event
-profile, disconnect cancellation and no reconnect/resume are decided.
+profile, disconnect cancellation and no reconnect/resume are implemented
+(#258), pinned to AG-UI 1.0 over HTTP/SSE with `ag-ui-protocol>=1.0.0,<2`.
 The runtime streaming surface (`ctx.generate(stream=True)`,
-`Runtime.run(on_text=)`, `StreamingModel`) is implemented (#257); no AG-UI
-event union, structured-result envelope or explicit
-cancellation method has been selected. A future adapter consumes managed execution events, not SDK/provider
-events that bypass validation/policy.
+`Runtime.run(on_text=)`, `StreamingModel`) is implemented (#257); no public
+AG-UI event union or explicit cancellation method was needed. The endpoint
+consumes managed execution facts (text pieces, tool status, the validated
+result), never SDK/provider events that bypass validation/policy, and maps the
+safe error hierarchy to `RUN_ERROR`, never provider error payloads.
 `Runtime.run` / `RunResult`, `ctx.generate(..., output=Summary)` and
-`ctx.generate(..., tools=[...])` are decided complete-result surfaces.
-Reuse the safe error hierarchy
-with a future verified event mapping, not provider error payloads.
+`ctx.generate(..., tools=[...])` stay the complete-result surfaces.
 
-Before delivery, pin versions/binding and implement the decided feature profile;
-native/runtime ID mapping, validated router argument extraction and typed
-result serialization, admission/tenant isolation, byte/concurrency limits,
-policy gating, cancellation/shutdown details and backpressure remain to specify.
-Frontend-executed tools and shared state are later, explicit opt-in only.
-Prove disconnect cancellation and no reconnect/resume alongside ordering/errors/truncation, refusal/
-incomplete-result behavior, safe side effects, isolation and no secrets/private
-reasoning with an independent AG-UI client. Do not advertise absent A2A features.
+The delivery gate was met with tests over real localhost HTTP whose events are
+parsed by the official SDK's own `Event` types: lifecycle ordering, text
+deltas, tool names/status without arguments or results, authentication and
+input refusals before any event, permission denial, shared rate limit and
+run slots, response-size limits, whole-output-check buffering and denial,
+generic skill errors with no secrets, disconnect cancellation with no
+terminal event, and shutdown's cancelled outcome. There is no official
+Python AG-UI client yet; checking against the TypeScript client remains
+worthwhile before claiming wider conformance. Frontend-executed tools,
+shared state, interrupts/resume and terminal usage are later, explicit opt-in
+only. Do not advertise absent A2A features.
 
 See [delivery milestones and post-M7 follow-ups](../roadmap.md#delivery-milestones),
 [runtime reference](../api/runtime.md), [model contracts](../api/models.md),

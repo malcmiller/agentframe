@@ -509,7 +509,7 @@ on AgentFrame peers. `tests/integration/test_multi_agent_release.py` (#97)
 proves this with [`examples/multi_agent`](../../examples/multi_agent) in
 separate `agentframe run` processes; the Foundry and on-behalf-of opt-in tests
 await runs against real resources. See the [core release plan](../roadmap.md#next-core-release-multi-agent-a2a-composition-m8).
-Future [AG-UI streaming](streaming.md) is another scoped direction; it does not
+[AG-UI streaming](streaming.md) (#258) is another scoped surface; it does not
 move multi-agent composition into M7 or add frontend tools or built-in approval
 pause/resume here. Revisit durable workflows after this release based on real
 usage, not now. Long work uses native A2A tasks with an in-memory default and

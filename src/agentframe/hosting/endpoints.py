@@ -1,4 +1,8 @@
-"""The app's HTTP endpoints and the host's checks around the SDK's A2A endpoint."""
+"""The app's HTTP endpoints and the host's checks shared by its agent endpoints.
+
+``caller_check`` (size and authentication), ``rate_limited`` and ``admit``
+are used, in that order, by ``/a2a``, ``/mcp`` and ``/ag-ui``.
+"""
 
 from collections.abc import Awaitable, Callable
 
@@ -12,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 
 from agentframe.discovery.identity import UserToken, UserTokenExchange
 from agentframe.errors import AuthenticationError
-from agentframe.hosting.admission import RunAdmission
+from agentframe.hosting.admission import RunAdmission, RunSlot
 from agentframe.hosting.card import SKILL_CALL_EXTENSION_URI
 from agentframe.hosting.dedup import FindTask, MessageDeduplicator
 from agentframe.hosting.host import HostConfig
@@ -79,10 +83,9 @@ def guard_a2a_endpoint(
         if not await _is_send_message(request):
             return await sdk_endpoint(request)
         principal: Principal | None = request.state.principal
-        if rate_limiter is not None:
-            wait = rate_limiter.try_acquire(principal.id if principal else None)
-            if wait is not None:
-                return too_many_requests(wait)
+        refusal = rate_limited(rate_limiter, principal)
+        if refusal is not None:
+            return refusal
         message = await _read_message(request)
         # Anonymous callers share one namespace, so a guessable messageId
         # would hand one of them another's task.
@@ -96,14 +99,9 @@ def guard_a2a_endpoint(
             return await admit_and_send(request)
 
     async def admit_and_send(request: Request) -> Response:
-        if lifecycle.shutting_down:
-            telemetry.record_rejection(agent=card.name, reason="shutting_down")
-            return unavailable("The agent is shutting down; retry later.")
-        slot = admission.try_admit()
-        if slot is None:
-            # Overload fails fast: the caller retries rather than waiting here.
-            telemetry.record_rejection(agent=card.name, reason="busy")
-            return unavailable("The agent is busy; retry later.")
+        slot = admit(admission, lifecycle, telemetry, card.name)
+        if isinstance(slot, Response):
+            return slot
         request.state.run_slot = slot
         try:
             with lifecycle.track_send():
@@ -162,6 +160,45 @@ def caller_check(
         return request
 
     return check
+
+
+def rate_limited(
+    rate_limiter: CallerRateLimiter | None, principal: Principal | None
+) -> Response | None:
+    """Take one request from the caller's allowance, or refuse with HTTP 429.
+
+    Shared by every request that runs a skill: an A2A ``SendMessage``, an
+    MCP ``tools/call`` and an AG-UI run.
+
+    Returns:
+        ``None`` when the request may go on; otherwise the 429 response.
+    """
+    if rate_limiter is None:
+        return None
+    wait = rate_limiter.try_acquire(principal.id if principal else None)
+    return too_many_requests(wait) if wait is not None else None
+
+
+def admit(
+    admission: RunAdmission, lifecycle: Lifecycle, telemetry: Telemetry, agent: str
+) -> RunSlot | Response:
+    """Take a run slot, or refuse with HTTP 503 when shutting down or busy.
+
+    Shared by every request that runs a skill. Overload fails fast: the
+    caller retries rather than waiting here. ``telemetry`` counts each
+    refusal under the agent's name.
+
+    Returns:
+        The run's slot, or the 503 response.
+    """
+    if lifecycle.shutting_down:
+        telemetry.record_rejection(agent=agent, reason="shutting_down")
+        return unavailable("The agent is shutting down; retry later.")
+    slot = admission.try_admit()
+    if slot is None:
+        telemetry.record_rejection(agent=agent, reason="busy")
+        return unavailable("The agent is busy; retry later.")
+    return slot
 
 
 def too_many_requests(wait: float) -> Response:

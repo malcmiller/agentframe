@@ -10,17 +10,18 @@ binding/TLS and external infrastructure remain application responsibilities.
 **Purpose / decision:** compose an agent and common runtime with native A2A
 hosting and optional MCP, rather than require a server subclass. Use one server,
 one shared runtime and an endpoint per caller audience, not per skill: A2A for
-agent callers, MCP for LLM apps/tools, and later AG-UI for frontends.
+agent callers, MCP for LLM apps/tools, and optional AG-UI for frontends.
 
 **Constructor status:** implemented in M2 (#3, #6) as
 `AgentApp(*, agent, host, runtime=None, services=None, authorization=None,
 tool_authorization=None, policy=None, router=None, default_skill=None, a2a=None,
-directory=None, remotes=None, default_remote=None, resources=(), mcp=None)`, with `policy=`
+directory=None, remotes=None, default_remote=None, resources=(), tracing=None,
+mcp=None, ag_ui=None)`, with `policy=`
 from M7 #77, `a2a=` from M7 #75, `directory=` from M8+ #87, `remotes=` from #92
 (`OnBehalfOf` entries #93), `default_remote=` from M10 #175, `default_skill=`
-from #270, `tool_authorization=` from #266, `resources=` from #264 and `mcp=`
-from #254; `ag_ui=` arrives later. `services=` and
-`ag_ui=` are decided; unspecified omission details remain illustrative.
+from #270, `tool_authorization=` from #266, `resources=` from #264, `mcp=`
+from #254 and `ag_ui=` from #258. Unspecified omission details remain
+illustrative.
 
 ```text
 AgentApp(
@@ -54,7 +55,7 @@ AgentApp(
 | `default_remote` | [`Service`](authorization.md#service)` \| `[`OnBehalfOf`](authorization.md#onbehalfof)` \| None` | Optional; only without `runtime=`; default `None` (M10 #175) | How to authenticate to [skill-catalog](orchestration.md#default_remote) agents without a `remotes=` entry, only where their card requires credentials it meets; never used for `Remote` parameters. It is sent to every such registered agent (token audience or shared key), so read the [security note](orchestration.md#default_remote). An `OnBehalfOf` default needs `auth=EntraIDAuth(client_id=..., client_credential=...)`, alone or as the one such member of [`AnyOf`](authorization.md#anyof), else `DefinitionError` at construction. |
 | `resources` | Sequence of async context managers or objects with `async aclose()` | Optional; default `()` (#264) | Application-owned objects that live as long as the server, such as models, Azure credentials or `httpx.AsyncClient`s. See [app-owned resources](#app-owned-resources). Not a list or tuple, an item that is neither, or an object listed twice raises `DefinitionError` at construction. |
 | `tracing` | [`TracingConfig`](configuration.md#tracingconfig)` \| None` | Optional; only without `runtime=`; default `None` (0.5.0 #248) | OpenTelemetry spans and metrics for hosted runs, including a server span continuing the caller's `traceparent` and admission-rejection counts; see the [tracing guide](../guides/tracing.md). With `runtime=`, pass it to that `Runtime` instead, else `DefinitionError`. |
-| `ag_ui` | `AGUIConfig` | Later explicit opt-in, off unless enabled | `AGUIConfig(enabled=True)` serves `/ag-ui` with the same auth/permissions/limits. |
+| `ag_ui` | [`AGUIConfig`](streaming.md#aguiconfig)` \| None` | Optional; default `None` serves nothing (#258) | `AGUIConfig(enabled=True)` serves `POST /ag-ui` for frontends with the same authentication, rate limit, run slots, permissions and limits as `/a2a`; see the [AG-UI endpoint](streaming.md#ag-ui-endpoint). Needs `router` or `default_skill` and the `ag-ui` extra, else `DefinitionError` at construction. |
 
 Supply an instance of [`Echo`](agents.md#agent) for this single-skill
 composition. `auth` is an explicit `Authenticator`;
@@ -472,10 +473,10 @@ For [discovery](discovery.md#agentdirectory), the app opens a `directory=`
 that is not open yet and closes it after shutdown; see
 [app-owned resources](#app-owned-resources). Directory refresh/removal is not A2A task cancellation or agent
 deployment.
-Future [AG-UI streaming](streaming.md) is a separate optional frontend adapter;
-`ag_ui=AGUIConfig(enabled=True)` and `/ag-ui` are decided, not implemented
-conformance. Disconnect cancels the AG-UI run with no first-version resume;
-this does not redefine A2A stream-disconnect task semantics.
+[AG-UI streaming](streaming.md#ag-ui-endpoint) is a separate optional frontend
+endpoint (#258): `ag_ui=AGUIConfig(enabled=True)` serves `/ag-ui`, not on the
+Agent Card. Disconnect cancels an AG-UI run, with no reconnect or resume; this
+does not redefine A2A stream-disconnect task semantics.
 
 ### App-owned resources
 

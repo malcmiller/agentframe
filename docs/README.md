@@ -4,8 +4,9 @@ These documents record decided design contracts and still-open API details,
 not a stable agent SDK. The repository implements milestones M0 to M10;
 version 0.3.0 is
 [published on PyPI](https://pypi.org/project/agentframe-py/0.3.0/) as
-`agentframe-py`. Features not yet implemented (MCP, AG-UI) remain design
-proposals; optional OpenTelemetry tracing is implemented for 0.5.0. See the
+`agentframe-py`. Features not yet implemented (MCP) remain
+design proposals; optional OpenTelemetry tracing and the AG-UI endpoint are
+implemented for 0.5.0. See the
 [setup and check commands](../CONTRIBUTING.md).
 
 ## Proposed API reference
@@ -25,7 +26,7 @@ unresolved defaults or interfaces.
 | Evaluation (M9, 0.3.0) | [Cases, datasets, local and A2A targets, scorers, rubric judge, reports and `agentframe eval`](api/evaluation.md) |
 | Model-planned orchestration (M10, 0.3.0) | [Remote skill catalog: `remote_skills`, `RemoteSkill`, `SkillCatalog`, `default_remote`; remote skills as model tools; `Plan`, `PlanStep`, `SkillCatalog.check`; `RunContext.plan` and `run_plan`, `PlanResult`, `StepResult`; plan logs and usage; permissions, tool checks and plan checks](api/orchestration.md) |
 | MCP client (0.5.0) | [`MCPClient`, `MCPClient.tools`, `connect`, `aclose`, `MCPTool`, `MCPServerError`; MCP server tools offered to `ctx.generate` with permissions, tool checks, timeouts and result bounds](api/mcp.md) |
-| Streaming | [Runtime streaming surface and optional AG-UI adapter](api/streaming.md) |
+| Streaming (0.5.0) | [Runtime streaming surface, `AGUIConfig` and the optional AG-UI endpoint](api/streaming.md) |
 
 ## Roadmap, guides and design discussion
 
@@ -67,7 +68,7 @@ behavior works, and `design/` records rationale and proposed designs.
 | [Orchestration](design/orchestration.md) | M10, complete, in 0.3.0 (#166-#176): remote skill catalog from Agent Cards, remote skills as model tools, model-made validated execution plans run with existing limits, identity and policy; revisits two M8+ scope cuts; decisions confirmed 2026-11-13. |
 | [MCP skills](design/mcp-skills.md) | Optional allowlisted skill publication, shared A2A/MCP hosting, schema mapping, and protocol boundaries. |
 | [Prompt safeguarding](design/prompt-safeguarding.md) | Shared responsibilities, content-policy hooks, data egress, and prompt-injection limitations. |
-| [Streaming and AG-UI](design/streaming.md) | Future scoped frontend-protocol adapter, primary-source event/transport research, trust/policy boundaries and open delivery contracts. |
+| [Streaming and AG-UI](design/streaming.md) | A2A text streaming and the scoped AG-UI 1.0 endpoint (both in 0.5.0), primary-source event/transport research, trust/policy boundaries and what remains open. |
 | [Tracing](design/tracing.md) | Optional OpenTelemetry tracing and metrics (implemented for 0.5.0, #248): configuration, span boundaries, safe metadata, and correlation. |
 
 Read the roadmap first for product boundaries, or use agent examples for an
@@ -82,13 +83,13 @@ specification are not a promise of automatic compatibility with future releases.
 The [reviewed release decisions](roadmap.md#reviewed-release-decisions)
 include built-in opt-in model routing plus custom routers, first-release typed
 structured outputs/bounded tools and complete validated results. Opt-in text
-streaming over A2A arrives in 0.5.0, with AG-UI support planned; discovery/remote invocation belongs to
+streaming over A2A and an optional AG-UI endpoint arrive in 0.5.0; discovery/remote invocation belongs to
 the next core multi-agent release after M7. Applications own human
 approval workflows; none of those protocol surfaces implies built-in pause/resume.
 The [audience/request-style design](design/mcp-skills.md#a2a-request-styles-and-extension-boundary)
 uses one server/shared runtime, not per-skill routes: preferred structured A2A
 selection via a declared/activated extension, free-text routing with
-input-required clarification, optional allowlisted MCP and AG-UI later.
+input-required clarification, optional allowlisted MCP and optional AG-UI.
 The extension wire format (M2) and the built-in `ModelRouter` with
 input-required clarification (M6) are implemented.
 Additional confirmed contracts are the single `ctx.generate` text/`output=`/
@@ -120,7 +121,7 @@ service modes, shared remaining budget/deadline and maximum 5 hops constrain
 native A2A calls. No orchestration helpers in M8+; use Python TaskGroup. M10
 (0.3.0) adds opt-in model-planned orchestration: remote
 skills as model tools and checked plans ([guide](guides/orchestration.md)).
-The later streaming contract is `AGUIConfig` via `ag_ui=` at `/ag-ui`, tool
+The streaming contract (0.5.0) is `AGUIConfig` via `ag_ui=` at `/ag-ui`, tool
 names/status rather than raw arguments, whole-answer buffering when needed,
 disconnect cancellation and no reconnect/resume. Revisit durable workflows only
 after multi-agent usage; persistent A2A task storage is not workflow resumption.

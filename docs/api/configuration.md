@@ -140,7 +140,7 @@ subtypes are implemented. Never silently truncate, discard
 history, disable validation, or switch models to fit a limit. Accounting works
 without tracing and is not an unqualified financial cap or free-cancellation
 guarantee.
-Future [AG-UI streaming](streaming.md) must preserve these limits during
+[AG-UI streaming](streaming.md) preserves these limits during
 buffering/backpressure and distinguish disconnect/cancellation. Safe local
 execution/usage metadata uses `Runtime.run` / `RunResult`, independent of tracing.
 M8+ propagates remaining deadlines and depth (implemented #89, with

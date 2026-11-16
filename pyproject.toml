@@ -54,6 +54,7 @@ mcp = ["mcp>=2.3.0,<3"]
 redis = ["redis>=8.1.0,<9"]
 # The API only: the application installs and configures the SDK and exporters.
 otel = ["opentelemetry-api>=1.45.2,<2"]
+ag-ui = ["ag-ui-protocol>=1.0.0,<2"]
 
 [project.scripts]
 agentframe = "agentframe.cli:main"
@@ -77,7 +78,7 @@ dev = [
     # Imported directly by the tests, so pinned rather than left transitive.
     "httpx2==2.16.0",
     "azure-core==1.41.0",
-    "agentframe-py[ollama,foundry,anthropic,entra,mcp,redis,otel]",
+    "agentframe-py[ollama,foundry,anthropic,entra,mcp,redis,otel,ag-ui]",
     # Tests RedisMessageDedupStore against redis-py without a Redis server.
     "fakeredis==2.40.0",
     # The tests record spans and metrics with the SDK's in-memory exporters.

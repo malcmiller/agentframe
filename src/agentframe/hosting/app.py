@@ -71,7 +71,13 @@ from agentframe.hosting.endpoints import (
     health,
     readiness_endpoint,
 )
-from agentframe.hosting.host import A2AConfig, HostConfig, MCPConfig, warn_if_insecure
+from agentframe.hosting.host import (
+    A2AConfig,
+    AGUIConfig,
+    HostConfig,
+    MCPConfig,
+    warn_if_insecure,
+)
 from agentframe.hosting.lifecycle import Lifecycle
 from agentframe.hosting.model_router import ModelRouter
 from agentframe.hosting.rate_limit import CallerRateLimiter
@@ -94,11 +100,15 @@ HEALTH_PATH = "/health"
 READY_PATH = "/ready"
 """Readiness probe: ``200`` after startup succeeded until shutdown starts."""
 
+AG_UI_PATH = "/ag-ui"
+"""Where AG-UI runs are served when ``AGUIConfig(enabled=True)``."""
+
 _CANCEL_SECONDS = 5
 """How long shutdown waits for runs to unwind once it has cancelled them."""
 
 if TYPE_CHECKING:
-    # The MCP SDK is the optional ``mcp`` extra, imported only when used.
+    # The MCP and AG-UI SDKs are optional extras, imported only when used.
+    from agentframe.hosting.ag_ui import AGUIEndpoint
     from agentframe.hosting.mcp_server import MCPEndpoint
 
 logger = logging.getLogger(__name__)
@@ -237,6 +247,15 @@ class AgentApp:
             ``tools/list`` shows only the published skills whose permissions
             the caller holds. Needs the ``mcp`` extra. ``None`` (the
             default) serves no MCP.
+        ag_ui: Serves AG-UI runs for frontends at ``POST /ag-ui`` with
+            ``AGUIConfig(enabled=True)``, under the same authentication,
+            rate limit, run slots, permissions, limits and telemetry as
+            ``/a2a``. Each run is free text, so it needs ``router`` or
+            ``default_skill``; it streams lifecycle events, text, tool names
+            and status, and safe errors (see ``agentframe.hosting.ag_ui``).
+            A client disconnect cancels the run; there is no reconnect or
+            resume. Needs the ``ag-ui`` extra. ``None`` (the default) serves
+            nothing.
 
     Raises:
         DefinitionError: The agent is invalid, a skill's injected service is
@@ -259,7 +278,9 @@ class AgentApp:
             ``aclose()`` objects, or lists one object twice, or ``mcp`` is
             given without the ``mcp`` extra installed, lists a skill the
             agent does not have, or lists one whose ID is not a valid MCP
-            tool name or whose result has no JSON schema.
+            tool name or whose result has no JSON schema, or ``ag_ui`` is
+            enabled without ``router`` or ``default_skill`` or without the
+            ``ag-ui`` extra installed.
     """
 
     def __init__(
@@ -281,6 +302,7 @@ class AgentApp:
         resources: Sequence[_AppResource] = (),
         tracing: TracingConfig | None = None,
         mcp: MCPConfig | None = None,
+        ag_ui: AGUIConfig | None = None,
     ) -> None:
         resources = _checked_resources(resources)
         runtime = _runtime_for(
@@ -316,7 +338,8 @@ class AgentApp:
         admission = RunAdmission(host.max_concurrent_runs)
         lifecycle = Lifecycle(host.shutdown_grace_seconds)
         self._lifecycle = lifecycle
-        # One allowance per caller, shared by A2A messages and MCP tool calls.
+        # One allowance per caller, shared by A2A messages, MCP tool calls
+        # and AG-UI runs.
         rate_limiter = CallerRateLimiter(host.rate_limit) if host.rate_limit else None
         routes = _routes(
             card,
@@ -343,6 +366,21 @@ class AgentApp:
                 rate_limiter,
             )
             routes.append(Route(mcp_endpoint.path, mcp_endpoint, methods=["POST"]))
+        ag_ui_endpoint = _ag_ui_endpoint(
+            ag_ui,
+            agent,
+            runtime,
+            router,
+            text_skill,
+            host,
+            card,
+            user_token_exchange,
+            admission,
+            lifecycle,
+            rate_limiter,
+        )
+        if ag_ui_endpoint is not None:
+            routes.append(Route(AG_UI_PATH, ag_ui_endpoint, methods=["POST"]))
         self._app = Starlette(
             routes=routes,
             lifespan=_lifespan(
@@ -357,6 +395,7 @@ class AgentApp:
                 resources,
                 directory,
                 mcp_endpoint,
+                ag_ui_endpoint,
             ),
         )
 
@@ -514,6 +553,7 @@ def _lifespan(
     resources: Sequence[_AppResource],
     directory: AgentDirectory | None,
     mcp_endpoint: "MCPEndpoint | None",
+    ag_ui_endpoint: "AGUIEndpoint | None",
 ) -> Callable[[Starlette], AbstractAsyncContextManager[None]]:
     """Return the app's lifespan: open resources, startup checks, then shutdown."""
 
@@ -542,6 +582,8 @@ def _lifespan(
             yield
             await lifecycle.wait_for_runs(admission, task_store)
             await handler.cancel_running_tasks()
+            if ag_ui_endpoint is not None:
+                await ag_ui_endpoint.cancel_running()
             await handler.aclose()
 
     return lifespan
@@ -580,6 +622,55 @@ def _mcp_endpoint(
         admission=admission,
         lifecycle=lifecycle,
         rate_limiter=rate_limiter,
+    )
+
+
+def _ag_ui_endpoint(
+    ag_ui: AGUIConfig | None,
+    agent: Agent,
+    runtime: Runtime,
+    router: SkillRouter | None,
+    default_skill: DefaultSkill | None,
+    host: HostConfig,
+    card: AgentCard,
+    user_token_exchange: UserTokenExchange | None,
+    admission: RunAdmission,
+    lifecycle: Lifecycle,
+    rate_limiter: CallerRateLimiter | None,
+) -> "AGUIEndpoint | None":
+    """Return the ``/ag-ui`` endpoint when ``ag_ui`` enables it, else ``None``.
+
+    Raises:
+        DefinitionError: It is enabled without a router or default skill,
+            or the ``ag-ui`` extra is not installed.
+    """
+    if ag_ui is None or not ag_ui.enabled:
+        return None
+    if router is None and default_skill is None:
+        raise DefinitionError(
+            "AGUIConfig(enabled=True) needs a router or default_skill: AG-UI "
+            "runs are free text."
+        )
+    try:
+        from agentframe.hosting.ag_ui import AGUIEndpoint
+    except ModuleNotFoundError as error:
+        if error.name is None or not error.name.startswith("ag_ui"):
+            raise
+        raise DefinitionError(
+            "AGUIConfig(enabled=True) needs the AG-UI SDK: install "
+            "agentframe-py[ag-ui]."
+        ) from error
+    return AGUIEndpoint(
+        agent,
+        runtime,
+        router,
+        default_skill,
+        host,
+        card,
+        user_token_exchange,
+        admission,
+        lifecycle,
+        rate_limiter,
     )
 
 

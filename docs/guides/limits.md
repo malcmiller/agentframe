@@ -215,9 +215,10 @@ unknown into zero. Exact usage marker fields/failed-run retrieval remain open.
 Streamed text (#257) is awaited piece by piece, so a slow consumer slows the
 model call within the run's deadline rather than buffering without bound, and
 over A2A streamed bytes count toward `max_response_bytes`.
-Future [AG-UI streaming](../design/streaming.md) must likewise bound buffering,
-slow-consumer/backpressure and write/shutdown time within execution deadlines.
-AG-UI disconnect cancels the run; its first version has no reconnect/resume.
+[AG-UI streaming](../api/streaming.md#ag-ui-endpoint) (#258) writes events straight
+to the connection with the same backpressure, counts its text and results
+toward `max_response_bytes`, and shares the host's run slots and rate limit
+with `/a2a`. AG-UI disconnect cancels the run; there is no reconnect/resume.
 This does not redefine A2A task-disconnect semantics or retry completed actions.
 Protocol usage events do not replace
 the accounting ledger or establish remote billing guarantees.

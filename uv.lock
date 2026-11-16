@@ -32,6 +32,18 @@ http-server = [
 ]
 
 [[package]]
+name = "ag-ui-protocol"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/92/d88fdc7f4648dc38d3d54c595066bb3e63a4c091884ffb2f98272c33eef8/ag_ui_protocol-1.0.0.tar.gz", hash = "sha256:cfebecef2e7bc942cc8a52d908a4ea86a98f631d2ffdc6ec5812bb843eac74fb", size = 30759, upload-time = "2026-09-17T18:31:19.448Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/82/b0/850be4576e6443dc575daa54188d8136ae2b2eca3f19e098e7a088fc9ebc/ag_ui_protocol-1.0.0-py3-none-any.whl", hash = "sha256:0058eaf0522201089d444e430fc35180bc8ad0222cae39e8568b313e8105d9e6", size = 36842, upload-time = "2026-09-17T18:31:18.471Z" },
+]
+
+[[package]]
 name = "agentframe-py"
 version = "0.3.0"
 source = { editable = "." }
@@ -44,6 +56,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+ag-ui = [
+    { name = "ag-ui-protocol" },
+]
 anthropic = [
     { name = "anthropic" },
 ]
@@ -77,7 +92,7 @@ server = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "agentframe-py", extra = ["anthropic", "entra", "foundry", "mcp", "ollama", "otel", "redis"] },
+    { name = "agentframe-py", extra = ["ag-ui", "anthropic", "entra", "foundry", "mcp", "ollama", "otel", "redis"] },
     { name = "azure-core" },
     { name = "coverage" },
     { name = "fakeredis" },
@@ -96,6 +111,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", extras = ["http-server"], specifier = ">=1.3.0,<2" },
+    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=1.0.0,<2" },
     { name = "aiohttp", marker = "extra == 'entra'", specifier = ">=3.14.5,<4" },
     { name = "aiohttp", marker = "extra == 'foundry'", specifier = ">=3.14.5,<4" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=2.8.0,<3" },
@@ -115,11 +131,11 @@ requires-dist = [
     { name = "starlette", specifier = ">=1.10.0,<2" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.54.0,<0.55" },
 ]
-provides-extras = ["server", "ollama", "anthropic", "foundry", "entra", "mcp", "redis", "otel"]
+provides-extras = ["server", "ollama", "anthropic", "foundry", "entra", "mcp", "redis", "otel", "ag-ui"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "agentframe-py", extras = ["ollama", "foundry", "anthropic", "entra", "mcp", "redis", "otel"] },
+    { name = "agentframe-py", extras = ["ollama", "foundry", "anthropic", "entra", "mcp", "redis", "otel", "ag-ui"] },
     { name = "azure-core", specifier = "==1.41.0" },
     { name = "coverage", specifier = "==7.17.3" },
     { name = "fakeredis", specifier = "==2.40.0" },
