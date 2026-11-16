@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 from agentframe.discovery.remote import Remote
 from agentframe.errors import DefinitionError
+from agentframe.mcp.client import MCPTool
+from agentframe.mcp.tools import bind_mcp_tools
 from agentframe.models.base import HostedTool, Message
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, build_catalog
 from agentframe.orchestration.execution import (
@@ -22,6 +24,7 @@ from agentframe.orchestration.remote_tools import remote_tools
 from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.remotes import RunRemotes
 from agentframe.runtime.state import RunConversation
+from agentframe.runtime.tools import BoundTool
 from agentframe.security.principal import Principal
 
 
@@ -59,7 +62,7 @@ class RunContext:
         text: str,
         *,
         instructions: str | None = None,
-        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool | MCPTool] = (),
         history: Sequence[Message] = (),
     ) -> str: ...
 
@@ -70,7 +73,7 @@ class RunContext:
         *,
         instructions: str | None = None,
         output: type[T],
-        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool | MCPTool] = (),
         history: Sequence[Message] = (),
     ) -> T: ...
 
@@ -80,7 +83,7 @@ class RunContext:
         *,
         instructions: str | None = None,
         output: type[BaseModel] | None = None,
-        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+        tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool | MCPTool] = (),
         history: Sequence[Message] = (),
     ) -> str | BaseModel:
         """Generate text, or a validated ``output`` instance, with the agent's model.
@@ -108,9 +111,10 @@ class RunContext:
                 Tools whose ``requires_permissions`` the caller lacks are
                 not offered, and every call is authorized before it runs.
                 ``RemoteSkill`` entries from this run's ``remote_skills``
-                catalogs may be mixed in: see "Remote skills" below. So
-                may hosted tools such as ``FoundryWebSearch()``, at most one
-                of each type: see "Hosted tools" below.
+                catalogs and ``MCPTool`` entries from ``MCPClient.tools``
+                may be mixed in: see "Remote skills" and "MCP tools" below.
+                So may hosted tools such as ``FoundryWebSearch()``, at most
+                one of each type: see "Hosted tools" below.
             history: Earlier ``user`` and ``assistant`` messages of the
                 conversation, oldest first, usually ``await ctx.history()``.
                 They are untrusted, like ``text``, and sent between the
@@ -156,6 +160,8 @@ class RunContext:
             PolicyUnavailableError: The tool authorization policy or an
                 execution policy model-request or tool check raised an error
                 or did not answer before the run's deadline.
+            MCPServerError: An MCP server could not be reached, or its
+                connection broke during a call.
             LimitExceededError: A model call does not fit the run's limits,
                 the run has made ``max_tool_calls`` tool calls (or hosted
                 tool calls took it past that limit), or the run's timeout
@@ -191,6 +197,22 @@ class RunContext:
         anything is sent; an argument schema the model's provider cannot use
         raises ``UnsupportedCapabilityError`` before sending.
 
+        MCP tools: each ``MCPTool`` becomes one model tool named like a
+        remote entry (``"files.read_file"`` becomes ``"files_read_file"``),
+        with the server's bounded description and input schema. Entries the
+        caller lacks ``requires_permissions`` for are not offered, and
+        before every call the permissions are checked again and each
+        execution policy tool check gets the entry's name
+        (``"files.read_file"``) and the arguments about to be sent; denial
+        fails the run. Calls count toward ``max_tool_calls``, run within the
+        client's ``call_timeout_seconds`` and the run's deadline, and are
+        never retried. The result goes back to the model as untrusted tool
+        output: structured content as JSON, or the text blocks; a server
+        tool error, a timeout or a result over ``max_result_bytes`` goes
+        back as a tool error. A broken connection raises ``MCPServerError``
+        and fails the run. An MCP tool named like another tool, or selected
+        twice, raises ``DefinitionError`` before anything is sent.
+
         Hosted tools: provider-specific tools the model provider runs itself
         during a model call, such as ``FoundryCodeInterpreter``,
         ``FoundryWebSearch`` and ``FoundryFileSearch`` for ``FoundryModel``.
@@ -209,8 +231,11 @@ class RunContext:
         selected = list(tools)  # May be a one-shot iterator.
         hosted = [item for item in selected if isinstance(item, HostedTool)]
         entries = [item for item in selected if isinstance(item, RemoteSkill)]
+        servers = [item for item in selected if isinstance(item, MCPTool)]
         functions = [
-            item for item in selected if not isinstance(item, RemoteSkill | HostedTool)
+            item
+            for item in selected
+            if not isinstance(item, RemoteSkill | HostedTool | MCPTool)
         ]
         remote = remote_tools(
             entries,
@@ -220,12 +245,26 @@ class RunContext:
             skill=self._generation.skill,
             deadline=self.deadline,
         )
+        mcp = bind_mcp_tools(
+            servers,
+            invocation_id=self.invocation_id,
+            principal=self.principal,
+            policy=self._generation.policy,
+            skill=self._generation.skill,
+            deadline=self.deadline,
+        )
+        for name in sorted(remote.keys() & mcp.keys()):
+            raise DefinitionError(
+                f"'{remote[name].entry.name}' and '{mcp[name].entry.name}' both "
+                f"become the model tool '{name}'; pass only one of them."
+            )
+        bound: dict[str, BoundTool] = {**remote, **mcp}
         if output is None:
             return await self._generation.generate_text(
-                self, text, instructions, functions, remote, hosted, history
+                self, text, instructions, functions, bound, hosted, history
             )
         return await self._generation.generate_output(
-            self, text, instructions, output, functions, remote, hosted, history
+            self, text, instructions, output, functions, bound, hosted, history
         )
 
     async def history(self) -> list[Message]:

@@ -160,6 +160,14 @@ behavior starts with an **Upgrading** section; see the
   agent, the verified caller and the A2A `contextId` (or `conversation_id=`
   on `Runtime.invoke` / `run`), so a context ID alone never reaches another
   caller's history; anonymous hosted callers get none (#252).
+- **MCP client:** the optional `mcp` extra (official MCP Python SDK 2.x)
+  adds `MCPClient`, an application-configured MCP server over stdio or
+  streamable HTTP injected as a service. A skill selects tools by name with
+  `await client.tools(...)` and passes the `MCPTool` entries to
+  `ctx.generate(tools=[...])`; calls count toward `max_tool_calls`, honor
+  per-tool `permissions=` and execution policy tool checks, and are bounded
+  by `call_timeout_seconds` and `max_result_bytes`. Nothing is offered
+  implicitly; a broken connection raises `MCPServerError` (#253).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

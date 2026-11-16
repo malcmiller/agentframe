@@ -53,6 +53,7 @@ The extras add what a deployment needs:
 | `foundry` | `FoundryModel`, `FoundryAgentRegistry` and `FoundryA2AToolRegistry`, for Microsoft Foundry. |
 | `anthropic` | `AnthropicModel`, for Claude through the Anthropic API. |
 | `entra` | `EntraIDAuth` and `OnBehalfOf`, for Microsoft Entra ID. |
+| `mcp` | `MCPClient`, offering an MCP server's tools to `ctx.generate`. |
 
 Pre-1.0: public APIs may change in minor releases; changes are listed in the
 [changelog](https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md).

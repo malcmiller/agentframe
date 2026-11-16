@@ -244,7 +244,7 @@ async def generate(
     text: str,
     *,
     instructions: str | None = None,
-    tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+    tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool | MCPTool] = (),
     history: Sequence[Message] = (),
 ) -> str
 async def generate[T: BaseModel](
@@ -253,7 +253,7 @@ async def generate[T: BaseModel](
     *,
     instructions: str | None = None,
     output: type[T],
-    tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+    tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool | MCPTool] = (),
     history: Sequence[Message] = (),
 ) -> T
 ```
@@ -268,7 +268,7 @@ message. This separation does not guarantee resistance to prompt injection.
 | `text` | `str` | Required in current text proposal | Untrusted user content, never promoted to privileged instructions. |
 | `instructions` | `str \| None` | Optional; default `None` sends no call instructions | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
 | `output` | `type[T]`, `T` a Pydantic `BaseModel` subclass (implemented, M4 #53) | Optional; `None` returns text | Sends the class's JSON schema as [`OutputSchema`](models.md#outputschema) and returns the reply validated with `model_validate_json` in Pydantic's default (lax) mode; a model's own `ConfigDict(strict=True)` is respected. `RootModel`, `list[...]` and other types raise `DefinitionError` before sending: wrap lists in a model field. Provider schema subsets are documented per adapter ([Foundry](models.md#structured-output), [Ollama](models.md#structured-output-ollama)). With `tools`, the final answer after the tool calls is validated (M5 #61). |
-| `tools` | `Iterable[Callable[..., Any] \| RemoteSkill \| HostedTool]`: `@tool` functions registered on the agent (selection implemented, M5 #60), [`RemoteSkill`](orchestration.md#remoteskill) entries from this run's catalogs (M10 #167), and provider [hosted tools](#hosted-tools-261) such as [`FoundryWebSearch`](models.md#foundrywebsearch) (#261) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent, or selected twice, raises `DefinitionError` naming the tool before anything is sent. The model's tool calls run within the run's limits until it answers; see [tool calling](#implemented-tool-calling-m5-61), the [Foundry mapping](models.md#tool-calling) and [remote skills as tools](orchestration.md#remote-skills-as-model-tools). Hosted tools need no registration; selecting one is the opt-in, and each type may be selected once (`DefinitionError` otherwise). Decoration or a model suggestion alone does not grant execution. |
+| `tools` | `Iterable[Callable[..., Any] \| RemoteSkill \| HostedTool \| MCPTool]`: `@tool` functions registered on the agent (selection implemented, M5 #60), [`RemoteSkill`](orchestration.md#remoteskill) entries from this run's catalogs (M10 #167), [`MCPTool`](mcp.md#mcptool) entries from an `MCPClient` (#253), and provider [hosted tools](#hosted-tools-261) such as [`FoundryWebSearch`](models.md#foundrywebsearch) (#261) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent, or selected twice, raises `DefinitionError` naming the tool before anything is sent. The model's tool calls run within the run's limits until it answers; see [tool calling](#implemented-tool-calling-m5-61), the [Foundry mapping](models.md#tool-calling) [remote skills as tools](orchestration.md#remote-skills-as-model-tools) and [MCP server tools](mcp.md#calls-from-ctxgenerate). Hosted tools need no registration; selecting one is the opt-in, and each type may be selected once (`DefinitionError` otherwise). Decoration or a model suggestion alone does not grant execution. |
 | `history` | `Sequence[`[`Message`](models.md#message)`]` (implemented, 0.5.0 #252) | Optional; default `()` sends none | Earlier `user` and `assistant` messages, oldest first, usually from [`ctx.history()`](#runcontexthistory). Any other role, or an assistant message with tool calls, raises `DefinitionError` before sending. The oldest messages are dropped so the first request fits (see [trimming](#conversation-history-and-trimming)). History is untrusted content, like `text`. |
 
 ```python

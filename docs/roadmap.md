@@ -726,6 +726,9 @@ Tracing integration adds a separate opt-in check for safe metadata, correct span
 and accounting that still works with tracing disabled. These additions do not
 reintroduce a UI, workflow platform, or custom REST skill API.
 See the [combined hosting proposal](design/mcp-skills.md).
+The client direction is implemented in 0.5.0 (#253): an application-configured
+[`MCPClient`](api/mcp.md) offers selected MCP server tools to `ctx.generate`
+under the same tool limits, permissions and policy tool checks.
 
 Streaming/AG-UI is another separate follow-up after M7, with its existing
 [acceptance criteria](design/streaming.md#open-contracts-and-delivery-gate) for ordering,

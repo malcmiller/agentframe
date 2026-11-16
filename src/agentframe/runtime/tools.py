@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import json
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import ValidationError
 
@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     # Imported only for type checking: these modules import this one.
     from agentframe.authoring.context import RunContext
     from agentframe.authoring.definitions import SkillDefinition, ToolDefinition
-    from agentframe.orchestration.catalog import RemoteSkill
     from agentframe.security.authorization import ToolAuthorizationPolicy
 
 
@@ -61,13 +60,36 @@ def tool_message(call: ToolCall, result: str) -> Message:
     )
 
 
-def is_permitted(
-    tool: "ToolDefinition | RemoteSkill", principal: Principal | None
-) -> bool:
+class PermissionedTool(Protocol):
+    """Anything offered to a model as a tool: a name and required permissions."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def requires_permissions(self) -> frozenset[str]: ...
+
+
+class BoundTool(Protocol):
+    """A tool entry bound to one run: a remote skill or an MCP server tool.
+
+    It checks permissions and the execution policy itself, in ``run``.
+    """
+
+    @property
+    def entry(self) -> PermissionedTool: ...
+
+    def spec(self) -> ToolSpec: ...
+
+    async def run(self, arguments: str) -> str: ...
+
+
+def is_permitted(tool: PermissionedTool, principal: Principal | None) -> bool:
     """Return whether ``principal`` holds every permission ``tool`` requires.
 
-    The one rule for ``@tool`` functions and remote skill catalog entries:
-    anything the caller may not use is never shown to a model.
+    The one rule for ``@tool`` functions, remote skill catalog entries and
+    MCP server tools: anything the caller may not use is never shown to a
+    model.
     """
     if not tool.requires_permissions:
         return True

@@ -212,6 +212,15 @@ class RemoteAgentError(AgentFrameError):
         self.task_state = task_state
 
 
+class MCPServerError(AgentFrameError):
+    """An MCP server could not be used: it did not start or connect in time,
+    or its connection broke.
+
+    Tool errors the server reports, and calls that time out, go back to the
+    model as tool errors instead of raising this.
+    """
+
+
 class ClarificationNeededError(AgentFrameError):
     """An agent asked a question instead of answering.
 

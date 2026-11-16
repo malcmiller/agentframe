@@ -294,6 +294,82 @@ The same tracing provider observes both interfaces with content capture off by
 default. Trace propagation never grants identity or execution permission.
 See [limits](../guides/limits.md) and [tracing](tracing.md) for the enforcement boundaries.
 
+## MCP client: server tools for `ctx.generate`
+
+Implemented (#253). The other direction: an agent's model calls the tools of
+an MCP server the application configured. MAF has `MCPStdioTool` and
+`MCPStreamableHTTPTool`; AgentFrame has one `MCPClient` for both transports,
+built on the official SDK's `mcp.Client` (optional `mcp` extra, which #254's
+server side will share).
+
+```python
+from mcp import StdioServerParameters
+
+from agentframe import Agent, Inject, MCPClient, RunContext, Services, agent, skill
+
+files = MCPClient(
+    StdioServerParameters(command="python", args=["-m", "files_server"]),
+    name="files",
+    permissions={"write_file": ["files.write"]},
+)
+services = Services()
+services.add(MCPClient, files)
+
+
+@agent(name="notes", description="Tidies notes.", version="0.1.0")
+class Notes(Agent):
+    @skill(description="Tidy the notes.", tags=["notes"])
+    async def tidy(self, text: str, files: Inject[MCPClient], ctx: RunContext) -> str:
+        tools = await files.tools("read_file", "write_file")
+        return await ctx.generate(text, tools=[*tools])
+```
+
+Decisions:
+
+- **Application-configured, injected as a service.** `MCPClient(server, *,
+  name, ...)` takes what `mcp.Client` takes: a `StdioServerParameters` (the
+  application's command, started as a subprocess) or a streamable HTTP URL
+  (https, or http to loopback or `allow_http_hosts`), plus an optional
+  `OutboundCredential` whose headers are sent with every HTTP request. The
+  application registers it with `Services.add` (one subclass per server when
+  there are several) and owns it. Construction does no I/O.
+- **No implicit tool grants.** Connecting offers nothing. A skill selects
+  tools by name with `await client.tools("a", "b")`; an unknown, repeated or
+  missing name raises `DefinitionError`. The returned `MCPTool` entries go in
+  `ctx.generate(tools=[...])` beside `@tool` functions and `RemoteSkill`
+  entries. Sampling, elicitation and roots are not offered to servers.
+- **Same tool rules as remote skills.** Each entry is the model tool
+  `<name>_<tool>` (qualified name `"<name>.<tool>"`). Calls count toward
+  `max_tool_calls`, run one at a time inside the run's deadline and are never
+  retried. Application-set `permissions=` become `requires_permissions`:
+  unmet entries are not offered and calling one fails the run. The execution
+  policy's tool checks see the qualified name and the arguments before
+  anything is sent. `ToolAuthorizationPolicy` takes a `ToolDefinition`, so,
+  as for remote skills, it covers `@tool` functions only.
+- **Untrusted server text.** Tool descriptions and input schemas are bounded
+  like card text (500 characters, no control characters, no `examples`, an
+  8 KiB schema limit). Results go to the model only as tool output.
+- **Bounded calls.** `call_timeout_seconds` (default 60) bounds each call
+  and `connect_timeout_seconds` (default 30) the connection; the run's
+  deadline bounds both. A result over `max_result_bytes` (default 1 MiB) is
+  never truncated: the model gets a tool error instead. A server-reported
+  tool error (`isError`), an MCP protocol error or a call timeout also goes
+  back as a tool error, so the model can try something else, and is logged.
+  A failed, closed (a stdio server exited) or broken connection raises
+  `MCPServerError` and fails the run; the next use reconnects.
+- **One connection, held in its own task.** The SDK's transports are anyio
+  context managers that must be entered and left by the same task, so the
+  client opens its connection lazily in a background task it owns, shared by
+  every run. `aclose()` (or `async with`) stops it and the stdio subprocess;
+  `asyncio.run` cancelling the task at shutdown does the same.
+
+Still open: tool list change notifications (a listing is fetched per
+`tools()` call, using the SDK's response cache), resources, prompts, MCP
+sampling and elicitation, and OAuth flows. `max_result_bytes` applies to the
+result the SDK has already read: SDK 2.3 does not bound a single stdio line
+or HTTP response body, so connect only to servers the application trusts not
+to flood it.
+
 ## Dependency and delivery boundary
 
 Use the official MCP Python SDK as an optional protocol dependency; do not pull
