@@ -1478,3 +1478,17 @@ async def test_stream_without_a_final_response_is_a_transient_provider_error(
             await model.stream(ask(), ignore)
 
     assert caught.value.transient is True
+
+
+async def test_stream_passes_errors_from_the_sink_on_unchanged(
+    use_server: Callable[[FakeFoundry], httpx2.AsyncClient],
+) -> None:
+    use_server(FakeFoundry(sse(delta("Hel", 1), final("completed", reply()))))
+
+    async def refuse(text: str) -> None:
+        # An OpenAI error of the sink's own, not the Foundry call's.
+        raise openai.OpenAIError("Caller went away")
+
+    async with foundry() as model:
+        with pytest.raises(openai.OpenAIError, match="Caller went away"):
+            await model.stream(ask(), refuse)

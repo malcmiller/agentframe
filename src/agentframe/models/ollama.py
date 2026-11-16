@@ -163,15 +163,17 @@ class OllamaModel:
                 format=request.output.json_schema if request.output else None,
                 stream=True,
             )
-            # The client returns an async generator; closing it ends the HTTP
-            # response at once when on_text raises or the run is cancelled.
-            async with aclosing(cast(AsyncGenerator[ollama.ChatResponse], chunks)):
-                async for chunk in chunks:
-                    if chunk.message.content:
-                        text.append(chunk.message.content)
-                        await on_text(chunk.message.content)
-                    tool_calls.extend(chunk.message.tool_calls or ())
-                    last = chunk
+        # The client returns an async generator; closing it ends the HTTP
+        # response at once when on_text raises or the run is cancelled.
+        # Only reading chunks maps errors, so on_text's own errors, even
+        # connection errors, propagate unchanged.
+        async with aclosing(cast(AsyncGenerator[ollama.ChatResponse], chunks)):
+            while (chunk := await _next_chunk(chunks, self.model)) is not None:
+                if chunk.message.content:
+                    text.append(chunk.message.content)
+                    await on_text(chunk.message.content)
+                tool_calls.extend(chunk.message.tool_calls or ())
+                last = chunk
         if last is None or not last.done:
             raise ProviderError(
                 "The Ollama server ended the stream early", transient=True
@@ -337,6 +339,18 @@ def _tool_calls(calls: Sequence[ollama.Message.ToolCall]) -> tuple[ToolCall, ...
         )
         for number, call in enumerate(calls, start=1)
     )
+
+
+async def _next_chunk(
+    chunks: AsyncIterator[ollama.ChatResponse], model: str
+) -> ollama.ChatResponse | None:
+    """Return the stream's next chunk, or ``None`` at its end.
+
+    Raises:
+        ProviderError: Reading the stream failed.
+    """
+    async with _provider_errors(model):
+        return await anext(chunks, None)
 
 
 @asynccontextmanager

@@ -4,11 +4,12 @@ Models are scripted, and every request travels over real localhost HTTP
 through the official SDK client with streaming on.
 """
 
+import asyncio
 import uuid
 from typing import Any
 
 import pytest
-from a2a.client import Client, ClientCallContext
+from a2a.client import A2AClientError, Client, ClientCallContext
 from a2a.client.service_parameters import (
     ServiceParametersFactory,
     with_a2a_extensions,
@@ -16,16 +17,18 @@ from a2a.client.service_parameters import (
 from a2a.helpers import new_data_part, new_text_part
 from a2a.types import (
     GetTaskRequest,
+    ListTasksRequest,
     Message,
     Role,
     SendMessageRequest,
     StreamResponse,
+    SubscribeToTaskRequest,
     Task,
     TaskState,
 )
 from a2a.utils.errors import UnsupportedOperationError
 
-from a2a_client import connect
+from a2a_client import call_skill, connect
 from agentframe import (
     Agent,
     AgentApp,
@@ -231,6 +234,59 @@ async def test_a_repeated_streaming_message_gets_the_original_task(
     [repeat] = again
     assert repeat.task.id == task_id_of(first)
     assert repeat.task.status.state == TaskState.TASK_STATE_COMPLETED
+
+
+@agent(version="1.0.0")
+class Waiter(Agent):
+    """Writes text once the test lets it."""
+
+    def __init__(self, model: ScriptedModel) -> None:
+        super().__init__(model=model)
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    @skill("write", tags=["text"])
+    async def write(self, text: str, ctx: RunContext) -> str:
+        """Wait to be released, then write text, streaming it."""
+        self.started.set()
+        await self.release.wait()
+        return await ctx.generate(text, stream=True)
+
+
+async def test_a_streaming_run_holds_its_slot_and_can_be_subscribed_to(
+    serve: ServeLocally,
+) -> None:
+    waiter = Waiter(ScriptedModel(["Hello there friend"]))
+
+    def one_run_app(public_url: str) -> AgentApp:
+        host = HostConfig(
+            public_url=public_url,
+            auth=APIKeyAuth(keys={API_KEY: APIKey("alice")}),
+            max_concurrent_runs=1,
+        )
+        return AgentApp(agent=waiter, host=host)
+
+    async with (
+        serve(one_run_app) as base_url,
+        await connect_streaming(base_url) as client,
+        await connect_streaming(base_url) as other,
+    ):
+        running = asyncio.create_task(stream(client, write_message("Go.")))
+        await waiter.started.wait()
+        # The streaming run still holds the only slot after its response began.
+        with pytest.raises(A2AClientError, match="503"):
+            await call_skill(other, "write", {"text": "Go."})
+        [task] = (await other.list_tasks(ListTasksRequest())).tasks
+        subscribed = other.subscribe(SubscribeToTaskRequest(id=task.id))
+        first = await anext(subscribed)
+        waiter.release.set()
+        rest = [event async for event in subscribed]
+        events = await running
+
+    assert first.task.id == task.id
+    assert final_state(events) == TaskState.TASK_STATE_COMPLETED
+    assert deltas(rest) == deltas(events) == ["Hello "]
+    assert final_state(rest) == TaskState.TASK_STATE_COMPLETED
 
 
 async def test_free_text_without_a_router_is_refused_on_a_stream(

@@ -33,6 +33,7 @@ try:
         ResponseIncompleteEvent,
         ResponseInputItemParam,
         ResponseInputParam,
+        ResponseStreamEvent,
         ResponseTextConfigParam,
         ResponseTextDeltaEvent,
         ResponseUsage,
@@ -258,7 +259,8 @@ class FoundryModel:
         """
         instructions, conversation = _split_instructions(request.messages)
         final: Response | None = None
-        async with _provider_errors(self.deployment, _rejection_hint(request)):
+        hint = _rejection_hint(request)
+        async with _provider_errors(self.deployment, hint):
             events = await self._client.responses.create(
                 model=self.deployment,
                 instructions=instructions,
@@ -271,18 +273,22 @@ class FoundryModel:
                 max_tool_calls=_max_tool_calls(request),
                 stream=True,
             )
-            async with events:
-                async for event in events:
-                    if isinstance(event, ResponseTextDeltaEvent) and event.delta:
-                        await on_text(event.delta)
-                    elif isinstance(event, _FINAL_EVENTS):
-                        final = event.response
-                    elif isinstance(event, ResponseErrorEvent):
-                        raise ProviderError(
-                            "The model service reported a stream error "
-                            f"(code {event.code or 'unknown'})",
-                            transient=event.code in TRANSIENT_FAILURE_CODES,
-                        )
+        # Only reading events maps errors, so on_text's own errors propagate
+        # unchanged.
+        async with events:
+            while (
+                event := await _next_event(events, self.deployment, hint)
+            ) is not None:
+                if isinstance(event, ResponseTextDeltaEvent) and event.delta:
+                    await on_text(event.delta)
+                elif isinstance(event, _FINAL_EVENTS):
+                    final = event.response
+                elif isinstance(event, ResponseErrorEvent):
+                    raise ProviderError(
+                        "The model service reported a stream error "
+                        f"(code {event.code or 'unknown'})",
+                        transient=event.code in TRANSIENT_FAILURE_CODES,
+                    )
         if final is None:
             raise ProviderError(
                 "The model service ended the stream without a final response",
@@ -712,6 +718,18 @@ def _rejection_hint(request: ModelRequest) -> str | None:
     if request.output is not None:
         features.append("structured output")
     return " or ".join(features) or None
+
+
+async def _next_event(
+    events: AsyncIterator[ResponseStreamEvent], deployment: str, features: str | None
+) -> ResponseStreamEvent | None:
+    """Return the stream's next event, or ``None`` at its end.
+
+    Raises:
+        ProviderError: Reading the stream failed.
+    """
+    async with _provider_errors(deployment, features):
+        return await anext(events, None)
 
 
 @asynccontextmanager

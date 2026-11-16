@@ -760,7 +760,7 @@ async def test_stream_that_ends_early_is_a_transient_provider_error(
     assert caught.value.transient is True
 
 
-async def test_stream_stops_when_the_sink_raises(
+async def test_stream_stops_when_the_sink_raises_and_its_error_is_unchanged(
     use_server: Callable[[FakeOllama], None],
 ) -> None:
     use_server(FakeOllama(chat=stream_reply(piece("Hel"), piece("lo"), chat_reply(""))))
@@ -768,10 +768,11 @@ async def test_stream_stops_when_the_sink_raises(
 
     async def refuse(text: str) -> None:
         pieces.append(text)
-        raise RuntimeError("Caller went away")
+        # A connection error of the sink's own, not the Ollama server's.
+        raise ConnectionResetError("Caller went away")
 
     async with OllamaModel(model="llama3.2:3b") as model:
-        with pytest.raises(RuntimeError, match="Caller went away"):
+        with pytest.raises(ConnectionResetError, match="Caller went away"):
             await model.stream(ask("Say hello"), refuse)
 
     assert pieces == ["Hel"]
