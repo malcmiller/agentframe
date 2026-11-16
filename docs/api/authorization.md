@@ -1211,8 +1211,9 @@ Prefer a certificate (`bytes`) or a federated client assertion
   sending without credentials.
 - Tokens and the client credential never appear in logs, errors,
   `Principal` or `RunContext`. The host also drops credential headers
-  (`Authorization`, `Proxy-Authorization`, `Cookie`, `X-API-Key`) from the A2A
-  SDK's call context, which the SDK logs at debug level.
+  (`Authorization`, `Proxy-Authorization`, `Cookie`, `X-API-Key` and any
+  header an `apiKey` card scheme names, such as `APIKeyAuth(header=...)`) from
+  the A2A SDK's call context, which the SDK logs at debug level.
 - **What the target sees:** the exchanged token's `oid` is the user, `azp` is
   the calling agent's client ID, and `scp` lists the delegated permissions.
   `EntraIDAuth` targets authorize on the user's roles and scopes through
