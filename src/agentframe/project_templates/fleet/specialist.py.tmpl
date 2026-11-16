@@ -1,0 +1,47 @@
+"""$class_name: a specialist agent whose skill is tagged ``content``.
+
+A planner that plans over skills tagged ``content`` finds this one with no
+code change. Run every agent of the project with ``agentframe dev``, which
+reads ``agentframe.yaml``; README.md shows how.
+"""
+
+from agentframe import (
+    Agent,
+    AgentApp,
+    HostConfig,
+    RunContext,
+    RunLimits,
+    agent,
+    dev_settings,
+    skill,
+)
+
+
+@agent(version="0.1.0")
+class $class_name(Agent):
+    """The $name specialist; describe what it does here."""
+
+    limits = RunLimits(timeout_seconds=30)
+
+    @skill(tags=["content"])
+    async def $module(self, text: str, ctx: RunContext) -> str:
+        """Return the text marked as handled by $name.
+
+        Placeholder: replace it with the real work and describe that here, since
+        a planner's model reads this description to decide when to call it.
+        """
+        return f"[$name] {text}"
+
+
+def create_app() -> AgentApp:
+    """Serve the agent, for the callers ``dev_settings()`` accepts.
+
+    ``dev_settings()`` reads the development API keys ``agentframe dev``
+    passes. Production hosts configure real authentication instead, such as
+    ``HostConfig(auth=EntraIDAuth(tenant_id=..., audience=...))``.
+    """
+    dev = dev_settings()
+    return AgentApp(
+        agent=$class_name(),
+        host=HostConfig(public_url=dev.public_url, auth=dev.auth),
+    )

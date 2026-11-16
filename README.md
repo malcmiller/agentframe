@@ -62,6 +62,11 @@ See the
 
 ## Quick start
 
+To start a new project, `agentframe new agent my-agent` writes one agent with
+tests, and `agentframe new fleet my-fleet --planner` writes specialists and a
+planner for `agentframe dev`; see
+[Create a project](https://github.com/malcmiller/agentframe/blob/main/docs/guides/development.md#create-a-project-agentframe-new).
+
 Decorators describe the agent; an `Agent` subclass implements behavior, one
 `@skill` method per ability. This model-free agent is
 [`examples/echo.py`](https://github.com/malcmiller/agentframe/blob/main/examples/echo.py);

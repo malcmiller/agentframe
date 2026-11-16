@@ -7,11 +7,15 @@ Usage::
     agentframe run myapp.agents:Echo --dev
     agentframe dev
     agentframe compose
+    agentframe new agent support-bot
+    agentframe new fleet newsroom --planner --agents research,writer
     agentframe eval evals.summaries:create_evaluation --min-pass-rate 0.9
 
 ``agentframe dev`` runs every agent listed in ``agentframe.yaml``; see
 ``agentframe.dev_server``. ``agentframe compose`` writes a development
 ``compose.yaml`` and ``Dockerfile`` for them; see ``agentframe.compose``.
+``agentframe new`` creates a project from a template; see
+``agentframe.new_project``.
 ``agentframe eval`` runs an evaluation and exits non-zero when it misses a
 threshold, for CI without pytest.
 
@@ -49,6 +53,12 @@ from agentframe.errors import AgentFrameError
 from agentframe.hosting.app import AgentApp
 from agentframe.hosting.host import HostConfig
 from agentframe.log_format import JSONFormatter
+from agentframe.new_project import (
+    DEFAULT_SPECIALISTS,
+    agent_project,
+    fleet_project,
+    write_project,
+)
 from agentframe.project import PROJECT_FILE
 from agentframe.security.authentication import AllowAnonymous
 from agentframe.urls import is_loopback_host
@@ -158,6 +168,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_dev(Path(arguments.config), startup_timeout=arguments.startup_timeout)
         elif arguments.command == "compose":
             _compose(Path(arguments.config), force=arguments.force)
+        elif arguments.command == "new":
+            _new(arguments)
         else:
             settings = RunSettings(
                 target=arguments.target,
@@ -241,6 +253,15 @@ def _parser() -> argparse.ArgumentParser:
     compose.add_argument(
         "--force", action="store_true", help="overwrite an existing compose.yaml"
     )
+    new = commands.add_parser(
+        "new",
+        help="create a new project from a template",
+        description=(
+            "Create a working, tested project. The generated code is yours to "
+            "edit; existing files are never overwritten without --force."
+        ),
+    )
+    _add_new_arguments(new)
     evaluation = commands.add_parser(
         "eval",
         help="run an evaluation and fail when it misses a threshold",
@@ -349,6 +370,59 @@ def _integer(text: str, *, minimum: int) -> int:
             f"'{text}' is not an integer of {minimum} or more"
         )
     return number
+
+
+def _add_new_arguments(new: argparse.ArgumentParser) -> None:
+    templates = new.add_subparsers(dest="template", required=True)
+    agent = templates.add_parser(
+        "agent",
+        help="one agent with a skill, create_app(), tests and a README",
+        description="Create a project with one agent served over A2A.",
+    )
+    fleet = templates.add_parser(
+        "fleet",
+        help="specialist agents, an optional planner, agentframe.yaml and tests",
+        description=(
+            "Create a project of specialist agents with skills tagged content, "
+            "and optionally a planner that finds them by tag, for agentframe dev."
+        ),
+    )
+    fleet.add_argument(
+        "--agents",
+        default=",".join(DEFAULT_SPECIALISTS),
+        help="comma-separated specialist names (default: %(default)s)",
+    )
+    fleet.add_argument(
+        "--planner",
+        action="store_true",
+        help="add a planner that plans over every skill tagged content",
+    )
+    for template in (agent, fleet):
+        template.add_argument(
+            "name", help="the project name: lowercase words joined by hyphens"
+        )
+        template.add_argument(
+            "--directory",
+            help="the folder to create the project in (default: ./NAME)",
+        )
+        template.add_argument(
+            "--force", action="store_true", help="overwrite existing files"
+        )
+
+
+def _new(arguments: argparse.Namespace) -> None:
+    if arguments.template == "agent":
+        files = agent_project(arguments.name)
+    else:
+        specialists = [name.strip() for name in arguments.agents.split(",")]
+        files = fleet_project(arguments.name, specialists, planner=arguments.planner)
+    directory = Path(arguments.directory or arguments.name)
+    for path in write_project(directory, files, force=arguments.force):
+        print(f"agentframe new: wrote {path}")
+    print(
+        f"agentframe new: next, in {directory}: uv sync, then uv run pytest. "
+        "README.md shows how to run it."
+    )
 
 
 def _compose(project_file: Path, *, force: bool) -> None:

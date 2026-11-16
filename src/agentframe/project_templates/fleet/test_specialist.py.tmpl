@@ -1,0 +1,27 @@
+"""Tests for the $name specialist."""
+
+import pytest
+from agentframe import AgentApp
+
+from $package.$module import (
+    $class_name,
+    create_app,
+)
+
+
+async def test_${module}_marks_the_text() -> None:
+    agent = $class_name()
+
+    result = await agent.invoke("$module", text="tides")
+
+    assert result == "[$name] tides"
+
+
+def test_create_app_serves_the_agent_with_development_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTFRAME_DEV", "1")
+    monkeypatch.setenv("AGENTFRAME_PUBLIC_URL", "http://127.0.0.1:$port")
+    monkeypatch.setenv("AGENTFRAME_DEV_API_KEYS", "developer=test-key")
+
+    assert isinstance(create_app(), AgentApp)

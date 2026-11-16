@@ -1,7 +1,49 @@
 # Local development and container packaging
 
-`agentframe run` (M2), `agentframe dev` (M8+ #95) and `agentframe compose`
-(M8+ #96) are implemented.
+`agentframe new` (#277), `agentframe run` (M2), `agentframe dev` (M8+ #95) and
+`agentframe compose` (M8+ #96) are implemented.
+
+## Create a project: `agentframe new`
+
+`agentframe new` writes a small, working project from templates shipped in
+the wheel, without network access. Generation runs once: the result is
+ordinary AgentFrame code that you own and edit by hand, with no hidden
+metadata and nothing that reads it back.
+
+```shell
+agentframe new agent support-bot
+agentframe new fleet newsroom --planner --agents research,writer
+```
+
+- `agent NAME` writes one agent with a model-backed skill, `answer`, its
+  `create_app()`, tests with a scripted model and a README.
+- `fleet NAME` writes one model-free specialist per `--agents` name (default
+  `research,writer`), each with a placeholder skill tagged `content`, plus
+  `agentframe.yaml` for [`agentframe dev`](#multiple-agents-m8), an
+  `agents.yaml` registry for agents started by hand, tests and a README.
+  `--planner` adds a planner based on
+  [`examples/dynamic_agents`](../../examples/dynamic_agents): it plans over
+  every registered skill tagged `content`, naming no agent, and requires the
+  `plans:run` permission. The planner listens on port 8000 and the
+  specialists on 8001 onwards.
+
+Each project has a `pyproject.toml` depending on `agentframe-py[server,ollama]`
+with Ruff, mypy (strict) and pytest configured, so `uv sync` then
+`uv run pytest` works straight away, and the generated code passes
+`ruff format --check`, `ruff check` and `mypy`. The defaults follow the
+production rule: explicit authentication with a development API key (the
+README names Microsoft Entra ID for production), `RunLimits` and
+`ModelSettings` set on each agent, the model chosen by `model_from_env()` and
+closed by the app through `resources=`.
+
+Names are lowercase words joined by hyphens, at most 30 characters, such as
+`support-bot`; the package is `support_bot`. Names that would hide a package
+the project imports, names clashing with `Agent` methods or AgentFrame
+names, such as `agent-app`, and `planner` as a specialist with `--planner` are refused.
+Files are written to a folder named after the project, or `--directory DIR`.
+If any file to write already exists, nothing is written and the command
+exits with code 1 and lists the files; `--force` overwrites them. See the
+[reference](../api/hosting.md#agentframe-new).
 
 ## One agent: M2
 

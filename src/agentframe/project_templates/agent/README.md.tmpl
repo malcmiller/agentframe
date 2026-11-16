@@ -1,0 +1,55 @@
+# $project
+
+One [AgentFrame](https://github.com/malcmiller/agentframe) agent with one
+skill, `answer`, served over A2A. Created by `agentframe new agent`; the code
+is yours to edit.
+
+| Path | Contents |
+| --- | --- |
+| `$package/app.py` | The `$class_name` agent and `create_app()`, which serves it. |
+| `tests/test_app.py` | Tests with a scripted model, so they never call a provider. |
+
+## Set up and check
+
+```shell
+uv sync
+uv run ruff format --check
+uv run ruff check
+uv run mypy
+uv run pytest
+```
+
+## Run
+
+`create_app()` chooses the model from environment variables with
+`model_from_env()`, so switching providers changes only configuration. With
+local Llama through Ollama (the model tag must already be installed):
+
+```shell
+${env_prefix}_API_KEY=dev-only-key AGENTFRAME_MODEL_PROVIDER=ollama \
+    AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \
+    uv run agentframe run $package.app:create_app
+```
+
+The Agent Card is at `http://127.0.0.1:8000/.well-known/agent-card.json` and
+the A2A endpoint at `/a2a`. Callers send the key in the `X-API-Key` header.
+Set `${env_prefix}_PUBLIC_URL` to the address callers use, if it is not
+`http://127.0.0.1:8000`.
+
+For a Microsoft Foundry deployment instead, add the `foundry` extra to
+`pyproject.toml`, sign in with `az login` and set:
+
+```shell
+AGENTFRAME_MODEL_PROVIDER=foundry
+AGENTFRAME_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com/openai/v1/
+AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment>
+AGENTFRAME_MODEL_CONTEXT_WINDOW=128000
+```
+
+## Before production
+
+- The API key is a **development placeholder**. Use real authentication, such
+  as Microsoft Entra ID: `HostConfig(auth=EntraIDAuth(tenant_id=...,
+  audience=...))` with the `entra` extra.
+- Review the agent's `limits` and `model_settings`, which bound every run.
+- Keep secrets in environment variables or a secret store, never in code.

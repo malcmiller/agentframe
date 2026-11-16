@@ -1,0 +1,170 @@
+"""A planner that never names an agent: it finds skills by tag and plans over them.
+
+Each run asks the registry for every skill tagged ``content``, lets its model
+plan a goal over those skills, and runs the plan. Register another agent with
+a ``content`` skill and the planner can use it, with no code change.
+
+**Open-proxy warning.** ``run_goal`` calls the specialists with this agent's
+own development API key (a ``Service`` identity, from ``default_remote=``),
+whatever goal its caller writes, so a caller could make the model call any
+skill in its catalog as this agent. So:
+
+- the catalog holds only skills tagged ``content``, never every registered
+  agent;
+- ``run_goal`` requires the ``plans:run`` permission, which only the
+  development client (``AGENTFRAME_DEV_CLIENT_KEY``) holds here;
+- an execution policy plan check refuses plans of more than
+  ``MAX_PLAN_STEPS`` steps before anything is sent.
+
+A production host would call the specialists ``OnBehalfOf`` the signed-in
+user instead (``default_remote=OnBehalfOf(scope=...)`` with
+``auth=EntraIDAuth(client_id=..., client_credential=...)``), so every
+specialist authorizes the real user rather than trusting this agent.
+"""
+
+import dataclasses
+from collections.abc import Mapping
+
+from a2a.types import SecurityScheme
+from agentframe import (
+    Agent,
+    AgentApp,
+    APIKeyAuth,
+    DevSettings,
+    ExecutionPolicy,
+    HostConfig,
+    Model,
+    ModelSettings,
+    Plan,
+    Principal,
+    RunContext,
+    RunLimits,
+    Service,
+    SkillDefinition,
+    VerifiedCaller,
+    agent,
+    dev_settings,
+    model_from_env,
+    skill,
+)
+from pydantic import BaseModel, JsonValue
+
+TAG = "content"
+MAX_PLAN_STEPS = 3
+STEP_TOKENS = 1_000
+
+
+class PlanOutcome(BaseModel):
+    """What running a model-made plan produced."""
+
+    # The plan's result step's value, or None when that step did not complete.
+    value: JsonValue
+    complete: bool
+    # Each step's status ("completed", "failed", "skipped", ...), by step ID.
+    steps: dict[str, str]
+    # The catalog the model planned over, so callers see what it could use.
+    skills: list[str]
+
+
+@agent(version="0.1.0")
+class Planner(Agent):
+    """Plans goals over whichever registered agents offer content skills."""
+
+    # Every run is bounded: time, tokens across all calls, and model calls.
+    limits = RunLimits(timeout_seconds=120, max_total_tokens=20_000, max_model_calls=4)
+    model_settings = ModelSettings(max_output_tokens=1_024)
+
+    # The model chooses calls made as this agent, so AgentFrame refuses this
+    # skill without requires_permissions (the open-proxy guard).
+    @skill(id="run_goal", tags=["planning"], requires_permissions=["plans:run"])
+    async def run_goal(self, goal: str, ctx: RunContext) -> PlanOutcome:
+        """Plan a goal over every registered content skill, then run the plan.
+
+        A failed step does not fail the run: the outcome says which steps
+        failed, and which were skipped because they needed its value.
+        """
+        skills = await ctx.remote_skills(tags=[TAG])
+        plan = await ctx.plan(goal, skills, max_steps=MAX_PLAN_STEPS)
+        result = await ctx.run_plan(
+            plan,
+            skills,
+            max_steps=MAX_PLAN_STEPS,
+            max_tokens_per_step=STEP_TOKENS,
+            on_failure="continue",
+        )
+        return PlanOutcome(
+            value=result.value,
+            complete=result.complete,
+            steps={step_id: step.status for step_id, step in result.steps.items()},
+            skills=[entry.name for entry in skills],
+        )
+
+
+async def small_plans_only(
+    skill: SkillDefinition, principal: Principal | None, plan: Plan
+) -> bool:
+    """Refuse plans of more than ``MAX_PLAN_STEPS`` steps, before anything is sent.
+
+    ``run_goal`` already tells the model that limit; this check is the
+    operator's guard, applied to every plan this agent runs whatever the
+    skill asks for.
+    """
+    return len(plan.steps) <= MAX_PLAN_STEPS
+
+
+def own_identity(dev: DevSettings) -> Service | None:
+    """Return this agent's development identity, for every registered agent.
+
+    ``agentframe dev`` gives each agent one key that it calls all the others
+    with, so every entry of ``dev.remotes`` holds the same credential. Using it
+    as ``default_remote`` means a newly registered agent needs no entry.
+    """
+    return next(iter(dev.remotes.values()), None)
+
+
+class DeveloperRoles:
+    """Development placeholder: the development keys, plus the ``planner``
+    role for the ``developer`` caller (``AGENTFRAME_DEV_CLIENT_KEY``).
+
+    Production hosts get roles from their identity provider instead, such as
+    Entra app roles through ``EntraIDAuth``.
+    """
+
+    def __init__(self, auth: APIKeyAuth) -> None:
+        self.auth = auth
+
+    def card_security(self) -> dict[str, SecurityScheme]:
+        return self.auth.card_security()
+
+    async def authenticate(self, headers: Mapping[str, str]) -> VerifiedCaller:
+        caller = await self.auth.authenticate(headers)
+        if caller.id != "developer":
+            return caller
+        return dataclasses.replace(caller, roles=frozenset({"planner"}))
+
+
+def create_app(model: Model | None = None) -> AgentApp:
+    """Serve the planner, calling registered agents with its development key.
+
+    Args:
+        model: The planning model, which must support structured output and
+            stays the caller's to close. Defaults to ``model_from_env()``,
+            which the app closes when the server stops.
+    """
+    dev = dev_settings()
+    resources: list[Model] = []
+    if model is None:
+        model = model_from_env()
+        resources.append(model)
+    return AgentApp(
+        agent=Planner(model=model),
+        host=HostConfig(
+            public_url=dev.public_url,
+            auth=DeveloperRoles(dev.auth),
+            role_permissions={"planner": ["plans:run"]},
+        ),
+        directory=dev.directory,
+        default_remote=own_identity(dev),
+        policy=ExecutionPolicy(plan_checks=[small_plans_only]),
+        resources=resources,
+    )
