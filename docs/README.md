@@ -24,6 +24,7 @@ unresolved defaults or interfaces.
 | Next core multi-agent release | [Read-first registries, managed directory and remote A2A client](api/discovery.md) |
 | Evaluation (M9, 0.3.0) | [Cases, datasets, local and A2A targets, scorers, rubric judge, reports and `agentframe eval`](api/evaluation.md) |
 | Model-planned orchestration (M10, 0.3.0) | [Remote skill catalog: `remote_skills`, `RemoteSkill`, `SkillCatalog`, `default_remote`; remote skills as model tools; `Plan`, `PlanStep`, `SkillCatalog.check`; `RunContext.plan` and `run_plan`, `PlanResult`, `StepResult`; plan logs and usage; permissions, tool checks and plan checks](api/orchestration.md) |
+| MCP client (0.5.0) | [`MCPClient`, `MCPClient.tools`, `connect`, `aclose`, `MCPTool`, `MCPServerError`; MCP server tools offered to `ctx.generate` with permissions, tool checks, timeouts and result bounds](api/mcp.md) |
 | Future streaming | [Optional AG-UI adapter and runtime event boundary](api/streaming.md) |
 
 ## Roadmap, guides and design discussion

@@ -33,6 +33,7 @@ from agentframe.errors import (
     IncompleteOutputError,
     InputValidationError,
     LimitExceededError,
+    MCPServerError,
     ModelCallLimitExceededError,
     ModelError,
     ModelRefusalError,
@@ -50,6 +51,7 @@ from agentframe.hosting.app import AgentApp
 from agentframe.hosting.dedup import MessageDedupStore
 from agentframe.hosting.host import A2AConfig, HostConfig
 from agentframe.hosting.model_router import ModelRouter
+from agentframe.mcp.client import MCPClient, MCPTool
 from agentframe.models.base import (
     HostedTool,
     Message,
@@ -161,6 +163,9 @@ __all__ = [
     "InputCheck",
     "InputValidationError",
     "LimitExceededError",
+    "MCPClient",
+    "MCPServerError",
+    "MCPTool",
     "Message",
     "MessageDedupStore",
     "Model",

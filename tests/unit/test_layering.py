@@ -14,6 +14,7 @@ BELOW_HOSTING = [
     "authoring",
     "discovery",
     "evaluation",
+    "mcp",
     "models",
     "orchestration",
     "runtime",
