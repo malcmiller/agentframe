@@ -62,3 +62,27 @@ jobs:
           version: "0.13.1"
       - run: uv build
       - uses: ./.github/actions/check-wheel
+
+  # Overhead and throughput benchmarks (docs/guides/performance.md). Non-gating:
+  # shared runners are noisy, so a failure flags a possible regression to
+  # rerun and investigate rather than blocking a merge.
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.1"
+          python-version: "3.13"
+      - run: uv sync --locked
+      # $GITHUB_STEP_SUMMARY is set per step, so it is read in the same step.
+      - run: |
+          echo "## Benchmarks" >> "$GITHUB_STEP_SUMMARY"
+          AGENTFRAME_BENCHMARK_REPORT="$GITHUB_STEP_SUMMARY" \
+            uv run pytest tests/benchmarks -m benchmark -s
+        env:
+          AGENTFRAME_BENCHMARK: "1"
