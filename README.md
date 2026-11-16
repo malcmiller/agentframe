@@ -130,9 +130,20 @@ class Assistant(Agent):
         return await ctx.generate(question)
 ```
 
-Its `create_app()` builds the model from environment variables: an installed
-Ollama model tag (nothing is downloaded), or a Foundry GPT deployment signed in
-through the Azure CLI (`az login`; no API key):
+Its `create_app()` gets the model from
+[`model_from_env()`](https://github.com/malcmiller/agentframe/blob/main/docs/api/models.md#model_from_env),
+which reads AgentFrame's model variables: an installed Ollama model tag
+(nothing is downloaded), or a Foundry GPT deployment signed in with
+`DefaultAzureCredential` (`az login` locally, managed identity in Azure; no API
+key). Switching providers changes only the environment:
+
+```python
+from agentframe import AgentApp, model_from_env
+
+app = AgentApp(agent=Assistant(model=model_from_env()), host=host)
+```
+
+Run it with either provider:
 
 ```shell
 AGENTFRAME_MODEL_PROVIDER=ollama AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \
@@ -189,8 +200,9 @@ the caller's identity. To let the model choose which agents to call, read the
 
 Each example has a `create_app()` you can serve with
 `agentframe run examples.<name>:create_app`. Model-backed examples choose
-Ollama or Foundry from `AGENTFRAME_MODEL_PROVIDER`, as in
-[using a model](https://github.com/malcmiller/agentframe/blob/main/README.md#using-a-model).
+Ollama or Foundry with `model_from_env()`, as in
+[using a model](https://github.com/malcmiller/agentframe/blob/main/README.md#using-a-model);
+`examples/multi_agent` uses local Llama only, through `AGENTFRAME_OLLAMA_MODEL`.
 
 | Example | Shows |
 | --- | --- |

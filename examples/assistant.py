@@ -1,13 +1,15 @@
 """One agent, served over A2A with local Llama or a Foundry GPT deployment.
 
 The agent class never names a model host. ``create_app()`` picks the model
-from environment variables, so switching hosts is configuration only::
+from environment variables with ``model_from_env()``, so switching hosts is
+configuration only::
 
     # Local Llama through Ollama (the model tag must already be installed)
     AGENTFRAME_MODEL_PROVIDER=ollama AGENTFRAME_OLLAMA_MODEL=llama3.2:3b \\
         agentframe run examples.assistant:create_app
 
-    # A Foundry GPT deployment, signed in with Microsoft Entra ID (az login)
+    # A Foundry GPT deployment, signed in with DefaultAzureCredential
+    # (az login locally, managed identity in Azure)
     AGENTFRAME_MODEL_PROVIDER=foundry \\
         AGENTFRAME_FOUNDRY_ENDPOINT=https://<resource>.openai.azure.com/openai/v1/ \\
         AGENTFRAME_FOUNDRY_DEPLOYMENT=<deployment> \\
@@ -34,6 +36,7 @@ from agentframe import (
     RunContext,
     RunLimits,
     agent,
+    model_from_env,
     skill,
 )
 
@@ -75,45 +78,12 @@ class Assistant(Agent):
         return len(text.split())
 
 
-def create_model() -> Model:
-    """Return the model that ``AGENTFRAME_MODEL_PROVIDER`` selects.
-
-    Raises:
-        KeyError: A required environment variable is not set.
-        ValueError: The provider is neither ``ollama`` nor ``foundry``.
-    """
-    provider = os.environ["AGENTFRAME_MODEL_PROVIDER"]
-    if provider == "ollama":
-        from agentframe.models.ollama import DEFAULT_ENDPOINT, OllamaModel
-
-        return OllamaModel(
-            model=os.environ["AGENTFRAME_OLLAMA_MODEL"],
-            endpoint=os.environ.get("AGENTFRAME_OLLAMA_ENDPOINT", DEFAULT_ENDPOINT),
-            context_window=8192,
-        )
-    if provider == "foundry":
-        from azure.identity.aio import AzureCliCredential
-
-        from agentframe.models.foundry import FoundryModel
-
-        # Local development signs in with `az login`; production can use
-        # DefaultAzureCredential or managed identity. Like the model, the
-        # credential lives as long as the server process; an application that
-        # stops serving earlier closes both.
-        return FoundryModel(
-            endpoint=os.environ["AGENTFRAME_FOUNDRY_ENDPOINT"],
-            deployment=os.environ["AGENTFRAME_FOUNDRY_DEPLOYMENT"],
-            credential=AzureCliCredential(),
-        )
-    raise ValueError(f"Unknown AGENTFRAME_MODEL_PROVIDER {provider!r}")
-
-
 def create_app(model: Model | None = None) -> AgentApp:
     """Serve the assistant over A2A.
 
     Args:
-        model: The model to use. Defaults to ``create_model()``; the model
-            lives as long as the server process.
+        model: The model to use. Defaults to ``model_from_env()``; the
+            model lives as long as the server process.
     """
     host = HostConfig(
         public_url=os.environ.get("ASSISTANT_PUBLIC_URL", "http://127.0.0.1:8000"),
@@ -121,4 +91,4 @@ def create_app(model: Model | None = None) -> AgentApp:
         # only. Production hosts need real authentication and authorization.
         auth=AllowAnonymous(),
     )
-    return AgentApp(agent=Assistant(model=model or create_model()), host=host)
+    return AgentApp(agent=Assistant(model=model or model_from_env()), host=host)

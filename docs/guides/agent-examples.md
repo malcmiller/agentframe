@@ -167,9 +167,10 @@ No skill code changes when the configured model host changes.
 
 [`examples/assistant.py`](../../examples/assistant.py) is the runnable version of
 this switch (the [first success criterion](../roadmap.md#first-success-criterion)).
-Its `create_app()` builds `OllamaModel` (with `context_window=8192`) or
-`FoundryModel` (signed in through the Azure CLI's Entra ID credential) from
-environment variables and serves one unchanged agent class, which mixes a
+Its `create_app()` calls [`model_from_env()`](../api/models.md#model_from_env),
+which builds `OllamaModel` (with an 8192-token context window) or
+`FoundryModel` (signed in with `DefaultAzureCredential`, so `az login`
+locally) from environment variables, and serves one unchanged agent class, which mixes a
 text skill, a typed structured-output `summarize` skill and a model-free one.
 `tests/integration/test_success_criterion.py` and
 `tests/integration/test_structured_example.py` call it over A2A with the

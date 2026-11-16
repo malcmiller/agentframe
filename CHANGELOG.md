@@ -45,6 +45,14 @@ behavior starts with an **Upgrading** section; see the
   JSON report, following `capture_content`. `baseline=` / `--baseline OLD.json`
   compares with an earlier JSON report: newly failing and newly passing cases
   plus pass-rate and latency changes (#276).
+- `agentframe.model_from_env(prefix="AGENTFRAME_", *, credential=None)`
+  chooses `OllamaModel` or `FoundryModel` from `MODEL_PROVIDER`,
+  `OLLAMA_MODEL`, `OLLAMA_ENDPOINT`, `FOUNDRY_ENDPOINT`, `FOUNDRY_DEPLOYMENT`
+  and an optional `MODEL_CONTEXT_WINDOW` (Ollama defaults to 8192), importing
+  only the selected provider. Errors name the missing or invalid variable,
+  never its value. Without `credential=`, Foundry signs in with a
+  `DefaultAzureCredential` that the model closes with itself. The examples
+  use it instead of their copied `create_model()` helper (#265).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

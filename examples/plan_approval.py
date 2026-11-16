@@ -61,9 +61,9 @@ from agentframe import (
     Service,
     SkillDefinition,
     agent,
+    model_from_env,
     skill,
 )
-from examples.assistant import create_model
 
 type Research = Remote[Literal["research-agent"]]
 
@@ -102,7 +102,7 @@ def create_app(
     """Serve the approvals agent.
 
     Args:
-        model: The planning model. Defaults to ``create_model()``; it lives
+        model: The planning model. Defaults to ``model_from_env()``; it lives
             as long as the server process.
         directory: Where to find ``research-agent``. Defaults to the agents
             listed in ``AGENTFRAME_AGENTS``, over HTTP on localhost only.
@@ -127,7 +127,7 @@ def create_app(
         else {}
     )
     return AgentApp(
-        agent=Approvals(model=model or create_model()),
+        agent=Approvals(model=model or model_from_env()),
         host=host,
         directory=directory or create_directory(),
         remotes=remotes,
