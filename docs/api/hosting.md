@@ -775,6 +775,21 @@ service validation. The probe bodies (`{"status": "ok"}`, `{"status":
 (HTTP 503) and the size errors (HTTP 413 and `LimitExceededError`) are
 decided.
 
+**Insecure hosting warnings (#267):** `AgentApp` construction logs one
+`WARNING` on the `agentframe.hosting.host` logger, without failing, for two
+legal but insecure combinations:
+
+- a plain `http://` `public_url` on a non-loopback host with any
+  authenticator other than `AllowAnonymous`, so API keys or tokens would
+  cross the network unencrypted;
+- `AllowAnonymous()` with a non-loopback `public_url`, so anyone who can
+  reach the server can call the agent.
+
+`localhost` and loopback addresses such as `127.0.0.1` and `[::1]` never warn,
+and nothing is logged under `AGENTFRAME_DEV=1`, which `agentframe dev` and
+`agentframe compose` set. The warning checks only `public_url`, not the
+address the server binds to.
+
 **Related:** [`Principal`](authorization.md#principal),
 [`AgentConfig`](configuration.md#agentconfig),
 [host ceilings](../guides/limits.md#defaults-versus-ceilings).

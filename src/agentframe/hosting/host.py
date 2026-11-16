@@ -1,16 +1,22 @@
 """Host configuration for serving an agent remotely."""
 
+import logging
+import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from urllib.parse import urlsplit
 
 from a2a.server.tasks import TaskStore
 
+from agentframe.dev import DEV_VARIABLE
 from agentframe.errors import DefinitionError
 from agentframe.hosting.dedup import MessageDedupStore
 from agentframe.runtime.limits import RunLimits
-from agentframe.security.authentication import Authenticator
-from agentframe.urls import is_plain_http_url
+from agentframe.security.authentication import AllowAnonymous, Authenticator
+from agentframe.urls import is_loopback_host, is_plain_http_url
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -148,6 +154,39 @@ class A2AConfig:
                 "A2AConfig task_retention_seconds must be at least "
                 "dedup_window_seconds, or a retried message could run again"
             )
+
+
+def warn_if_insecure(host: HostConfig) -> None:
+    """Log a warning for a legal but insecure ``host`` outside development.
+
+    Warns when callers' credentials would cross plain HTTP (an ``http://``
+    ``public_url`` on a non-loopback host with any authenticator other than
+    ``AllowAnonymous``), and when ``AllowAnonymous`` is served on a
+    non-loopback ``public_url``. Nothing is logged under ``AGENTFRAME_DEV=1``,
+    which ``agentframe dev`` and ``agentframe compose`` set.
+
+    Args:
+        host: The host configuration to check.
+    """
+    if os.environ.get(DEV_VARIABLE) == "1":
+        return
+    parts = urlsplit(host.public_url)
+    if is_loopback_host(parts.hostname or ""):
+        return
+    if isinstance(host.auth, AllowAnonymous):
+        logger.warning(
+            "HostConfig accepts anonymous callers (AllowAnonymous) on the "
+            "non-loopback public_url host %s, so anyone who can reach it can "
+            "call the agent. Use real authentication unless this is intended.",
+            parts.hostname,
+        )
+    elif parts.scheme == "http":
+        logger.warning(
+            "HostConfig public_url uses plain http on the non-loopback host %s, "
+            "so callers' credentials and messages cross the network "
+            "unencrypted. Use an https public_url.",
+            parts.hostname,
+        )
 
 
 def _check_public_url(public_url: str) -> None:
