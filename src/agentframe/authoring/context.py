@@ -1,6 +1,6 @@
 """Per-run context passed to skills."""
 
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, overload
 
@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from agentframe.discovery.remote import Remote
 from agentframe.errors import DefinitionError
-from agentframe.models.base import HostedTool
+from agentframe.models.base import HostedTool, Message
 from agentframe.orchestration.catalog import RemoteSkill, SkillCatalog, build_catalog
 from agentframe.orchestration.execution import (
     DEFAULT_MAX_PARALLEL,
@@ -21,6 +21,7 @@ from agentframe.orchestration.planning import make_plan
 from agentframe.orchestration.remote_tools import remote_tools
 from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.remotes import RunRemotes
+from agentframe.runtime.state import RunConversation
 from agentframe.security.principal import Principal
 
 
@@ -46,6 +47,11 @@ class RunContext:
     hops: int = 0
     # Private per-run bindings to remote agents; None without a directory.
     _remotes: RunRemotes | None = field(default=None, repr=False, compare=False)
+    # Private conversation the runtime keyed by the verified caller; None
+    # without a principal and a conversation ID.
+    _conversation: RunConversation | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @overload
     async def generate(
@@ -54,6 +60,7 @@ class RunContext:
         *,
         instructions: str | None = None,
         tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+        history: Sequence[Message] = (),
     ) -> str: ...
 
     @overload
@@ -64,6 +71,7 @@ class RunContext:
         instructions: str | None = None,
         output: type[T],
         tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+        history: Sequence[Message] = (),
     ) -> T: ...
 
     async def generate(
@@ -73,6 +81,7 @@ class RunContext:
         instructions: str | None = None,
         output: type[BaseModel] | None = None,
         tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+        history: Sequence[Message] = (),
     ) -> str | BaseModel:
         """Generate text, or a validated ``output`` instance, with the agent's model.
 
@@ -102,6 +111,14 @@ class RunContext:
                 catalogs may be mixed in: see "Remote skills" below. So
                 may hosted tools such as ``FoundryWebSearch()``, at most one
                 of each type: see "Hosted tools" below.
+            history: Earlier ``user`` and ``assistant`` messages of the
+                conversation, oldest first, usually ``await ctx.history()``.
+                They are untrusted, like ``text``, and sent between the
+                instructions and ``text``. When they would not fit, the
+                oldest are left out until the first request fits the input
+                limit, the context window and the run's remaining tokens,
+                each less the output cap; what is kept starts with a
+                ``user`` message. Later tool continuations are not trimmed.
 
         Returns:
             The model's complete answer, or an ``output`` instance when
@@ -109,9 +126,10 @@ class RunContext:
 
         Raises:
             DefinitionError: ``output`` is not a ``BaseModel`` subclass, or is
-                a ``RootModel``, or a selected tool is not registered on the
-                agent or is selected twice, or a hosted tool type is selected
-                twice. Raised before anything is sent.
+                a ``RootModel``, a selected tool is not registered on the
+                agent or is selected twice, a hosted tool type is selected
+                twice, or ``history`` holds a message with another role or
+                with tool calls. Raised before anything is sent.
             UnsupportedCapabilityError: The agent has no model configured, or
                 the model lacks something the request needs, such as
                 structured output, tool calling or a hosted tool. Raised
@@ -204,11 +222,51 @@ class RunContext:
         )
         if output is None:
             return await self._generation.generate_text(
-                self, text, instructions, functions, remote, hosted
+                self, text, instructions, functions, remote, hosted, history
             )
         return await self._generation.generate_output(
-            self, text, instructions, output, functions, remote, hosted
+            self, text, instructions, output, functions, remote, hosted, history
         )
+
+    async def history(self) -> list[Message]:
+        """Return this conversation's earlier messages, oldest first.
+
+        A run has a conversation when it has a verified ``principal`` and a
+        conversation ID: the A2A ``contextId`` for hosted runs, or
+        ``conversation_id=`` for local runs. Conversations are kept per
+        agent, caller and ID, so a caller never sees another caller's
+        messages, whatever ID it sends. Without a conversation, this returns
+        an empty list.
+
+        Returns:
+            ``user`` and ``assistant`` messages from the runtime's
+            ``StateStore``, to pass as ``generate(history=...)``.
+
+        Raises:
+            Exception: Whatever the state store raises, unchanged.
+        """
+        if self._conversation is None:
+            return []
+        return await self._conversation.load()
+
+    async def save_turn(self, user: str, assistant: str) -> None:
+        """Add one exchange to this conversation, for the caller's next run.
+
+        Nothing is saved without a conversation (see ``history``), so a
+        skill can call this unconditionally. The store may drop the oldest
+        messages to stay within its bounds.
+
+        Args:
+            user: The caller's text, saved as a ``user`` message.
+            assistant: The agent's answer, saved as an ``assistant`` message.
+                For a structured answer, save its JSON, for example
+                ``summary.model_dump_json()``.
+
+        Raises:
+            Exception: Whatever the state store raises, unchanged.
+        """
+        if self._conversation is not None:
+            await self._conversation.save_turn(user, assistant)
 
     async def remote_skills(
         self,

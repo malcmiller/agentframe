@@ -180,6 +180,7 @@ count), so concurrent runs never share accounting. Further accessors remain open
 | `hops` | `int` | `0` for a local run or a caller that sent no depth | The run's depth in a chain of calls between agents, read from `agentframe.hops` (M8 #89). `Remote` sends one more; see [`RunLimits.max_remote_hops`](configuration.md#runlimits). |
 | Service injection | Skill parameters annotated `Inject[T]` | Services registered by trusted application | No untyped context service bag; injected parameters are excluded from caller input and all published schemas/cards. |
 | Model access | Injected `Model` through `generate` | Model optional until used | No implicit model or fallback. No additional public model accessor is specified. |
+| Conversation history | [`history`](#runcontexthistory), [`save_turn`](#runcontextsave_turn) | Empty / no-op unless the run has a conversation | The caller's earlier `user` and `assistant` messages from the runtime's [`StateStore`](runtime.md#statestore), kept per agent, verified caller and conversation ID (0.5.0 #252). |
 | Remote skill catalog | [`remote_skills`](orchestration.md#runcontextremote_skills) | Needs `directory=` on `Runtime` / `AgentApp` | Returns a [`SkillCatalog`](orchestration.md#skillcatalog) of registered agents' skills, built from their cards without calling a model (M10 #166). |
 | Cancellation, run state | Exact accessors/types open | Managed per invocation | Enforce effective limits and isolation; IDs/accounting work without tracing. |
 
@@ -230,6 +231,7 @@ await ctx.generate(text, output=Summary) -> Summary     # implemented (M4 #53)
 await ctx.generate(text, tools=[lookup_order]) -> str   # implemented (M5 #60, #61)
 await ctx.generate(text, tools=[*skills]) -> str        # implemented (M10 #167)
 await ctx.generate(text, tools=[FoundryWebSearch()])    # implemented (#261)
+await ctx.generate(text, history=messages) -> str       # implemented (0.5.0 #252)
 ```
 
 **Implemented signature (M3 #35, M4 #53, `tools` M5 #60/#61, remote skills
@@ -243,6 +245,7 @@ async def generate(
     *,
     instructions: str | None = None,
     tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+    history: Sequence[Message] = (),
 ) -> str
 async def generate[T: BaseModel](
     self,
@@ -251,12 +254,13 @@ async def generate[T: BaseModel](
     instructions: str | None = None,
     output: type[T],
     tools: Iterable[Callable[..., Any] | RemoteSkill | HostedTool] = (),
+    history: Sequence[Message] = (),
 ) -> T
 ```
 
 Messages are assembled in this order: the agent's `instructions` as a `system`
 message, then the call's `instructions` as a second `system` message, then
-`text` as a `user` message. Untrusted `text` is never merged into a `system`
+any `history` messages, oldest first, then `text` as a `user` message. Untrusted `text` is never merged into a `system`
 message. This separation does not guarantee resistance to prompt injection.
 
 | Parameter | Type | Required/default status | Meaning, constraints, precedence |
@@ -265,6 +269,7 @@ message. This separation does not guarantee resistance to prompt injection.
 | `instructions` | `str \| None` | Optional; default `None` sends no call instructions | Trusted call-specific instructions combine with shared agent instructions without replacing shared constraints. Must not interpolate untrusted content as trusted instructions. |
 | `output` | `type[T]`, `T` a Pydantic `BaseModel` subclass (implemented, M4 #53) | Optional; `None` returns text | Sends the class's JSON schema as [`OutputSchema`](models.md#outputschema) and returns the reply validated with `model_validate_json` in Pydantic's default (lax) mode; a model's own `ConfigDict(strict=True)` is respected. `RootModel`, `list[...]` and other types raise `DefinitionError` before sending: wrap lists in a model field. Provider schema subsets are documented per adapter ([Foundry](models.md#structured-output), [Ollama](models.md#structured-output-ollama)). With `tools`, the final answer after the tool calls is validated (M5 #61). |
 | `tools` | `Iterable[Callable[..., Any] \| RemoteSkill \| HostedTool]`: `@tool` functions registered on the agent (selection implemented, M5 #60), [`RemoteSkill`](orchestration.md#remoteskill) entries from this run's catalogs (M10 #167), and provider [hosted tools](#hosted-tools-261) such as [`FoundryWebSearch`](models.md#foundrywebsearch) (#261) | Optional; default `()` offers no tools | Names the tools this call offers the model; omitting `tools=` or passing an empty selection offers none, even when the agent registers tools. A function not registered on the agent, or selected twice, raises `DefinitionError` naming the tool before anything is sent. The model's tool calls run within the run's limits until it answers; see [tool calling](#implemented-tool-calling-m5-61), the [Foundry mapping](models.md#tool-calling) and [remote skills as tools](orchestration.md#remote-skills-as-model-tools). Hosted tools need no registration; selecting one is the opt-in, and each type may be selected once (`DefinitionError` otherwise). Decoration or a model suggestion alone does not grant execution. |
+| `history` | `Sequence[`[`Message`](models.md#message)`]` (implemented, 0.5.0 #252) | Optional; default `()` sends none | Earlier `user` and `assistant` messages, oldest first, usually from [`ctx.history()`](#runcontexthistory). Any other role, or an assistant message with tool calls, raises `DefinitionError` before sending. The oldest messages are dropped so the first request fits (see [trimming](#conversation-history-and-trimming)). History is untrusted content, like `text`. |
 
 ```python
 from agentframe import Agent, RunContext, agent, skill
@@ -499,6 +504,80 @@ resistance. Cancellation does not guarantee no provider charges.
 [`RunLimits`](configuration.md#runlimits),
 [`ExecutionPolicy`](authorization.md#executionpolicy),
 [instruction design](../guides/annotations.md#proposed-authoring-shape).
+
+## `RunContext.history`
+
+**Purpose / decision:** read the caller's earlier messages in this
+conversation, to pass as [`generate(history=...)`](#runcontextgenerate)
+(0.5.0 #252).
+
+**Implemented signature:** `async def history(self) -> list[Message]`.
+
+A run has a conversation only when it has both a verified `principal` and a
+conversation ID: the A2A `contextId` for hosted runs, or
+[`conversation_id=`](runtime.md#runtimeinvoke) for local runs. Messages are
+kept per agent, verified caller and ID in the runtime's
+[`StateStore`](runtime.md#statestore), so a caller never sees another
+caller's messages, whatever ID it sends. Without a conversation (an anonymous
+hosted caller, a `contextId` over 256 characters, or a local run without
+`conversation_id`) this returns `[]`.
+
+```python
+from agentframe import Agent, RunContext, agent, skill
+
+
+@agent(name="Chat", description="Chats, remembering earlier turns.", version="0.1.0")
+class Chat(Agent):
+    @skill(id="chat", name="Chat", description="Answer.", tags=["chat"])
+    async def chat(self, text: str, ctx: RunContext) -> str:
+        history = await ctx.history()
+        answer = await ctx.generate(text, history=history)
+        await ctx.save_turn(text, answer)
+        return answer
+```
+
+**Behavior / failures:** returns a new list of `user` and `assistant`
+messages, oldest first. Exceptions the store raises propagate unchanged and
+fail the run.
+
+### Conversation history and trimming
+
+`generate(history=...)` keeps the newest whole messages that fit the first
+model request, dropping the oldest first; what is kept always starts with a
+`user` message. The request with its history must fit
+`RunLimits.max_input_tokens` (or the model's context window when unset), the
+context window less `max_output_tokens`, and the run's remaining
+`max_total_tokens` less `max_output_tokens`. Token counts are the same
+estimate `generate` uses for its fit checks. Only the first request is
+trimmed: tool results added during the call can still exceed a limit and fail
+as usual. Trimming changes what is sent, never what the store keeps; stores
+apply their own bounds.
+
+**Related:** [`RunContext.save_turn`](#runcontextsave_turn),
+[`StateStore`](runtime.md#statestore),
+[multi-turn guide](../guides/agent-examples.md#multi-turn-conversations).
+
+## `RunContext.save_turn`
+
+**Purpose / decision:** add one exchange to this conversation, for the
+caller's next run (0.5.0 #252).
+
+**Implemented signature:** `async def save_turn(self, user: str, assistant: str) -> None`.
+
+| Parameter | Type | Required/default status | Meaning |
+| --- | --- | --- | --- |
+| `user` | `str` | Required | The caller's text, saved as a `user` message. |
+| `assistant` | `str` | Required | The agent's answer, saved as an `assistant` message. Save a structured answer as JSON, for example `summary.model_dump_json()`. |
+
+**Behavior / failures:** without a conversation (see
+[`history`](#runcontexthistory)) nothing is saved, so a skill can call it
+unconditionally. The skill decides what to remember: nothing is saved
+automatically, and tool calls and results are never saved. The store may drop
+the oldest messages to stay within its bounds. Exceptions the store raises
+propagate unchanged and fail the run.
+
+**Related:** [`RunContext.history`](#runcontexthistory),
+[`StateStore`](runtime.md#statestore).
 
 ## `Inject[T]`
 

@@ -44,6 +44,12 @@ from agentframe.runtime.generation import GenerationState
 from agentframe.runtime.limits import DEFAULT_LIMITS, RunLimits, cap_limits
 from agentframe.runtime.options import RunOptions, merge_settings
 from agentframe.runtime.remotes import RunRemotes
+from agentframe.runtime.state import (
+    InMemoryStateStore,
+    RunConversation,
+    StateStore,
+    run_conversation,
+)
 from agentframe.runtime.tokens import input_token_limit
 from agentframe.security.authorization import (
     AuthorizationPolicy,
@@ -88,6 +94,7 @@ class _Invocation:
     user_token: UserToken | None
     correlation: RunCorrelation
     own_interface_url: str | None
+    conversation_id: str | None
 
 
 class Runtime:
@@ -123,6 +130,9 @@ class Runtime:
             receives it, so use it only when each is trusted with it.
             ``None`` (the default) includes only open agents and agents with
             ``remotes=`` entries.
+        state_store: Where conversation history is kept between runs
+            (``ctx.history()`` and ``ctx.save_turn()``). ``None`` uses a new
+            ``InMemoryStateStore()``, which is bounded and lost on restart.
 
     Raises:
         DefinitionError: ``remotes`` is not a mapping of names to ``Service``
@@ -140,6 +150,7 @@ class Runtime:
         directory: AgentDirectory | None = None,
         remotes: Mapping[str, Service | OnBehalfOf] | None = None,
         default_remote: Service | OnBehalfOf | None = None,
+        state_store: StateStore | None = None,
     ) -> None:
         self._services = services or Services()
         self._authorization = authorization
@@ -150,6 +161,9 @@ class Runtime:
         self._default_remote = checked_default_remote(default_remote)
         # Each (agent, skill) logs its catalog identity mode once.
         self._logged_identities: set[tuple[str, str]] = set()
+        self._state_store = (
+            state_store if state_store is not None else InMemoryStateStore()
+        )
 
     @property
     def policy(self) -> ExecutionPolicy | None:
@@ -271,6 +285,7 @@ class Runtime:
         arguments: Mapping[str, Any] | None = None,
         principal: Principal | None = None,
         options: RunOptions | None = None,
+        conversation_id: str | None = None,
     ) -> Any:
         """Run a skill and return only its validated value.
 
@@ -282,6 +297,7 @@ class Runtime:
             arguments=arguments,
             principal=principal,
             options=options,
+            conversation_id=conversation_id,
         )
         return result.value
 
@@ -293,6 +309,7 @@ class Runtime:
         arguments: Mapping[str, Any] | None = None,
         principal: Principal | None = None,
         options: RunOptions | None = None,
+        conversation_id: str | None = None,
     ) -> RunResult[Any]:
         """Run a skill and return its value with execution metadata.
 
@@ -303,15 +320,21 @@ class Runtime:
             principal: Verified caller identity supplied by trusted code.
             options: Limits and model settings for this run only. Each field
                 they set overrides the skill's, agent's and library's value.
+            conversation_id: The conversation this run continues, for
+                ``ctx.history()`` and ``ctx.save_turn()``. Needs a
+                ``principal``: conversations are kept per agent, caller and
+                ID. ``None`` means the run has no conversation.
 
         Returns:
             A ``RunResult`` holding the validated value.
 
         Raises:
-            InputValidationError: Unknown skill or invalid arguments.
+            InputValidationError: Unknown skill, invalid arguments, or a
+                ``conversation_id`` that is empty or over 256 characters.
             DefinitionError: Undecorated agent, a service needed by the
-                skill or a registered tool is not registered, or a ``Remote``
-                parameter's agent is unknown or requires credentials.
+                skill or a registered tool is not registered, a ``Remote``
+                parameter's agent is unknown or requires credentials, or a
+                ``conversation_id`` is given without a ``principal``.
             RemoteAgentError: A ``Remote`` parameter's agent card cannot be
                 fetched or is invalid.
             PermissionDeniedError: The principal lacks a permission the skill
@@ -340,6 +363,7 @@ class Runtime:
             arguments or {},
             principal,
             options or RunOptions(),
+            conversation_id=conversation_id,
         )
 
     async def run_invocation(
@@ -357,6 +381,7 @@ class Runtime:
         user_token: UserToken | None = None,
         correlation: RunCorrelation | None = None,
         own_interface_url: str | None = None,
+        conversation_id: str | None = None,
     ) -> RunResult[Any]:
         """Run like ``run``, under an invocation ID chosen by the caller.
 
@@ -369,8 +394,9 @@ class Runtime:
         carries the caller's deadline), the request's ``hops``, the
         signed-in caller's ``user_token`` for ``OnBehalfOf`` remotes, the
         request's ``correlation`` with the agents before it (``None`` makes
-        the run a root run) and the A2A interface URL it advertises, which
-        leaves the agent out of its own skill catalog.
+        the run a root run), the A2A interface URL it advertises, which
+        leaves the agent out of its own skill catalog, and the task's
+        ``contextId`` as ``conversation_id`` when the caller is verified.
         """
         started = time.perf_counter()
         accounting = accounting or RunAccounting()
@@ -390,6 +416,7 @@ class Runtime:
             user_token=user_token,
             correlation=correlation,
             own_interface_url=own_interface_url,
+            conversation_id=conversation_id,
         )
         try:
             value = await self._run(invocation)
@@ -411,6 +438,12 @@ class Runtime:
         skill = self._checked_skill(run.agent, run.skill_id)
         _check_permissions(skill, run.principal)
         validated_arguments = _validate_arguments(skill, run.arguments)
+        conversation = run_conversation(
+            self._state_store,
+            type(run.agent).definition().name,
+            run.principal.id if run.principal is not None else None,
+            run.conversation_id,
+        )
 
         limits, model_settings = _effective_settings(
             run.agent, skill, run.options, run.limits_ceiling
@@ -433,7 +466,13 @@ class Runtime:
         try:
             async with asyncio.timeout_at(deadline) as timeout:
                 result = await self._call_skill(
-                    run, skill, validated_arguments, limits, model_settings, deadline
+                    run,
+                    skill,
+                    validated_arguments,
+                    limits,
+                    model_settings,
+                    deadline,
+                    conversation,
                 )
         except TimeoutError:
             if not timeout.expired():
@@ -478,6 +517,7 @@ class Runtime:
         limits: RunLimits,
         model_settings: ModelSettings,
         deadline: float,
+        conversation: RunConversation | None,
     ) -> Any:
         """Call the skill's method with its services, remotes and ``RunContext``.
 
@@ -507,6 +547,7 @@ class Runtime:
                 generation,
                 hops=run.hops,
                 _remotes=run_remotes,
+                _conversation=conversation,
             )
             injected = await services.resolve(skill.injected)
             remotes: dict[str, object] = {}
