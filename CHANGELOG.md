@@ -4,12 +4,33 @@ All notable changes to AgentFrame are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Pre-1.0: public APIs may change in minor releases; changes are listed in the
-changelog.
+changelog. From the release after 0.3.0, a release that changes public API or
+behavior starts with an **Upgrading** section; see the
+[stability, deprecation and upgrade policy](docs/guides/stability.md).
 
 ## [Unreleased]
 
+### Upgrading
+
+- The default in-memory A2A task store now deletes finished tasks after
+  `A2AConfig.task_retention_seconds` (default 1 hour) or past
+  `max_retained_tasks` (default 10,000); `GetTask` and `CancelTask` then
+  treat them as unknown. Callers that read finished tasks later should raise
+  those settings or pass a persistent `A2AConfig(task_store=...)` (#208).
+
 ### Added
 
+- **Documentation:** a
+  [stability, deprecation and upgrade policy](docs/guides/stability.md): what
+  the public API is, what may change before 1.0 (minor releases may break,
+  patch releases do not), how deprecations are signposted (a
+  `DeprecationWarning` for at least one minor release, **Deprecated** and
+  **Removed** changelog entries), **Upgrading** notes in this changelog and the
+  criteria for 1.0 (#251).
+- **Documentation:** `docs/api/hosting.md` and `AgentApp`'s docstring no
+  longer say tasks are always lost on restart, since `A2AConfig(task_store=...)`
+  can keep them, and `docs/api/decorators.md` no longer says tools are not
+  registered or executed (#251).
 - **Evaluation:** judge vote counts. `Score` and `ScoreResult` gain
   `votes_cast` and `votes_passed`; every `Judge` score sets them to the judge
   runs actually made, so an early stop shows (a unanimous `votes=3` is `2/2`,

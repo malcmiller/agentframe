@@ -96,9 +96,10 @@ class AgentApp:
 
     Serves the public Agent Card at ``/.well-known/agent-card.json`` and the
     JSON-RPC A2A endpoint at ``/a2a``. Every request to ``/a2a`` must pass the
-    host's authenticator, then runs through the runtime. Tasks live in the
-    SDK's in-memory store, scoped to the caller, and are lost on restart;
-    anonymous callers share one namespace and cannot list tasks. Messages that
+    host's authenticator, then runs through the runtime. Tasks are scoped to
+    the caller and kept in ``a2a.task_store``, by default a bounded in-memory
+    store whose tasks are lost on restart; anonymous callers share one
+    namespace and cannot list tasks. Messages that
     do not name a skill through the skill-call extension are free text, routed
     by ``router``. A caller's deadline and call depth, sent in the extension,
     shorten hosted runs and reject requests deeper than

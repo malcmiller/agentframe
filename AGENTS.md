@@ -735,12 +735,14 @@ because PyPI shows it; milestones, status and decisions live in
 Keep `docs/roadmap.md`, the
 guides (`docs/guides/annotations.md`, `agent-examples.md`, `limits.md`,
 `authorization.md`, `development.md`, `evaluation.md`, `orchestration.md`,
-`provider-tests.md`) and the design docs
+`provider-tests.md`, `stability.md`) and the design docs
 (`docs/design/base-classes.md`, `tracing.md`, `mcp-skills.md`,
 `prompt-safeguarding.md`, `discovery.md`, `streaming.md`, `evaluation.md`,
 `orchestration.md`) consistent, including discovery/streaming API pages and
 navigation. Preserve the distinction between confirmed product direction and
-illustrative API details.
+illustrative API details. Breaking or deprecating public API follows
+`docs/guides/stability.md`: a `DeprecationWarning` where practical and an
+**Upgrading** note in `CHANGELOG.md`.
 
 Maintain `docs/api/README.md` and its linked surface reference pages alongside
 those design documents. Give every proposed decorator, class, and known public

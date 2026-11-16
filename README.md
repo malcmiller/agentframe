@@ -52,6 +52,8 @@ The extras add what a deployment needs:
 
 Pre-1.0: public APIs may change in minor releases; changes are listed in the
 [changelog](https://github.com/malcmiller/agentframe/blob/main/CHANGELOG.md).
+See the
+[stability, deprecation and upgrade policy](https://github.com/malcmiller/agentframe/blob/main/docs/guides/stability.md).
 
 ## Quick start
 

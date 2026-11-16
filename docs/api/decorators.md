@@ -1,10 +1,10 @@
 # Decorators and data contracts
 
 [Reference index and status conventions](README.md). Approved fields below are
-decisions. `@agent` and `@skill` are implemented from source as of M1 (model-free,
-local `Runtime` only); `@tool` and `ToolDefinition` are implemented as of M5
-(#58), without agent registration or tool execution yet. Unspecified details
-remain illustrative.
+decisions. `@agent` and `@skill` are implemented as of M1, and their skills are
+hosted over A2A since M2; `@tool` and `ToolDefinition` are implemented as of M5
+(#58), with agent registration, the bounded tool loop and tool authorization
+(#60-#62). Unspecified details remain illustrative.
 Decorators describe/register behavior; Python
 types describe validated data. Neither replaces runtime enforcement.
 

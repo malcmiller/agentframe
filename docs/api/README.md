@@ -68,10 +68,10 @@ import agentframe
 print(agentframe.__version__)  # for example "0.3.0"
 ```
 
-**Behavior / failures:** read-only by convention. Pre-1.0 there is no stable
-import surface, so any release may change the public API; check the
-[changelog](../../CHANGELOG.md)
-before upgrading.
+**Behavior / failures:** read-only by convention. Pre-1.0 a minor release may
+change the public API; check the [changelog](../../CHANGELOG.md)'s
+**Upgrading** notes before upgrading (see the
+[stability policy](../guides/stability.md)).
 
 ## Reading the examples
 
