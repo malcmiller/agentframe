@@ -67,7 +67,7 @@ Issues = "https://github.com/malcmiller/agentframe/issues"
 
 [dependency-groups]
 dev = [
-    "ruff==0.17.5",
+    "ruff==0.17.6",
     "mypy==2.4.1",
     "pytest==9.2.0",
     "pytest-asyncio==1.5.0",
@@ -76,7 +76,7 @@ dev = [
     "uvicorn==0.54.0",
     "httpx==0.28.1",
     # Imported directly by the tests, so pinned rather than left transitive.
-    "httpx2==2.16.0",
+    "httpx2==2.16.2",
     "azure-core==1.41.0",
     "agentframe-py[ollama,foundry,anthropic,entra,mcp,redis,otel,ag-ui]",
     # Tests RedisMessageDedupStore against redis-py without a Redis server.
