@@ -83,7 +83,7 @@ dev = [
     "fakeredis==2.40.0",
     # The tests record spans and metrics with the SDK's in-memory exporters.
     "opentelemetry-sdk==1.45.2",
-    "types-pyyaml==6.0.12.20261111",
+    "types-pyyaml==6.0.12.20261113",
 ]
 
 # The distribution is agentframe-py; the import package stays agentframe.
